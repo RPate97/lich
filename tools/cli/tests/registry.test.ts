@@ -56,3 +56,24 @@ describe('Registry', () => {
     expect(entries.map(e => e.key).sort()).toEqual(['k1', 'k2']);
   });
 });
+
+describe('Registry.withLock', () => {
+  it('serializes read-modify-write under concurrent callers', async () => {
+    const { Registry: Reg2 } = await import('../src/registry');
+    const reg = new Reg2(join(tmp, 'registry.json'));
+
+    const inc = async () => {
+      await reg.withLock(async () => {
+        const data = await reg.read();
+        const count = (data.stacks['counter']?.ports['n'] ?? 0) + 1;
+        await reg.upsert('counter', {
+          path: '/x', branch: '', ports: { n: count }, urls: {}, containers: [], network: '', logDir: '', createdAt: '',
+        });
+      });
+    };
+
+    await Promise.all([inc(), inc(), inc(), inc(), inc()]);
+    const data = await reg.read();
+    expect(data.stacks['counter']!.ports['n']).toBe(5);
+  });
+});
