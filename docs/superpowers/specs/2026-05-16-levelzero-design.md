@@ -51,7 +51,6 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Unit + integration tests | Vitest | Universal. |
 | E2E tests | Playwright | v0 only; replaced by a custom agent-first browser driver in v2. |
 | Container orchestration | Docker Compose | Local infra (Postgres, anything else unowned). |
-| HTTP ingress / local URLs | [portless](https://github.com/vercel-labs/portless) | Stable named URLs per worktree, automatic HTTPS, no port management. Native git-worktree subdomain support. |
 
 ### Why a separate Hono backend (not Next route handlers / Server Actions)
 
@@ -155,23 +154,11 @@ All commands operate against the **auto-detected stack** for the current `cwd` (
 
 Agent-driven development means many branches in flight in parallel. Today, every framework assumes one stack per machine — port 5432, container `myapp_postgres_1`, seed data shared across whoever happens to be running. Two agents on two branches collide instantly. levelzero treats parallel stacks as the **default**, not an advanced configuration.
 
-### HTTP ingress: portless
-
-HTTP-facing services (api, web) are exposed via [portless](https://github.com/vercel-labs/portless). Portless solves a chunk of the multi-worktree problem out of the box:
-
-- Native git worktree detection: branch name becomes a subdomain prefix automatically (`https://feature-x.myapp.localhost`, `https://api.feature-x.myapp.localhost`).
-- Random port assignment under the hood — the agent never sees a port for HTTP services, only stable named URLs.
-- Per-service subdomains (`api.myapp.localhost`, `myapp.localhost`).
-- HTTPS + HTTP/2 with an auto-trusted local CA.
-- One proxy process serves every worktree's web and api simultaneously.
-
-`levelzero init` writes the necessary `portless.json` / `package.json` `"portless"` keys; `levelzero dev` runs the api and web through portless. The CLI resolves a worktree's URLs by asking portless (or by deriving them from the worktree branch and project name) — the agent never needs to know.
-
 ### Worktree key
 
-Even with portless handling HTTP, levelzero still needs an internal identifier for non-HTTP resources (Postgres container, log directory, registry entries). Every stack is identified by a **worktree key**: a stable identifier derived from the absolute, canonical path of the worktree root (the directory containing `levelzero.config.ts`). Using the full path — not just the directory name — avoids collisions when two worktrees share a basename.
+Every stack is identified by a **worktree key**: a stable identifier derived from the absolute, canonical path of the worktree root (the directory containing `levelzero.config.ts`). Using the full path — not just the directory name — avoids collisions when two worktrees share a basename (`feature-x/` in two different parent dirs).
 
-A machine-local registry at `~/.levelzero/registry.json` tracks what levelzero itself manages (Docker resources, log dirs) — portless owns HTTP route state separately:
+The key is recorded in a machine-local registry at `~/.levelzero/registry.json` — the single source of truth for what's running where:
 
 ```jsonc
 {
@@ -179,23 +166,36 @@ A machine-local registry at `~/.levelzero/registry.json` tracks what levelzero i
     "<sha256(absolute_path)[:12]>": {
       "path": "/Users/ryan/code/myapp-worktrees/feature-x",
       "branch": "feature-x",
-      "postgresPort": 54123,            // dynamic, internal — not surfaced to agent
+      "ports": {
+        "postgres": 54123,
+        "api": 54124,
+        "web": 54125
+      },
+      "urls": {
+        "api": "http://localhost:54124",
+        "web": "http://localhost:54125"
+      },
       "containers": ["levelzero-a3f8c1-postgres"],
       "network": "levelzero-a3f8c1",
       "logDir": ".levelzero/logs",
-      "urls": {                          // resolved from portless, cached for convenience
-        "web": "https://feature-x.myapp.localhost",
-        "api": "https://api.feature-x.myapp.localhost"
-      },
       "createdAt": "..."
     }
   }
 }
 ```
 
-### Postgres and other non-HTTP services
+### Port allocation
 
-Postgres can't go through portless (not HTTP). levelzero allocates a free port at first `dev`, persists it to the registry, reuses it across restarts. The api process gets `DATABASE_URL` injected with that port — agents and tests never see the port directly; they use `levelzero db inspect` and `levelzero curl` respectively.
+Each stack reserves a contiguous block of ports from a levelzero-owned range (proposed: `54000–54999`, 10 ports per stack). Allocation rules:
+
+- On first `levelzero dev` for a worktree, allocate the next free block and persist it.
+- Subsequent `dev` invocations reuse the same allocation — ports are stable per worktree across restarts.
+- If a previously allocated port is occupied by something outside levelzero, `doctor` surfaces a clear error rather than silently reassigning.
+- `stacks prune` reclaims allocations from worktrees that no longer exist on disk.
+
+Agents never reference ports. They use `levelzero curl /api/foo` for backend calls and `levelzero db inspect` for DB inspection — the CLI resolves the right port from the registry. The api process and tests receive ports via injected environment variables (`DATABASE_URL`, `API_URL`, `AUTH_URL`).
+
+For humans peeking in a browser, `levelzero stacks current` returns the worktree's URLs.
 
 ### Container and network isolation
 
@@ -216,11 +216,11 @@ If no `levelzero.config.ts` is found, the command errors with an actionable mess
 ### Tests target the correct stack
 
 Vitest and Playwright runners are spawned with the auto-detected stack's connection details injected as environment variables:
-- `DATABASE_URL` — the auto-allocated Postgres port for this worktree.
-- `API_URL` — the portless URL (e.g. `https://api.feature-x.myapp.localhost`).
-- `AUTH_URL` — same root as `API_URL` or its own subdomain.
+- `DATABASE_URL` — `postgres://...localhost:<allocated-postgres-port>/...`
+- `API_URL` — `http://localhost:<allocated-api-port>`
+- `AUTH_URL` — same root as `API_URL` or its own port.
 
-Tests never reference `localhost:5432` or hardcoded URLs directly — they consume the env vars provided by the runner. Tests on worktree A run against stack A, tests on worktree B run against stack B, concurrently and without collision.
+Tests never reference hardcoded ports — they consume the env vars provided by the runner. Tests on worktree A run against stack A, tests on worktree B run against stack B, concurrently and without collision.
 
 ### Out-of-scope for v0 (worktree-specific)
 
