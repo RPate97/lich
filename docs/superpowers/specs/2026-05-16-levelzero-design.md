@@ -51,6 +51,7 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Unit + integration tests | Vitest | Universal. |
 | E2E tests | Playwright | v0 only; replaced by a custom agent-first browser driver in v2. |
 | Container orchestration | Docker Compose | Local infra (Postgres, anything else unowned). |
+| Web URL ergonomics | [portless](https://github.com/vercel-labs/portless) (web only) | Named `https://<branch>.myapp.localhost` for the frontend so humans can tell which stack they're viewing. Api stays on a raw port. |
 
 ### Why a separate Hono backend (not Next route handlers / Server Actions)
 
@@ -154,6 +155,19 @@ All commands operate against the **auto-detected stack** for the current `cwd` (
 
 Agent-driven development means many branches in flight in parallel. Today, every framework assumes one stack per machine — port 5432, container `myapp_postgres_1`, seed data shared across whoever happens to be running. Two agents on two branches collide instantly. levelzero treats parallel stacks as the **default**, not an advanced configuration.
 
+### Web URL ergonomics: portless (web only)
+
+The web frontend runs through [portless](https://github.com/vercel-labs/portless) so the browser tab shows a human-readable URL per worktree: `https://feature-x.myapp.localhost`. This is the *only* place humans interact with stack URLs (agents go through `levelzero curl`), and the URL is the only visual cue distinguishing one worktree's UI from another's. Worth the small dependency.
+
+The api **does not** go through portless — nothing ever visits it in a browser. It stays on a raw allocated port. To avoid CORS / mixed-content issues from web → api calls, the Next.js dev server is configured with rewrites: `/api/*` on the web origin proxies to `http://localhost:<api-port>/*`. This is dev-only and doesn't affect prod, where the api is an independent deployable as designed.
+
+What this means for the rest of the system:
+
+- Registry still owns Postgres + api port allocation as before.
+- `levelzero curl` and tests target the raw api port (unchanged).
+- Portless owns only the web-side URL. Its state lives in its own dir; we don't try to mirror it.
+- Failure mode: if portless is misconfigured or its proxy isn't up, `doctor` surfaces the error and offers the fallback `http://localhost:<web-port>` URL from the registry so the human is never blocked.
+
 ### Worktree key
 
 Every stack is identified by a **worktree key**: a stable identifier derived from the absolute, canonical path of the worktree root (the directory containing `levelzero.config.ts`). Using the full path — not just the directory name — avoids collisions when two worktrees share a basename (`feature-x/` in two different parent dirs).
@@ -173,7 +187,8 @@ The key is recorded in a machine-local registry at `~/.levelzero/registry.json` 
       },
       "urls": {
         "api": "http://localhost:54124",
-        "web": "http://localhost:54125"
+        "web": "http://localhost:54125",
+        "webPretty": "https://feature-x.myapp.localhost"
       },
       "containers": ["levelzero-a3f8c1-postgres"],
       "network": "levelzero-a3f8c1",
