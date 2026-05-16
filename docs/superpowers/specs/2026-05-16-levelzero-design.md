@@ -46,6 +46,8 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Backend framework | Hono | Runtime-agnostic, typed client generation, separate deployable. |
 | Auth | Better Auth | Self-hosted library; plays nicely with own DB. |
 | Frontend | Next.js (App Router, frontend only) | Deepest agent training data wins for v0. |
+| Styling | Tailwind CSS | Required by shadcn; the default with Next anyway. |
+| Component library | [shadcn/ui](https://ui.shadcn.com) | Components copied into the repo (not a black-box dep) — fits "everything inspectable." Excellent agent training data. Radix-based a11y. |
 | Package manager | Bun | Default; behind an adapter. |
 | Monorepo | Turborepo | PM-agnostic orchestration. |
 | Unit + integration tests | Vitest | Universal. |
@@ -146,6 +148,11 @@ All commands operate against the **auto-detected stack** for the current `cwd` (
 
 - `levelzero gen client` — regenerate `packages/api-client` from Hono types.
 - `levelzero gen types` — anything else type-derived.
+
+### UI
+
+- `levelzero ui add <component>` — add a shadcn component to `apps/web` via the configured `UIAdapter`. Thin wrapper that resolves the right working dir, runs the underlying tool, and reports what files landed.
+- `levelzero ui list` — list installed shadcn components (parsed from `components.json` / the repo).
 
 ### Meta
 
@@ -264,7 +271,7 @@ Two kinds, shipped under `tools/skills/`.
 
 One per stack tool, stack-specific (not generic vendor docs): how *this stack* uses the tool, conventions, gotchas, common patterns.
 
-- `prisma`, `hono`, `next`, `better-auth`, `vitest`, `playwright`, `turbo`, `levelzero-cli`.
+- `prisma`, `hono`, `next`, `tailwind`, `shadcn`, `better-auth`, `vitest`, `playwright`, `turbo`, `levelzero-cli`.
 
 ### CLAUDE.md
 
@@ -302,6 +309,11 @@ interface PackageManagerAdapter {
   install(): Promise<void>;
   add(packages: string[], opts: AddOpts): Promise<void>;
   workspacesConfig(): WorkspacesConfig;
+}
+
+interface UIAdapter {
+  add(component: string, opts: AddComponentOpts): Promise<AddComponentResult>;
+  list(): Promise<InstalledComponent[]>;
 }
 
 interface BrowserAdapter {
