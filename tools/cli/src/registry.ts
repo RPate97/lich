@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { acquireLock } from './registry-lock';
 
 export interface StackEntry {
   path: string;
@@ -51,6 +52,19 @@ export class Registry {
   async get(key: string): Promise<StackEntry | undefined> {
     const data = await this.read();
     return data.stacks[key];
+  }
+
+  /**
+   * Run `fn` with an exclusive advisory lock held on this registry file.
+   * Use for read-modify-write sequences that must not interleave.
+   */
+  async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const release = await acquireLock(this.path);
+    try {
+      return await fn();
+    } finally {
+      await release();
+    }
   }
 
   private async write(data: RegistryData): Promise<void> {
