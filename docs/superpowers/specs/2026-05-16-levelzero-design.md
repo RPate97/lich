@@ -23,6 +23,7 @@ These are load-bearing and shape every decision below.
 4. **Inspection is first-class, not a debugging afterthought.** Every part of the running stack — DB state, routes, sessions, jobs, logs — has a `levelzero inspect` or equivalent command that returns structured data. Agents call these *during* implementation to verify assumptions, not just when things break.
 5. **Adapters from day one.** Every swappable component (ORM, frontend framework, package manager, auth, eventually browser driver) sits behind a capability-shaped adapter interface. v0 ships one implementation per slot. Future implementations fill the interface; they do not retrofit it.
 6. **Local first, deploy parity later.** v0 runs the entire stack on the developer's machine in seconds via Docker + the CLI. The deploy story (v2) is "what you validated locally is what runs in prod" — meaning the local design must not preclude remote parity. No magic that only works locally.
+7. **Worktree-isolated by default.** Multiple stacks run fully independently and in parallel — separate ports, separate containers, separate databases — keyed off the worktree's absolute path. Every CLI command auto-detects which stack it's operating against from `cwd`. The agent never reasons about ports, container names, or which copy of Postgres is which. This is what makes parallel agent-driven branches actually workable.
 
 ## Validation checklist
 
@@ -50,6 +51,7 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Unit + integration tests | Vitest | Universal. |
 | E2E tests | Playwright | v0 only; replaced by a custom agent-first browser driver in v2. |
 | Container orchestration | Docker Compose | Local infra (Postgres, anything else unowned). |
+| HTTP ingress / local URLs | [portless](https://github.com/vercel-labs/portless) | Stable named URLs per worktree, automatic HTTPS, no port management. Native git-worktree subdomain support. |
 
 ### Why a separate Hono backend (not Next route handlers / Server Actions)
 
@@ -97,13 +99,23 @@ CLAUDE.md             # Agent entrypoint — lists skills, surfaces conventions
 
 All commands support `--json` (default for most), `--pretty` for human read, and structured `--help`. Noun-verb grammar.
 
+All commands operate against the **auto-detected stack** for the current `cwd` (see "Multi-worktree support" below). The agent never passes ports, container names, or stack identifiers — those are resolved transparently.
+
 ### Lifecycle
 
 - `levelzero init` — scaffold a project; prompts (or takes flags) for adapter choices; writes `levelzero.config.ts`.
-- `levelzero dev` — bring up Postgres + api + web; tee structured logs to `.levelzero/logs/`.
-- `levelzero stop` — clean teardown.
-- `levelzero reset` — nuke DB, re-migrate, re-seed. The "known starting point" command.
+- `levelzero dev` — bring up Postgres + api + web for *this* worktree's stack; allocate/reuse the stack's port block; tee structured logs to `.levelzero/logs/`.
+- `levelzero stop` — clean teardown of this worktree's stack.
+- `levelzero reset` — nuke this stack's DB, re-migrate, re-seed. The "known starting point" command.
 - `levelzero doctor` — diagnose local environment. Used by agents for self-diagnosis.
+
+### Stacks (multi-worktree)
+
+- `levelzero stacks list` — list every running levelzero stack across all worktrees on this machine; for each: worktree path, allocated ports, container names, uptime.
+- `levelzero stacks current` — show the stack the CLI would target from `cwd` (path, ports, container names). Useful for diagnosis; agents rarely need it because commands auto-target.
+- `levelzero stacks stop --all` — tear down every running levelzero stack regardless of `cwd`. Escape hatch for "clean slate everywhere."
+- `levelzero stacks stop <key|path>` — tear down a specific stack by worktree key or path.
+- `levelzero stacks prune` — remove registry entries and orphaned containers for worktrees that no longer exist on disk.
 
 ### Database
 
@@ -124,7 +136,11 @@ All commands support `--json` (default for most), `--pretty` for human read, and
 
 ### Logs
 
-- `levelzero logs [--service <name,...>] [--grep <pattern>] [--since <time>] [--level <level>] [--tail <n>] [--follow]` — unified query across owned services and Docker-managed infra. Structured JSON output by default. Critical to the validation loop: when a test fails, the agent grabs logs by time window without per-test wiring.
+- `levelzero logs [--service <name,...>] [--grep <pattern>] [--since <time>] [--level <level>] [--tail <n>] [--follow]` — unified query across owned services and Docker-managed infra for the auto-detected stack. Structured JSON output by default. Critical to the validation loop: when a test fails, the agent grabs logs by time window without per-test wiring.
+
+### Request
+
+- `levelzero curl <path> [--method <verb>] [--data <json>] [--as <user>]` — hit a backend endpoint on the auto-detected stack. Resolves the correct port, handles auth (creates/reuses a session for `--as <user>`), pretty-prints JSON responses. Replaces hand-rolled `curl localhost:$RANDOM_PORT/api/...` and the auth-cookie dance. The agent uses this for ad-hoc probing during implementation and debugging.
 
 ### Codegen
 
@@ -134,6 +150,82 @@ All commands support `--json` (default for most), `--pretty` for human read, and
 ### Meta
 
 - `levelzero adapter list` / `levelzero adapter swap <slot> <impl>` — see or change adapter choices.
+
+## Multi-worktree support
+
+Agent-driven development means many branches in flight in parallel. Today, every framework assumes one stack per machine — port 5432, container `myapp_postgres_1`, seed data shared across whoever happens to be running. Two agents on two branches collide instantly. levelzero treats parallel stacks as the **default**, not an advanced configuration.
+
+### HTTP ingress: portless
+
+HTTP-facing services (api, web) are exposed via [portless](https://github.com/vercel-labs/portless). Portless solves a chunk of the multi-worktree problem out of the box:
+
+- Native git worktree detection: branch name becomes a subdomain prefix automatically (`https://feature-x.myapp.localhost`, `https://api.feature-x.myapp.localhost`).
+- Random port assignment under the hood — the agent never sees a port for HTTP services, only stable named URLs.
+- Per-service subdomains (`api.myapp.localhost`, `myapp.localhost`).
+- HTTPS + HTTP/2 with an auto-trusted local CA.
+- One proxy process serves every worktree's web and api simultaneously.
+
+`levelzero init` writes the necessary `portless.json` / `package.json` `"portless"` keys; `levelzero dev` runs the api and web through portless. The CLI resolves a worktree's URLs by asking portless (or by deriving them from the worktree branch and project name) — the agent never needs to know.
+
+### Worktree key
+
+Even with portless handling HTTP, levelzero still needs an internal identifier for non-HTTP resources (Postgres container, log directory, registry entries). Every stack is identified by a **worktree key**: a stable identifier derived from the absolute, canonical path of the worktree root (the directory containing `levelzero.config.ts`). Using the full path — not just the directory name — avoids collisions when two worktrees share a basename.
+
+A machine-local registry at `~/.levelzero/registry.json` tracks what levelzero itself manages (Docker resources, log dirs) — portless owns HTTP route state separately:
+
+```jsonc
+{
+  "stacks": {
+    "<sha256(absolute_path)[:12]>": {
+      "path": "/Users/ryan/code/myapp-worktrees/feature-x",
+      "branch": "feature-x",
+      "postgresPort": 54123,            // dynamic, internal — not surfaced to agent
+      "containers": ["levelzero-a3f8c1-postgres"],
+      "network": "levelzero-a3f8c1",
+      "logDir": ".levelzero/logs",
+      "urls": {                          // resolved from portless, cached for convenience
+        "web": "https://feature-x.myapp.localhost",
+        "api": "https://api.feature-x.myapp.localhost"
+      },
+      "createdAt": "..."
+    }
+  }
+}
+```
+
+### Postgres and other non-HTTP services
+
+Postgres can't go through portless (not HTTP). levelzero allocates a free port at first `dev`, persists it to the registry, reuses it across restarts. The api process gets `DATABASE_URL` injected with that port — agents and tests never see the port directly; they use `levelzero db inspect` and `levelzero curl` respectively.
+
+### Container and network isolation
+
+Every Docker resource is namespaced by the worktree key:
+
+- Containers: `levelzero-<key>-<service>` (e.g. `levelzero-a3f8c1-postgres`).
+- Networks: `levelzero-<key>`.
+- Volumes: `levelzero-<key>-<service>-data`.
+
+`stacks stop --all` and `stacks prune` work off the `levelzero-` prefix.
+
+### Auto-detection
+
+Every CLI command walks up from `cwd` until it finds a `levelzero.config.ts`. That directory's absolute path is the worktree key. The CLI loads the registry entry for that key and routes the command to the correct stack: `levelzero test` runs against this stack's ports, `levelzero logs` reads this stack's log directory, `levelzero curl` hits this stack's API. The agent never specifies the stack explicitly.
+
+If no `levelzero.config.ts` is found, the command errors with an actionable message ("not inside a levelzero project; run `levelzero init` or `cd` into one").
+
+### Tests target the correct stack
+
+Vitest and Playwright runners are spawned with the auto-detected stack's connection details injected as environment variables:
+- `DATABASE_URL` — the auto-allocated Postgres port for this worktree.
+- `API_URL` — the portless URL (e.g. `https://api.feature-x.myapp.localhost`).
+- `AUTH_URL` — same root as `API_URL` or its own subdomain.
+
+Tests never reference `localhost:5432` or hardcoded URLs directly — they consume the env vars provided by the runner. Tests on worktree A run against stack A, tests on worktree B run against stack B, concurrently and without collision.
+
+### Out-of-scope for v0 (worktree-specific)
+
+- Cross-stack data sharing (e.g. "snapshot stack A's DB into stack B"). Each stack is fully independent.
+- Remote stacks (running someone else's worktree's stack on your machine for collaboration). Local only.
 
 ## Test patterns
 
