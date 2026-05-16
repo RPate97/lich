@@ -54,6 +54,10 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Unit + integration tests | Vitest | Universal. |
 | E2E tests | Playwright | v0 only; replaced by a custom agent-first browser driver in v2. |
 | Container orchestration | Docker Compose | Local infra (Postgres, anything else unowned). |
+| Owned-process orchestration | [concurrently](https://github.com/open-cli-tools/concurrently) | Single multiplexed `levelzero dev` invocation spawns every owned service with per-service log prefixing and restart-on-fail. Adding an owned service = one more concurrently target. |
+| Hot reload (backend) | `bun --hot run` | Native Bun HMR for Hono; no nodemon/tsx-watch. |
+| Hot reload (frontend) | Next.js dev server | Built-in HMR. |
+| Lint + format | [Biome](https://biomejs.dev) | One tool for both, zero-config friendly, fast. Replaces ESLint + Prettier. |
 | Web URL ergonomics | [portless](https://github.com/vercel-labs/portless) (web only) | Named `https://<branch>.myapp.localhost` for the frontend so humans can tell which stack they're viewing. Api stays on a raw port. |
 
 ### Why a separate Hono backend (not Next route handlers / Server Actions)
@@ -250,6 +254,62 @@ Tests never reference hardcoded ports — they consume the env vars provided by 
 - Cross-stack data sharing (e.g. "snapshot stack A's DB into stack B"). Each stack is fully independent.
 - Remote stacks (running someone else's worktree's stack on your machine for collaboration). Local only.
 
+## Process orchestration & hot reload
+
+`levelzero dev` brings up everything for the current worktree in one command. Two layers of orchestration:
+
+1. **Docker-managed services** (Postgres, Redis-if-added, anything else `kind: 'docker'`): brought up via a worktree-namespaced `docker compose up -d`. Containers, networks, and volumes are prefixed by the worktree key (see §"Multi-worktree support").
+2. **Owned services** (api, web, workers, anything `kind: 'owned'`): spawned as one `concurrently` invocation, all in the foreground of the `dev` process. Output is multiplexed with per-service prefix + color and tee'd to `.levelzero/logs/<service>.jsonl` so `levelzero logs` can query later.
+
+### Owned-service contract under concurrently
+
+Each owned service contributes a row to the concurrently invocation. The Service interface (`kind: 'owned'`) exposes the four fields concurrently needs plus the env contributions other services depend on:
+
+```ts
+interface OwnedService extends Service {
+  kind: 'owned';
+  cwd: string;                                    // relative to project root
+  command: string;                                // shell-quoted, hot-reload-aware
+  envContributions: (ports: PortMap) => Record<string, string>;
+  dependsOn?: string[];                           // names of other services
+}
+```
+
+The dev orchestrator topologically sorts services by `dependsOn`, brings up docker services first, then spawns `concurrently --kill-others-on-fail --names <a>,<b>,... '<cmd-a>' '<cmd-b>' ...` with the right env per process.
+
+### Hot reload as a default
+
+Every owned service ships with hot reload in dev. The convention is that the service's `command` field uses a watcher-aware invocation:
+
+- **Hono backend**: `bun --hot run src/index.ts`. Native Bun HMR — no `tsx watch`, no `nodemon`.
+- **Next.js frontend**: `next dev` (HMR built in).
+- **Project-added services**: declare their own watcher (e.g. `bun --hot`, `tsx watch`, `cargo watch`, `watchfiles`).
+
+The CLI does not enforce a specific watcher; it executes whatever command the service declares. The convention exists so the default experience is: edit a file, see the change without restarting `levelzero dev`. The scaffolder skill nudges authors toward this when they add a new owned service.
+
+### Adding a new owned service
+
+This is the extensibility path for owned services (Docker-only services are still declared in `services` per §"Extensibility"). In `levelzero.config.ts`:
+
+```ts
+services: [
+  // ...built-ins
+  {
+    name: 'worker',
+    kind: 'owned',
+    cwd: 'apps/worker',
+    command: 'bun --hot run src/index.ts',
+    dependsOn: ['postgres', 'redis'],
+    envContributions: (ports) => ({
+      DATABASE_URL: `postgres://localhost:${ports.postgres}/app`,
+      REDIS_URL:    `redis://localhost:${ports.redis}`,
+    }),
+  },
+]
+```
+
+`levelzero dev` picks it up automatically: it shows up in the concurrently output, its logs tee to `.levelzero/logs/worker.jsonl`, `levelzero logs --service worker` queries them, `levelzero stop` kills it cleanly. No CLI code change required.
+
 ## Test patterns
 
 - **Unit:** Vitest, colocated with source. Pure, no DB, no network. Default skill biases the agent toward writing these for non-trivial logic.
@@ -272,7 +332,7 @@ Two kinds, shipped under `tools/skills/`.
 
 One per stack tool, stack-specific (not generic vendor docs): how *this stack* uses the tool, conventions, gotchas, common patterns.
 
-- `prisma`, `hono`, `next`, `tailwind`, `shadcn`, `better-auth`, `vitest`, `playwright`, `turbo`, `levelzero-cli`.
+- `prisma`, `hono`, `next`, `tailwind`, `shadcn`, `better-auth`, `vitest`, `playwright`, `turbo`, `biome`, `concurrently`, `levelzero-cli`.
 
 ### CLAUDE.md
 
