@@ -3,6 +3,7 @@ import { runCli } from '../src/cli';
 import type { Command } from '../src/commands/types';
 import { CommandRegistry } from '../src/commands/registry';
 import { CLIError } from '../src/errors';
+import { buildCommands } from '../src/bin';
 
 function makeRegistry(commands: Command[]): CommandRegistry {
   const reg = new CommandRegistry();
@@ -62,5 +63,18 @@ describe('runCli', () => {
     const out = await runCli(['bad'], makeRegistry([bad]), { cwd: '/' });
     expect(out.exitCode).toBe(1);
     expect(JSON.parse(out.stderr).code).toBe('NO_PROJECT');
+  });
+
+  // Smoke check for LEV-110: `curl` is registered in bin.ts. We invoke
+  // through `buildCommands` with no args so the curl command's own
+  // argument validation fires (CONFIG_INVALID), proving the dispatcher
+  // resolved `curl` rather than returning UNKNOWN_COMMAND.
+  it('registers the curl command in bin (not UNKNOWN_COMMAND)', async () => {
+    const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
+    const out = await runCli(['curl'], reg, { cwd: '/' });
+    expect(out.exitCode).toBe(1);
+    const parsed = JSON.parse(out.stderr);
+    expect(parsed.code).not.toBe('UNKNOWN_COMMAND');
+    expect(parsed.code).toBe('CONFIG_INVALID');
   });
 });
