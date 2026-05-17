@@ -31,6 +31,7 @@ import { dbInspectCommand } from './commands/db/inspect';
 import { adapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand } from './commands/adapter/swap';
 import { skillsIndexCommand } from './commands/skills';
+import { makeTestCommand } from './commands/test';
 
 export const VERSION = '0.0.0';
 
@@ -69,6 +70,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);
   reg.register(skillsIndexCommand);
+  reg.register(makeTestCommand({ getRegistry: getReg }));
   return reg;
 }
 
