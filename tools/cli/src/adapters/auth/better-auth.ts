@@ -216,6 +216,29 @@ export const betterAuthAdapter: AuthAdapter = {
       expiresAt: toISO(session.expiresAt),
     };
   },
+  async findUserByEmail(ctx: AuthContext, email: string): Promise<User | null> {
+    const trimmed = typeof email === 'string' ? email.trim() : '';
+    if (trimmed.length === 0) return null;
+    const instance = getBetterAuthInstance(ctx);
+    const context = await ensureMigrated(instance);
+    const user = await context.internalAdapter.findUserByEmail(trimmed);
+    if (!user) return null;
+    // Better Auth's findUserByEmail returns `{ ...user, accounts? }`.
+    // When `accounts` is unrequested we still get a bare user object.
+    const u = (user as any).user ?? user;
+    if (!u || typeof u.id !== 'string' || typeof u.email !== 'string') return null;
+    return {
+      id: u.id,
+      email: u.email,
+      name: typeof u.name === 'string' ? u.name : undefined,
+      createdAt:
+        typeof u.createdAt === 'string'
+          ? u.createdAt
+          : u.createdAt instanceof Date
+            ? u.createdAt.toISOString()
+            : new Date().toISOString(),
+    };
+  },
   async inspectSession(ctx: AuthContext, token: string): Promise<SessionInfo | null> {
     const instance = getBetterAuthInstance(ctx);
     const context = await ensureMigrated(instance);

@@ -77,3 +77,35 @@ describe('betterAuthAdapter.createUser', () => {
     ).rejects.toThrow(/email/i);
   });
 });
+
+describe('betterAuthAdapter.findUserByEmail', () => {
+  beforeEach(() => {
+    _resetBetterAuthCacheForTests();
+  });
+
+  it('returns the user when the email is registered', async () => {
+    const ctx = ctxFor('find-hit');
+    const created = await betterAuthAdapter.createUser(ctx, {
+      email: 'finder@example.com',
+      password: 'hunter2hunter2',
+      name: 'Finder',
+    });
+    const found = await betterAuthAdapter.findUserByEmail!(ctx, 'finder@example.com');
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(created.id);
+    expect(found!.email).toBe('finder@example.com');
+    expect(found!.name).toBe('Finder');
+  });
+
+  it('returns null when the email is not registered', async () => {
+    const ctx = ctxFor('find-miss');
+    const found = await betterAuthAdapter.findUserByEmail!(ctx, 'ghost@example.com');
+    expect(found).toBeNull();
+  });
+
+  it('returns null for empty/whitespace email', async () => {
+    const ctx = ctxFor('find-empty');
+    expect(await betterAuthAdapter.findUserByEmail!(ctx, '')).toBeNull();
+    expect(await betterAuthAdapter.findUserByEmail!(ctx, '   ')).toBeNull();
+  });
+});
