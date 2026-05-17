@@ -32,6 +32,9 @@ import { adapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand } from './commands/adapter/swap';
 import { skillsIndexCommand } from './commands/skills';
 import { makeTestCommand } from './commands/test';
+import { findWorktree } from './worktree';
+import { loadConfig } from './config';
+import { bootPlugins } from './plugins/boot';
 
 export const VERSION = '0.0.0';
 
@@ -74,8 +77,50 @@ export function buildCommands(registryPath: string): CommandRegistry {
   return reg;
 }
 
+/**
+ * Build the dispatch registry for a single CLI invocation. Always seeds the
+ * inline registrations from {@link buildCommands} (`init`, `dev`, `stacks.*`,
+ * etc.), then — if the invocation is inside a project whose
+ * `levelzero.config.ts` declares a non-empty `plugins` array — boots every
+ * declared plugin and merges its command contributions on top.
+ *
+ * This is the transitional wiring for LEV-130. The inline registrations remain
+ * the source of truth for built-in commands; plugins can layer additional
+ * commands (or override an inline one with a same-named contribution, since
+ * `CommandRegistry.register` is last-write-wins). A later tier will move the
+ * built-ins themselves into plugins and cut the seam.
+ */
+export async function buildDispatchRegistry(
+  cwd: string,
+  registryPath: string,
+): Promise<CommandRegistry> {
+  const cli = buildCommands(registryPath);
+
+  const wt = await findWorktree(cwd).catch(() => null);
+  if (wt === null) return cli;
+
+  let config;
+  try {
+    config = await loadConfig(wt.configPath);
+  } catch {
+    // A malformed config shouldn't take down the inline-only dispatch path —
+    // commands that need the config (dev, doctor, etc.) will surface the same
+    // error themselves with their own context. The fallback path stays usable
+    // for `init --force` and other recovery flows.
+    return cli;
+  }
+
+  if (!config.plugins || config.plugins.length === 0) return cli;
+
+  const boot = await bootPlugins(config, wt.path);
+  for (const cmd of boot.commands.all()) {
+    cli.register(cmd);
+  }
+  return cli;
+}
+
 async function main() {
-  const cli = buildCommands(defaultRegistryPath());
+  const cli = await buildDispatchRegistry(process.cwd(), defaultRegistryPath());
   const result = await runCli(process.argv.slice(2), cli, { cwd: process.cwd() });
   if (result.stdout) process.stdout.write(result.stdout + '\n');
   if (result.stderr) process.stderr.write(result.stderr + '\n');
