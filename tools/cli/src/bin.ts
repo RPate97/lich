@@ -23,6 +23,10 @@ import { uiAddCommand } from './commands/ui/add';
 import { uiListCommand } from './commands/ui/list';
 import { genClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
+import { dbMigrateCommand } from './commands/db/migrate';
+import { dbMigrationNewCommand } from './commands/db/migration-new';
+import { dbSeedCommand } from './commands/db/seed';
+import { dbInspectCommand } from './commands/db/inspect';
 
 export const VERSION = '0.0.0';
 
@@ -53,6 +57,10 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(uiListCommand);
   reg.register(genClientCommand);
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
+  reg.register(dbMigrateCommand);
+  reg.register(dbMigrationNewCommand);
+  reg.register(dbSeedCommand);
+  reg.register(dbInspectCommand);
   return reg;
 }
 
