@@ -112,12 +112,17 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(byKey.get('portless:portless')!.active).toBe(false);
     expect(byKey.get('portless:noop')).toBeDefined();
     expect(byKey.get('portless:noop')!.active).toBe(true);
-    // The portless plugin doesn't touch the orm slot, and post-LEV-149
-    // prisma is contributed by `@levelzero/plugin-prisma` rather than
-    // builtins — so loading only the portless plugin leaves orm absent.
+    // The portless plugin doesn't touch any other slot, and post-Plan-14
+    // every adapter slot (orm, auth, ui, browser, backend, frontend,
+    // test-runner) is contributed by a separate `@levelzero/plugin-*`
+    // package — so loading only the portless plugin leaves every other
+    // slot absent from the merged registry.
     expect(byKey.has('orm:prisma')).toBe(false);
-    // Built-in slots not touched by the plugin remain intact.
-    expect(byKey.get('auth:better-auth')?.active).toBe(true);
+    expect(byKey.has('auth:better-auth')).toBe(false);
+    expect(byKey.has('ui:shadcn')).toBe(false);
+    expect(byKey.has('browser:playwright')).toBe(false);
+    expect(byKey.has('backend:hono')).toBe(false);
+    expect(byKey.has('frontend:typed-client')).toBe(false);
   });
 
   it('inline commands remain available alongside plugin commands (transitional coexistence)', () => {

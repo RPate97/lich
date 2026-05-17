@@ -112,12 +112,15 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
         out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
       );
 
-      // Built-ins still present (the merge does not drop them).
-      expect(byKey.get('auth:better-auth')?.active).toBe(true);
-      // Both portless impls show up; `noop` is active per the plugin's
-      // `setActiveAdapter('portless', 'noop')` default.
+      // Post-Plan-14 the merged registry contains only what the loaded
+      // plugins contribute — portless adds two impls, neither of which the
+      // empty built-in registry shadows. Both portless impls show up; `noop`
+      // is active per the plugin's `setActiveAdapter('portless', 'noop')`
+      // default.
       expect(byKey.get('portless:portless')?.active).toBe(false);
       expect(byKey.get('portless:noop')?.active).toBe(true);
+      // No other slots leak in.
+      expect(byKey.has('auth:better-auth')).toBe(false);
     });
   });
 
