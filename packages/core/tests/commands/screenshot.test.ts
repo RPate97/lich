@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { spawnSync } from 'node:child_process';
 
-vi.mock('../../src/adapters/browser/playwright', () => ({
+vi.mock('@levelzero/plugin-playwright', () => ({
   playwrightAdapter: {
     name: 'playwright',
     screenshot: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock('../../src/adapters/browser/playwright', () => ({
   },
 }));
 
-import { playwrightAdapter } from '../../src/adapters/browser/playwright';
+import { playwrightAdapter } from '@levelzero/plugin-playwright';
 import { screenshotCommand } from '../../src/commands/screenshot';
 import { CLIError } from '../../src/errors';
 
@@ -216,8 +216,8 @@ describeIfBrowser('levelzero screenshot (real chromium)', () => {
   it('writes a non-empty PNG (magic bytes) for a real page', async () => {
     // Use the un-mocked adapter for this end-to-end check.
     const { playwrightAdapter: realAdapter } =
-      await vi.importActual<typeof import('../../src/adapters/browser/playwright')>(
-        '../../src/adapters/browser/playwright',
+      await vi.importActual<typeof import('@levelzero/plugin-playwright')>(
+        '@levelzero/plugin-playwright',
       );
     mockScreenshot.mockImplementationOnce((url, opts) => realAdapter.screenshot(url, opts));
 

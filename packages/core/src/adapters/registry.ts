@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { playwrightAdapter } from './browser/playwright';
 
 /**
  * Adapter slot identifiers. Each slot represents one pluggable boundary in
@@ -9,18 +8,21 @@ import { playwrightAdapter } from './browser/playwright';
  * both registered under "orm", with prisma active).
  *
  * Adding a slot here is a breaking change for downstream consumers — keep the
- * list curated. The following slots are now contributed by extracted plugins
- * and absent from `getBuiltinAdapters()`:
+ * list curated. After Plan 14 ALL slots are now contributed by extracted
+ * plugins and absent from `getBuiltinAdapters()` (which returns an empty
+ * registry):
+ *   - `orm`          → `@levelzero/plugin-prisma`
  *   - `auth`         → `@levelzero/plugin-better-auth`
- *   - `portless`     → `@levelzero/plugin-portless`
+ *   - `ui`           → `@levelzero/plugin-shadcn`
+ *   - `browser`      → `@levelzero/plugin-playwright`
  *   - `backend`      → `@levelzero/plugin-hono`
  *   - `frontend`     → `@levelzero/plugin-typed-client`
- *   - `orm`          → `@levelzero/plugin-prisma`
+ *   - `portless`     → `@levelzero/plugin-portless`
  *   - `test-runner`  → `@levelzero/plugin-vitest` (unit/integration),
  *                      `@levelzero/plugin-playwright` (e2e)
- *   - `ui`           → `@levelzero/plugin-shadcn`
- * Their slot identifiers stay declared here so the types remain stable across
- * the extractions.
+ * Slot identifiers stay declared here so the types remain stable across
+ * the extractions; consumers load whichever plugins they need via
+ * `levelzero.config.ts`.
  */
 export type AdapterSlot =
   | 'orm'
@@ -244,26 +246,20 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 
 /**
  * Build the default registry: every adapter impl that ships from core, with
- * the sole impl per slot marked active. Slots that are populated by extracted
- * plugins (`portless` → `@levelzero/plugin-portless`; `auth` →
- * `@levelzero/plugin-better-auth`; `backend` → `@levelzero/plugin-hono`;
- * `frontend` → `@levelzero/plugin-typed-client`; `orm` →
- * `@levelzero/plugin-prisma`; `ui` → `@levelzero/plugin-shadcn`;
- * `test-runner` → `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`)
- * are absent from the returned registry; `getActive(slot)` throws "no active
- * impl for slot X" until the plugin is loaded by `bootPlugins`. The
+ * the sole impl per slot marked active. After Plan 14's extraction wave the
+ * core no longer ships ANY built-in adapters — every slot (orm, auth, ui,
+ * browser, backend, frontend, portless, test-runner) is contributed by a
+ * separate `@levelzero/plugin-*` package that downstream projects declare in
+ * their `levelzero.config.ts`. `getActive(slot)` throws "no active impl for
+ * slot X" until the corresponding plugin is loaded by `bootPlugins`. The
  * `test-runner` slot is intentionally left without an active impl by default:
  * the `test` command picks playwright vs vitest by subcommand name rather than
  * going through `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
- * mutable state.
+ * mutable state. The empty registry is preserved so plugins layered on top
+ * still go through the same `bootPlugins → mergeAdapterRegistries` path.
  */
 export function getBuiltinAdapters(): AdapterRegistry {
-  const registry = new AdapterRegistry();
-
-  registry.register({ slot: 'browser', name: 'playwright', impl: playwrightAdapter });
-  registry.setActive('browser', 'playwright');
-
-  return registry;
+  return new AdapterRegistry();
 }

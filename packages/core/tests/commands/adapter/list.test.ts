@@ -30,22 +30,16 @@ describe('levelzero adapter list', () => {
     const result = (await cmd.run(ctx(tmp))) as { adapters: ListEntry[] };
 
     expect(Array.isArray(result.adapters)).toBe(true);
-    // Built-ins today: browser/playwright. Extracted to plugins (only show
-    // up when loaded via config):
+    // After Plan 14 the built-in registry is empty — every adapter is now
+    // contributed by a plugin and only shows up when loaded via config:
     //   - orm/prisma          → @levelzero/plugin-prisma
     //   - auth/better-auth    → @levelzero/plugin-better-auth
     //   - ui/shadcn           → @levelzero/plugin-shadcn
+    //   - browser/playwright  → @levelzero/plugin-playwright
     //   - backend/hono        → @levelzero/plugin-hono
     //   - frontend/typed-client → @levelzero/plugin-typed-client
     //   - portless            → @levelzero/plugin-portless
-    const byKey = new Map(result.adapters.map((a) => [`${a.slot}:${a.name}`, a]));
-    expect(byKey.get('browser:playwright')?.active).toBe(true);
-    expect(byKey.has('orm:prisma')).toBe(false);
-    expect(byKey.has('auth:better-auth')).toBe(false);
-    expect(byKey.has('ui:shadcn')).toBe(false);
-    expect(byKey.has('backend:hono')).toBe(false);
-    expect(byKey.has('frontend:typed-client')).toBe(false);
-    expect(result.adapters).toHaveLength(1);
+    expect(result.adapters).toEqual([]);
   });
 
   it('marks an adapter inactive when its slot has a different active impl', async () => {

@@ -152,54 +152,48 @@ describe('getBuiltinAdapters', () => {
     expect(r).toBeInstanceOf(AdapterRegistry);
   });
 
-  it('registers playwright under the browser slot and marks it active', async () => {
+  it('returns an empty registry — all built-ins extracted into plugins', () => {
     const r = getBuiltinAdapters();
-    const { playwrightAdapter } = await import('../../src/adapters/browser/playwright');
-    expect(r.get('browser', 'playwright')).toBe(playwrightAdapter);
-    expect(r.getActive('browser')).toBe(playwrightAdapter);
+    expect(r.list()).toEqual([]);
   });
 
-  it('list covers the populated slot names', () => {
+  it('list returns no slots — all extracted to plugin packages', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls in core today: browser.
-    // Extracted to plugins: `auth` (@levelzero/plugin-better-auth),
-    // `orm` (@levelzero/plugin-prisma),
-    // `ui` (@levelzero/plugin-shadcn),
-    // `backend` (@levelzero/plugin-hono),
-    // `frontend` (@levelzero/plugin-typed-client),
-    // `portless` (@levelzero/plugin-portless),
-    // `test-runner` (@levelzero/plugin-vitest, @levelzero/plugin-playwright).
-    expect(slots.has('browser')).toBe(true);
-    expect(slots.has('auth')).toBe(false);
-    expect(slots.has('orm')).toBe(false);
-    expect(slots.has('ui')).toBe(false);
-    expect(slots.has('backend')).toBe(false);
-    expect(slots.has('frontend')).toBe(false);
-    expect(slots.has('portless')).toBe(false);
-    expect(slots.has('test-runner')).toBe(false);
+    // After Plan 14 ALL slots are extracted:
+    //   - orm         → @levelzero/plugin-prisma
+    //   - auth        → @levelzero/plugin-better-auth
+    //   - ui          → @levelzero/plugin-shadcn
+    //   - browser     → @levelzero/plugin-playwright
+    //   - backend     → @levelzero/plugin-hono
+    //   - frontend    → @levelzero/plugin-typed-client
+    //   - portless    → @levelzero/plugin-portless
+    //   - test-runner → @levelzero/plugin-vitest, @levelzero/plugin-playwright
+    expect(slots.size).toBe(0);
   });
 
-  it('throws no-active for slots populated only by extracted plugins', () => {
+  it('throws no-active for every slot — all extracted to plugins', () => {
     const r = getBuiltinAdapters();
-    expect(() => r.getActive('test-runner')).toThrowError(/no active impl for slot "test-runner"/);
-    expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
-    expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
-    expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
     expect(() => r.getActive('orm')).toThrowError(/no active impl for slot "orm"/);
     expect(() => r.getActive('auth')).toThrowError(/no active impl for slot "auth"/);
     expect(() => r.getActive('ui')).toThrowError(/no active impl for slot "ui"/);
+    expect(() => r.getActive('browser')).toThrowError(/no active impl for slot "browser"/);
+    expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
+    expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
+    expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
+    expect(() => r.getActive('test-runner')).toThrowError(/no active impl for slot "test-runner"/);
   });
 
-  it('listBySlot returns empty for slots populated only by extracted plugins', () => {
+  it('listBySlot returns empty for every slot — all extracted to plugins', () => {
     const r = getBuiltinAdapters();
-    expect(r.listBySlot('test-runner')).toEqual([]);
-    expect(r.listBySlot('portless')).toEqual([]);
-    expect(r.listBySlot('frontend')).toEqual([]);
-    expect(r.listBySlot('backend')).toEqual([]);
     expect(r.listBySlot('orm')).toEqual([]);
     expect(r.listBySlot('auth')).toEqual([]);
     expect(r.listBySlot('ui')).toEqual([]);
+    expect(r.listBySlot('browser')).toEqual([]);
+    expect(r.listBySlot('backend')).toEqual([]);
+    expect(r.listBySlot('frontend')).toEqual([]);
+    expect(r.listBySlot('portless')).toEqual([]);
+    expect(r.listBySlot('test-runner')).toEqual([]);
   });
 
   it('returns a fresh registry each call (mutating one does not affect another)', () => {

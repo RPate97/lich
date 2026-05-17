@@ -48,31 +48,33 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
       expect(Array.isArray(out.adapters)).toBe(true);
 
-      // The single built-in impl remaining in core after Wave-1 + Wave-2 +
-      // LEV-153 (shadcn) extractions is browser/playwright. The remaining
-      // slots are contributed by extracted plugins and only appear when the
-      // plugin is declared in `levelzero.config.ts`:
+      // After Plan 14 the built-in registry is empty — every slot is now
+      // contributed by an extracted plugin and only appears in `adapter list`
+      // when its plugin is declared in `levelzero.config.ts`:
       //   - orm         → @levelzero/plugin-prisma (LEV-149)
       //   - auth        → @levelzero/plugin-better-auth (LEV-152)
       //   - ui          → @levelzero/plugin-shadcn (LEV-153)
+      //   - browser     → @levelzero/plugin-playwright (LEV-156)
       //   - backend     → @levelzero/plugin-hono (LEV-150)
       //   - frontend    → @levelzero/plugin-typed-client (LEV-151)
       //   - portless    → @levelzero/plugin-portless (LEV-145)
       //   - test-runner → @levelzero/plugin-vitest / @levelzero/plugin-playwright
-      // The next test covers the loader path.
+      // With an empty config the list is empty. The next test covers the
+      // loader path.
       const byKey = new Map(
         out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
       );
-      expect(byKey.get('browser:playwright')?.active).toBe(true);
 
       // Extracted slots are absent with an empty config.
       expect(byKey.has('orm:prisma')).toBe(false);
       expect(byKey.has('auth:better-auth')).toBe(false);
       expect(byKey.has('ui:shadcn')).toBe(false);
+      expect(byKey.has('browser:playwright')).toBe(false);
       expect(byKey.has('backend:hono')).toBe(false);
       expect(byKey.has('frontend:typed-client')).toBe(false);
       expect(byKey.get('portless:portless')).toBeUndefined();
       expect(byKey.get('portless:noop')).toBeUndefined();
+      expect(out.adapters).toEqual([]);
 
       // All eight slot identifiers should be valid (i.e. anything listed must
       // belong to one of the eight). This guards against a slot being silently

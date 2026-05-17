@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { TestRunnerAdapter, TestRunInput, TestResult } from './types';
+import type { TestRunnerAdapter, TestRunInput, TestResult } from '@levelzero/core';
 
 interface SpawnResult {
   stdout: string;

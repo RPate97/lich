@@ -101,6 +101,12 @@ export type {
   AddComponentResult,
   ListComponentsResult,
 } from './adapters/ui/types';
+export type {
+  BrowserAdapter,
+  ScreenshotOptions,
+  DiffOptions,
+  DiffResult,
+} from './adapters/browser/types';
 
 /**
  * Runtime helper re-exported for plugins that contribute commands needing the
