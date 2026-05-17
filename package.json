@@ -4,13 +4,17 @@
   "packageManager": "bun@1.2.23",
   "workspaces": ["packages/*"],
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@changesets/cli": "2.31.0",
     "bun-types": "^1.2.0",
-    "turbo": "^2.0.0"
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
   },
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   }
 }
