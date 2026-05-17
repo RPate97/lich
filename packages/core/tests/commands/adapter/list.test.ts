@@ -31,18 +31,18 @@ describe('levelzero adapter list', () => {
 
     expect(Array.isArray(result.adapters)).toBe(true);
     // Built-ins today: orm/prisma, auth/better-auth, ui/shadcn,
-    // browser/playwright, frontend/typed-client. The `backend` slot is
-    // contributed by `@levelzero/plugin-hono` and only shows up when the
-    // plugin is loaded via config (verified separately in the plugin's own
-    // tests and in the bin e2e suite).
+    // browser/playwright. Extracted to plugins (only show up when loaded via
+    // config): backend/hono → @levelzero/plugin-hono;
+    // frontend/typed-client → @levelzero/plugin-typed-client;
+    // portless → @levelzero/plugin-portless.
     const byKey = new Map(result.adapters.map((a) => [`${a.slot}:${a.name}`, a]));
     expect(byKey.get('orm:prisma')?.active).toBe(true);
     expect(byKey.get('auth:better-auth')?.active).toBe(true);
     expect(byKey.get('ui:shadcn')?.active).toBe(true);
     expect(byKey.get('browser:playwright')?.active).toBe(true);
-    expect(byKey.get('frontend:typed-client')?.active).toBe(true);
     expect(byKey.has('backend:hono')).toBe(false);
-    expect(result.adapters).toHaveLength(5);
+    expect(byKey.has('frontend:typed-client')).toBe(false);
+    expect(result.adapters).toHaveLength(4);
   });
 
   it('marks an adapter inactive when its slot has a different active impl', async () => {

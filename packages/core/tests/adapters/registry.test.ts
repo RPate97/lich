@@ -180,30 +180,29 @@ describe('getBuiltinAdapters', () => {
     expect(r.getActive('browser')).toBe(playwrightAdapter);
   });
 
-  it('registers typed-client under the frontend slot and marks it active', async () => {
-    const r = getBuiltinAdapters();
-    const { typedClientFrontendAdapter } = await import('../../src/adapters/frontend/typed-client');
-    expect(r.get('frontend', 'typed-client')).toBe(typedClientFrontendAdapter);
-    expect(r.getActive('frontend')).toBe(typedClientFrontendAdapter);
-  });
-
   it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls today: orm, auth, ui, browser, frontend. The
-    // `backend` slot is now contributed by `@levelzero/plugin-hono` and so is
-    // absent from the built-in registry.
+    // Slots with concrete impls in core today: orm, auth, ui, browser.
+    // Extracted to plugins: `backend` (@levelzero/plugin-hono),
+    // `frontend` (@levelzero/plugin-typed-client),
+    // `portless` (@levelzero/plugin-portless),
+    // `test-runner` (@levelzero/plugin-vitest, @levelzero/plugin-playwright).
     expect(slots.has('orm')).toBe(true);
     expect(slots.has('auth')).toBe(true);
     expect(slots.has('ui')).toBe(true);
     expect(slots.has('browser')).toBe(true);
-    expect(slots.has('frontend')).toBe(true);
+    expect(slots.has('backend')).toBe(false);
+    expect(slots.has('frontend')).toBe(false);
+    expect(slots.has('portless')).toBe(false);
+    expect(slots.has('test-runner')).toBe(false);
   });
 
-  it('throws no-active for slots without a built-in impl (test-runner, portless, backend)', () => {
+  it('throws no-active for slots populated only by extracted plugins', () => {
     const r = getBuiltinAdapters();
     expect(() => r.getActive('test-runner')).toThrowError(/no active impl for slot "test-runner"/);
     expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
+    expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
     expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
   });
 
@@ -211,6 +210,7 @@ describe('getBuiltinAdapters', () => {
     const r = getBuiltinAdapters();
     expect(r.listBySlot('test-runner')).toEqual([]);
     expect(r.listBySlot('portless')).toEqual([]);
+    expect(r.listBySlot('frontend')).toEqual([]);
     expect(r.listBySlot('backend')).toEqual([]);
   });
 

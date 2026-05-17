@@ -3,9 +3,8 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Project } from 'ts-morph';
-import { typedClientFrontendAdapter } from '../../../src/adapters/frontend/typed-client';
-import type { FrontendAdapter } from '../../../src/adapters/frontend/types';
-import type { RouteManifest } from '../../../src/adapters/backend/types';
+import { typedClientFrontendAdapter } from '../src/adapter';
+import type { FrontendAdapter, RouteManifest } from '@levelzero/core';
 
 describe('typedClientFrontendAdapter', () => {
   let outDir: string;

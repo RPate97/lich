@@ -28,12 +28,16 @@ export type { Rule } from './check/types';
 export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
 
 /**
- * Backend slot contract. The `BackendAdapter` interface and its data types
- * stay in core because the slot is part of the published API surface — even
- * after the hono impl was extracted into `@levelzero/plugin-hono`, multiple
- * core paths (frontend/typed-client, commands/gen/client) still depend on
- * these shapes, and out-of-tree backend adapters need them too.
+ * Adapter slot contracts. The slot interfaces stay in core because they are
+ * part of the published API surface — even after the concrete impls were
+ * extracted into separate plugin packages (`@levelzero/plugin-hono`,
+ * `@levelzero/plugin-typed-client`, etc.), multiple core paths still depend
+ * on these shapes, and out-of-tree adapter implementations need them too.
  */
+export type {
+  FrontendAdapter,
+  GenerateClientInput,
+} from './adapters/frontend/types';
 export type {
   BackendAdapter,
   RouteEntry,

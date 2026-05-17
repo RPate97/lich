@@ -4,7 +4,6 @@ import { prismaAdapter } from './orm/prisma';
 import { betterAuthAdapter } from './auth/better-auth';
 import { shadcnAdapter } from './ui/shadcn';
 import { playwrightAdapter } from './browser/playwright';
-import { typedClientFrontendAdapter } from './frontend/typed-client';
 
 /**
  * Adapter slot identifiers. Each slot represents one pluggable boundary in
@@ -14,11 +13,13 @@ import { typedClientFrontendAdapter } from './frontend/typed-client';
  *
  * Adding a slot here is a breaking change for downstream consumers — keep the
  * list curated. The `test-runner` slot is reserved for an impl landing in a
- * subsequent wave; `portless` is now contributed by the extracted
- * `@levelzero/plugin-portless` package, and `backend` (hono) is contributed
- * by `@levelzero/plugin-hono` — both are absent from `getBuiltinAdapters()`
- * (the slot identifiers stay declared here so the type remains stable across
- * the extractions).
+ * subsequent wave; the following slots are now contributed by extracted
+ * plugins and absent from `getBuiltinAdapters()`:
+ *   - `portless`  → `@levelzero/plugin-portless`
+ *   - `backend`   → `@levelzero/plugin-hono`
+ *   - `frontend`  → `@levelzero/plugin-typed-client`
+ * Their slot identifiers stay declared here so the type remains stable across
+ * the extractions.
  */
 export type AdapterSlot =
   | 'orm'
@@ -243,11 +244,13 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 /**
  * Build the default registry: every adapter impl that ships from core, with
  * the sole impl per slot marked active. Slots that are populated by extracted
- * plugins (`portless` — via `@levelzero/plugin-portless`; `backend` — via
- * `@levelzero/plugin-hono`) or that have no concrete impl yet (`test-runner`)
- * are simply absent from the returned registry; `getActive(slot)` throws
- * "no active impl for slot X" until either the plugin is loaded by
- * `bootPlugins` or a later wave lands the impl.
+<<<<<<< HEAD
+ * plugins (`portless` — `@levelzero/plugin-portless`; `backend` —
+ * `@levelzero/plugin-hono`; `frontend` — `@levelzero/plugin-typed-client`)
+ * or that have no concrete impl yet (`test-runner`) are simply absent from
+ * the returned registry; `getActive(slot)` throws "no active impl for slot X"
+ * until either the plugin is loaded by `bootPlugins` or a later wave lands
+ * the impl.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.
@@ -266,13 +269,6 @@ export function getBuiltinAdapters(): AdapterRegistry {
 
   registry.register({ slot: 'browser', name: 'playwright', impl: playwrightAdapter });
   registry.setActive('browser', 'playwright');
-
-  registry.register({
-    slot: 'frontend',
-    name: 'typed-client',
-    impl: typedClientFrontendAdapter,
-  });
-  registry.setActive('frontend', 'typed-client');
 
   return registry;
 }
