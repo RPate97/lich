@@ -17,7 +17,7 @@ export const playwrightAdapter: BrowserAdapter = {
         waitUntil: opts.waitFor ?? 'networkidle',
         timeout: opts.timeoutMs ?? 30_000,
       });
-      return await page.screenshot({ type: 'png' });
+      return await page.screenshot({ type: 'png', fullPage: opts.fullPage ?? false });
     } finally {
       await browser.close();
     }
