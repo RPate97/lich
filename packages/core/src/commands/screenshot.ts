@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { CLIError } from '../errors';
-import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
+import { AdapterRegistry } from '../adapters/registry';
+import { playwrightAdapter } from '@levelzero/plugin-playwright';
 import type { BrowserAdapter, ScreenshotOptions } from '../adapters/browser/types';
 import type { Command } from './types';
 
@@ -51,12 +52,19 @@ function validateUrl(raw: string): string {
 }
 
 export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command {
-  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  const getAdapterRegistry = opts?.getAdapterRegistry;
   // Lazy resolve so an `adapter swap browser ...` between command construction
   // and run-time is honored, and so tests that pass an explicit adapter never
-  // touch the global registry.
-  const resolveAdapter = (): BrowserAdapter =>
-    opts?.adapter ?? (getAdapterRegistry().getActive('browser') as BrowserAdapter);
+  // touch the global registry. When no registry provider is supplied, fall back
+  // to the playwright adapter imported directly from `@levelzero/plugin-playwright`
+  // (the post-LEV-156 default; the `browser` slot is no longer populated by
+  // `getBuiltinAdapters()` and is only registered when the plugin is loaded
+  // via `levelzero.config.ts`).
+  const resolveAdapter = (): BrowserAdapter => {
+    if (opts?.adapter) return opts.adapter;
+    if (getAdapterRegistry) return getAdapterRegistry().getActive('browser') as BrowserAdapter;
+    return playwrightAdapter;
+  };
   return {
     name: 'screenshot',
     describe: 'Capture a PNG screenshot of a URL and write it to disk',

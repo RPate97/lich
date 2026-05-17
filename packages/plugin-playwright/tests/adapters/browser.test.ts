@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { playwrightAdapter } from '../../../src/adapters/browser/playwright';
+import { playwrightAdapter } from '../../src/adapters/browser';
 import { createServer, type Server } from 'node:http';
 import { spawnSync } from 'node:child_process';
 

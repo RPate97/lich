@@ -6,7 +6,7 @@ import { pgService } from '@levelzero/plugin-postgres';
 import { apiService, webService } from '../services/builtins';
 import { resolveStackContext } from '../services/context';
 import { vitestAdapter } from '@levelzero/plugin-vitest';
-import { playwrightTestAdapter } from '../adapters/test-runner/playwright';
+import { playwrightTestAdapter } from '@levelzero/plugin-playwright';
 import type { TestRunnerAdapter } from '../adapters/test-runner/types';
 import type { Command, CommandContext } from './types';
 

@@ -182,7 +182,7 @@ describe('levelzero visual diff', () => {
   it('--alpha is forwarded to the adapter as DiffOptions.threshold', async () => {
     // Mock the adapter to verify the option propagation.
     vi.resetModules();
-    vi.doMock('../../src/adapters/browser/playwright', () => ({
+    vi.doMock('@levelzero/plugin-playwright', () => ({
       playwrightAdapter: {
         name: 'playwright',
         screenshot: vi.fn(),
@@ -190,7 +190,7 @@ describe('levelzero visual diff', () => {
       },
     }));
     const { visualDiffCommand: cmd } = await import('../../src/commands/visual');
-    const { playwrightAdapter } = await import('../../src/adapters/browser/playwright');
+    const { playwrightAdapter } = await import('@levelzero/plugin-playwright');
 
     const px = solidPng(2, 2, [255, 0, 0, 255]);
     writeFileSync(baselinePath, px);
@@ -208,7 +208,7 @@ describe('levelzero visual diff', () => {
       .mock.calls[0]![2];
     expect(calledOpts).toMatchObject({ threshold: 0.5 });
 
-    vi.doUnmock('../../src/adapters/browser/playwright');
+    vi.doUnmock('@levelzero/plugin-playwright');
     vi.resetModules();
   });
 });

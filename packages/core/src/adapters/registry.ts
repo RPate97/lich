@@ -3,7 +3,6 @@ import { pathToFileURL } from 'node:url';
 import { prismaAdapter } from './orm/prisma';
 import { betterAuthAdapter } from './auth/better-auth';
 import { shadcnAdapter } from './ui/shadcn';
-import { playwrightAdapter } from './browser/playwright';
 
 /**
  * Adapter slot identifiers. Each slot represents one pluggable boundary in
@@ -17,6 +16,7 @@ import { playwrightAdapter } from './browser/playwright';
  *   - `portless`     → `@levelzero/plugin-portless`
  *   - `backend`      → `@levelzero/plugin-hono`
  *   - `frontend`     → `@levelzero/plugin-typed-client`
+ *   - `browser`      → `@levelzero/plugin-playwright`
  *   - `test-runner`  → `@levelzero/plugin-vitest` (unit/integration),
  *                      `@levelzero/plugin-playwright` (e2e)
  * Their slot identifiers stay declared here so the types remain stable across
@@ -247,12 +247,13 @@ function isAdapterSlot(value: string): value is AdapterSlot {
  * the sole impl per slot marked active. Slots that are populated by extracted
  * plugins (`portless` → `@levelzero/plugin-portless`; `backend` →
  * `@levelzero/plugin-hono`; `frontend` → `@levelzero/plugin-typed-client`;
- * `test-runner` → `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`)
- * are absent from the returned registry; `getActive(slot)` throws "no active
- * impl for slot X" until the plugin is loaded by `bootPlugins`. The
- * `test-runner` slot is intentionally left without an active impl by default:
- * the `test` command picks playwright vs vitest by subcommand name rather than
- * going through `getActive('test-runner')`.
+ * `browser` → `@levelzero/plugin-playwright`; `test-runner` →
+ * `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`) are absent
+ * from the returned registry; `getActive(slot)` throws "no active impl for
+ * slot X" until the plugin is loaded by `bootPlugins`. The `test-runner` slot
+ * is intentionally left without an active impl by default: the `test` command
+ * picks playwright vs vitest by subcommand name rather than going through
+ * `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.
@@ -268,9 +269,6 @@ export function getBuiltinAdapters(): AdapterRegistry {
 
   registry.register({ slot: 'ui', name: 'shadcn', impl: shadcnAdapter });
   registry.setActive('ui', 'shadcn');
-
-  registry.register({ slot: 'browser', name: 'playwright', impl: playwrightAdapter });
-  registry.setActive('browser', 'playwright');
 
   return registry;
 }

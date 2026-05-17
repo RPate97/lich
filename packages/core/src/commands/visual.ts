@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { CLIError } from '../errors';
-import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
+import { AdapterRegistry } from '../adapters/registry';
+import { playwrightAdapter } from '@levelzero/plugin-playwright';
 import type { BrowserAdapter, DiffOptions } from '../adapters/browser/types';
 import type { Command } from './types';
 
@@ -54,9 +55,16 @@ function parseNumberFlag(value: string | boolean | undefined, name: string): num
  * adapter bypass the registry entirely.
  */
 export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
-  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
-  const resolveAdapter = (): BrowserAdapter =>
-    opts?.adapter ?? (getAdapterRegistry().getActive('browser') as BrowserAdapter);
+  const getAdapterRegistry = opts?.getAdapterRegistry;
+  // See screenshot.ts for the rationale: when no registry provider is supplied
+  // we fall back to the playwright adapter imported directly from
+  // `@levelzero/plugin-playwright` (post-LEV-156 the `browser` slot is no
+  // longer populated by `getBuiltinAdapters()`).
+  const resolveAdapter = (): BrowserAdapter => {
+    if (opts?.adapter) return opts.adapter;
+    if (getAdapterRegistry) return getAdapterRegistry().getActive('browser') as BrowserAdapter;
+    return playwrightAdapter;
+  };
 
   return {
     name: 'visual.diff',

@@ -173,25 +173,19 @@ describe('getBuiltinAdapters', () => {
     expect(r.getActive('ui')).toBe(shadcnAdapter);
   });
 
-  it('registers playwright under the browser slot and marks it active', async () => {
-    const r = getBuiltinAdapters();
-    const { playwrightAdapter } = await import('../../src/adapters/browser/playwright');
-    expect(r.get('browser', 'playwright')).toBe(playwrightAdapter);
-    expect(r.getActive('browser')).toBe(playwrightAdapter);
-  });
-
   it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls in core today: orm, auth, ui, browser.
+    // Slots with concrete impls in core today: orm, auth, ui.
     // Extracted to plugins: `backend` (@levelzero/plugin-hono),
+    // `browser` (@levelzero/plugin-playwright),
     // `frontend` (@levelzero/plugin-typed-client),
     // `portless` (@levelzero/plugin-portless),
     // `test-runner` (@levelzero/plugin-vitest, @levelzero/plugin-playwright).
     expect(slots.has('orm')).toBe(true);
     expect(slots.has('auth')).toBe(true);
     expect(slots.has('ui')).toBe(true);
-    expect(slots.has('browser')).toBe(true);
+    expect(slots.has('browser')).toBe(false);
     expect(slots.has('backend')).toBe(false);
     expect(slots.has('frontend')).toBe(false);
     expect(slots.has('portless')).toBe(false);
@@ -204,6 +198,7 @@ describe('getBuiltinAdapters', () => {
     expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
     expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
     expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
+    expect(() => r.getActive('browser')).toThrowError(/no active impl for slot "browser"/);
   });
 
   it('listBySlot returns empty for slots populated only by extracted plugins', () => {
@@ -212,6 +207,7 @@ describe('getBuiltinAdapters', () => {
     expect(r.listBySlot('portless')).toEqual([]);
     expect(r.listBySlot('frontend')).toEqual([]);
     expect(r.listBySlot('backend')).toEqual([]);
+    expect(r.listBySlot('browser')).toEqual([]);
   });
 
   it('returns a fresh registry each call (mutating one does not affect another)', () => {

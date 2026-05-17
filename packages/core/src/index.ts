@@ -49,3 +49,9 @@ export type {
   TestRunInput,
   TestRunnerAdapter,
 } from './adapters/test-runner/types';
+export type {
+  BrowserAdapter,
+  ScreenshotOptions,
+  DiffOptions,
+  DiffResult,
+} from './adapters/browser/types';
