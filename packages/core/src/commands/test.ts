@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { CLIError } from '../errors';
 import { Registry } from '../registry';
 import { pgService } from '@levelzero/plugin-postgres';
-import { apiService, webService } from '../services/builtins';
+import { webService } from '@levelzero/plugin-next';
+import { apiService } from '../services/builtins';
 import { resolveStackContext } from '../services/context';
 import { vitestAdapter } from '@levelzero/plugin-vitest';
 import { playwrightTestAdapter } from '../adapters/test-runner/playwright';
@@ -37,8 +38,9 @@ function defaultRegistry(): Registry {
  *
  * Env derivation mirrors the running stack's `pgService` / `apiService` /
  * `webService` envContributions — single source of truth lives in
- * `@levelzero/plugin-postgres` (for `pgService`, post-LEV-148) and
- * `services/builtins.ts` (for api/web). `integration` and `e2e`
+ * `@levelzero/plugin-postgres` (for `pgService`, post-LEV-148),
+ * `@levelzero/plugin-next` (for `webService`, post-LEV-154), and
+ * `services/builtins.ts` (for `apiService`). `integration` and `e2e`
  * require a running stack (a registry entry for the current worktree);
  * `unit` skips the stack lookup entirely so unit tests stay runnable without
  * `levelzero dev`.

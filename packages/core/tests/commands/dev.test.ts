@@ -195,6 +195,48 @@ describe('levelzero dev (unit, mocked compose)', () => {
     await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
     expect(calls.filter((c) => c.op === 'up')).toHaveLength(0);
   });
+
+  it('appends getPluginOwnedServices entries onto the merged service list (post-LEV-154)', async () => {
+    // Simulates how the dispatcher wires `bootPlugins().ownedServices`
+    // through to `dev` post-LEV-154 so plugins like `@levelzero/plugin-next`
+    // contribute owned services that `dev` brings up alongside built-ins.
+    const pluginOwned: OwnedService = {
+      name: 'plugin-owned',
+      kind: 'owned',
+      portNames: ['plugin-port'],
+      cwd: projectDir,
+      // Quick-exit so the owned runner returns immediately; we only care that
+      // the env contribution + port allocation reflect the plugin-supplied
+      // service.
+      command: 'sh -c "echo plugin-up"',
+      envContributions: (ports) => ({
+        PLUGIN_URL: `http://localhost:${ports['plugin-port']}`,
+      }),
+    };
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      // No built-in docker services for this test — keep the focus on the
+      // owned-merge path.
+      getServices: () => [],
+      getPluginOwnedServices: () => [pluginOwned],
+      composeRunnerFactory: factory,
+    });
+
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    // The plugin-contributed port was allocated, and its envContributions ran
+    // against the live port map — proving the service made it through the
+    // merge into the runner's allServices view.
+    expect(result.ports['plugin-port']).toBeGreaterThan(0);
+    expect(result.env.PLUGIN_URL).toBe(
+      `http://localhost:${result.ports['plugin-port']}`,
+    );
+  });
 });
 
 describeIfDocker('levelzero dev (integration with real docker compose)', () => {

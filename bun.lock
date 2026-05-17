@@ -19,6 +19,7 @@
       "dependencies": {
         "@levelzero/plugin-better-auth": "workspace:*",
         "@levelzero/plugin-hono": "workspace:*",
+        "@levelzero/plugin-next": "workspace:*",
         "@levelzero/plugin-portless": "workspace:*",
         "@levelzero/plugin-postgres": "workspace:*",
         "@levelzero/plugin-prisma": "workspace:*",
@@ -71,6 +72,19 @@
         "@types/node": "^20.12.0",
         "bun-types": "^1.2.0",
         "hono": "^4.12.19",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+      },
+    },
+    "packages/plugin-next": {
+      "name": "@levelzero/plugin-next",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
         "typescript": "^5.4.0",
         "vitest": "^1.6.0",
       },
@@ -297,6 +311,8 @@
     "@levelzero/plugin-better-auth": ["@levelzero/plugin-better-auth@workspace:packages/plugin-better-auth"],
 
     "@levelzero/plugin-hono": ["@levelzero/plugin-hono@workspace:packages/plugin-hono"],
+
+    "@levelzero/plugin-next": ["@levelzero/plugin-next@workspace:packages/plugin-next"],
 
     "@levelzero/plugin-portless": ["@levelzero/plugin-portless@workspace:packages/plugin-portless"],
 

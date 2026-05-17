@@ -8,7 +8,7 @@ import {
 import { makeComposeRunner, type ComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
-import type { DockerService, Service } from '../services/types';
+import type { DockerService, OwnedService, Service } from '../services/types';
 
 export interface StopOptions {
   /** Service provider; defaults to getBuiltinServices. Tests can inject custom lists. */
@@ -25,6 +25,16 @@ export interface StopOptions {
    * empty when omitted.
    */
   getPluginCompose?: () => PluginComposeContributions;
+  /**
+   * Plugin-contributed `OwnedService` entries (post-LEV-154). Accepted for
+   * parity with {@link DevOptions} so the dispatcher can pass the same option
+   * shape through to `stop`; `stop` only consumes the docker subset of the
+   * merged service list (owned services are managed by `dev`'s
+   * `concurrently` runner, which the dispatch path tears down via its own
+   * lifecycle), but accepting the option keeps the wiring symmetric and
+   * future-proofs any per-owned teardown logic.
+   */
+  getPluginOwnedServices?: () => OwnedService[];
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {

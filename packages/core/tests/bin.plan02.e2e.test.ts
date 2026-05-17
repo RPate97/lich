@@ -19,15 +19,19 @@ beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-home-')));
   // Postgres is no longer a built-in (LEV-148) — it ships as a compose
-  // contribution from `@levelzero/plugin-postgres`. Load it here so the
-  // generated compose file still contains the postgres service and the
-  // assertions on `result.ports.postgres` / `result.containers` keep holding.
+  // contribution from `@levelzero/plugin-postgres`. The `web` OwnedService is
+  // likewise no longer a built-in (LEV-154) — it ships from
+  // `@levelzero/plugin-next`. Load both here so the generated compose file
+  // still contains the postgres service and the spawned owned-service list
+  // still includes web, keeping the assertions on `result.ports.postgres` /
+  // `result.containers` plus the `apps/web` startup behaviour holding.
   writeFileSync(
     join(projectDir, 'levelzero.config.ts'),
-    `import postgres from '@levelzero/plugin-postgres';\nexport default { plugins: [postgres] };\n`,
+    `import postgres from '@levelzero/plugin-postgres';\nimport next from '@levelzero/plugin-next';\nexport default { plugins: [postgres, next] };\n`,
   );
-  // The default builtins (LEV-90) now include `api` and `web` OwnedServices
-  // that spawn `bun run dev` in `apps/api`/`apps/web`. Provide trivial
+  // The default builtins (LEV-90, partially extracted by LEV-148/LEV-154) plus
+  // the plugin-next contribution above mean `dev` will spawn `bun run dev` in
+  // `apps/api` (built-in) and `apps/web` (plugin-contributed). Provide trivial
   // package.json stubs whose `dev` script exits 0 so concurrently doesn't
   // crash the run on missing directories.
   for (const app of ['api', 'web']) {
