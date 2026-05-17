@@ -22,6 +22,7 @@ import { visualDiffCommand } from './commands/visual';
 import { uiAddCommand } from './commands/ui/add';
 import { uiListCommand } from './commands/ui/list';
 import { genClientCommand } from './commands/gen/client';
+import { makeUrlsCommand } from './commands/urls';
 
 export const VERSION = '0.0.0';
 
@@ -51,6 +52,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(uiAddCommand);
   reg.register(uiListCommand);
   reg.register(genClientCommand);
+  reg.register(makeUrlsCommand({ getRegistry: getReg }));
   return reg;
 }
 
