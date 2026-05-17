@@ -14,9 +14,11 @@ import { typedClientFrontendAdapter } from './frontend/typed-client';
  * both registered under "orm", with prisma active).
  *
  * Adding a slot here is a breaking change for downstream consumers — keep the
- * list curated. The `test-runner` slot is reserved for an impl landing in a
- * subsequent wave; `portless` is now contributed by the extracted
- * `@levelzero/plugin-portless` package and so is absent from
+ * list curated. The `test-runner` slot carries one built-in impl shipped from
+ * core (`playwright`) for `levelzero test e2e`; the `vitest` impl used by
+ * `test unit|integration` is contributed by the extracted
+ * `@levelzero/plugin-vitest` package. `portless` is likewise contributed by
+ * the extracted `@levelzero/plugin-portless` package and so is absent from
  * `getBuiltinAdapters()` (the slot identifier stays declared here so the type
  * remains stable across the extraction).
  */
@@ -243,10 +245,12 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 /**
  * Build the default registry: every adapter impl that ships from core, with
  * the sole impl per slot marked active. Slots that are populated by extracted
- * plugins (`portless` — via `@levelzero/plugin-portless`) or that have no
- * concrete impl yet (`test-runner`) are simply absent from the returned
- * registry; `getActive(slot)` throws "no active impl for slot X" until either
- * the plugin is loaded by `bootPlugins` or a later wave lands the impl.
+ * plugins (`portless` — via `@levelzero/plugin-portless`; `test-runner.vitest`
+ * — via `@levelzero/plugin-vitest`) are absent from the returned registry
+ * unless the plugin is loaded by `bootPlugins`. The `test-runner` slot is
+ * intentionally left without an active impl here: the `test` command picks
+ * playwright vs vitest by subcommand name rather than going through
+ * `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.

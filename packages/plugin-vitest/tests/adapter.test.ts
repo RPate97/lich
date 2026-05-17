@@ -65,7 +65,7 @@ vi.mock('node:child_process', () => {
   };
 });
 
-import { vitestAdapter } from '../../../src/adapters/test-runner/vitest';
+import { vitestAdapter } from '../src/adapter';
 
 beforeEach(() => {
   spawnQueue.length = 0;

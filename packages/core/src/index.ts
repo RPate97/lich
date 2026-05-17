@@ -26,3 +26,8 @@ export type { Command, CommandContext } from './commands/types';
 export type { OwnedService } from './services/types';
 export type { Rule } from './check/types';
 export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
+export type {
+  TestResult,
+  TestRunInput,
+  TestRunnerAdapter,
+} from './adapters/test-runner/types';
