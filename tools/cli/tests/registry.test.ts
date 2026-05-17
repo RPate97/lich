@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../src/registry';
@@ -54,6 +54,34 @@ describe('Registry', () => {
     const entries = await reg.list();
     expect(entries).toHaveLength(2);
     expect(entries.map(e => e.key).sort()).toEqual(['k1', 'k2']);
+  });
+
+  it('defaults urls to {} for legacy entries that lack the field on disk', async () => {
+    const path = join(tmp, 'registry.json');
+    // Simulate a registry file written before `urls` existed.
+    writeFileSync(
+      path,
+      JSON.stringify({
+        stacks: {
+          legacy: {
+            path: '/legacy',
+            branch: 'main',
+            ports: { postgres: 5432 },
+            containers: [],
+            network: '',
+            logDir: '',
+            createdAt: '2026-05-16T00:00:00Z',
+          },
+        },
+      }),
+    );
+    const reg = new Registry(path);
+    const entry = await reg.get('legacy');
+    expect(entry).toBeDefined();
+    expect(entry!.urls).toEqual({});
+    // list() should produce the same defaulted shape.
+    const entries = await reg.list();
+    expect(entries[0]!.entry.urls).toEqual({});
   });
 });
 

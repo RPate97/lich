@@ -61,6 +61,13 @@ export interface OwnedService {
   envContributions: EnvContributions;
   /** Names of other services this service depends on. The runner starts them first. */
   dependsOn?: string[];
+  /**
+   * Optional key under which this service publishes a URL (e.g., 'web', 'api') in
+   * the per-stack registry's `urls` map. `dev` populates the entry after URL
+   * registration; consumers (e.g., `stacks ls`) surface it. Absent for services
+   * that do not expose a URL.
+   */
+  urlName?: string;
 }
 
 export type Service = DockerService | OwnedService;
