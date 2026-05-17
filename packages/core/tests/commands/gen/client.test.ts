@@ -235,7 +235,11 @@ describe('levelzero gen client', () => {
     expect(result.generatedFiles).toEqual(writtenFiles);
   });
 
-  it('default export wires up honoBackendAdapter + typedClientFrontendAdapter (smoke check)', () => {
+  it('default export wires up the built-in registry lazily (smoke check)', () => {
+    // The frontend adapter is no longer built in (extracted to
+    // `@levelzero/plugin-typed-client`); we just assert the command exists —
+    // the actual frontend resolution happens at runtime against whichever
+    // registry the dispatch layer hands in.
     expect(typeof genClientCommand.run).toBe('function');
   });
 });

@@ -26,3 +26,15 @@ export type { Command, CommandContext } from './commands/types';
 export type { OwnedService } from './services/types';
 export type { Rule } from './check/types';
 export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
+
+// Adapter slot interfaces re-exported so extracted plugins can type their
+// contributions against the same contract the core registry consumes.
+export type {
+  FrontendAdapter,
+  GenerateClientInput,
+} from './adapters/frontend/types';
+export type {
+  BackendAdapter,
+  RouteEntry,
+  RouteManifest,
+} from './adapters/backend/types';

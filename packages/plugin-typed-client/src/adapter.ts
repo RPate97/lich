@@ -1,10 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RouteEntry } from '../backend/types';
 import type {
   FrontendAdapter,
   GenerateClientInput,
-} from './types';
+  RouteEntry,
+} from '@levelzero/core';
 
 /**
  * Convert a route path into a CamelCase token for a function-name suffix.

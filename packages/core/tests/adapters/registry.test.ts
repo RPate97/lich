@@ -187,35 +187,33 @@ describe('getBuiltinAdapters', () => {
     expect(r.getActive('backend')).toBe(honoBackendAdapter);
   });
 
-  it('registers typed-client under the frontend slot and marks it active', async () => {
-    const r = getBuiltinAdapters();
-    const { typedClientFrontendAdapter } = await import('../../src/adapters/frontend/typed-client');
-    expect(r.get('frontend', 'typed-client')).toBe(typedClientFrontendAdapter);
-    expect(r.getActive('frontend')).toBe(typedClientFrontendAdapter);
-  });
-
   it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls today: orm, auth, ui, browser, backend, frontend.
+    // Slots with concrete impls in core today: orm, auth, ui, browser, backend.
+    // `frontend` is contributed by `@levelzero/plugin-typed-client`, and
+    // `portless` by `@levelzero/plugin-portless` — neither is built in.
     expect(slots.has('orm')).toBe(true);
     expect(slots.has('auth')).toBe(true);
     expect(slots.has('ui')).toBe(true);
     expect(slots.has('browser')).toBe(true);
     expect(slots.has('backend')).toBe(true);
-    expect(slots.has('frontend')).toBe(true);
+    expect(slots.has('frontend')).toBe(false);
+    expect(slots.has('portless')).toBe(false);
   });
 
-  it('throws no-active for slots without an impl yet (test-runner, portless)', () => {
+  it('throws no-active for slots without a built-in impl (test-runner, portless, frontend)', () => {
     const r = getBuiltinAdapters();
     expect(() => r.getActive('test-runner')).toThrowError(/no active impl for slot "test-runner"/);
     expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
+    expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
   });
 
-  it('listBySlot returns empty for the still-empty slots', () => {
+  it('listBySlot returns empty for the slots populated only by extracted plugins', () => {
     const r = getBuiltinAdapters();
     expect(r.listBySlot('test-runner')).toEqual([]);
     expect(r.listBySlot('portless')).toEqual([]);
+    expect(r.listBySlot('frontend')).toEqual([]);
   });
 
   it('returns a fresh registry each call (mutating one does not affect another)', () => {
