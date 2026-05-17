@@ -9,6 +9,10 @@ import { makeDoctorCommand } from './commands/doctor';
 import { makeStacksCurrentCommand } from './commands/stacks/current';
 import { makeStacksListCommand } from './commands/stacks/list';
 import { makeStacksPruneCommand } from './commands/stacks/prune';
+import { makeDevCommand } from './commands/dev';
+import { makeStopCommand } from './commands/stop';
+import { makeResetCommand } from './commands/reset';
+import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
 
 export const VERSION = '0.0.0';
 
@@ -22,9 +26,13 @@ export function buildCommands(registryPath: string): CommandRegistry {
   const getReg = () => new Registry(registryPath);
   reg.register(initCommand);
   reg.register(makeDoctorCommand(getReg));
+  reg.register(makeDevCommand(getReg));
+  reg.register(makeStopCommand(getReg));
+  reg.register(makeResetCommand(getReg));
   reg.register(makeStacksCurrentCommand(getReg));
   reg.register(makeStacksListCommand(getReg));
   reg.register(makeStacksPruneCommand(getReg));
+  reg.register(makeStacksStopAllCommand(getReg));
   return reg;
 }
 
