@@ -24,9 +24,10 @@ describe('AuthAdapter types', () => {
     expect(u.id).toMatch(/^u_/);
   });
 
-  it('SessionToken is an opaque string wrapper', () => {
-    const t: SessionToken = { token: 'eyJ...' };
+  it('SessionToken carries the token + ISO8601 expiry', () => {
+    const t: SessionToken = { token: 'eyJ...', expiresAt: new Date().toISOString() };
     expect(typeof t.token).toBe('string');
+    expect(typeof t.expiresAt).toBe('string');
   });
 
   it('SessionInfo identifies the user and expiry', () => {

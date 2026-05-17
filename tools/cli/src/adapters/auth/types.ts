@@ -18,6 +18,8 @@ export interface User {
 
 export interface SessionToken {
   token: string;
+  /** ISO8601 timestamp when this session token expires. */
+  expiresAt: string;
 }
 
 export interface SessionInfo {
