@@ -27,6 +27,8 @@ import { dbMigrateCommand } from './commands/db/migrate';
 import { dbMigrationNewCommand } from './commands/db/migration-new';
 import { dbSeedCommand } from './commands/db/seed';
 import { dbInspectCommand } from './commands/db/inspect';
+import { adapterListCommand } from './commands/adapter/list';
+import { adapterSwapCommand } from './commands/adapter/swap';
 
 export const VERSION = '0.0.0';
 
@@ -61,6 +63,8 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(dbMigrationNewCommand);
   reg.register(dbSeedCommand);
   reg.register(dbInspectCommand);
+  reg.register(adapterListCommand);
+  reg.register(adapterSwapCommand);
   return reg;
 }
 
