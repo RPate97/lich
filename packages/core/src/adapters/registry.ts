@@ -12,13 +12,14 @@ import { playwrightAdapter } from './browser/playwright';
  * both registered under "orm", with prisma active).
  *
  * Adding a slot here is a breaking change for downstream consumers — keep the
- * list curated. The `test-runner` slot is reserved for an impl landing in a
- * subsequent wave; the following slots are now contributed by extracted
- * plugins and absent from `getBuiltinAdapters()`:
- *   - `portless`  → `@levelzero/plugin-portless`
- *   - `backend`   → `@levelzero/plugin-hono`
- *   - `frontend`  → `@levelzero/plugin-typed-client`
- * Their slot identifiers stay declared here so the type remains stable across
+ * list curated. The following slots are now contributed by extracted plugins
+ * and absent from `getBuiltinAdapters()`:
+ *   - `portless`     → `@levelzero/plugin-portless`
+ *   - `backend`      → `@levelzero/plugin-hono`
+ *   - `frontend`     → `@levelzero/plugin-typed-client`
+ *   - `test-runner`  → `@levelzero/plugin-vitest` (unit/integration),
+ *                      `@levelzero/plugin-playwright` (e2e)
+ * Their slot identifiers stay declared here so the types remain stable across
  * the extractions.
  */
 export type AdapterSlot =
@@ -244,13 +245,14 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 /**
  * Build the default registry: every adapter impl that ships from core, with
  * the sole impl per slot marked active. Slots that are populated by extracted
-<<<<<<< HEAD
- * plugins (`portless` — `@levelzero/plugin-portless`; `backend` —
- * `@levelzero/plugin-hono`; `frontend` — `@levelzero/plugin-typed-client`)
- * or that have no concrete impl yet (`test-runner`) are simply absent from
- * the returned registry; `getActive(slot)` throws "no active impl for slot X"
- * until either the plugin is loaded by `bootPlugins` or a later wave lands
- * the impl.
+ * plugins (`portless` → `@levelzero/plugin-portless`; `backend` →
+ * `@levelzero/plugin-hono`; `frontend` → `@levelzero/plugin-typed-client`;
+ * `test-runner` → `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`)
+ * are absent from the returned registry; `getActive(slot)` throws "no active
+ * impl for slot X" until the plugin is loaded by `bootPlugins`. The
+ * `test-runner` slot is intentionally left without an active impl by default:
+ * the `test` command picks playwright vs vitest by subcommand name rather than
+ * going through `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.

@@ -31,8 +31,9 @@ export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
  * Adapter slot contracts. The slot interfaces stay in core because they are
  * part of the published API surface — even after the concrete impls were
  * extracted into separate plugin packages (`@levelzero/plugin-hono`,
- * `@levelzero/plugin-typed-client`, etc.), multiple core paths still depend
- * on these shapes, and out-of-tree adapter implementations need them too.
+ * `@levelzero/plugin-typed-client`, `@levelzero/plugin-vitest`, etc.),
+ * multiple core paths still depend on these shapes, and out-of-tree adapter
+ * implementations need them too.
  */
 export type {
   FrontendAdapter,
@@ -43,3 +44,8 @@ export type {
   RouteEntry,
   RouteManifest,
 } from './adapters/backend/types';
+export type {
+  TestResult,
+  TestRunInput,
+  TestRunnerAdapter,
+} from './adapters/test-runner/types';
