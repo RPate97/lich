@@ -14,7 +14,15 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // Declare the extracted plugin via levelzero.config.ts so each plan-04 e2e
+  // also exercises the plugin loader path with a real package (LEV-146): the
+  // loader must resolve `@levelzero/plugin-portless` from the workspace, run
+  // its `register()`, and merge its adapters into the dispatch registry — all
+  // without disrupting any inline command (`urls` here is inline).
+  writeFileSync(
+    join(projectDir, 'levelzero.config.ts'),
+    `export default { plugins: ['@levelzero/plugin-portless'] };`,
+  );
 });
 
 function run(args: string[]) {

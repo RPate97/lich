@@ -48,10 +48,13 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
       expect(Array.isArray(out.adapters)).toBe(true);
 
-      // The four built-in impls cover four of the eight declared AdapterSlot
-      // values (orm, auth, ui, browser). The other four slots
-      // (backend, frontend, test-runner, portless) are reserved but have no
-      // active impl yet, so they simply do not appear in the list output.
+      // The six built-in impls cover six of the eight declared AdapterSlot
+      // values (orm, auth, ui, browser, backend, frontend). The remaining two
+      // slots (test-runner, portless) have no built-in impl: `test-runner` is
+      // reserved for a future wave; `portless` was extracted into
+      // `@levelzero/plugin-portless` (LEV-145) and only appears when that
+      // plugin is declared in `levelzero.config.ts`. The next test covers
+      // that loader path.
       const byKey = new Map(
         out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
       );
@@ -59,6 +62,14 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       expect(byKey.get('auth:better-auth')?.active).toBe(true);
       expect(byKey.get('ui:shadcn')?.active).toBe(true);
       expect(byKey.get('browser:playwright')?.active).toBe(true);
+      expect(byKey.get('backend:hono')?.active).toBe(true);
+      expect(byKey.get('frontend:typed-client')?.active).toBe(true);
+
+      // No empty-config invocation should surface a portless impl — those are
+      // contributed by the extracted plugin, which the empty config does not
+      // declare.
+      expect(byKey.get('portless:portless')).toBeUndefined();
+      expect(byKey.get('portless:noop')).toBeUndefined();
 
       // All eight slot identifiers should be valid (i.e. anything listed must
       // belong to one of the eight). This guards against a slot being silently
@@ -76,6 +87,32 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       for (const a of out.adapters) {
         expect(knownSlots.has(a.slot)).toBe(true);
       }
+    });
+
+    it('surfaces plugin-contributed portless adapters when the plugin is declared in config (LEV-146)', () => {
+      // Replace the empty config with one that loads the extracted plugin.
+      // The loader resolves the npm specifier through Node's algorithm rooted
+      // at the project — bun's workspace symlinks under `node_modules/@levelzero/`
+      // make this resolve from any cwd within the workspace.
+      writeFileSync(
+        join(projectDir, 'levelzero.config.ts'),
+        `export default { plugins: ['@levelzero/plugin-portless'] };`,
+      );
+
+      const res = run(['adapter', 'list']);
+      expect(res.status, res.stderr).toBe(0);
+
+      const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
+      const byKey = new Map(
+        out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
+      );
+
+      // Built-ins still present (the merge does not drop them).
+      expect(byKey.get('orm:prisma')?.active).toBe(true);
+      // Both portless impls show up; `noop` is active per the plugin's
+      // `setActiveAdapter('portless', 'noop')` default.
+      expect(byKey.get('portless:portless')?.active).toBe(false);
+      expect(byKey.get('portless:noop')?.active).toBe(true);
     });
   });
 
