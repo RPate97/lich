@@ -51,8 +51,8 @@ case "$EVENT" in
         fi
       done
     fi
-    # Legacy tools/cli/node_modules symlink (still here during transition)
-    if [[ -d "$PROJECT_DIR/tools/cli/node_modules" && ! -e "$WT_DIR/tools/cli/node_modules" ]]; then
+    # Legacy tools/cli/node_modules symlink (only if both paths exist in this worktree)
+    if [[ -d "$PROJECT_DIR/tools/cli/node_modules" && -d "$WT_DIR/tools/cli" && ! -e "$WT_DIR/tools/cli/node_modules" ]]; then
       ln -sfn "$PROJECT_DIR/tools/cli/node_modules" "$WT_DIR/tools/cli/node_modules"
     fi
     echo "$WT_DIR"
