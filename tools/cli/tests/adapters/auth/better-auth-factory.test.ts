@@ -15,9 +15,15 @@ describe('makeBetterAuth', () => {
     expect(typeof betterAuthAdapter.inspectSession).toBe('function');
   });
 
-  it('createUser throws not-yet-implemented in plan 06.2', async () => {
+  it('signSession throws not-yet-implemented in plan 06.3', async () => {
     await expect(
-      betterAuthAdapter.createUser({ databaseUrl: 'postgres://', secret: 'x'.repeat(32) }, { email: 'a@b', password: 'x' }),
+      betterAuthAdapter.signSession({ databaseUrl: 'sqlite::memory:', secret: 'x'.repeat(32) }, 'u_1'),
+    ).rejects.toThrow(/not yet implemented/);
+  });
+
+  it('inspectSession throws not-yet-implemented in plan 06.3', async () => {
+    await expect(
+      betterAuthAdapter.inspectSession({ databaseUrl: 'sqlite::memory:', secret: 'x'.repeat(32) }, 'tok'),
     ).rejects.toThrow(/not yet implemented/);
   });
 });
