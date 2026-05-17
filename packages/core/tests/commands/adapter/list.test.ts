@@ -30,19 +30,20 @@ describe('levelzero adapter list', () => {
     const result = (await cmd.run(ctx(tmp))) as { adapters: ListEntry[] };
 
     expect(Array.isArray(result.adapters)).toBe(true);
-    // Built-ins today: orm/prisma, auth/better-auth, ui/shadcn,
-    // browser/playwright. Extracted to plugins (only show up when loaded via
-    // config): backend/hono → @levelzero/plugin-hono;
-    // frontend/typed-client → @levelzero/plugin-typed-client;
-    // portless → @levelzero/plugin-portless.
+    // Built-ins today: orm/prisma, auth/better-auth, browser/playwright.
+    // Extracted to plugins (only show up when loaded via config):
+    //   backend/hono → @levelzero/plugin-hono;
+    //   frontend/typed-client → @levelzero/plugin-typed-client;
+    //   portless → @levelzero/plugin-portless;
+    //   ui/shadcn → @levelzero/plugin-shadcn.
     const byKey = new Map(result.adapters.map((a) => [`${a.slot}:${a.name}`, a]));
     expect(byKey.get('orm:prisma')?.active).toBe(true);
     expect(byKey.get('auth:better-auth')?.active).toBe(true);
-    expect(byKey.get('ui:shadcn')?.active).toBe(true);
     expect(byKey.get('browser:playwright')?.active).toBe(true);
+    expect(byKey.has('ui:shadcn')).toBe(false);
     expect(byKey.has('backend:hono')).toBe(false);
     expect(byKey.has('frontend:typed-client')).toBe(false);
-    expect(result.adapters).toHaveLength(4);
+    expect(result.adapters).toHaveLength(3);
   });
 
   it('marks an adapter inactive when its slot has a different active impl', async () => {

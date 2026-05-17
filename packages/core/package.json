@@ -29,6 +29,7 @@
     "@levelzero/plugin-hono": "workspace:*",
     "@levelzero/plugin-portless": "workspace:*",
     "@levelzero/plugin-postgres": "workspace:*",
+    "@levelzero/plugin-shadcn": "workspace:*",
     "@levelzero/plugin-typed-client": "workspace:*",
     "@levelzero/plugin-vitest": "workspace:*",
     "@prisma/client": "^5.18.0",

@@ -21,7 +21,13 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p10-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p10-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // `ui add` / `ui list` live in `@levelzero/plugin-shadcn` after LEV-153;
+  // the project config must declare the plugin or the commands aren't
+  // registered against the dispatcher.
+  writeFileSync(
+    join(projectDir, 'levelzero.config.ts'),
+    `export default { plugins: ['@levelzero/plugin-shadcn'] };`,
+  );
 });
 
 function run(args: string[]) {

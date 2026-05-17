@@ -49,3 +49,22 @@ export type {
   TestRunInput,
   TestRunnerAdapter,
 } from './adapters/test-runner/types';
+export type {
+  UIAdapter,
+  UIContext,
+  AddComponentOptions,
+  AddComponentResult,
+  ListComponentsResult,
+} from './adapters/ui/types';
+
+/**
+ * Runtime helpers re-exported for plugins that contribute commands.
+ *
+ * Extracted plugins (e.g. `@levelzero/plugin-shadcn`) need to resolve the
+ * caller's project root and surface structured errors from their command
+ * implementations. Keeping these in the barrel saves plugin authors from
+ * reaching into deep paths under `@levelzero/core/src/**`.
+ */
+export { resolveStackContext } from './services/context';
+export { CLIError } from './errors';
+export type { CLIErrorCode, CLIErrorOptions } from './errors';

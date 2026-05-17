@@ -19,8 +19,6 @@ import { coverageCommand } from './commands/coverage';
 import { makeCheckCommand } from './commands/check';
 import { screenshotCommand } from './commands/screenshot';
 import { visualDiffCommand } from './commands/visual';
-import { uiAddCommand } from './commands/ui/add';
-import { uiListCommand } from './commands/ui/list';
 import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { makeCurlCommand } from './commands/curl';
@@ -63,8 +61,6 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeCheckCommand());
   reg.register(screenshotCommand);
   reg.register(visualDiffCommand);
-  reg.register(uiAddCommand);
-  reg.register(uiListCommand);
   reg.register(genClientCommand);
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
   reg.register(makeCurlCommand({ getRegistry: getReg }));

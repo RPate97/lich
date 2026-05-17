@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { uiListCommand } from '../../../src/commands/ui/list';
+import { uiListCommand } from '../../src/commands/list';
 
 let projectDir: string;
 beforeEach(() => {
