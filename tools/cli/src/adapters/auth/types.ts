@@ -32,4 +32,12 @@ export interface AuthAdapter {
   createUser(ctx: AuthContext, input: CreateUserInput): Promise<User>;
   signSession(ctx: AuthContext, userId: string): Promise<SessionToken>;
   inspectSession(ctx: AuthContext, token: string): Promise<SessionInfo | null>;
+  /**
+   * Optional lookup-by-email. Returns `null` if the user does not exist.
+   * Used by the orchestration layer (auth/helpers.ts) to make `getOrCreateUser`
+   * and `loginAs` idempotent. Adapters that don't support lookup can omit it,
+   * in which case the helpers will surface a clear error when a duplicate
+   * email is encountered.
+   */
+  findUserByEmail?(ctx: AuthContext, email: string): Promise<User | null>;
 }
