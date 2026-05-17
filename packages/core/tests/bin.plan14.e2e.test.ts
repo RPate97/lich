@@ -83,6 +83,39 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(parsed.greeting).toBe('hello');
   });
 
+  it('loads the real `@levelzero/plugin-portless` package by npm specifier (LEV-146)', () => {
+    // End-to-end proof that the plugin loader path works with an *actually
+    // extracted* plugin — not just a tmpdir fixture. Declares the real
+    // workspace package in `levelzero.config.ts`, then runs `adapter list`
+    // and asserts the plugin's `register()` populated the `portless` slot
+    // with both impls and selected `noop` as the active one.
+    //
+    // Why the cwd is the project tmpdir but the import still resolves: the
+    // bin script under test lives inside the monorepo; the loader's
+    // `createRequire` falls back to dynamic import for bare specifiers, and
+    // bun's workspace symlinks under the script's `node_modules/@levelzero/`
+    // satisfy that import. Catches regressions in (a) the loader's
+    // npm-specifier path, (b) the merge of plugin adapters into the
+    // built-in registry, and (c) the plugin's own `register()` shape.
+    writeFileSync(
+      join(projectDir, 'levelzero.config.ts'),
+      `export default { plugins: ['@levelzero/plugin-portless'] };`,
+    );
+
+    const res = run(['adapter', 'list']);
+    expect(res.status, res.stderr).toBe(0);
+    const out = JSON.parse(res.stdout) as {
+      adapters: Array<{ slot: string; name: string; active: boolean }>;
+    };
+    const byKey = new Map(out.adapters.map((a) => [`${a.slot}:${a.name}`, a]));
+    expect(byKey.get('portless:portless')).toBeDefined();
+    expect(byKey.get('portless:portless')!.active).toBe(false);
+    expect(byKey.get('portless:noop')).toBeDefined();
+    expect(byKey.get('portless:noop')!.active).toBe(true);
+    // Built-in slot remains intact — the plugin doesn't touch `orm`.
+    expect(byKey.get('orm:prisma')?.active).toBe(true);
+  });
+
   it('inline commands remain available alongside plugin commands (transitional coexistence)', () => {
     // The whole point of the transitional wiring is that both sources of
     // registrations coexist. Declare a plugin that adds one command, then
