@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { betterAuthAdapter, _resetBetterAuthCacheForTests } from '../../../src/adapters/auth/better-auth';
+import { betterAuthAdapter, _resetBetterAuthCacheForTests } from '../src/adapter';
 
 const ctxFor = (id: string) => ({
   databaseUrl: `sqlite::memory:#${id}`,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeBetterAuth, betterAuthAdapter } from '../../../src/adapters/auth/better-auth';
+import { makeBetterAuth, betterAuthAdapter } from '../src/adapter';
 
 describe('makeBetterAuth', () => {
   it('constructs a Better Auth instance with SQLite in-memory', () => {

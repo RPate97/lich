@@ -48,10 +48,11 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
       expect(Array.isArray(out.adapters)).toBe(true);
 
-      // The four built-in impls cover four of the eight declared AdapterSlot
-      // values (orm, auth, ui, browser). The remaining slots are now
-      // contributed by extracted plugins and only appear when the plugin is
-      // declared in `levelzero.config.ts`:
+      // The three built-in impls cover three of the eight declared AdapterSlot
+      // values (orm, ui, browser). The remaining slots are now contributed by
+      // extracted plugins and only appear when the plugin is declared in
+      // `levelzero.config.ts`:
+      //   - auth        → @levelzero/plugin-better-auth (LEV-152)
       //   - backend     → @levelzero/plugin-hono (LEV-150)
       //   - frontend    → @levelzero/plugin-typed-client (LEV-151)
       //   - portless    → @levelzero/plugin-portless (LEV-145)
@@ -61,11 +62,11 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
         out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
       );
       expect(byKey.get('orm:prisma')?.active).toBe(true);
-      expect(byKey.get('auth:better-auth')?.active).toBe(true);
       expect(byKey.get('ui:shadcn')?.active).toBe(true);
       expect(byKey.get('browser:playwright')?.active).toBe(true);
 
       // Extracted slots are absent with an empty config.
+      expect(byKey.has('auth:better-auth')).toBe(false);
       expect(byKey.has('backend:hono')).toBe(false);
       expect(byKey.has('frontend:typed-client')).toBe(false);
       expect(byKey.get('portless:portless')).toBeUndefined();

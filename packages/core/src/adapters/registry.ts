@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { prismaAdapter } from './orm/prisma';
-import { betterAuthAdapter } from './auth/better-auth';
 import { shadcnAdapter } from './ui/shadcn';
 import { playwrightAdapter } from './browser/playwright';
 
@@ -14,6 +13,7 @@ import { playwrightAdapter } from './browser/playwright';
  * Adding a slot here is a breaking change for downstream consumers — keep the
  * list curated. The following slots are now contributed by extracted plugins
  * and absent from `getBuiltinAdapters()`:
+ *   - `auth`         → `@levelzero/plugin-better-auth`
  *   - `portless`     → `@levelzero/plugin-portless`
  *   - `backend`      → `@levelzero/plugin-hono`
  *   - `frontend`     → `@levelzero/plugin-typed-client`
@@ -245,14 +245,15 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 /**
  * Build the default registry: every adapter impl that ships from core, with
  * the sole impl per slot marked active. Slots that are populated by extracted
- * plugins (`portless` → `@levelzero/plugin-portless`; `backend` →
- * `@levelzero/plugin-hono`; `frontend` → `@levelzero/plugin-typed-client`;
- * `test-runner` → `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`)
- * are absent from the returned registry; `getActive(slot)` throws "no active
- * impl for slot X" until the plugin is loaded by `bootPlugins`. The
- * `test-runner` slot is intentionally left without an active impl by default:
- * the `test` command picks playwright vs vitest by subcommand name rather than
- * going through `getActive('test-runner')`.
+ * plugins (`auth` → `@levelzero/plugin-better-auth`; `portless` →
+ * `@levelzero/plugin-portless`; `backend` → `@levelzero/plugin-hono`;
+ * `frontend` → `@levelzero/plugin-typed-client`; `test-runner` →
+ * `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`) are absent
+ * from the returned registry; `getActive(slot)` throws "no active impl for
+ * slot X" until the plugin is loaded by `bootPlugins`. The `test-runner` slot
+ * is intentionally left without an active impl by default: the `test` command
+ * picks playwright vs vitest by subcommand name rather than going through
+ * `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.
@@ -262,9 +263,6 @@ export function getBuiltinAdapters(): AdapterRegistry {
 
   registry.register({ slot: 'orm', name: 'prisma', impl: prismaAdapter });
   registry.setActive('orm', 'prisma');
-
-  registry.register({ slot: 'auth', name: 'better-auth', impl: betterAuthAdapter });
-  registry.setActive('auth', 'better-auth');
 
   registry.register({ slot: 'ui', name: 'shadcn', impl: shadcnAdapter });
   registry.setActive('ui', 'shadcn');

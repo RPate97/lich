@@ -7,7 +7,7 @@ import type {
   User,
   SessionToken,
   SessionInfo,
-} from './types';
+} from '@levelzero/core';
 
 export interface BetterAuthInstance {
   // We type this minimally; Better Auth's full shape lives in its own types.

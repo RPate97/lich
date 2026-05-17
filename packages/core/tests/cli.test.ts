@@ -65,16 +65,17 @@ describe('runCli', () => {
     expect(JSON.parse(out.stderr).code).toBe('NO_PROJECT');
   });
 
-  // Smoke check for LEV-110: `curl` is registered in bin.ts. We invoke
-  // through `buildCommands` with no args so the curl command's own
-  // argument validation fires (CONFIG_INVALID), proving the dispatcher
-  // resolved `curl` rather than returning UNKNOWN_COMMAND.
-  it('registers the curl command in bin (not UNKNOWN_COMMAND)', async () => {
+  // Post-LEV-152: `curl` is no longer registered inline in `buildCommands` —
+  // it ships from `@levelzero/plugin-better-auth`. The bin-level smoke check
+  // now verifies that `buildCommands` (the inline-only path) reports the
+  // command as unknown; project-level dispatch via `buildDispatchRegistry`
+  // wires it in when the plugin is loaded, which is covered by the plugin's
+  // own tests.
+  it('does not register curl in buildCommands (plugin-only after LEV-152)', async () => {
     const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
     const out = await runCli(['curl'], reg, { cwd: '/' });
     expect(out.exitCode).toBe(1);
     const parsed = JSON.parse(out.stderr);
-    expect(parsed.code).not.toBe('UNKNOWN_COMMAND');
-    expect(parsed.code).toBe('CONFIG_INVALID');
+    expect(parsed.code).toBe('UNKNOWN_COMMAND');
   });
 });

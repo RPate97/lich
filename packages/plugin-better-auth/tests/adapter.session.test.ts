@@ -4,8 +4,8 @@ import {
   getBetterAuthInstance,
   InvalidSessionError,
   resetBetterAuthCache,
-} from '../../../src/adapters/auth/better-auth';
-import type { AuthContext } from '../../../src/adapters/auth/types';
+} from '../src/adapter';
+import type { AuthContext } from '@levelzero/core';
 
 const TEST_SECRET = 'test-secret-32-chars-min-length-aaaa';
 
