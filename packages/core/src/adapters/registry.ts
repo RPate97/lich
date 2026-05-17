@@ -14,8 +14,11 @@ import { typedClientFrontendAdapter } from './frontend/typed-client';
  * both registered under "orm", with prisma active).
  *
  * Adding a slot here is a breaking change for downstream consumers — keep the
- * list curated. The four trailing slots (backend, frontend, test-runner,
- * portless) are reserved for impls landing in subsequent waves of Plan 13.
+ * list curated. The `test-runner` slot is reserved for an impl landing in a
+ * subsequent wave; `portless` is now contributed by the extracted
+ * `@levelzero/plugin-portless` package and so is absent from
+ * `getBuiltinAdapters()` (the slot identifier stays declared here so the type
+ * remains stable across the extraction).
  */
 export type AdapterSlot =
   | 'orm'
@@ -238,11 +241,12 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 }
 
 /**
- * Build the default registry: every adapter impl that exists today, with the
- * sole impl per slot marked active. Slots without a concrete impl yet
- * (test-runner, portless) are simply absent from the registry —
- * `getActive(slot)` throws "no active impl for slot X" until they land in
- * later waves.
+ * Build the default registry: every adapter impl that ships from core, with
+ * the sole impl per slot marked active. Slots that are populated by extracted
+ * plugins (`portless` — via `@levelzero/plugin-portless`) or that have no
+ * concrete impl yet (`test-runner`) are simply absent from the returned
+ * registry; `getActive(slot)` throws "no active impl for slot X" until either
+ * the plugin is loaded by `bootPlugins` or a later wave lands the impl.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.

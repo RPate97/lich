@@ -14,9 +14,11 @@ import type { Command } from './types';
 import type { DockerService, OwnedService, PortMap, Service } from '../services/types';
 import { findWorktree } from '../worktree';
 import { loadConfig } from '../config';
-import { portlessAdapter } from '../adapters/portless/portless';
-import { noopPortlessAdapter } from '../adapters/portless/noop';
-import type { PortlessAdapter } from '../adapters/portless/types';
+import {
+  portlessAdapter,
+  noopPortlessAdapter,
+  type PortlessAdapter,
+} from '@levelzero/plugin-portless';
 import { basename, join } from 'node:path';
 
 export interface DevOptions {

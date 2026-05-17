@@ -29,8 +29,9 @@ import { dbMigrateCommand } from './commands/db/migrate';
 import { dbMigrationNewCommand } from './commands/db/migration-new';
 import { dbSeedCommand } from './commands/db/seed';
 import { dbInspectCommand } from './commands/db/inspect';
-import { adapterListCommand } from './commands/adapter/list';
+import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand } from './commands/adapter/swap';
+import { AdapterRegistry, getBuiltinAdapters } from './adapters/registry';
 import { skillsIndexCommand } from './commands/skills';
 import { makeTestCommand } from './commands/test';
 import { findWorktree } from './worktree';
@@ -118,7 +119,38 @@ export async function buildDispatchRegistry(
   for (const cmd of boot.commands.all()) {
     cli.register(cmd);
   }
+
+  // Merge plugin-contributed adapters into the built-in registry so
+  // `adapter list` reflects the full registered surface. Built-ins are
+  // registered first; plugin entries can override a (slot, name) pair via
+  // last-write-wins, matching `AdapterRegistry.register` semantics.
+  const merged = mergeAdapterRegistries(getBuiltinAdapters(), boot.adapters);
+  cli.register(makeAdapterListCommand({ getRegistry: () => merged }));
+
   return cli;
+}
+
+function mergeAdapterRegistries(
+  base: AdapterRegistry,
+  overlay: AdapterRegistry,
+): AdapterRegistry {
+  for (const entry of overlay.list()) {
+    base.register(entry);
+  }
+  // Re-apply overlay active selections last so they win over base actives for
+  // any slot the overlay touched.
+  for (const entry of overlay.list()) {
+    try {
+      const overlayActive = overlay.getActive(entry.slot);
+      const overlayName = overlay
+        .listBySlot(entry.slot)
+        .find((e) => e.impl === overlayActive)?.name;
+      if (overlayName) base.setActive(entry.slot, overlayName);
+    } catch {
+      // No active impl for this slot in the overlay — leave base's active as-is.
+    }
+  }
+  return base;
 }
 
 async function main() {

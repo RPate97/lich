@@ -2,6 +2,10 @@
   "name": "@levelzero/core",
   "version": "0.1.0",
   "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "bin": {
     "levelzero": "./src/bin.ts"
   },
@@ -22,6 +26,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
+    "@levelzero/plugin-portless": "workspace:*",
     "@prisma/client": "^5.18.0",
     "better-auth": "^1.6.11",
     "concurrently": "^9.0.0",

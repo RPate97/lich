@@ -10,7 +10,7 @@ import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/compose/naming';
 import { pgService } from '../../src/services/postgres';
 import type { OwnedService, Service } from '../../src/services/types';
-import type { PortlessAdapter } from '../../src/adapters/portless/types';
+import type { PortlessAdapter } from '@levelzero/plugin-portless';
 import type { ComposeRunner } from '../../src/compose/runner';
 
 // Tests inject `[pgService]` explicitly: the default `getBuiltinServices()`

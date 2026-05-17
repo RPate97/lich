@@ -61,7 +61,7 @@ vi.mock('node:child_process', () => {
   };
 });
 
-import { portlessAdapter } from '../../../src/adapters/portless/portless';
+import { portlessAdapter } from '../src/portless';
 
 beforeEach(() => {
   spawnQueue.length = 0;
