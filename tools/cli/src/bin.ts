@@ -24,6 +24,7 @@ import { uiListCommand } from './commands/ui/list';
 import { genClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { makeCurlCommand } from './commands/curl';
+import { composeCommand } from './commands/compose';
 import { dbMigrateCommand } from './commands/db/migrate';
 import { dbMigrationNewCommand } from './commands/db/migration-new';
 import { dbSeedCommand } from './commands/db/seed';
@@ -63,6 +64,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(genClientCommand);
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
   reg.register(makeCurlCommand({ getRegistry: getReg }));
+  reg.register(composeCommand);
   reg.register(dbMigrateCommand);
   reg.register(dbMigrationNewCommand);
   reg.register(dbSeedCommand);
