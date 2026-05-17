@@ -4,15 +4,21 @@ import { CLIError } from '../../errors';
 import { Registry } from '../../registry';
 import { pgService } from '../../services/postgres';
 import { resolveStackContext } from '../../services/context';
-import { prismaAdapter } from '../../adapters/orm/prisma';
+import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { ORMAdapter } from '../../adapters/orm/types';
 import type { Command } from '../types';
 
 export interface DbSeedOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
-  /** ORM adapter; defaults to prismaAdapter. Tests inject a stub. */
+  /**
+   * ORM adapter. When omitted, resolved from the AdapterRegistry returned by
+   * `getAdapterRegistry` (default `getBuiltinAdapters()`); tests pass an
+   * explicit stub to bypass the registry entirely.
+   */
   adapter?: ORMAdapter;
+  /** AdapterRegistry provider used when `adapter` is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 function defaultRegistry(): Registry {
@@ -32,7 +38,9 @@ function defaultRegistry(): Registry {
  */
 export function makeDbSeedCommand(opts?: DbSeedOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const adapter = opts?.adapter ?? prismaAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  const resolveAdapter = (): ORMAdapter =>
+    opts?.adapter ?? (getAdapterRegistry().getActive('orm') as ORMAdapter);
 
   return {
     name: 'db.seed',
@@ -60,7 +68,7 @@ export function makeDbSeedCommand(opts?: DbSeedOptions): Command {
         );
       }
 
-      const result = await adapter.seed({
+      const result = await resolveAdapter().seed({
         databaseUrl,
         projectRoot: stackCtx.worktreePath,
       });

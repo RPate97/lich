@@ -1,8 +1,7 @@
 import { isAbsolute, join } from 'node:path';
 import { CLIError } from '../../errors';
 import { resolveStackContext } from '../../services/context';
-import { honoBackendAdapter } from '../../adapters/backend/hono';
-import { typedClientFrontendAdapter } from '../../adapters/frontend/typed-client';
+import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { BackendAdapter } from '../../adapters/backend/types';
 import type { FrontendAdapter } from '../../adapters/frontend/types';
 import type { Command } from '../types';
@@ -22,10 +21,20 @@ const DEFAULT_API_DIR = 'apps/api';
 const DEFAULT_OUT_DIR = 'packages/api-client/src';
 
 export interface GenClientOptions {
-  /** Backend adapter; defaults to {@link honoBackendAdapter}. Tests inject a stub. */
+  /**
+   * Backend adapter. When omitted, resolved from the AdapterRegistry returned
+   * by `getAdapterRegistry` (default `getBuiltinAdapters()`); tests pass an
+   * explicit stub to bypass the registry entirely.
+   */
   backendAdapter?: BackendAdapter;
-  /** Frontend adapter; defaults to {@link typedClientFrontendAdapter}. Tests inject a stub. */
+  /**
+   * Frontend adapter. When omitted, resolved from the AdapterRegistry returned
+   * by `getAdapterRegistry` (default `getBuiltinAdapters()`); tests pass an
+   * explicit stub to bypass the registry entirely.
+   */
   frontendAdapter?: FrontendAdapter;
+  /** AdapterRegistry provider used when either adapter is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 function flagString(value: string | boolean | undefined): string | undefined {
@@ -51,8 +60,16 @@ function resolveUnderRoot(root: string, p: string): string {
  *    `packages/api-client/src`.
  */
 export function makeGenClientCommand(opts?: GenClientOptions): Command {
-  const backendAdapter = opts?.backendAdapter ?? honoBackendAdapter;
-  const frontendAdapter = opts?.frontendAdapter ?? typedClientFrontendAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  // Lazy resolution so a swap landed between command construction and run
+  // time is honored, and so tests that pass explicit adapters never touch
+  // the registry at all.
+  const resolveBackend = (): BackendAdapter =>
+    opts?.backendAdapter ??
+    (getAdapterRegistry().getActive('backend') as BackendAdapter);
+  const resolveFrontend = (): FrontendAdapter =>
+    opts?.frontendAdapter ??
+    (getAdapterRegistry().getActive('frontend') as FrontendAdapter);
 
   return {
     name: 'gen.client',
@@ -68,6 +85,9 @@ export function makeGenClientCommand(opts?: GenClientOptions): Command {
       const apiDir = apiDirFlag ?? DEFAULT_API_DIR;
       const outDirRel = outFlag ?? DEFAULT_OUT_DIR;
       const outDir = resolveUnderRoot(projectRoot, outDirRel);
+
+      const backendAdapter = resolveBackend();
+      const frontendAdapter = resolveFrontend();
 
       // The backend adapter's `extractRoutes(root, options)` signature is the
       // typed contract — but `BackendAdapter` (the structural type) only

@@ -4,6 +4,8 @@ import { prismaAdapter } from './orm/prisma';
 import { betterAuthAdapter } from './auth/better-auth';
 import { shadcnAdapter } from './ui/shadcn';
 import { playwrightAdapter } from './browser/playwright';
+import { honoBackendAdapter } from './backend/hono';
+import { typedClientFrontendAdapter } from './frontend/typed-client';
 
 /**
  * Adapter slot identifiers. Each slot represents one pluggable boundary in
@@ -238,9 +240,9 @@ function isAdapterSlot(value: string): value is AdapterSlot {
 /**
  * Build the default registry: every adapter impl that exists today, with the
  * sole impl per slot marked active. Slots without a concrete impl yet
- * (backend, frontend, test-runner, portless) are simply absent from the
- * registry — `getActive(slot)` throws "no active impl for slot X" until they
- * land in later waves.
+ * (test-runner, portless) are simply absent from the registry —
+ * `getActive(slot)` throws "no active impl for slot X" until they land in
+ * later waves.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.
@@ -259,6 +261,16 @@ export function getBuiltinAdapters(): AdapterRegistry {
 
   registry.register({ slot: 'browser', name: 'playwright', impl: playwrightAdapter });
   registry.setActive('browser', 'playwright');
+
+  registry.register({ slot: 'backend', name: 'hono', impl: honoBackendAdapter });
+  registry.setActive('backend', 'hono');
+
+  registry.register({
+    slot: 'frontend',
+    name: 'typed-client',
+    impl: typedClientFrontendAdapter,
+  });
+  registry.setActive('frontend', 'typed-client');
 
   return registry;
 }

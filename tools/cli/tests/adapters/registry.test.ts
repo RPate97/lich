@@ -180,28 +180,40 @@ describe('getBuiltinAdapters', () => {
     expect(r.getActive('browser')).toBe(playwrightAdapter);
   });
 
-  it('list covers all 8 slot names', () => {
+  it('registers hono under the backend slot and marks it active', async () => {
+    const r = getBuiltinAdapters();
+    const { honoBackendAdapter } = await import('../../src/adapters/backend/hono');
+    expect(r.get('backend', 'hono')).toBe(honoBackendAdapter);
+    expect(r.getActive('backend')).toBe(honoBackendAdapter);
+  });
+
+  it('registers typed-client under the frontend slot and marks it active', async () => {
+    const r = getBuiltinAdapters();
+    const { typedClientFrontendAdapter } = await import('../../src/adapters/frontend/typed-client');
+    expect(r.get('frontend', 'typed-client')).toBe(typedClientFrontendAdapter);
+    expect(r.getActive('frontend')).toBe(typedClientFrontendAdapter);
+  });
+
+  it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls today: orm, auth, ui, browser
+    // Slots with concrete impls today: orm, auth, ui, browser, backend, frontend.
     expect(slots.has('orm')).toBe(true);
     expect(slots.has('auth')).toBe(true);
     expect(slots.has('ui')).toBe(true);
     expect(slots.has('browser')).toBe(true);
+    expect(slots.has('backend')).toBe(true);
+    expect(slots.has('frontend')).toBe(true);
   });
 
-  it('throws no-active for slots without an impl yet (backend, frontend, test-runner, portless)', () => {
+  it('throws no-active for slots without an impl yet (test-runner, portless)', () => {
     const r = getBuiltinAdapters();
-    expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
-    expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
     expect(() => r.getActive('test-runner')).toThrowError(/no active impl for slot "test-runner"/);
     expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
   });
 
-  it('listBySlot returns empty for the empty slots', () => {
+  it('listBySlot returns empty for the still-empty slots', () => {
     const r = getBuiltinAdapters();
-    expect(r.listBySlot('backend')).toEqual([]);
-    expect(r.listBySlot('frontend')).toEqual([]);
     expect(r.listBySlot('test-runner')).toEqual([]);
     expect(r.listBySlot('portless')).toEqual([]);
   });
@@ -209,7 +221,9 @@ describe('getBuiltinAdapters', () => {
   it('returns a fresh registry each call (mutating one does not affect another)', () => {
     const a = getBuiltinAdapters();
     const b = getBuiltinAdapters();
-    a.register({ slot: 'backend', name: 'hono', impl: { test: true } });
-    expect(() => b.get('backend', 'hono')).toThrow();
+    // Use the still-empty `test-runner` slot so we can prove isolation without
+    // colliding with a populated builtin.
+    a.register({ slot: 'test-runner', name: 'custom', impl: { test: true } });
+    expect(() => b.get('test-runner', 'custom')).toThrow();
   });
 });
