@@ -1,12 +1,18 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '../errors';
-import { Registry, type StackEntry } from '../registry';
-import { findWorktree } from '../worktree';
-import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
-import { getOrCreateUser, loginAs } from '../auth/helpers';
-import type { AuthAdapter, AuthContext } from '../adapters/auth/types';
-import type { Command, CommandContext } from './types';
+import {
+  AdapterRegistry,
+  CLIError,
+  Registry,
+  findWorktree,
+  getBuiltinAdapters,
+  type AuthAdapter,
+  type AuthContext,
+  type Command,
+  type CommandContext,
+  type StackEntry,
+} from '@levelzero/core';
+import { getOrCreateUser, loginAs } from './helpers';
 
 /**
  * Result shape returned by the curl command. Mirrors a (very small) subset of

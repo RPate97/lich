@@ -3,13 +3,13 @@ import {
   betterAuthAdapter,
   _resetBetterAuthCacheForTests,
   InvalidSessionError,
-} from '../../src/adapters/auth/better-auth';
-import type { AuthAdapter, AuthContext } from '../../src/adapters/auth/types';
+} from '../src/adapter';
+import type { AuthAdapter, AuthContext } from '@levelzero/core';
 import {
   getOrCreateUser,
   loginAs,
   verifyAndExtractUserId,
-} from '../../src/auth/helpers';
+} from '../src/helpers';
 
 const TEST_SECRET = 'test-secret-32-chars-min-length-aaaa';
 

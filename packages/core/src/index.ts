@@ -28,6 +28,41 @@ export type { Rule } from './check/types';
 export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
 
 /**
+ * Runtime values plugins need to author commands that participate in the CLI's
+ * dispatch path (registry lookups, error reporting, worktree resolution,
+ * AdapterRegistry access). Kept narrow on purpose — each export is part of the
+ * published API surface, so additions here should be deliberate.
+ *
+ * Added for LEV-152 (`@levelzero/plugin-better-auth`) so the extracted `curl`
+ * command can construct a `Registry`, throw `CLIError`, locate the surrounding
+ * worktree, and (optionally) resolve auth adapters off the builtin registry —
+ * all without reaching into core via deep paths.
+ */
+export { Registry } from './registry';
+export type { StackEntry, RegistryData } from './registry';
+export { CLIError } from './errors';
+export type { CLIErrorCode, CLIErrorOptions } from './errors';
+export { findWorktree, computeWorktreeKey } from './worktree';
+export type { Worktree } from './worktree';
+export { AdapterRegistry, getBuiltinAdapters } from './adapters/registry';
+
+/**
+ * Auth slot contract. Like the other slot interfaces (`BackendAdapter`,
+ * `FrontendAdapter`, `TestRunnerAdapter`), the types stay in core even after
+ * the concrete `betterAuthAdapter` impl was extracted into
+ * `@levelzero/plugin-better-auth` — other core consumers (auth helpers in the
+ * plugin, future test fixtures, out-of-tree auth adapters) still need them.
+ */
+export type {
+  AuthAdapter,
+  AuthContext,
+  CreateUserInput,
+  User,
+  SessionToken,
+  SessionInfo,
+} from './adapters/auth/types';
+
+/**
  * Adapter slot contracts. The slot interfaces stay in core because they are
  * part of the published API surface — even after the concrete impls were
  * extracted into separate plugin packages (`@levelzero/plugin-hono`,

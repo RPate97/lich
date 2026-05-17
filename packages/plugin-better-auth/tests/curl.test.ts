@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Registry } from '../../src/registry';
-import { computeWorktreeKey } from '../../src/worktree';
-import { CLIError } from '../../src/errors';
-import { makeCurlCommand } from '../../src/commands/curl';
-import type {
-  AuthAdapter,
-  AuthContext,
-  CreateUserInput,
-  SessionToken,
-  SessionInfo,
-  User,
-} from '../../src/adapters/auth/types';
+import {
+  CLIError,
+  Registry,
+  computeWorktreeKey,
+  type AuthAdapter,
+  type AuthContext,
+  type CreateUserInput,
+  type SessionToken,
+  type SessionInfo,
+  type User,
+} from '@levelzero/core';
+import { makeCurlCommand } from '../src/curl';
 
 /**
  * Minimal in-memory AuthAdapter for the curl tests. We don't need a real

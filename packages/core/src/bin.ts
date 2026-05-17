@@ -23,7 +23,6 @@ import { uiAddCommand } from './commands/ui/add';
 import { uiListCommand } from './commands/ui/list';
 import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
-import { makeCurlCommand } from './commands/curl';
 import { composeCommand } from './commands/compose';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand, makeAdapterSwapCommand } from './commands/adapter/swap';
@@ -63,7 +62,6 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(uiListCommand);
   reg.register(genClientCommand);
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
-  reg.register(makeCurlCommand({ getRegistry: getReg }));
   reg.register(composeCommand);
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);

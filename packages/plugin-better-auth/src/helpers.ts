@@ -4,7 +4,7 @@ import type {
   AuthContext,
   SessionInfo,
   User,
-} from '../adapters/auth/types';
+} from '@levelzero/core';
 
 export interface GetOrCreateUserArgs {
   adapter: AuthAdapter;
