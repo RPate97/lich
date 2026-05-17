@@ -13,6 +13,7 @@ import { makeDevCommand } from './commands/dev';
 import { makeStopCommand } from './commands/stop';
 import { makeResetCommand } from './commands/reset';
 import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
+import { makeLogsCommand } from './commands/logs';
 
 export const VERSION = '0.0.0';
 
@@ -33,6 +34,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeStacksListCommand(getReg));
   reg.register(makeStacksPruneCommand(getReg));
   reg.register(makeStacksStopAllCommand(getReg));
+  reg.register(makeLogsCommand(getReg));
   return reg;
 }
 
