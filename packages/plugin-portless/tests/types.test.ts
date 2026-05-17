@@ -1,5 +1,5 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import type { PortlessAdapter, URLEntry } from '../../../src/adapters/portless/types';
+import type { PortlessAdapter, URLEntry } from '../src/types';
 
 describe('PortlessAdapter types', () => {
   it('URLEntry carries host + target with optional service', () => {

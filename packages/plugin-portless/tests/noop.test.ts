@@ -1,6 +1,6 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import { noopPortlessAdapter } from '../../../src/adapters/portless/noop';
-import type { PortlessAdapter, URLEntry } from '../../../src/adapters/portless/types';
+import { noopPortlessAdapter } from '../src/noop';
+import type { PortlessAdapter, URLEntry } from '../src/types';
 
 describe('noopPortlessAdapter', () => {
   it('conforms to the PortlessAdapter interface', () => {
