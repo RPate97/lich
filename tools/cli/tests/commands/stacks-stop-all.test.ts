@@ -3,13 +3,12 @@ import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, isContainerRunning } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeStacksStopAllCommand } from '../../src/commands/stacks/stop-all';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/docker/naming';
-import { isContainerRunning } from '../../src/docker/runner';
+import { containerName, volumeName } from '../../src/compose/naming';
 import { CLIError } from '../../src/errors';
 import { pgService } from '../../src/services/postgres';
 import type { Service } from '../../src/services/types';
@@ -84,16 +83,16 @@ describeIfDocker('levelzero stacks stop --all (integration)', () => {
     const a = (await dev.run({ cwd: dirA, format: 'json', args: [], flags: {} })) as any;
     const b = (await dev.run({ cwd: dirB, format: 'json', args: [], flags: {} })) as any;
 
-    expect(await isContainerRunning(a.containers[0])).toBe(true);
-    expect(await isContainerRunning(b.containers[0])).toBe(true);
+    expect(isContainerRunning(a.containers[0])).toBe(true);
+    expect(isContainerRunning(b.containers[0])).toBe(true);
 
     const cmd = makeStacksStopAllCommand(() => registry);
     const result = (await cmd.run({ cwd: '/', format: 'json', args: [], flags: { all: true } })) as any;
 
     expect(result.stoppedFromRegistry).toContain(a.key);
     expect(result.stoppedFromRegistry).toContain(b.key);
-    expect(await isContainerRunning(a.containers[0])).toBe(false);
-    expect(await isContainerRunning(b.containers[0])).toBe(false);
+    expect(isContainerRunning(a.containers[0])).toBe(false);
+    expect(isContainerRunning(b.containers[0])).toBe(false);
     expect(await registry.get(a.key)).toBeUndefined();
     expect(await registry.get(b.key)).toBeUndefined();
   }, 240_000);

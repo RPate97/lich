@@ -1,5 +1,5 @@
 import type { DockerService, StackContext } from '../services/types';
-import { containerName, volumeName } from '../docker/naming';
+import { containerName, volumeName } from './naming';
 import type {
   ComposeServiceDef,
   ComposeVolumeDef,

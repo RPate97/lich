@@ -8,7 +8,7 @@ import type {
 import type { DockerService, StackContext } from '../services/types';
 import { dockerServiceToCompose } from './from-docker';
 import { emitCompose } from './emitter';
-import { composeProjectName } from '../docker/naming';
+import { composeProjectName } from './naming';
 
 export interface ComposeBundle {
   /** Compose project name, e.g. `levelzero-<key>`. */
