@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '../../../src/registry';
-import { computeWorktreeKey } from '../../../src/worktree';
-import { CLIError } from '../../../src/errors';
+import { Registry } from '@levelzero/core/registry';
+import { computeWorktreeKey } from '@levelzero/core/worktree';
+import { CLIError } from '@levelzero/core/errors';
 import {
   makeDbMigrationNewCommand,
   dbMigrationNewCommand,
-} from '../../../src/commands/db/migration-new';
-import type { ORMAdapter, ORMContext, MigrationFile } from '../../../src/adapters/orm/types';
+} from '../../src/commands/migration-new';
+import type { ORMAdapter, ORMContext, MigrationFile } from '@levelzero/core';
 
 function stubAdapter(
   impl: (ctx: ORMContext, name: string) => Promise<MigrationFile>,

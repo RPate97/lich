@@ -3,15 +3,15 @@ import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from '../../_helpers/docker';
-import { Registry } from '../../../src/registry';
-import { makeDevCommand } from '../../../src/commands/dev';
-import { computeWorktreeKey } from '../../../src/worktree';
-import { containerName, volumeName } from '../../../src/compose/naming';
-import { makePrismaFixture } from '../../_helpers/prisma-fixture';
-import { prismaAdapter } from '../../../src/adapters/orm/prisma';
+import { dockerOrSkip } from './_helpers/docker';
+import { Registry } from '@levelzero/core/registry';
+import { makeDevCommand } from '@levelzero/core/commands/dev';
+import { computeWorktreeKey } from '@levelzero/core/worktree';
+import { containerName, volumeName } from '@levelzero/core/compose/naming';
+import { makePrismaFixture } from './_helpers/prisma-fixture';
+import { prismaAdapter } from '../src/adapter';
 import { pgService } from '@levelzero/plugin-postgres';
-import type { Service } from '../../../src/services/types';
+import type { Service } from '@levelzero/core/services/types';
 
 // Default builtins now include api+web OwnedServices (LEV-90). Inject
 // `[pgService]` so dev only manages postgres in this tmpdir fixture (this

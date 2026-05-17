@@ -49,3 +49,13 @@ export type {
   TestRunInput,
   TestRunnerAdapter,
 } from './adapters/test-runner/types';
+export type {
+  ORMAdapter,
+  ORMContext,
+  MigrationResult,
+  MigrationFile,
+  SchemaDescription,
+  TableDescription,
+  ColumnDescription,
+  TableRow,
+} from './adapters/orm/types';

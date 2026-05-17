@@ -5,13 +5,6 @@ import { join } from 'node:path';
 /** Create a minimal Prisma project directory tree in a tmpdir.
  *  Returns the absolute projectRoot. The schema has a `User` model and one
  *  empty `init` migration directory (so deploy is a no-op).
- *
- *  Duplicated in `packages/plugin-prisma/tests/_helpers/prisma-fixture.ts`
- *  (LEV-149): after the prisma extraction core still owns one integration
- *  test (`tests/testing/rollback.test.ts`) that needs the fixture, so keeping
- *  a copy in each package's `tests/_helpers/` avoids reaching across package
- *  boundaries with deep relative imports (which break under per-package
- *  vitest runs).
  */
 export function makePrismaFixture(): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'lz-prisma-fixture-')));

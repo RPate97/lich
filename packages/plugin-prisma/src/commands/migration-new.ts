@@ -1,23 +1,26 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '../../errors';
-import { Registry } from '../../registry';
+import { CLIError } from '@levelzero/core/errors';
+import { Registry } from '@levelzero/core/registry';
 import { pgService } from '@levelzero/plugin-postgres';
-import { resolveStackContext } from '../../services/context';
-import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
-import type { ORMAdapter } from '../../adapters/orm/types';
-import type { Command } from '../types';
+import { resolveStackContext } from '@levelzero/core/services/context';
+import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
+import type { Command, ORMAdapter } from '@levelzero/core';
+import { prismaAdapter } from '../adapter';
 
 export interface DbMigrationNewOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
   /**
-   * ORM adapter. When omitted, resolved from the AdapterRegistry returned by
-   * `getAdapterRegistry` (default `getBuiltinAdapters()`); tests pass an
+   * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
+   * command falls back to this package's `prismaAdapter`. Tests pass an
    * explicit stub to bypass the registry entirely.
    */
   adapter?: ORMAdapter;
-  /** AdapterRegistry provider used when `adapter` is omitted. */
+  /**
+   * AdapterRegistry provider used when `adapter` is omitted. No default —
+   * when omitted the command uses `prismaAdapter` directly.
+   */
   getAdapterRegistry?: () => AdapterRegistry;
 }
 
@@ -50,9 +53,13 @@ const MIGRATION_NAME_RE = /^[a-z][a-z0-9_]*$/;
  */
 export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
-  const resolveAdapter = (): ORMAdapter =>
-    opts?.adapter ?? (getAdapterRegistry().getActive('orm') as ORMAdapter);
+  const resolveAdapter = (): ORMAdapter => {
+    if (opts?.adapter) return opts.adapter;
+    if (opts?.getAdapterRegistry) {
+      return opts.getAdapterRegistry().getActive('orm') as ORMAdapter;
+    }
+    return prismaAdapter;
+  };
 
   return {
     name: 'db.migration.new',

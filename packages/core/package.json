@@ -4,7 +4,15 @@
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./errors": "./src/errors.ts",
+    "./registry": "./src/registry.ts",
+    "./worktree": "./src/worktree.ts",
+    "./services/context": "./src/services/context.ts",
+    "./services/types": "./src/services/types.ts",
+    "./commands/dev": "./src/commands/dev.ts",
+    "./compose/naming": "./src/compose/naming.ts",
+    "./adapters/registry": "./src/adapters/registry.ts"
   },
   "bin": {
     "levelzero": "./src/bin.ts"
@@ -29,6 +37,7 @@
     "@levelzero/plugin-hono": "workspace:*",
     "@levelzero/plugin-portless": "workspace:*",
     "@levelzero/plugin-postgres": "workspace:*",
+    "@levelzero/plugin-prisma": "workspace:*",
     "@levelzero/plugin-typed-client": "workspace:*",
     "@levelzero/plugin-vitest": "workspace:*",
     "@prisma/client": "^5.18.0",
