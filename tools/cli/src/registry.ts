@@ -6,6 +6,12 @@ export interface StackEntry {
   path: string;
   branch: string;
   ports: Record<string, number>;
+  /**
+   * URLs published by services for this stack, keyed by `OwnedService.urlName`
+   * (e.g., `{ web: "http://localhost:3000" }`). `dev` populates this after URL
+   * registration. Defaults to `{}` for legacy entries written before this field
+   * existed (see `read()`).
+   */
   urls: Record<string, string>;
   containers: string[];
   network: string;
@@ -25,6 +31,12 @@ export class Registry {
       const raw = await readFile(this.path, 'utf8');
       const parsed = JSON.parse(raw) as RegistryData;
       if (!parsed.stacks || typeof parsed.stacks !== 'object') return { stacks: {} };
+      // Default `urls` to `{}` for legacy entries written before the field existed.
+      // Purely additive: no migration, just a default on the read path.
+      for (const key of Object.keys(parsed.stacks)) {
+        const entry = parsed.stacks[key]!;
+        if (!entry.urls || typeof entry.urls !== 'object') entry.urls = {};
+      }
       return parsed;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { stacks: {} };
