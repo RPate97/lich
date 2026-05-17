@@ -3,3 +3,5 @@ node_modules/
 .levelzero/
 !tools/cli/templates/**/.levelzero/
 *.tmp
+packages/*/node_modules
+packages/*/dist
