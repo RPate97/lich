@@ -1,74 +1,108 @@
 # Extension Surface
 
-Levelzero is built around eight pluggable **adapter slots**. The CLI, codegen, and runtime always go through these interfaces — never through a hard-coded vendor — so you can swap any slot for a custom impl without forking.
+Levelzero is built around **plugins**. A plugin is the single unit of extension: it can contribute adapters, commands, owned services, compose services / volumes / networks, check rules, generators, and skills directories — all through one `register()` call during CLI bootstrap.
 
-## The 8 adapter slots
+This page is the reference. For the actual interface, see [`tools/cli/src/plugins/types.ts`](../tools/cli/src/plugins/types.ts).
 
-| Slot | Purpose | Interface |
-|---|---|---|
-| `orm` | Migrations, schema introspection, seed, generated client | [`tools/cli/src/adapters/orm/types.ts`](../tools/cli/src/adapters/orm/types.ts) |
-| `auth` | User creation, session signing, session inspection | [`tools/cli/src/adapters/auth/types.ts`](../tools/cli/src/adapters/auth/types.ts) |
-| `ui` | Add/list design-system components | [`tools/cli/src/adapters/ui/types.ts`](../tools/cli/src/adapters/ui/types.ts) |
-| `browser` | Headless screenshot + pixel diff for visual checks | [`tools/cli/src/adapters/browser/types.ts`](../tools/cli/src/adapters/browser/types.ts) |
-| `backend` | Extract a route manifest from server source | [`tools/cli/src/adapters/backend/types.ts`](../tools/cli/src/adapters/backend/types.ts) |
-| `frontend` | Generate a typed API client from a route manifest | [`tools/cli/src/adapters/frontend/types.ts`](../tools/cli/src/adapters/frontend/types.ts) |
-| `test-runner` | Run a test suite and report pass/fail counts | [`tools/cli/src/adapters/test-runner/types.ts`](../tools/cli/src/adapters/test-runner/types.ts) |
-| `portless` | Register/unregister public hostnames for local services | [`tools/cli/src/adapters/portless/types.ts`](../tools/cli/src/adapters/portless/types.ts) |
+## What a plugin is
 
-Exactly one impl per slot is **active** at a time; the registry can carry alternates (e.g. `prisma` and `drizzle` both registered under `orm`, with `prisma` active).
-
-## Writing a custom adapter
-
-An adapter is any object implementing the slot's interface. The slot is inferred from the method shape — or you can pin it explicitly with `slot: 'redis'` on the object (useful for new slots or shapes that collide with another slot).
-
-## Registering a custom adapter
-
-Add the plugin path to `adapters.custom` in `levelzero.config.ts`:
+A plugin is any module that exports an object satisfying the `Plugin` contract:
 
 ```ts
+export interface Plugin {
+  name: string;
+  version: string;
+  register(api: PluginAPI, ctx: PluginContext): void | Promise<void>;
+}
+```
+
+`register()` runs once per CLI invocation, with a `PluginAPI` (contribution surface) and a read-only `PluginContext` (`{ projectRoot, config }`). Sync or async — the loader awaits either.
+
+## Plugin discovery
+
+Plugins are **opt-in** via the `plugins` array in `levelzero.config.ts`:
+
+```ts
+import postgres from '@levelzero/plugin-postgres';
+
 export default {
-  adapters: {
-    orm: 'prisma',
-    custom: {
-      'redis-cache': './plugins/redis-cache.ts',
-    },
-  },
+  plugins: [
+    postgres,                              // Plugin object
+    './plugins/redis.ts',                  // string specifier (local path or npm package)
+    import('@levelzero/plugin-stripe'),    // Promise (typically a dynamic import)
+  ],
 };
 ```
 
-At boot, `AdapterRegistry.loadCustomPlugins` dynamic-imports each path, picks `module.default ?? module[name] ?? module`, detects the slot, and registers it. The key (`'redis-cache'`) is the registered adapter `name`, **not** the slot.
+Three entry shapes are accepted (see [`tools/cli/src/config.ts`](../tools/cli/src/config.ts) `PluginEntry`):
 
-## `levelzero adapter list` / `swap`
+1. **Plugin object** — used as-is.
+2. **String specifier** — a relative path (resolved against `projectRoot`) or a bare npm package name. The [loader](../tools/cli/src/plugins/loader.ts) dynamic-imports it and picks `default`, a camelCased shorthand export, or the module itself.
+3. **Promise** — awaited; `{ default: Plugin }` is unwrapped.
 
-* `levelzero adapter list` — prints every (slot, name) in the registry with an `active` flag. Read-only.
-* `levelzero adapter swap <slot> <name>` — validates the pair against the registry and persists the choice to `.levelzero/adapter.json`. Subsequent CLI runs read that file and call `setActive(slot, name)` before dispatching.
+There is no auto-discovery: a plugin not listed in `plugins[]` is not loaded.
 
-## Example: a 20-line Redis service adapter
+## PluginAPI surface
+
+`PluginAPI` exposes ten contribution methods. Each is additive — re-registering with the same key overrides the previous entry; there is no removal method.
+
+| Method | Purpose |
+|---|---|
+| `addAdapter(slot, name, impl)` | Register an adapter under a slot (`orm`, `auth`, `ui`, `browser`, `backend`, `frontend`, `test-runner`, `portless`). |
+| `setActiveAdapter(slot, name)` | Mark one registered adapter as the active impl for its slot. |
+| `addCommand(cmd)` | Register a CLI command for the dispatcher. |
+| `addOwnedService(service)` | Declare a service whose lifecycle Levelzero owns. |
+| `addComposeService(name, def)` | Contribute a compose v2 service to the merged stack. |
+| `addComposeVolume(name, def)` | Contribute a named compose volume. |
+| `addComposeNetwork(name, def)` | Contribute a named compose network. |
+| `addRule(rule)` | Register a check rule consumed by `levelzero check`. |
+| `addGenerator(gen)` | Register a code generator (typed clients, schemas, etc.). |
+| `addSkillsDir(absPath)` | Expose a directory of skills to the agent. |
+
+## Cross-plugin coordination
+
+Plugins are processed **in declared order**. That ordering matters in two places:
+
+- **`setActiveAdapter` is last-write-wins.** If two plugins both call `setActiveAdapter('orm', ...)`, the later one wins. Order your `plugins[]` so the plugin you want to "decide" comes last, or call `setActiveAdapter` in a project-local plugin to override.
+- **Compose services / volumes / networks are keyed by name.** Two plugins contributing `addComposeService('postgres', ...)` collide; the later call replaces the earlier definition wholesale (no deep merge).
+
+`addAdapter`, `addCommand`, `addRule`, `addGenerator`, and `addSkillsDir` are also last-write-wins on their natural key (slot+name, command name, rule id, generator id, absolute path).
+
+A `register()` that throws aborts boot; the error is rewrapped with the offending plugin's `name` for attribution. See [`tools/cli/src/plugins/boot.ts`](../tools/cli/src/plugins/boot.ts) for the assembly order.
+
+## Worked example: a tiny Redis plugin
+
+Runs Redis in compose, registers a `portless` adapter against it, and adds a `redis:ping` command:
 
 ```ts
 // plugins/redis.ts
-import { createClient } from 'redis';
-
-const client = createClient({ url: process.env.REDIS_URL });
+import type { Plugin } from '@levelzero/core';
 
 export default {
-  slot: 'portless',          // pin the slot explicitly
   name: 'redis',
-  async available() {
-    try { await client.connect(); return client.isOpen; }
-    catch { return false; }
+  version: '0.1.0',
+  register(api) {
+    api.addComposeService('redis', {
+      image: 'redis:7-alpine',
+      ports: ['${PORT}:6379'],
+      healthcheck: { test: ['CMD', 'redis-cli', 'ping'], interval: '5s', retries: 5 },
+    });
+    api.addAdapter('portless', 'redis', {
+      async available() { return true; },
+      async register({ host, target }) { /* ... */ },
+      async unregister(host) { /* ... */ },
+      async list() { return []; },
+    });
+    api.setActiveAdapter('portless', 'redis');
+    api.addCommand({ name: 'redis:ping', describe: 'Ping Redis', run: async () => { /* ... */ } });
   },
-  async register({ host, target }) {
-    await client.hSet('levelzero:hosts', host, target);
-  },
-  async unregister(host) {
-    await client.hDel('levelzero:hosts', host);
-  },
-  async list() {
-    const all = await client.hGetAll('levelzero:hosts');
-    return Object.entries(all).map(([host, target]) => ({ host, target }));
-  },
-};
+} satisfies Plugin;
 ```
 
-Wire it in `levelzero.config.ts` under `adapters.custom`, then `levelzero adapter swap portless redis`.
+Wire it in `levelzero.config.ts`: `export default { plugins: ['./plugins/redis.ts'] };`
+
+## Publishing a plugin
+
+External plugins ship as standalone npm packages. Versioning and changelog generation go through **changesets** (`.changeset/`). Build with **`tsup`** to emit dual ESM + CJS plus `.d.ts` declarations — the same template `@levelzero/core` uses. See [`docs/build-strategy.md`](./build-strategy.md) for the full decision and config template.
+
+Each PR that introduces or bumps a plugin must include a changeset, and the package's `"main"` / `"module"` / `"types"` / `"exports"` must point at the `tsup` output with `@levelzero/core` pinned as a peer dependency.
