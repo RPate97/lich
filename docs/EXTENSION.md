@@ -2,7 +2,7 @@
 
 Levelzero is built around **plugins**. A plugin is the single unit of extension: it can contribute adapters, commands, owned services, compose services / volumes / networks, check rules, generators, and skills directories — all through one `register()` call during CLI bootstrap.
 
-This page is the reference. For the actual interface, see [`tools/cli/src/plugins/types.ts`](../tools/cli/src/plugins/types.ts).
+This page is the reference. For the actual interface, see [`packages/core/src/plugins/types.ts`](../packages/core/src/plugins/types.ts).
 
 ## What a plugin is
 
@@ -34,10 +34,10 @@ export default {
 };
 ```
 
-Three entry shapes are accepted (see [`tools/cli/src/config.ts`](../tools/cli/src/config.ts) `PluginEntry`):
+Three entry shapes are accepted (see [`packages/core/src/config.ts`](../packages/core/src/config.ts) `PluginEntry`):
 
 1. **Plugin object** — used as-is.
-2. **String specifier** — a relative path (resolved against `projectRoot`) or a bare npm package name. The [loader](../tools/cli/src/plugins/loader.ts) dynamic-imports it and picks `default`, a camelCased shorthand export, or the module itself.
+2. **String specifier** — a relative path (resolved against `projectRoot`) or a bare npm package name. The [loader](../packages/core/src/plugins/loader.ts) dynamic-imports it and picks `default`, a camelCased shorthand export, or the module itself.
 3. **Promise** — awaited; `{ default: Plugin }` is unwrapped.
 
 There is no auto-discovery: a plugin not listed in `plugins[]` is not loaded.
@@ -68,7 +68,7 @@ Plugins are processed **in declared order**. That ordering matters in two places
 
 `addAdapter`, `addCommand`, `addRule`, `addGenerator`, and `addSkillsDir` are also last-write-wins on their natural key (slot+name, command name, rule id, generator id, absolute path).
 
-A `register()` that throws aborts boot; the error is rewrapped with the offending plugin's `name` for attribution. See [`tools/cli/src/plugins/boot.ts`](../tools/cli/src/plugins/boot.ts) for the assembly order.
+A `register()` that throws aborts boot; the error is rewrapped with the offending plugin's `name` for attribution. See [`packages/core/src/plugins/boot.ts`](../packages/core/src/plugins/boot.ts) for the assembly order.
 
 ## Worked example: a tiny Redis plugin
 

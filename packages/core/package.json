@@ -1,6 +1,6 @@
 {
-  "name": "@levelzero/cli",
-  "version": "0.0.0",
+  "name": "@levelzero/core",
+  "version": "0.1.0",
   "type": "module",
   "bin": {
     "levelzero": "./src/bin.ts"

@@ -8,7 +8,7 @@ import { Socket } from 'node:net';
  * the `redis.ping` command and demonstrate the adapter wiring end to end.
  *
  * The `slot: 'portless'` field is what `addAdapter` keys off — see
- * [`adapters/registry.ts`](../../../tools/cli/src/adapters/registry.ts)
+ * [`adapters/registry.ts`](../../../packages/core/src/adapters/registry.ts)
  * `detectSlot()`. The portless slot is the only one that accepts
  * arbitrary shapes via the explicit-annotation escape hatch, so it's the
  * pragmatic choice for a plugin that wants to add a brand-new boundary
