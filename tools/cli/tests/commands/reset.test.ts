@@ -10,6 +10,13 @@ import { makeResetCommand } from '../../src/commands/reset';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/docker/naming';
 import { dockerExec } from '../../src/docker/exec';
+import { pgService } from '../../src/services/postgres';
+import type { Service } from '../../src/services/types';
+
+// Default builtins include api+web OwnedServices (LEV-90) which would try
+// to spawn `bun run dev` in missing `apps/api`/`apps/web` directories in
+// this tmpdir fixture. Inject `[pgService]` to scope dev to postgres only.
+const onlyPostgres = (): Service[] => [pgService];
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -60,7 +67,7 @@ describe('levelzero reset (unit)', () => {
 
 describeIfDocker('levelzero reset (integration)', () => {
   it('after dev, reset wipes the volume and brings up an empty DB', async () => {
-    const dev = makeDevCommand(() => registry);
+    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
     const devResult = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
     const cname = devResult.containers[0];
 
@@ -70,7 +77,7 @@ describeIfDocker('levelzero reset (integration)', () => {
     ], { timeoutMs: 10_000 });
     expect(insert.exitCode).toBe(0);
 
-    const reset = makeResetCommand(() => registry);
+    const reset = makeResetCommand(() => registry, { getServices: onlyPostgres });
     const result = (await reset.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
 
     expect(result.key).toBe(devResult.key);
@@ -86,7 +93,7 @@ describeIfDocker('levelzero reset (integration)', () => {
   }, 240_000);
 
   it('reset works when no entry exists (cleans orphan volumes, then brings up)', async () => {
-    const cmd = makeResetCommand(() => registry);
+    const cmd = makeResetCommand(() => registry, { getServices: onlyPostgres });
     const result = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
     expect(result.key).toMatch(/^[0-9a-f]{12}$/);
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);

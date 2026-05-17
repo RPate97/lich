@@ -11,6 +11,12 @@ import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/docker/naming';
 import { isContainerRunning } from '../../src/docker/runner';
 import { CLIError } from '../../src/errors';
+import { pgService } from '../../src/services/postgres';
+import type { Service } from '../../src/services/types';
+
+// Default builtins now include api+web OwnedServices (LEV-90). Inject
+// `[pgService]` so dev only manages postgres in these tmpdir fixtures.
+const onlyPostgres = (): Service[] => [pgService];
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -74,7 +80,7 @@ describeIfDocker('levelzero stacks stop --all (integration)', () => {
   it('tears down stacks from two different worktrees', async () => {
     const dirA = makeProject();
     const dirB = makeProject();
-    const dev = makeDevCommand(() => registry);
+    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
     const a = (await dev.run({ cwd: dirA, format: 'json', args: [], flags: {} })) as any;
     const b = (await dev.run({ cwd: dirB, format: 'json', args: [], flags: {} })) as any;
 

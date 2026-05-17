@@ -76,7 +76,10 @@ describeIfDocker('dev with owned services (DI)', () => {
   }, 180_000);
 
   it('without owned services, behavior is unchanged (returns immediately after docker up)', async () => {
-    const dev = makeDevCommand(() => registry);
+    // Inject `[pgService]` directly: the default builtins now include api+web
+    // OwnedServices (LEV-90) which would try to spawn `bun run dev` in
+    // missing `apps/api`/`apps/web` directories in this tmpdir fixture.
+    const dev = makeDevCommand(() => registry, { getServices: (): Service[] => [pgService] });
     const start = Date.now();
     const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
     const elapsed = Date.now() - start;

@@ -8,8 +8,15 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/docker/naming';
+import { pgService } from '../../src/services/postgres';
 import type { OwnedService, Service } from '../../src/services/types';
 import type { PortlessAdapter } from '../../src/adapters/portless/types';
+
+// Tests inject `[pgService]` explicitly: the default `getBuiltinServices()`
+// now also returns api+web OwnedServices (LEV-90) which would try to spawn
+// `bun run dev` in `apps/api`/`apps/web` directories that don't exist in
+// these tmpdir fixtures.
+const onlyPostgres = (): Service[] => [pgService];
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -37,14 +44,14 @@ afterEach(() => {
 describeIfDocker('levelzero dev', () => {
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-outside-')));
-    const cmd = makeDevCommand(() => registry);
+    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(/not inside a levelzero project/i);
   });
 
   it('first run allocates ports, starts postgres, persists registry, returns env', async () => {
-    const cmd = makeDevCommand(() => registry);
+    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
     const result = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
 
     expect(result.key).toMatch(/^[0-9a-f]{12}$/);
@@ -61,7 +68,7 @@ describeIfDocker('levelzero dev', () => {
   }, 120_000);
 
   it('second run is idempotent (same ports, same container, no errors)', async () => {
-    const cmd = makeDevCommand(() => registry);
+    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
     const first = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
     const second = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
 
