@@ -17,6 +17,8 @@ import { makeLogsCommand } from './commands/logs';
 import { impactCommand } from './commands/impact';
 import { screenshotCommand } from './commands/screenshot';
 import { visualDiffCommand } from './commands/visual';
+import { uiAddCommand } from './commands/ui/add';
+import { uiListCommand } from './commands/ui/list';
 
 export const VERSION = '0.0.0';
 
@@ -41,6 +43,8 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(impactCommand);
   reg.register(screenshotCommand);
   reg.register(visualDiffCommand);
+  reg.register(uiAddCommand);
+  reg.register(uiListCommand);
   return reg;
 }
 
