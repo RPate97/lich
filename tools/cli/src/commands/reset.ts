@@ -1,6 +1,7 @@
 import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
-import { stopDockerService, removeServiceVolume } from '../docker/runner';
+import { buildComposeBundle, writeComposeFile } from '../compose/stack';
+import { makeComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, Service } from '../services/types';
@@ -14,6 +15,9 @@ function dockerServicesOnly(list: Service[]): DockerService[] {
  * `reset` options mirror the subset of `DevOptions` that affects what reset
  * brings back up — primarily `getServices`, so tests can inject a constrained
  * service list (e.g. `[pgService]`) without touching the absent api/web apps.
+ *
+ * `composeRunnerFactory` is shared with `dev`: the same factory is used for
+ * the `down -v` call in reset and the subsequent `up` call inside dev.
  */
 export type ResetOptions = DevOptions;
 
@@ -22,6 +26,7 @@ export function makeResetCommand(
   opts?: ResetOptions,
 ): Command {
   const getServices = opts?.getServices ?? getBuiltinServices;
+  const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
 
   return {
     name: 'reset',
@@ -33,15 +38,21 @@ export function makeResetCommand(
 
       await reg.withLock(async () => {
         const entry = await reg.get(stackCtx.worktreeKey);
-        if (entry) {
-          for (const cname of entry.containers) {
-            await stopDockerService({ serviceName: '', containerName: cname, ports: {} });
-          }
-          await reg.remove(stackCtx.worktreeKey);
-        }
-        for (const svc of services) {
-          await removeServiceVolume(svc, stackCtx);
-        }
+        // With a known entry we can rebuild the full compose file (services
+        // and named volumes) so `down -v` removes both containers and
+        // volumes. Without an entry we don't know the allocator's port
+        // choices, but compose only needs `name:` to identify the project
+        // for teardown — so emit a services-less bundle. Any orphan
+        // containers from a prior run will still be removed by name.
+        const bundle = entry
+          ? buildComposeBundle(stackCtx, services, entry.ports)
+          : buildComposeBundle(stackCtx, [], {});
+        await writeComposeFile(bundle);
+
+        const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);
+        await runner.down({ volumes: true });
+
+        if (entry) await reg.remove(stackCtx.worktreeKey);
       });
 
       const dev = makeDevCommand(getRegistry, opts);

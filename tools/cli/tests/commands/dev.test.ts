@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, realpathSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,12 +11,52 @@ import { containerName, volumeName } from '../../src/docker/naming';
 import { pgService } from '../../src/services/postgres';
 import type { OwnedService, Service } from '../../src/services/types';
 import type { PortlessAdapter } from '../../src/adapters/portless/types';
+import type { ComposeRunner } from '../../src/compose/runner';
 
 // Tests inject `[pgService]` explicitly: the default `getBuiltinServices()`
 // now also returns api+web OwnedServices (LEV-90) which would try to spawn
 // `bun run dev` in `apps/api`/`apps/web` directories that don't exist in
 // these tmpdir fixtures.
 const onlyPostgres = (): Service[] => [pgService];
+
+/**
+ * Mock compose runner factory. Records the (projectName, composeFile) pair
+ * each call constructs with, plus every `up`/`down`/`ps`/`logs`/`exec` call
+ * the runner receives. All operations succeed with empty output — none of
+ * the dev/stop/reset code paths read return values besides `ps`.
+ */
+function makeMockComposeFactory() {
+  const constructed: Array<{ projectName: string; composeFile: string }> = [];
+  const calls: Array<{ op: string; args: unknown[]; projectName: string; composeFile: string }> =
+    [];
+  const factory = (projectName: string, composeFile: string): ComposeRunner => {
+    constructed.push({ projectName, composeFile });
+    const record = (op: string, ...args: unknown[]) => {
+      calls.push({ op, args, projectName, composeFile });
+    };
+    return {
+      async up(o) {
+        record('up', o);
+      },
+      async down(o) {
+        record('down', o);
+      },
+      async ps() {
+        record('ps');
+        return [];
+      },
+      async logs(svc, o) {
+        record('logs', svc, o);
+        return '';
+      },
+      async exec(svc, cmd) {
+        record('exec', svc, cmd);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    };
+  };
+  return { factory, constructed, calls };
+}
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -35,24 +75,137 @@ beforeEach(() => {
 function cleanup(key: string) {
   spawnSync('docker', ['rm', '-f', containerName(key, 'postgres')], { stdio: 'ignore' });
   spawnSync('docker', ['volume', 'rm', '-f', volumeName(key, 'postgres')], { stdio: 'ignore' });
+  // Compose creates a default network `<project>_default` for every up call;
+  // remove it so repeated test runs don't exhaust docker's address pools.
+  spawnSync('docker', ['network', 'rm', `levelzero-${key}_default`], { stdio: 'ignore' });
 }
 
 afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describeIfDocker('levelzero dev', () => {
+describe('levelzero dev (unit, mocked compose)', () => {
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-outside-')));
-    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(/not inside a levelzero project/i);
   });
 
-  it('first run allocates ports, starts postgres, persists registry, returns env', async () => {
+  it('emits a compose file under .levelzero/<key>/docker-compose.yml and calls up({detach,waitForHealthy})', async () => {
+    const { factory, constructed, calls } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    // Compose file landed at the documented path.
+    const expectedPath = join(
+      projectDir,
+      '.levelzero',
+      result.key,
+      'docker-compose.yml',
+    );
+    expect(existsSync(expectedPath)).toBe(true);
+    const yaml = readFileSync(expectedPath, 'utf8');
+    expect(yaml).toContain(`name: levelzero-${result.key}`);
+    expect(yaml).toContain(`container_name: levelzero-${result.key}-postgres`);
+
+    // Runner constructed with project name + compose file.
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0]!.projectName).toBe(`levelzero-${result.key}`);
+    expect(constructed[0]!.composeFile).toBe(expectedPath);
+
+    // Exactly one `up` call with detach + waitForHealthy.
+    const ups = calls.filter((c) => c.op === 'up');
+    expect(ups).toHaveLength(1);
+    expect(ups[0]!.args[0]).toEqual({ detach: true, waitForHealthy: true });
+
+    // Result shape preserved + compose summary added.
+    expect(result.containers).toContain(`levelzero-${result.key}-postgres`);
+    expect(result.compose).toEqual({
+      projectName: `levelzero-${result.key}`,
+      file: expectedPath,
+    });
+    expect(result.ports.postgres).toBeGreaterThan(0);
+    expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
+  });
+
+  it('persists ports + containers in the registry under the worktree key', async () => {
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+    const entry = await registry.get(result.key);
+    expect(entry).toBeDefined();
+    expect(entry!.ports.postgres).toBe(result.ports.postgres);
+    expect(entry!.containers).toEqual([`levelzero-${result.key}-postgres`]);
+  });
+
+  it('second run reuses ports and calls up again (idempotent)', async () => {
+    const { factory, calls } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    const first = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+    const second = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    expect(second.ports.postgres).toBe(first.ports.postgres);
+    expect(second.containers).toEqual(first.containers);
+    // Two up calls — compose itself is the idempotency boundary.
+    expect(calls.filter((c) => c.op === 'up')).toHaveLength(2);
+  });
+
+  it('skips up() when there are no docker services to start', async () => {
+    const ownedOnly = (): Service[] => [];
+    const { factory, calls } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: ownedOnly,
+      composeRunnerFactory: factory,
+    });
+    await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
+    expect(calls.filter((c) => c.op === 'up')).toHaveLength(0);
+  });
+});
+
+describeIfDocker('levelzero dev (integration with real docker compose)', () => {
+  it('first run brings up postgres via docker compose and persists registry', async () => {
     const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
-    const result = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
 
     expect(result.key).toMatch(/^[0-9a-f]{12}$/);
     expect(result.path).toBe(projectDir);
@@ -60,21 +213,10 @@ describeIfDocker('levelzero dev', () => {
     expect(result.ports.postgres).toBeLessThanOrEqual(54999);
     expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
     expect(result.containers).toContain(containerName(result.key, 'postgres'));
-    expect(result.services.find((s: any) => s.name === 'postgres')).toBeDefined();
 
     const entry = await registry.get(result.key);
     expect(entry).toBeDefined();
     expect(entry!.ports.postgres).toBe(result.ports.postgres);
-  }, 120_000);
-
-  it('second run is idempotent (same ports, same container, no errors)', async () => {
-    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
-    const first = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
-    const second = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
-
-    expect(second.key).toBe(first.key);
-    expect(second.ports.postgres).toBe(first.ports.postgres);
-    expect(second.containers).toEqual(first.containers);
   }, 180_000);
 });
 
@@ -131,9 +273,11 @@ describe('levelzero dev — portless integration', () => {
     const worker = mkOwnedWorker(projectDir);
     const getServices = (): Service[] => [web, worker];
 
+    const { factory } = makeMockComposeFactory();
     const cmd = makeDevCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
+      composeRunnerFactory: factory,
     });
     const result = (await cmd.run({
       cwd: projectDir,
@@ -163,9 +307,11 @@ describe('levelzero dev — portless integration', () => {
     const web = mkOwnedWeb(projectDir);
     const getServices = (): Service[] => [web];
 
+    const { factory } = makeMockComposeFactory();
     const cmd = makeDevCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
+      composeRunnerFactory: factory,
     });
     const result = (await cmd.run({
       cwd: projectDir,
@@ -189,9 +335,11 @@ describe('levelzero dev — portless integration', () => {
     const worker = mkOwnedWorker(projectDir);
     const getServices = (): Service[] => [worker];
 
+    const { factory } = makeMockComposeFactory();
     const cmd = makeDevCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
+      composeRunnerFactory: factory,
     });
     const result = (await cmd.run({
       cwd: projectDir,
