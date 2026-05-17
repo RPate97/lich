@@ -25,30 +25,14 @@ export const apiService: OwnedService = {
 };
 
 /**
- * `web` service — Next.js frontend at `apps/web`. Depends on `api` so URLs
- * are registered in dependency order. `cwd` is relative to the project root.
- */
-export const webService: OwnedService = {
-  name: 'web',
-  kind: 'owned',
-  portNames: ['web-http'],
-  cwd: 'apps/web',
-  command: 'bun run dev',
-  dependsOn: ['api'],
-  urlName: 'web',
-  envContributions: (ports) => ({
-    WEB_URL: `http://localhost:${ports['web-http']}`,
-  }),
-};
-
-/**
  * The default service list `dev`/`stop`/`reset` inject when the caller doesn't
  * provide one. Postgres is no longer included here — it ships as a compose
- * contribution from `@levelzero/plugin-postgres` (LEV-148). Consumers that
- * still need the legacy `pgService` `DockerService` (notably the db.* commands
- * that derive `DATABASE_URL` from `pgService.envContributions`) import it
- * directly from `@levelzero/plugin-postgres`.
+ * contribution from `@levelzero/plugin-postgres` (LEV-148). The Next.js `web`
+ * `OwnedService` was also extracted (LEV-154) and now ships from
+ * `@levelzero/plugin-next`; consumers that still need the raw `webService`
+ * shape (e.g. `levelzero test e2e`, which derives `WEB_URL` from its
+ * `envContributions`) import it directly from `@levelzero/plugin-next`.
  */
 export function getBuiltinServices(): Service[] {
-  return [apiService, webService];
+  return [apiService];
 }

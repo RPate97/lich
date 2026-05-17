@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@levelzero/plugin-hono": "workspace:*",
+    "@levelzero/plugin-next": "workspace:*",
     "@levelzero/plugin-portless": "workspace:*",
     "@levelzero/plugin-postgres": "workspace:*",
     "@levelzero/plugin-typed-client": "workspace:*",

@@ -46,6 +46,15 @@ export interface DevOptions {
    * Defaults to empty when omitted (tests not exercising the plugin path).
    */
   getPluginCompose?: () => PluginComposeContributions;
+  /**
+   * Plugin-contributed `OwnedService` entries (post-LEV-154). The dispatcher
+   * fills this from `bootPlugins().ownedServices` so plugins like
+   * `@levelzero/plugin-next` that call `api.addOwnedService` get their
+   * services merged into the dev/stop/reset service set alongside the
+   * built-ins. Defaults to empty when omitted (tests that inject `getServices`
+   * directly typically don't exercise this path).
+   */
+  getPluginOwnedServices?: () => OwnedService[];
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -145,13 +154,22 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
   const getPortlessAdapter = opts?.getPortlessAdapter;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
   const getPluginCompose = opts?.getPluginCompose;
+  const getPluginOwnedServices = opts?.getPluginOwnedServices;
 
   return {
     name: 'dev',
     describe: 'Bring up every service for the current worktree (idempotent)',
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
-      const allServices = getServices();
+      // Built-in services first; plugin-contributed `OwnedService` entries
+      // (post-LEV-154) append onto the same list so the runner treats them
+      // identically. Order is preserved so `dependsOn` chains across the
+      // built-in/plugin boundary still resolve in declaration order (e.g.
+      // built-in `api` precedes plugin-contributed `web`).
+      const allServices: Service[] = [
+        ...getServices(),
+        ...(getPluginOwnedServices?.() ?? []),
+      ];
       const docker = dockerServicesOnly(allServices);
       const owned = ownedServicesOnly(allServices);
       const pluginCompose = getPluginCompose?.() ?? {

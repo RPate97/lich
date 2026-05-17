@@ -8,6 +8,12 @@ describe('getBuiltinServices', () => {
     expect(pg).toBeUndefined();
   });
 
+  it('does not include web (extracted to @levelzero/plugin-next in LEV-154)', () => {
+    const list = getBuiltinServices();
+    const web = list.find((s) => s.name === 'web');
+    expect(web).toBeUndefined();
+  });
+
   it('includes api as an OwnedService that depends on postgres', () => {
     const list = getBuiltinServices();
     const api = list.find((s) => s.name === 'api');
@@ -25,25 +31,8 @@ describe('getBuiltinServices', () => {
     }
   });
 
-  it('includes web as an OwnedService that depends on api', () => {
+  it('returns exactly api (postgres now ships via @levelzero/plugin-postgres, web via @levelzero/plugin-next)', () => {
     const list = getBuiltinServices();
-    const web = list.find((s) => s.name === 'web');
-    expect(web).toBeDefined();
-    expect(web!.kind).toBe('owned');
-    expect(web!.portNames).toEqual(['web-http']);
-    if (web!.kind === 'owned') {
-      expect(web!.cwd).toBe('apps/web');
-      expect(web!.command).toBe('bun run dev');
-      expect(web!.dependsOn).toContain('api');
-      expect(web!.urlName).toBe('web');
-      expect(web!.envContributions({ 'web-http': 3002 }).WEB_URL).toBe(
-        'http://localhost:3002',
-      );
-    }
-  });
-
-  it('returns exactly api + web (postgres now ships via @levelzero/plugin-postgres)', () => {
-    const list = getBuiltinServices();
-    expect(list.map((s) => s.name).sort()).toEqual(['api', 'web']);
+    expect(list.map((s) => s.name).sort()).toEqual(['api']);
   });
 });
