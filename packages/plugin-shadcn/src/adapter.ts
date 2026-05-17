@@ -7,7 +7,7 @@ import type {
   AddComponentOptions,
   AddComponentResult,
   ListComponentsResult,
-} from './types';
+} from '@levelzero/core';
 
 async function shellExec(cmd: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {

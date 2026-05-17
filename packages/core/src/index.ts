@@ -94,3 +94,18 @@ export type {
   ColumnDescription,
   TableRow,
 } from './adapters/orm/types';
+export type {
+  UIAdapter,
+  UIContext,
+  AddComponentOptions,
+  AddComponentResult,
+  ListComponentsResult,
+} from './adapters/ui/types';
+
+/**
+ * Runtime helper re-exported for plugins that contribute commands needing the
+ * project root. CLIError + Registry + worktree helpers are already exported
+ * above (added for LEV-152); resolveStackContext joins them here for
+ * `@levelzero/plugin-shadcn` (LEV-153) and other command-extracting plugins.
+ */
+export { resolveStackContext } from './services/context';

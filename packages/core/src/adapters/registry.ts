@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { shadcnAdapter } from './ui/shadcn';
 import { playwrightAdapter } from './browser/playwright';
 
 /**
@@ -19,6 +18,7 @@ import { playwrightAdapter } from './browser/playwright';
  *   - `orm`          → `@levelzero/plugin-prisma`
  *   - `test-runner`  → `@levelzero/plugin-vitest` (unit/integration),
  *                      `@levelzero/plugin-playwright` (e2e)
+ *   - `ui`           → `@levelzero/plugin-shadcn`
  * Their slot identifiers stay declared here so the types remain stable across
  * the extractions.
  */
@@ -248,22 +248,19 @@ function isAdapterSlot(value: string): value is AdapterSlot {
  * plugins (`portless` → `@levelzero/plugin-portless`; `auth` →
  * `@levelzero/plugin-better-auth`; `backend` → `@levelzero/plugin-hono`;
  * `frontend` → `@levelzero/plugin-typed-client`; `orm` →
- * `@levelzero/plugin-prisma`; `test-runner` →
- * `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`) are absent
- * from the returned registry; `getActive(slot)` throws "no active impl for
- * slot X" until the plugin is loaded by `bootPlugins`. The `test-runner` slot
- * is intentionally left without an active impl by default: the `test` command
- * picks playwright vs vitest by subcommand name rather than going through
- * `getActive('test-runner')`.
+ * `@levelzero/plugin-prisma`; `ui` → `@levelzero/plugin-shadcn`;
+ * `test-runner` → `@levelzero/plugin-vitest` and `@levelzero/plugin-playwright`)
+ * are absent from the returned registry; `getActive(slot)` throws "no active
+ * impl for slot X" until the plugin is loaded by `bootPlugins`. The
+ * `test-runner` slot is intentionally left without an active impl by default:
+ * the `test` command picks playwright vs vitest by subcommand name rather than
+ * going through `getActive('test-runner')`.
  *
  * Returns a fresh instance each call so tests and CLI invocations don't share
  * mutable state.
  */
 export function getBuiltinAdapters(): AdapterRegistry {
   const registry = new AdapterRegistry();
-
-  registry.register({ slot: 'ui', name: 'shadcn', impl: shadcnAdapter });
-  registry.setActive('ui', 'shadcn');
 
   registry.register({ slot: 'browser', name: 'playwright', impl: playwrightAdapter });
   registry.setActive('browser', 'playwright');

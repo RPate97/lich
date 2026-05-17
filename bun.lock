@@ -22,6 +22,7 @@
         "@levelzero/plugin-portless": "workspace:*",
         "@levelzero/plugin-postgres": "workspace:*",
         "@levelzero/plugin-prisma": "workspace:*",
+        "@levelzero/plugin-shadcn": "workspace:*",
         "@levelzero/plugin-typed-client": "workspace:*",
         "@levelzero/plugin-vitest": "workspace:*",
         "@prisma/client": "^5.18.0",
@@ -115,6 +116,19 @@
         "@prisma/client": "^5.18.0",
         "@types/node": "^20.12.0",
         "@types/pg": "^8.11.0",
+        "bun-types": "^1.2.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+      },
+    },
+    "packages/plugin-shadcn": {
+      "name": "@levelzero/plugin-shadcn",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^20.12.0",
         "bun-types": "^1.2.0",
         "typescript": "^5.4.0",
         "vitest": "^1.6.0",
@@ -289,6 +303,8 @@
     "@levelzero/plugin-postgres": ["@levelzero/plugin-postgres@workspace:packages/plugin-postgres"],
 
     "@levelzero/plugin-prisma": ["@levelzero/plugin-prisma@workspace:packages/plugin-prisma"],
+
+    "@levelzero/plugin-shadcn": ["@levelzero/plugin-shadcn@workspace:packages/plugin-shadcn"],
 
     "@levelzero/plugin-typed-client": ["@levelzero/plugin-typed-client@workspace:packages/plugin-typed-client"],
 

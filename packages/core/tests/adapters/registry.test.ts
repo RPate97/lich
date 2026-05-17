@@ -152,13 +152,6 @@ describe('getBuiltinAdapters', () => {
     expect(r).toBeInstanceOf(AdapterRegistry);
   });
 
-  it('registers shadcn under the ui slot and marks it active', async () => {
-    const r = getBuiltinAdapters();
-    const { shadcnAdapter } = await import('../../src/adapters/ui/shadcn');
-    expect(r.get('ui', 'shadcn')).toBe(shadcnAdapter);
-    expect(r.getActive('ui')).toBe(shadcnAdapter);
-  });
-
   it('registers playwright under the browser slot and marks it active', async () => {
     const r = getBuiltinAdapters();
     const { playwrightAdapter } = await import('../../src/adapters/browser/playwright');
@@ -169,17 +162,18 @@ describe('getBuiltinAdapters', () => {
   it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls in core today: ui, browser.
+    // Slots with concrete impls in core today: browser.
     // Extracted to plugins: `auth` (@levelzero/plugin-better-auth),
     // `orm` (@levelzero/plugin-prisma),
+    // `ui` (@levelzero/plugin-shadcn),
     // `backend` (@levelzero/plugin-hono),
     // `frontend` (@levelzero/plugin-typed-client),
     // `portless` (@levelzero/plugin-portless),
     // `test-runner` (@levelzero/plugin-vitest, @levelzero/plugin-playwright).
-    expect(slots.has('ui')).toBe(true);
     expect(slots.has('browser')).toBe(true);
     expect(slots.has('auth')).toBe(false);
     expect(slots.has('orm')).toBe(false);
+    expect(slots.has('ui')).toBe(false);
     expect(slots.has('backend')).toBe(false);
     expect(slots.has('frontend')).toBe(false);
     expect(slots.has('portless')).toBe(false);
@@ -194,6 +188,7 @@ describe('getBuiltinAdapters', () => {
     expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
     expect(() => r.getActive('orm')).toThrowError(/no active impl for slot "orm"/);
     expect(() => r.getActive('auth')).toThrowError(/no active impl for slot "auth"/);
+    expect(() => r.getActive('ui')).toThrowError(/no active impl for slot "ui"/);
   });
 
   it('listBySlot returns empty for slots populated only by extracted plugins', () => {
@@ -204,6 +199,7 @@ describe('getBuiltinAdapters', () => {
     expect(r.listBySlot('backend')).toEqual([]);
     expect(r.listBySlot('orm')).toEqual([]);
     expect(r.listBySlot('auth')).toEqual([]);
+    expect(r.listBySlot('ui')).toEqual([]);
   });
 
   it('returns a fresh registry each call (mutating one does not affect another)', () => {

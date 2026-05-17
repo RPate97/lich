@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { shadcnAdapter } from '../../../src/adapters/ui/shadcn';
-import type { UIAdapter } from '../../../src/adapters/ui/types';
+import { shadcnAdapter } from '../src/adapter';
+import type { UIAdapter } from '@levelzero/core';
 
 describe('shadcn UIAdapter', () => {
   it('exposes the UIAdapter interface', () => {

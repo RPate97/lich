@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { uiAddCommand } from '../../../src/commands/ui/add';
-import { CLIError } from '../../../src/errors';
+import { uiAddCommand } from '../../src/commands/add';
+import { CLIError } from '@levelzero/core';
 
 let projectDir: string;
 beforeEach(() => {
