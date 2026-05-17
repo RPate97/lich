@@ -7,6 +7,7 @@ import {
   buildComposeBundle,
   writeComposeFile,
   type ComposeBundle,
+  type PluginComposeContributions,
 } from '../compose/stack';
 import { makeComposeRunner, type ComposeRunner } from '../compose/runner';
 import type { Registry, StackEntry } from '../registry';
@@ -37,6 +38,14 @@ export interface DevOptions {
    * `up`/`down`/`ps` calls and never touches docker.
    */
   composeRunnerFactory?: (projectName: string, composeFile: string) => ComposeRunner;
+  /**
+   * Plugin-contributed compose services/volumes/networks (post-LEV-148). The
+   * dispatcher fills this from `bootPlugins().compose` so plugins like
+   * `@levelzero/plugin-postgres` that call `api.addComposeService` land in the
+   * emitted compose file alongside any legacy `DockerService` entries.
+   * Defaults to empty when omitted (tests not exercising the plugin path).
+   */
+  getPluginCompose?: () => PluginComposeContributions;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -51,6 +60,31 @@ function collectPortNames(services: Service[]): string[] {
   const out: string[] = [];
   for (const s of services) for (const p of s.portNames) out.push(p);
   return out;
+}
+
+/**
+ * Scan a plugin's compose-service `ports` entries for `${PORT_<name>}`
+ * placeholders and return the unique set of names referenced. The allocator
+ * is then asked to assign a host port to each so the emitter has a value to
+ * substitute when it writes the compose file.
+ *
+ * Mirrors the placeholder regex used in `compose/emitter.ts` — kept inline
+ * here to avoid a cross-module export of a one-line regex.
+ */
+function collectPluginPortNames(
+  contributions: PluginComposeContributions,
+): string[] {
+  const placeholder = /\$\{PORT_([A-Za-z0-9_-]+)\}/g;
+  const seen = new Set<string>();
+  for (const def of Object.values(contributions.services)) {
+    for (const p of def.ports ?? []) {
+      for (const match of p.matchAll(placeholder)) {
+        const name = match[1];
+        if (name) seen.add(name);
+      }
+    }
+  }
+  return [...seen];
 }
 
 function deriveEnv(services: Service[], ports: PortMap): Record<string, string> {
@@ -110,6 +144,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
   const getServices = opts?.getServices ?? getBuiltinServices;
   const getPortlessAdapter = opts?.getPortlessAdapter;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
+  const getPluginCompose = opts?.getPluginCompose;
 
   return {
     name: 'dev',
@@ -119,6 +154,11 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       const allServices = getServices();
       const docker = dockerServicesOnly(allServices);
       const owned = ownedServicesOnly(allServices);
+      const pluginCompose = getPluginCompose?.() ?? {
+        services: {},
+        volumes: {},
+        networks: {},
+      };
       const reg = getRegistry();
 
       // Resolve ports + emit compose file + bring up containers. All of this
@@ -127,7 +167,13 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       const { entry, bundle } = await reg.withLock(async () => {
         const all = await reg.list();
         const reserved = reservedPortsFromOtherStacks(stackCtx.worktreeKey, all);
-        const portNames = collectPortNames(allServices);
+        // Merge port names from Service[] (legacy) with `${PORT_<name>}`
+        // placeholders scanned out of plugin compose contributions so both
+        // sources get host ports allocated in the same pool.
+        const portNames = [
+          ...collectPortNames(allServices),
+          ...collectPluginPortNames(pluginCompose),
+        ];
 
         const existing = await reg.get(stackCtx.worktreeKey);
         // Re-use previously allocated ports so the compose file is stable across
@@ -152,7 +198,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           ports = await allocatePorts(portNames, { reservedPorts: reserved });
         }
 
-        const bundle = buildComposeBundle(stackCtx, docker, ports);
+        const bundle = buildComposeBundle(stackCtx, docker, ports, pluginCompose);
         await writeComposeFile(bundle);
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);

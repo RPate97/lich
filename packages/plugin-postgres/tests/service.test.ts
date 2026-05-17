@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '../src/service';
 
-describe('postgres service definition', () => {
+describe('pgService (legacy DockerService re-export)', () => {
   it('is kind=docker with name "postgres"', () => {
     expect(pgService.kind).toBe('docker');
     expect(pgService.name).toBe('postgres');
@@ -26,7 +26,9 @@ describe('postgres service definition', () => {
 
   it('contributes DATABASE_URL with the allocated host port', () => {
     const env = pgService.envContributions({ postgres: 54123 });
-    expect(env.DATABASE_URL).toBe('postgres://levelzero:levelzero@localhost:54123/levelzero');
+    expect(env.DATABASE_URL).toBe(
+      'postgres://levelzero:levelzero@localhost:54123/levelzero',
+    );
   });
 
   it('passes POSTGRES_USER/PASSWORD/DB into the container env', () => {

@@ -8,7 +8,7 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/compose/naming';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { OwnedService, Service } from '../../src/services/types';
 import type { PortlessAdapter } from '@levelzero/plugin-portless';
 import type { ComposeRunner } from '../../src/compose/runner';

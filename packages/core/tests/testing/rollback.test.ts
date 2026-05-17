@@ -11,7 +11,7 @@ import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/compose/naming';
 import { prismaAdapter } from '../../src/adapters/orm/prisma';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import { withRollback, RollbackSignal } from '../../src/testing/rollback';
 

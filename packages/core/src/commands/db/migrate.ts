@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CLIError } from '../../errors';
 import { Registry } from '../../registry';
-import { pgService } from '../../services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import { resolveStackContext } from '../../services/context';
 import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { ORMAdapter } from '../../adapters/orm/types';

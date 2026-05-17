@@ -120,6 +120,19 @@ export async function buildDispatchRegistry(
     cli.register(cmd);
   }
 
+  // Re-register dev/stop/reset with the plugin compose contributions piped in
+  // (post-LEV-148). Without this, services declared via `addComposeService`
+  // (e.g. `postgres` from `@levelzero/plugin-postgres`) would not reach the
+  // emitted compose file — `bootPlugins` collects them but the legacy inline
+  // command registrations only know about `Service[]`-based contributions.
+  // CommandRegistry.register is last-write-wins, so re-registering here
+  // overrides the seed entries from `buildCommands` for these three commands.
+  const getReg = () => new Registry(registryPath);
+  const getPluginCompose = () => boot.compose;
+  cli.register(makeDevCommand(getReg, { getPluginCompose }));
+  cli.register(makeStopCommand(getReg, { getPluginCompose }));
+  cli.register(makeResetCommand(getReg, { getPluginCompose }));
+
   // Merge plugin-contributed adapters into the built-in registry so
   // `adapter list` reflects the full registered surface. Built-ins are
   // registered first; plugin entries can override a (slot, name) pair via

@@ -1,6 +1,10 @@
 import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
-import { buildComposeBundle, writeComposeFile } from '../compose/stack';
+import {
+  buildComposeBundle,
+  writeComposeFile,
+  type PluginComposeContributions,
+} from '../compose/stack';
 import { makeComposeRunner, type ComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
@@ -14,6 +18,13 @@ export interface StopOptions {
    * Tests inject a stub that records the `down` call and never touches docker.
    */
   composeRunnerFactory?: (projectName: string, composeFile: string) => ComposeRunner;
+  /**
+   * Plugin-contributed compose services/volumes/networks (post-LEV-148). The
+   * dispatcher fills this from `bootPlugins().compose` so the re-emitted
+   * compose file teardown finds the same shape `dev` brought up. Defaults to
+   * empty when omitted.
+   */
+  getPluginCompose?: () => PluginComposeContributions;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -26,6 +37,7 @@ export function makeStopCommand(
 ): Command {
   const getServices = opts?.getServices ?? getBuiltinServices;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
+  const getPluginCompose = opts?.getPluginCompose;
 
   return {
     name: 'stop',
@@ -45,7 +57,12 @@ export function makeStopCommand(
         // the project name to match for container teardown, but we re-emit
         // defensively in case a stale file was edited or deleted.
         const docker = dockerServicesOnly(getServices());
-        const bundle = buildComposeBundle(stackCtx, docker, entry.ports);
+        const pluginCompose = getPluginCompose?.() ?? {
+          services: {},
+          volumes: {},
+          networks: {},
+        };
+        const bundle = buildComposeBundle(stackCtx, docker, entry.ports, pluginCompose);
         await writeComposeFile(bundle);
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);

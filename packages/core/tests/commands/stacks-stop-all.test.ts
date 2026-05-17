@@ -10,7 +10,7 @@ import { makeStacksStopAllCommand } from '../../src/commands/stacks/stop-all';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/compose/naming';
 import { CLIError } from '../../src/errors';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
 
 // Default builtins now include api+web OwnedServices (LEV-90). Inject
