@@ -10,6 +10,12 @@ import { makeStopCommand } from '../../src/commands/stop';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/docker/naming';
 import { isContainerRunning } from '../../src/docker/runner';
+import { pgService } from '../../src/services/postgres';
+import type { Service } from '../../src/services/types';
+
+// Default builtins now include api+web OwnedServices (LEV-90). Inject
+// `[pgService]` so dev only manages postgres in this tmpdir fixture.
+const onlyPostgres = (): Service[] => [pgService];
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -66,7 +72,7 @@ describe('levelzero stop (unit)', () => {
 
 describeIfDocker('levelzero stop (integration with dev)', () => {
   it('after dev, stop removes containers, clears registry entry, leaves volume intact', async () => {
-    const dev = makeDevCommand(() => registry);
+    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
     const devResult = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
 
     const stop = makeStopCommand(() => registry);

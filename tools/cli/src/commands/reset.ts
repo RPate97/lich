@@ -4,19 +4,31 @@ import { stopDockerService, removeServiceVolume } from '../docker/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, Service } from '../services/types';
-import { makeDevCommand } from './dev';
+import { makeDevCommand, type DevOptions } from './dev';
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
   return list.filter((s): s is DockerService => s.kind === 'docker');
 }
 
-export function makeResetCommand(getRegistry: () => Registry): Command {
+/**
+ * `reset` options mirror the subset of `DevOptions` that affects what reset
+ * brings back up — primarily `getServices`, so tests can inject a constrained
+ * service list (e.g. `[pgService]`) without touching the absent api/web apps.
+ */
+export type ResetOptions = DevOptions;
+
+export function makeResetCommand(
+  getRegistry: () => Registry,
+  opts?: ResetOptions,
+): Command {
+  const getServices = opts?.getServices ?? getBuiltinServices;
+
   return {
     name: 'reset',
     describe: 'Nuke the current stack’s volumes and bring it back up empty',
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
-      const services = dockerServicesOnly(getBuiltinServices());
+      const services = dockerServicesOnly(getServices());
       const reg = getRegistry();
 
       await reg.withLock(async () => {
@@ -32,7 +44,7 @@ export function makeResetCommand(getRegistry: () => Registry): Command {
         }
       });
 
-      const dev = makeDevCommand(getRegistry);
+      const dev = makeDevCommand(getRegistry, opts);
       return await dev.run(ctx);
     },
   };

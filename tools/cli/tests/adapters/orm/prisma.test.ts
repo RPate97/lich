@@ -10,6 +10,13 @@ import { computeWorktreeKey } from '../../../src/worktree';
 import { containerName, volumeName } from '../../../src/docker/naming';
 import { makePrismaFixture } from '../../_helpers/prisma-fixture';
 import { prismaAdapter } from '../../../src/adapters/orm/prisma';
+import { pgService } from '../../../src/services/postgres';
+import type { Service } from '../../../src/services/types';
+
+// Default builtins now include api+web OwnedServices (LEV-90). Inject
+// `[pgService]` so dev only manages postgres in this tmpdir fixture (this
+// test only needs DATABASE_URL).
+const onlyPostgres = (): Service[] => [pgService];
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -36,7 +43,7 @@ beforeEach(async () => {
     logDir: '',
     createdAt: new Date().toISOString(),
   });
-  const dev = makeDevCommand(() => registry);
+  const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
   const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
   databaseUrl = result.env.DATABASE_URL;
   fixtureRoot = makePrismaFixture();

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,6 +19,18 @@ beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-home-')));
   writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // The default builtins (LEV-90) now include `api` and `web` OwnedServices
+  // that spawn `bun run dev` in `apps/api`/`apps/web`. Provide trivial
+  // package.json stubs whose `dev` script exits 0 so concurrently doesn't
+  // crash the run on missing directories.
+  for (const app of ['api', 'web']) {
+    const dir = join(projectDir, 'apps', app);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: `e2e-${app}`, scripts: { dev: 'true' } }),
+    );
+  }
 });
 
 afterEach(() => {
