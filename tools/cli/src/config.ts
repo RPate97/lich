@@ -1,4 +1,21 @@
 import type { AdapterSlot } from './adapters/registry';
+import type { Plugin } from './plugins/types';
+
+/**
+ * Entry in the `plugins` array of `levelzero.config.ts`. May be:
+ *  - a fully-constructed `Plugin` object (`import postgres from '...' ; { plugins: [postgres] }`)
+ *  - a string specifier (npm package name or relative path) the loader will
+ *    dynamic-import at boot
+ *  - a thenable (typically `import('@levelzero/plugin-x')`) resolving to a
+ *    `Plugin` or a CJS-style `{ default: Plugin }` module namespace
+ *
+ * The parser only validates the *shape* of each entry — it does not resolve
+ * Promises or import strings. That work happens later in the plugin loader.
+ */
+export type PluginEntry =
+  | Plugin
+  | string
+  | Promise<Plugin | { default: Plugin }>;
 
 /**
  * Set of valid adapter slot names. Kept here (rather than imported as a value
@@ -46,6 +63,13 @@ export interface LevelzeroConfig {
    * `getBuiltinAdapters()`. See `AdaptersConfig` for the shape.
    */
   adapters?: AdaptersConfig;
+  /**
+   * Optional plugin list. Each entry is a `Plugin` object, a string specifier
+   * (package name or relative path) the loader will dynamic-import, or a
+   * Promise resolving to a Plugin (e.g. `import('@levelzero/plugin-postgres')`).
+   * See `PluginEntry` for the full shape.
+   */
+  plugins?: PluginEntry[];
   // Other adapter slots and services land in later plans. Keep this surface
   // minimal in plan 01 — every later plan extends it via module declaration
   // merging or interface extension.
@@ -65,7 +89,45 @@ export async function loadConfig(configPath: string): Promise<LevelzeroConfig> {
   if (cfg.adapters !== undefined) {
     validateAdapters(cfg.adapters, configPath);
   }
+  if (cfg.plugins !== undefined) {
+    validatePlugins(cfg.plugins, configPath);
+  }
   return cfg;
+}
+
+function validatePlugins(plugins: unknown, configPath: string): asserts plugins is PluginEntry[] {
+  if (!Array.isArray(plugins)) {
+    throw new Error(
+      `levelzero config at ${configPath}: \`plugins\` must be an array (got ${describe(plugins)})`,
+    );
+  }
+  for (let i = 0; i < plugins.length; i++) {
+    const entry: unknown = plugins[i];
+    if (typeof entry === 'string') continue;
+    if (isThenable(entry)) continue;
+    if (isPluginObject(entry)) continue;
+    throw new Error(
+      `levelzero config at ${configPath}: \`plugins[${i}]\` must be a string specifier, a Plugin object ({ name, version, register }), or a Promise resolving to one (got ${describe(entry)})`,
+    );
+  }
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function isPluginObject(value: unknown): value is Plugin {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as { name?: unknown; version?: unknown; register?: unknown };
+  return (
+    typeof candidate.name === 'string' &&
+    typeof candidate.version === 'string' &&
+    typeof candidate.register === 'function'
+  );
 }
 
 function validateAdapters(adapters: unknown, configPath: string): asserts adapters is AdaptersConfig {
