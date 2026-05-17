@@ -2,7 +2,9 @@
   "name": "@levelzero/cli",
   "version": "0.0.0",
   "type": "module",
-  "bin": { "levelzero": "./src/bin.ts" },
+  "bin": {
+    "levelzero": "./src/bin.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -12,5 +14,8 @@
     "bun-types": "^1.2.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "concurrently": "^9.0.0"
   }
 }
