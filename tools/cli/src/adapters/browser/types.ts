@@ -6,6 +6,8 @@ export interface ScreenshotOptions {
   waitFor?: 'load' | 'domcontentloaded' | 'networkidle';
   /** Hard timeout in ms. Default 30s. */
   timeoutMs?: number;
+  /** Capture the full scrollable page height instead of the viewport. Default false. */
+  fullPage?: boolean;
 }
 
 export interface DiffOptions {
