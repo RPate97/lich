@@ -1,6 +1,10 @@
 import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
-import { buildComposeBundle, writeComposeFile } from '../compose/stack';
+import {
+  buildComposeBundle,
+  writeComposeFile,
+  type PluginComposeContributions,
+} from '../compose/stack';
 import { makeComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
@@ -27,6 +31,7 @@ export function makeResetCommand(
 ): Command {
   const getServices = opts?.getServices ?? getBuiltinServices;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
+  const getPluginCompose = opts?.getPluginCompose;
 
   return {
     name: 'reset',
@@ -34,6 +39,11 @@ export function makeResetCommand(
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
       const services = dockerServicesOnly(getServices());
+      const pluginCompose: PluginComposeContributions = getPluginCompose?.() ?? {
+        services: {},
+        volumes: {},
+        networks: {},
+      };
       const reg = getRegistry();
 
       await reg.withLock(async () => {
@@ -45,8 +55,8 @@ export function makeResetCommand(
         // for teardown — so emit a services-less bundle. Any orphan
         // containers from a prior run will still be removed by name.
         const bundle = entry
-          ? buildComposeBundle(stackCtx, services, entry.ports)
-          : buildComposeBundle(stackCtx, [], {});
+          ? buildComposeBundle(stackCtx, services, entry.ports, pluginCompose)
+          : buildComposeBundle(stackCtx, [], {}, pluginCompose);
         await writeComposeFile(bundle);
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);

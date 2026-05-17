@@ -26,6 +26,30 @@ export interface ComposeBundle {
 }
 
 /**
+ * Compose contributions sourced from plugins (post-LEV-148). The dispatcher
+ * harvests these from `bootPlugins().compose` and forwards them into
+ * `buildComposeBundle` alongside the legacy `DockerService[]` list so the
+ * emitter writes a single unified compose file.
+ *
+ * Plugin contributions are merged **after** the legacy `dockerServiceToCompose`
+ * outputs, so a plugin that contributes a same-named service overrides the
+ * legacy entry — mirroring `PluginAPI.addComposeService`'s last-write-wins
+ * semantics. Container names from plugin contributions are appended to
+ * `bundle.containerNames` when present so `entry.containers` carries them too.
+ */
+export interface PluginComposeContributions {
+  services: Record<string, ComposeServiceDef>;
+  volumes: Record<string, ComposeVolumeDef>;
+  networks: Record<string, ComposeNetworkDef>;
+}
+
+const EMPTY_PLUGIN_CONTRIBUTIONS: PluginComposeContributions = {
+  services: {},
+  volumes: {},
+  networks: {},
+};
+
+/**
  * Build the compose bundle for the current stack: project name, on-disk file
  * path (under `.levelzero/<key>/`), container names, and the YAML text the
  * file should contain. **Pure** — no I/O. Use {@link writeComposeFile} to
@@ -34,11 +58,16 @@ export interface ComposeBundle {
  * The split lets `stop`/`reset` reconstruct the same project name + file path
  * without re-running every plugin's contribution logic if it later becomes
  * expensive. For now it's just a small convenience for testing.
+ *
+ * `pluginContributions` defaults to empty so callers that haven't been wired
+ * through the plugin system (e.g. tests that drive the bundle directly with a
+ * `DockerService[]`) keep working unchanged.
  */
 export function buildComposeBundle(
   ctx: StackContext,
   dockerServices: DockerService[],
   allocatedPorts: Record<string, number>,
+  pluginContributions: PluginComposeContributions = EMPTY_PLUGIN_CONTRIBUTIONS,
 ): ComposeBundle {
   const services: Record<string, ComposeServiceDef> = {};
   const volumes: Record<string, ComposeVolumeDef> = {};
@@ -54,6 +83,19 @@ export function buildComposeBundle(
     if (contrib.serviceDef.container_name) {
       containerNames.push(contrib.serviceDef.container_name);
     }
+  }
+
+  // Merge plugin contributions on top. Same-named services/volumes/networks
+  // win over the legacy DockerService output.
+  for (const [name, def] of Object.entries(pluginContributions.services)) {
+    services[name] = def;
+    if (def.container_name) containerNames.push(def.container_name);
+  }
+  for (const [name, def] of Object.entries(pluginContributions.volumes)) {
+    volumes[name] = def;
+  }
+  for (const [name, def] of Object.entries(pluginContributions.networks)) {
+    networks[name] = def;
   }
 
   const projectName = composeProjectName(ctx.worktreeKey);

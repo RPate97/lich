@@ -2,11 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { getBuiltinServices } from '../../src/services/builtins';
 
 describe('getBuiltinServices', () => {
-  it('includes postgres as a DockerService', () => {
+  it('does not include postgres (extracted to @levelzero/plugin-postgres in LEV-148)', () => {
     const list = getBuiltinServices();
     const pg = list.find((s) => s.name === 'postgres');
-    expect(pg).toBeDefined();
-    expect(pg!.kind).toBe('docker');
+    expect(pg).toBeUndefined();
   });
 
   it('includes api as an OwnedService that depends on postgres', () => {
@@ -43,8 +42,8 @@ describe('getBuiltinServices', () => {
     }
   });
 
-  it('returns exactly postgres + api + web', () => {
+  it('returns exactly api + web (postgres now ships via @levelzero/plugin-postgres)', () => {
     const list = getBuiltinServices();
-    expect(list.map((s) => s.name).sort()).toEqual(['api', 'postgres', 'web']);
+    expect(list.map((s) => s.name).sort()).toEqual(['api', 'web']);
   });
 });

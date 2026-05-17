@@ -9,7 +9,7 @@ import { makeDevCommand } from '../../src/commands/dev';
 import { makeStopCommand } from '../../src/commands/stop';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, volumeName } from '../../src/compose/naming';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
 

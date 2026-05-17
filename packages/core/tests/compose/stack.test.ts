@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { buildComposeBundle, writeComposeFile } from '../../src/compose/stack';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { StackContext } from '../../src/services/types';
 
 describe('buildComposeBundle', () => {
@@ -49,6 +49,57 @@ describe('buildComposeBundle', () => {
     };
     expect(parsed.name).toBe('levelzero-abcdef012345');
     expect(parsed.services).toEqual({});
+  });
+
+  it('merges plugin compose contributions on top of legacy DockerService output', () => {
+    const b = buildComposeBundle(
+      ctx,
+      [],
+      { redis: 54200 },
+      {
+        services: {
+          redis: {
+            image: 'redis:7-alpine',
+            ports: ['${PORT_redis}:6379'],
+          },
+        },
+        volumes: { rediscache: {} },
+        networks: {},
+      },
+    );
+
+    expect(Object.keys(b.services)).toEqual(['redis']);
+    expect(b.services.redis!.image).toBe('redis:7-alpine');
+    const parsed = parseYaml(b.yaml) as {
+      services: Record<string, { ports?: string[] }>;
+      volumes: Record<string, unknown>;
+    };
+    expect(parsed.services.redis!.ports).toEqual(['54200:6379']);
+    expect(parsed.volumes.rediscache).toEqual({});
+  });
+
+  it('plugin compose service overrides a same-named legacy DockerService entry', () => {
+    const b = buildComposeBundle(
+      ctx,
+      [pgService],
+      { postgres: 54123 },
+      {
+        services: {
+          postgres: {
+            image: 'postgres:16-alpine',
+            ports: ['${PORT_postgres}:5432'],
+            environment: { POSTGRES_USER: 'override' },
+          },
+        },
+        volumes: {},
+        networks: {},
+      },
+    );
+
+    expect(b.services.postgres!.environment).toEqual({ POSTGRES_USER: 'override' });
+    // The plugin entry has no `container_name`, so containerNames only carries
+    // the legacy DockerService's pinned name from the first pass.
+    expect(b.containerNames).toEqual(['levelzero-abcdef012345-postgres']);
   });
 });
 

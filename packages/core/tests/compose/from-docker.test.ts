@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { dockerServiceToCompose } from '../../src/compose/from-docker';
-import { pgService } from '../../src/services/postgres';
+import { pgService } from '@levelzero/plugin-postgres';
 import type { DockerService, StackContext } from '../../src/services/types';
 
 const ctx: StackContext = {

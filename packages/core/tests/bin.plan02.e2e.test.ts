@@ -18,7 +18,14 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // Postgres is no longer a built-in (LEV-148) — it ships as a compose
+  // contribution from `@levelzero/plugin-postgres`. Load it here so the
+  // generated compose file still contains the postgres service and the
+  // assertions on `result.ports.postgres` / `result.containers` keep holding.
+  writeFileSync(
+    join(projectDir, 'levelzero.config.ts'),
+    `import postgres from '@levelzero/plugin-postgres';\nexport default { plugins: [postgres] };\n`,
+  );
   // The default builtins (LEV-90) now include `api` and `web` OwnedServices
   // that spawn `bun run dev` in `apps/api`/`apps/web`. Provide trivial
   // package.json stubs whose `dev` script exits 0 so concurrently doesn't
