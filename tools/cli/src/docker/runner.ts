@@ -68,16 +68,24 @@ async function waitHealthy(
   timeoutMs: number,
 ): Promise<void> {
   if (!svc.healthCommand) return;
+  const REQUIRED_CONSECUTIVE = 3;
+  const POLL_INTERVAL_MS = 500;
   const deadline = Date.now() + timeoutMs;
+  let consecutive = 0;
   while (true) {
     const r = await dockerExec(['exec', cName, ...svc.healthCommand], { timeoutMs: 5_000 });
-    if (r.exitCode === 0) return;
+    if (r.exitCode === 0) {
+      consecutive++;
+      if (consecutive >= REQUIRED_CONSECUTIVE) return;
+    } else {
+      consecutive = 0;
+    }
     if (Date.now() >= deadline) {
       throw new Error(
         `service ${svc.name} did not become healthy within ${timeoutMs}ms (last stderr: ${r.stderr.trim()})`,
       );
     }
-    await new Promise((res) => setTimeout(res, 500));
+    await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS));
   }
 }
 
