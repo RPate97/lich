@@ -112,8 +112,12 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(byKey.get('portless:portless')!.active).toBe(false);
     expect(byKey.get('portless:noop')).toBeDefined();
     expect(byKey.get('portless:noop')!.active).toBe(true);
-    // Built-in slot remains intact — the plugin doesn't touch `orm`.
-    expect(byKey.get('orm:prisma')?.active).toBe(true);
+    // The portless plugin doesn't touch the orm slot, and post-LEV-149
+    // prisma is contributed by `@levelzero/plugin-prisma` rather than
+    // builtins — so loading only the portless plugin leaves orm absent.
+    expect(byKey.has('orm:prisma')).toBe(false);
+    // Built-in slots not touched by the plugin remain intact.
+    expect(byKey.get('auth:better-auth')?.active).toBe(true);
   });
 
   it('inline commands remain available alongside plugin commands (transitional coexistence)', () => {

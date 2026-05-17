@@ -12,7 +12,7 @@ import type {
   TableDescription,
   ColumnDescription,
   TableRow,
-} from './types';
+} from '@levelzero/core';
 
 /**
  * Resolve the local prisma CLI entry point. We resolve via require so the same

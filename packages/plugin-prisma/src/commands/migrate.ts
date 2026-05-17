@@ -1,28 +1,29 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '../../errors';
-import { Registry } from '../../registry';
+import { CLIError } from '@levelzero/core/errors';
+import { Registry } from '@levelzero/core/registry';
 import { pgService } from '@levelzero/plugin-postgres';
-import { resolveStackContext } from '../../services/context';
-import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
-import type { ORMAdapter } from '../../adapters/orm/types';
-import type { Command } from '../types';
+import { resolveStackContext } from '@levelzero/core/services/context';
+import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
+import type { Command, ORMAdapter } from '@levelzero/core';
+import { prismaAdapter } from '../adapter';
 
 export interface DbMigrateOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
   /**
-   * ORM adapter. When omitted, the command resolves the active impl from the
-   * AdapterRegistry returned by `getAdapterRegistry` (default:
-   * `getBuiltinAdapters()`), so `levelzero adapter swap orm ...` takes effect
-   * without changing this file. Tests pass an explicit stub to keep
-   * behavior independent of the global registry state.
+   * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
+   * command falls back to this package's `prismaAdapter`. Tests pass an
+   * explicit stub to keep behaviour independent of the registry. Callers that
+   * want `levelzero adapter swap orm ...` to take effect at runtime should
+   * supply `getAdapterRegistry` instead — see field below.
    */
   adapter?: ORMAdapter;
   /**
-   * AdapterRegistry provider used when `adapter` is omitted. Defaults to
-   * `getBuiltinAdapters` — a fresh registry per call so tests don't share
-   * mutable state.
+   * AdapterRegistry provider used when `adapter` is omitted. No default — when
+   * omitted the command uses `prismaAdapter` directly. This option exists so
+   * the CLI bootstrapper can wire a merged registry (post-`bootPlugins`) for
+   * adapter-swap dispatch without hard-coding the impl.
    */
   getAdapterRegistry?: () => AdapterRegistry;
 }
@@ -51,12 +52,22 @@ function defaultRegistry(): Registry {
  */
 export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
-  // Resolve the adapter lazily so that tests that pass an explicit `adapter`
-  // never touch the AdapterRegistry, and so production builds pick up adapter
-  // swaps that happen between command construction and first run.
-  const resolveAdapter = (): ORMAdapter =>
-    opts?.adapter ?? (getAdapterRegistry().getActive('orm') as ORMAdapter);
+  // Resolve the adapter lazily so tests that pass an explicit `adapter` or
+  // `getAdapterRegistry` never construct a default registry, and so production
+  // dispatch picks up an `adapter swap` that happens after command
+  // construction. Default chain (post-LEV-149):
+  //   1. opts.adapter (test-injected stub),
+  //   2. opts.getAdapterRegistry().getActive('orm') (registry override),
+  //   3. prismaAdapter (this package's impl — prisma is no longer in
+  //      `getBuiltinAdapters()` after the extraction, so the registry path is
+  //      only used when a caller wires it up explicitly).
+  const resolveAdapter = (): ORMAdapter => {
+    if (opts?.adapter) return opts.adapter;
+    if (opts?.getAdapterRegistry) {
+      return opts.getAdapterRegistry().getActive('orm') as ORMAdapter;
+    }
+    return prismaAdapter;
+  };
 
   return {
     name: 'db.migrate',

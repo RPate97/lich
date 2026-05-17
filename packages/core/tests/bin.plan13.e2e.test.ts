@@ -48,10 +48,11 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
       expect(Array.isArray(out.adapters)).toBe(true);
 
-      // The four built-in impls cover four of the eight declared AdapterSlot
-      // values (orm, auth, ui, browser). The remaining slots are now
-      // contributed by extracted plugins and only appear when the plugin is
-      // declared in `levelzero.config.ts`:
+      // The three built-in impls remaining in core after Wave-1 plugin
+      // extractions are auth/better-auth, ui/shadcn, browser/playwright. The
+      // remaining slots are contributed by extracted plugins and only appear
+      // when the plugin is declared in `levelzero.config.ts`:
+      //   - orm         → @levelzero/plugin-prisma (LEV-149)
       //   - backend     → @levelzero/plugin-hono (LEV-150)
       //   - frontend    → @levelzero/plugin-typed-client (LEV-151)
       //   - portless    → @levelzero/plugin-portless (LEV-145)
@@ -60,12 +61,12 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       const byKey = new Map(
         out.adapters.map((a) => [`${a.slot}:${a.name}`, a]),
       );
-      expect(byKey.get('orm:prisma')?.active).toBe(true);
       expect(byKey.get('auth:better-auth')?.active).toBe(true);
       expect(byKey.get('ui:shadcn')?.active).toBe(true);
       expect(byKey.get('browser:playwright')?.active).toBe(true);
 
       // Extracted slots are absent with an empty config.
+      expect(byKey.has('orm:prisma')).toBe(false);
       expect(byKey.has('backend:hono')).toBe(false);
       expect(byKey.has('frontend:typed-client')).toBe(false);
       expect(byKey.get('portless:portless')).toBeUndefined();
@@ -108,7 +109,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       );
 
       // Built-ins still present (the merge does not drop them).
-      expect(byKey.get('orm:prisma')?.active).toBe(true);
+      expect(byKey.get('auth:better-auth')?.active).toBe(true);
       // Both portless impls show up; `noop` is active per the plugin's
       // `setActiveAdapter('portless', 'noop')` default.
       expect(byKey.get('portless:portless')?.active).toBe(false);
@@ -118,6 +119,16 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
 
   describe('adapter swap', () => {
     it('writes .levelzero/adapter.json with the chosen {slot: name}', () => {
+      // Post-LEV-149: orm/prisma is only present when `@levelzero/plugin-prisma`
+      // is loaded. The swap command validates against the merged registry
+      // (built-ins + plugin contributions) so without the plugin declared in
+      // `levelzero.config.ts` the swap would fail with "unknown adapter slot
+      // 'orm'".
+      writeFileSync(
+        join(projectDir, 'levelzero.config.ts'),
+        `export default { plugins: ['@levelzero/plugin-prisma'] };`,
+      );
+
       const res = run(['adapter', 'swap', 'orm', 'prisma']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout) as {

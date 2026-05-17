@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '../../../src/registry';
-import { computeWorktreeKey } from '../../../src/worktree';
-import { CLIError } from '../../../src/errors';
-import { makeDbInspectCommand, dbInspectCommand } from '../../../src/commands/db/inspect';
+import { Registry } from '@levelzero/core/registry';
+import { computeWorktreeKey } from '@levelzero/core/worktree';
+import { CLIError } from '@levelzero/core/errors';
+import { makeDbInspectCommand, dbInspectCommand } from '../../src/commands/inspect';
 import type {
   ORMAdapter,
   ORMContext,
   SchemaDescription,
   TableRow,
-} from '../../../src/adapters/orm/types';
+} from '@levelzero/core';
 
 interface AdapterStubs {
   inspectSchemaImpl?: (ctx: ORMContext) => Promise<SchemaDescription>;

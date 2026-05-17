@@ -6,7 +6,7 @@ import type {
   SchemaDescription,
   TableRow,
   ORMContext,
-} from '../../../src/adapters/orm/types';
+} from '@levelzero/core';
 
 describe('ORMAdapter types', () => {
   it('ORMContext carries connection details', () => {

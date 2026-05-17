@@ -25,12 +25,8 @@ import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { makeCurlCommand } from './commands/curl';
 import { composeCommand } from './commands/compose';
-import { dbMigrateCommand } from './commands/db/migrate';
-import { dbMigrationNewCommand } from './commands/db/migration-new';
-import { dbSeedCommand } from './commands/db/seed';
-import { dbInspectCommand } from './commands/db/inspect';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
-import { adapterSwapCommand } from './commands/adapter/swap';
+import { adapterSwapCommand, makeAdapterSwapCommand } from './commands/adapter/swap';
 import { AdapterRegistry, getBuiltinAdapters } from './adapters/registry';
 import { skillsIndexCommand } from './commands/skills';
 import { makeTestCommand } from './commands/test';
@@ -69,10 +65,6 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
   reg.register(makeCurlCommand({ getRegistry: getReg }));
   reg.register(composeCommand);
-  reg.register(dbMigrateCommand);
-  reg.register(dbMigrationNewCommand);
-  reg.register(dbSeedCommand);
-  reg.register(dbInspectCommand);
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);
   reg.register(skillsIndexCommand);
@@ -145,6 +137,12 @@ export async function buildDispatchRegistry(
   // The inline `genClientCommand` registered above closes over the built-in
   // registry only, which after the extraction has no active `backend` impl.
   cli.register(makeGenClientCommand({ getAdapterRegistry: () => merged }));
+  // Re-bind `adapter swap` against the merged registry as well — its
+  // validation step (`listBySlot(slot)`) needs to see plugin-contributed
+  // (slot, name) pairs. Without this, `adapter swap orm prisma` would fail
+  // with "unknown adapter slot 'orm'" post-LEV-149 because the inline
+  // registration closes over the bare built-ins.
+  cli.register(makeAdapterSwapCommand({ getRegistry: () => merged }));
 
   return cli;
 }

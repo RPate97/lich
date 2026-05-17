@@ -17,6 +17,22 @@ beforeEach(() => {
   writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
 });
 
+/**
+ * Test-local registry seeded with the orm/prisma pair that used to ship in
+ * `getBuiltinAdapters()`. Post-LEV-149 prisma was extracted into
+ * `@levelzero/plugin-prisma`; these unit tests still want to exercise the
+ * swap command's validation/disk-write paths against a known-good (slot,
+ * name) pair without booting the plugin loader. The impl is intentionally
+ * `{}` — the swap command never invokes adapter methods, it only checks
+ * registration.
+ */
+function getBuiltinsWithPrisma(): AdapterRegistry {
+  const reg = getBuiltinAdapters();
+  reg.register({ slot: 'orm', name: 'prisma', impl: {} });
+  reg.setActive('orm', 'prisma');
+  return reg;
+}
+
 function run(
   cmd: ReturnType<typeof makeAdapterSwapCommand>,
   cwd: string,
@@ -33,7 +49,7 @@ describe('levelzero adapter swap', () => {
 
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-swap-outside-')));
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const err = await run(cmd, outside, ['orm', 'prisma']).then(
       () => null,
       (e: unknown) => e,
@@ -43,17 +59,17 @@ describe('levelzero adapter swap', () => {
   });
 
   it('errors when slot is missing', async () => {
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     await expect(run(cmd, projectDir, [])).rejects.toThrow(/slot/i);
   });
 
   it('errors when adapter name is missing', async () => {
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     await expect(run(cmd, projectDir, ['orm'])).rejects.toThrow(/name|adapter/i);
   });
 
   it('errors clearly on unknown slot', async () => {
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const err = await run(cmd, projectDir, ['bogus', 'prisma']).then(
       () => null,
       (e: unknown) => e,
@@ -64,7 +80,7 @@ describe('levelzero adapter swap', () => {
   });
 
   it('errors clearly on unknown impl for a valid slot', async () => {
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const err = await run(cmd, projectDir, ['orm', 'drizzle']).then(
       () => null,
       (e: unknown) => e,
@@ -75,7 +91,7 @@ describe('levelzero adapter swap', () => {
   });
 
   it('writes .levelzero/adapter.json with {slot: name} and returns confirmation', async () => {
-    const cmd = makeAdapterSwapCommand({ getRegistry: () => getBuiltinAdapters() });
+    const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const result = (await run(cmd, projectDir, ['orm', 'prisma'])) as {
       ok: boolean;
       slot: string;

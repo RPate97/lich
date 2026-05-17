@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '../../../src/registry';
-import { computeWorktreeKey } from '../../../src/worktree';
-import { CLIError } from '../../../src/errors';
-import { makeDbSeedCommand, dbSeedCommand } from '../../../src/commands/db/seed';
-import type { ORMAdapter, ORMContext } from '../../../src/adapters/orm/types';
+import { Registry } from '@levelzero/core/registry';
+import { computeWorktreeKey } from '@levelzero/core/worktree';
+import { CLIError } from '@levelzero/core/errors';
+import { makeDbSeedCommand, dbSeedCommand } from '../../src/commands/seed';
+import type { ORMAdapter, ORMContext } from '@levelzero/core';
 
 function stubAdapter(
   impl: (ctx: ORMContext) => Promise<{ ok: boolean; output: string }>,

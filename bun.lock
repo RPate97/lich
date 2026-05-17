@@ -20,6 +20,7 @@
         "@levelzero/plugin-hono": "workspace:*",
         "@levelzero/plugin-portless": "workspace:*",
         "@levelzero/plugin-postgres": "workspace:*",
+        "@levelzero/plugin-prisma": "workspace:*",
         "@levelzero/plugin-typed-client": "workspace:*",
         "@levelzero/plugin-vitest": "workspace:*",
         "@prisma/client": "^5.18.0",
@@ -78,6 +79,26 @@
       "version": "0.1.0",
       "devDependencies": {
         "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+      },
+    },
+    "packages/plugin-prisma": {
+      "name": "@levelzero/plugin-prisma",
+      "version": "0.1.0",
+      "dependencies": {
+        "@levelzero/plugin-postgres": "workspace:*",
+        "pg": "^8.12.0",
+        "prisma": "^5.18.0",
+      },
+      "devDependencies": {
+        "@prisma/client": "^5.18.0",
+        "@types/node": "^20.12.0",
+        "@types/pg": "^8.11.0",
         "bun-types": "^1.2.0",
         "typescript": "^5.4.0",
         "vitest": "^1.6.0",
@@ -248,6 +269,8 @@
     "@levelzero/plugin-portless": ["@levelzero/plugin-portless@workspace:packages/plugin-portless"],
 
     "@levelzero/plugin-postgres": ["@levelzero/plugin-postgres@workspace:packages/plugin-postgres"],
+
+    "@levelzero/plugin-prisma": ["@levelzero/plugin-prisma@workspace:packages/plugin-prisma"],
 
     "@levelzero/plugin-typed-client": ["@levelzero/plugin-typed-client@workspace:packages/plugin-typed-client"],
 

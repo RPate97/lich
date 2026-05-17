@@ -152,13 +152,6 @@ describe('getBuiltinAdapters', () => {
     expect(r).toBeInstanceOf(AdapterRegistry);
   });
 
-  it('registers prisma under the orm slot and marks it active', async () => {
-    const r = getBuiltinAdapters();
-    const { prismaAdapter } = await import('../../src/adapters/orm/prisma');
-    expect(r.get('orm', 'prisma')).toBe(prismaAdapter);
-    expect(r.getActive('orm')).toBe(prismaAdapter);
-  });
-
   it('registers better-auth under the auth slot and marks it active', async () => {
     const r = getBuiltinAdapters();
     const { betterAuthAdapter } = await import('../../src/adapters/auth/better-auth');
@@ -183,15 +176,16 @@ describe('getBuiltinAdapters', () => {
   it('list covers the populated slot names', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
-    // Slots with concrete impls in core today: orm, auth, ui, browser.
+    // Slots with concrete impls in core today: auth, ui, browser.
     // Extracted to plugins: `backend` (@levelzero/plugin-hono),
     // `frontend` (@levelzero/plugin-typed-client),
     // `portless` (@levelzero/plugin-portless),
+    // `orm` (@levelzero/plugin-prisma),
     // `test-runner` (@levelzero/plugin-vitest, @levelzero/plugin-playwright).
-    expect(slots.has('orm')).toBe(true);
     expect(slots.has('auth')).toBe(true);
     expect(slots.has('ui')).toBe(true);
     expect(slots.has('browser')).toBe(true);
+    expect(slots.has('orm')).toBe(false);
     expect(slots.has('backend')).toBe(false);
     expect(slots.has('frontend')).toBe(false);
     expect(slots.has('portless')).toBe(false);
@@ -204,6 +198,7 @@ describe('getBuiltinAdapters', () => {
     expect(() => r.getActive('portless')).toThrowError(/no active impl for slot "portless"/);
     expect(() => r.getActive('frontend')).toThrowError(/no active impl for slot "frontend"/);
     expect(() => r.getActive('backend')).toThrowError(/no active impl for slot "backend"/);
+    expect(() => r.getActive('orm')).toThrowError(/no active impl for slot "orm"/);
   });
 
   it('listBySlot returns empty for slots populated only by extracted plugins', () => {
@@ -212,6 +207,7 @@ describe('getBuiltinAdapters', () => {
     expect(r.listBySlot('portless')).toEqual([]);
     expect(r.listBySlot('frontend')).toEqual([]);
     expect(r.listBySlot('backend')).toEqual([]);
+    expect(r.listBySlot('orm')).toEqual([]);
   });
 
   it('returns a fresh registry each call (mutating one does not affect another)', () => {
