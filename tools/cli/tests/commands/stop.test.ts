@@ -3,13 +3,12 @@ import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, isContainerRunning } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeStopCommand } from '../../src/commands/stop';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/docker/naming';
-import { isContainerRunning } from '../../src/docker/runner';
+import { containerName, volumeName } from '../../src/compose/naming';
 import { pgService } from '../../src/services/postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
@@ -183,7 +182,7 @@ describeIfDocker('levelzero stop (integration with real docker compose)', () => 
     expect(result.key).toBe(devResult.key);
     expect(result.containers).toEqual(devResult.containers);
 
-    expect(await isContainerRunning(devResult.containers[0])).toBe(false);
+    expect(isContainerRunning(devResult.containers[0])).toBe(false);
     expect(await registry.get(devResult.key)).toBeUndefined();
     const r = spawnSync(
       'docker',

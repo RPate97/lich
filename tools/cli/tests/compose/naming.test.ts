@@ -5,11 +5,11 @@ import {
   volumeName,
   composeProjectName,
   LEVELZERO_PREFIX,
-} from '../../src/docker/naming';
+} from '../../src/compose/naming';
 
 const KEY = 'a3f8c1234567';
 
-describe('docker naming', () => {
+describe('compose naming', () => {
   it('LEVELZERO_PREFIX is "levelzero-"', () => {
     expect(LEVELZERO_PREFIX).toBe('levelzero-');
   });

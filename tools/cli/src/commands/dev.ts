@@ -1,7 +1,7 @@
 import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
 import { allocatePorts } from '../ports/allocator';
-import { containerName, networkName } from '../docker/naming';
+import { containerName, networkName } from '../compose/naming';
 import { runOwnedServices } from '../owned/runner';
 import {
   buildComposeBundle,

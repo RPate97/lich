@@ -8,8 +8,7 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeResetCommand } from '../../src/commands/reset';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/docker/naming';
-import { dockerExec } from '../../src/docker/exec';
+import { containerName, volumeName } from '../../src/compose/naming';
 import { pgService } from '../../src/services/postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
@@ -175,14 +174,15 @@ describeIfDocker('levelzero reset (integration with real docker compose)', () =>
     })) as any;
     const cname = devResult.containers[0];
 
-    const insert = await dockerExec(
+    const insert = spawnSync(
+      'docker',
       [
         'exec', cname, 'psql', '-U', 'levelzero', '-d', 'levelzero',
         '-c', 'create table marker(x int); insert into marker values (1);',
       ],
-      { timeoutMs: 10_000 },
+      { encoding: 'utf8', timeout: 10_000 },
     );
-    expect(insert.exitCode).toBe(0);
+    expect(insert.status).toBe(0);
 
     const reset = makeResetCommand(() => registry, { getServices: onlyPostgres });
     const result = (await reset.run({
@@ -196,14 +196,15 @@ describeIfDocker('levelzero reset (integration with real docker compose)', () =>
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);
     expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
 
-    const select = await dockerExec(
+    const select = spawnSync(
+      'docker',
       [
         'exec', result.containers[0], 'psql', '-U', 'levelzero', '-d', 'levelzero',
         '-c', 'select 1 from marker;',
       ],
-      { timeoutMs: 10_000 },
+      { encoding: 'utf8', timeout: 10_000 },
     );
-    expect(select.exitCode).not.toBe(0);
+    expect(select.status).not.toBe(0);
     expect(select.stderr).toMatch(/relation .*marker.* does not exist/i);
   }, 300_000);
 });

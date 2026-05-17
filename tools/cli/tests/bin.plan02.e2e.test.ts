@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip } from './_helpers/docker';
 import { computeWorktreeKey } from '../src/worktree';
-import { containerName, volumeName } from '../src/docker/naming';
+import { containerName, volumeName } from '../src/compose/naming';
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;

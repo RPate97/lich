@@ -7,7 +7,7 @@ import { dockerOrSkip } from '../../_helpers/docker';
 import { Registry } from '../../../src/registry';
 import { makeDevCommand } from '../../../src/commands/dev';
 import { computeWorktreeKey } from '../../../src/worktree';
-import { containerName, volumeName } from '../../../src/docker/naming';
+import { containerName, volumeName } from '../../../src/compose/naming';
 import { makePrismaFixture } from '../../_helpers/prisma-fixture';
 import { prismaAdapter } from '../../../src/adapters/orm/prisma';
 import { pgService } from '../../../src/services/postgres';

@@ -1,3 +1,17 @@
+/**
+ * Naming helpers for levelzero compose projects.
+ *
+ * These produce the stable names that compose, the registry, and operators
+ * see — `levelzero-<key>` for the project/network, `levelzero-<key>-<service>`
+ * for containers, and `levelzero-<key>-<service>-data` for named volumes.
+ *
+ * Validation guards (`assertKey`, `assertService`) reject inputs that would
+ * produce ambiguous or shell-unsafe names; callers should treat throws here
+ * as programmer errors, not user input issues.
+ *
+ * Previously lived at `src/docker/naming.ts` — moved here as part of LEV-134
+ * when the legacy docker runner was deleted.
+ */
 export const LEVELZERO_PREFIX = 'levelzero-';
 
 const KEY_RE = /^[0-9a-f]{12}$/;
