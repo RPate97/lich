@@ -4,7 +4,7 @@ import type {
   BackendAdapter,
   RouteEntry,
   RouteManifest,
-} from './types';
+} from '@levelzero/core';
 
 /**
  * Options for {@link honoBackendAdapter.extractRoutes}. Most consumers will

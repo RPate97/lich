@@ -21,7 +21,7 @@ import { screenshotCommand } from './commands/screenshot';
 import { visualDiffCommand } from './commands/visual';
 import { uiAddCommand } from './commands/ui/add';
 import { uiListCommand } from './commands/ui/list';
-import { genClientCommand } from './commands/gen/client';
+import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { makeCurlCommand } from './commands/curl';
 import { composeCommand } from './commands/compose';
@@ -139,6 +139,12 @@ export async function buildDispatchRegistry(
   // last-write-wins, matching `AdapterRegistry.register` semantics.
   const merged = mergeAdapterRegistries(getBuiltinAdapters(), boot.adapters);
   cli.register(makeAdapterListCommand({ getRegistry: () => merged }));
+  // Re-bind `gen.client` to the merged registry too so commands that depend
+  // on plugin-contributed adapters (e.g. `backend` after LEV-150 extracted
+  // hono into `@levelzero/plugin-hono`) actually see them at dispatch time.
+  // The inline `genClientCommand` registered above closes over the built-in
+  // registry only, which after the extraction has no active `backend` impl.
+  cli.register(makeGenClientCommand({ getAdapterRegistry: () => merged }));
 
   return cli;
 }

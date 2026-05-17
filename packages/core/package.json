@@ -26,6 +26,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
+    "@levelzero/plugin-hono": "workspace:*",
     "@levelzero/plugin-portless": "workspace:*",
     "@levelzero/plugin-postgres": "workspace:*",
     "@prisma/client": "^5.18.0",

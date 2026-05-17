@@ -1,6 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { honoBackendAdapter } from '../../adapters/backend/hono';
+// Direct dependency on the extracted plugin package — mirrors the
+// `commands/dev.ts` import of `@levelzero/plugin-portless`. Core's built-in
+// rules keep this import during the transition; once the rules themselves
+// move into plugins they can fetch the adapter from the registry instead.
+import { honoBackendAdapter } from '@levelzero/plugin-hono';
 import type { Rule } from '../types';
 
 const HONO_ENTRY = 'apps/api/src/index.ts';
