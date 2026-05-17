@@ -21,6 +21,7 @@ import { screenshotCommand } from './commands/screenshot';
 import { visualDiffCommand } from './commands/visual';
 import { uiAddCommand } from './commands/ui/add';
 import { uiListCommand } from './commands/ui/list';
+import { genClientCommand } from './commands/gen/client';
 
 export const VERSION = '0.0.0';
 
@@ -49,6 +50,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(visualDiffCommand);
   reg.register(uiAddCommand);
   reg.register(uiListCommand);
+  reg.register(genClientCommand);
   return reg;
 }
 
