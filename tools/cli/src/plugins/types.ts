@@ -28,6 +28,13 @@ export interface Generator {
 export interface ComposeServiceDef {
   image?: string;
   build?: string | { context: string; dockerfile?: string };
+  /**
+   * Pin the container name (compose-v2 `container_name`). When unset, compose
+   * generates `<project>-<service>-<idx>`. Used by `dev`/`stop`/`reset` to
+   * preserve the legacy `levelzero-<key>-<service>` naming so registry entries
+   * keep working unchanged.
+   */
+  container_name?: string;
   /** e.g. `["${PORT}:5432"]` — host side typically a variable, container side fixed. */
   ports?: string[];
   environment?: Record<string, string>;
@@ -47,11 +54,20 @@ export interface ComposeServiceDef {
 export interface ComposeVolumeDef {
   driver?: string;
   driver_opts?: Record<string, string>;
+  /**
+   * Pin the on-disk volume name (compose-v2 `name:`). When unset, compose
+   * synthesizes `<project>_<key>`. Used by the docker→compose interim
+   * adapter to keep legacy `levelzero-<key>-<service>-data` naming so
+   * existing volumes carry over.
+   */
+  name?: string;
 }
 
 /** Subset of a compose v2 named-network definition. */
 export interface ComposeNetworkDef {
   driver?: string;
+  /** Pin the on-disk network name; see `ComposeVolumeDef.name`. */
+  name?: string;
 }
 
 /**

@@ -1,13 +1,14 @@
 import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
 import { allocatePorts } from '../ports/allocator';
-import {
-  startDockerService,
-  stopDockerService,
-  isContainerRunning,
-} from '../docker/runner';
 import { containerName, networkName } from '../docker/naming';
 import { runOwnedServices } from '../owned/runner';
+import {
+  buildComposeBundle,
+  writeComposeFile,
+  type ComposeBundle,
+} from '../compose/stack';
+import { makeComposeRunner, type ComposeRunner } from '../compose/runner';
 import type { Registry, StackEntry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, OwnedService, PortMap, Service } from '../services/types';
@@ -28,6 +29,12 @@ export interface DevOptions {
    * real `portless` binary.
    */
   getPortlessAdapter?: () => PortlessAdapter;
+  /**
+   * Factory for the compose runner. Defaults to {@link makeComposeRunner}
+   * (real `docker compose` shell-out). Tests inject a stub that records
+   * `up`/`down`/`ps` calls and never touches docker.
+   */
+  composeRunnerFactory?: (projectName: string, composeFile: string) => ComposeRunner;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -100,6 +107,7 @@ async function resolveProjectName(worktreePath: string): Promise<string> {
 export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): Command {
   const getServices = opts?.getServices ?? getBuiltinServices;
   const getPortlessAdapter = opts?.getPortlessAdapter;
+  const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
 
   return {
     name: 'dev',
@@ -111,49 +119,64 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       const owned = ownedServicesOnly(allServices);
       const reg = getRegistry();
 
-      const entry = await reg.withLock(async () => {
-        const existing = await reg.get(stackCtx.worktreeKey);
-        if (existing) {
-          let allUp = true;
-          for (const cname of existing.containers) {
-            if (!(await isContainerRunning(cname))) { allUp = false; break; }
-          }
-          if (allUp) return existing;
-          for (const cname of existing.containers) {
-            await stopDockerService({ serviceName: '', containerName: cname, ports: {} });
-          }
-          await reg.remove(stackCtx.worktreeKey);
-        }
-
+      // Resolve ports + emit compose file + bring up containers. All of this
+      // happens under the registry lock so concurrent `dev` invocations on
+      // the same worktree can't race on port allocation or compose state.
+      const { entry, bundle } = await reg.withLock(async () => {
         const all = await reg.list();
         const reserved = reservedPortsFromOtherStacks(stackCtx.worktreeKey, all);
         const portNames = collectPortNames(allServices);
-        const ports = await allocatePorts(portNames, { reservedPorts: reserved });
 
-        const containers: string[] = [];
-        for (const svc of docker) {
-          const handle = await startDockerService(svc, stackCtx, ports);
-          containers.push(handle.containerName);
+        const existing = await reg.get(stackCtx.worktreeKey);
+        // Re-use previously allocated ports so the compose file is stable across
+        // dev runs and idempotent up calls don't re-publish to different host
+        // ports.
+        let ports: PortMap;
+        if (existing) {
+          ports = {};
+          let needsAlloc = false;
+          for (const name of portNames) {
+            const existingPort = existing.ports[name];
+            if (existingPort === undefined) {
+              needsAlloc = true;
+              break;
+            }
+            ports[name] = existingPort;
+          }
+          if (needsAlloc) {
+            ports = await allocatePorts(portNames, { reservedPorts: reserved });
+          }
+        } else {
+          ports = await allocatePorts(portNames, { reservedPorts: reserved });
+        }
+
+        const bundle = buildComposeBundle(stackCtx, docker, ports);
+        await writeComposeFile(bundle);
+
+        const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);
+        if (Object.keys(bundle.services).length > 0) {
+          await runner.up({ detach: true, waitForHealthy: true });
         }
 
         const newEntry: StackEntry = {
           path: stackCtx.worktreePath,
           branch: stackCtx.branch,
           ports,
-          urls: {},
-          containers,
+          // Preserve existing URLs across re-runs; portless block below may
+          // overwrite individual keys but shouldn't drop unrelated ones.
+          urls: existing?.urls ?? {},
+          containers: bundle.containerNames,
           network: networkName(stackCtx.worktreeKey),
           logDir: '.levelzero/logs',
-          createdAt: new Date().toISOString(),
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
         };
         await reg.upsert(stackCtx.worktreeKey, newEntry);
-        return newEntry;
+        return { entry: newEntry, bundle };
       });
 
       // Register per-service URLs through the active portless adapter. Done
       // after services are up (containers started) and before owned processes
       // run, so the proxy can reach them as soon as they start serving.
-      // Service-name → registered https URL pairs we persist into StackEntry.urls.
       const ownedWithUrl = owned.filter(
         (s): s is OwnedService & { urlName: string } =>
           typeof s.urlName === 'string' && s.urlName.length > 0,
@@ -210,6 +233,10 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
         containers: entry.containers,
         network: entry.network,
         services: serviceSummaries,
+        compose: {
+          projectName: bundle.projectName,
+          file: bundle.composeFilePath,
+        },
       };
 
       if (owned.length === 0) return baseResult;
