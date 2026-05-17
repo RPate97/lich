@@ -70,6 +70,51 @@ Plugins are processed **in declared order**. That ordering matters in two places
 
 A `register()` that throws aborts boot; the error is rewrapped with the offending plugin's `name` for attribution. See [`packages/core/src/plugins/boot.ts`](../packages/core/src/plugins/boot.ts) for the assembly order.
 
+## Composability rule (READ THIS)
+
+**Plugins compose through contracts, not through each other's internals.** If your plugin needs something another plugin provides, look it up through its slot interface — never import the other plugin's package.
+
+Concrete cases:
+
+- **ORM plugins** consume the active `DatabaseProvider` (which is contributed by whichever DB plugin is loaded — postgres, mysql, sqlite, mongo, …). The ORM is the one place where storage-engine-specific code lives (e.g. "drop schema" semantics). The CLI calls `orm.resetDatabase(ctx)`; the ORM dispatches internally on the provider's driver.
+- **Auth plugins** consume the active ORM for user/session storage. They do NOT bring their own database driver.
+- **Backend plugins** consume the active ORM (for typed handles), the active auth (for session middleware), and the active `DatabaseProvider` (for connection strings) — through context lookups, never through direct imports.
+- **Frontend plugins** consume the active backend's route manifest.
+
+Anti-patterns that fail review:
+
+```ts
+// ❌  Cross-plugin import (couples plugin-prisma to plugin-postgres)
+import { pgService } from '@levelzero/plugin-postgres';
+const databaseUrl = pgService.envContributions(entry.ports).DATABASE_URL;
+
+// ✅  Capability lookup through the registry / context
+const provider = ctx.getActiveDatabaseProvider();
+const databaseUrl = provider.url();
+```
+
+```ts
+// ❌  Storage-engine-specific SQL outside the implementation that owns it
+import { Client } from 'pg';
+await client.query('DROP SCHEMA public CASCADE');
+
+// ✅  Generic operation on the slot interface; ORM dispatches internally
+await orm.resetDatabase(ctx);
+```
+
+```jsonc
+// ❌  Plugin package depends on a sibling stack plugin
+{ "dependencies": { "@levelzero/plugin-postgres": "workspace:*" } }
+
+// ✅  Plugins depend only on @levelzero/core
+{ "peerDependencies": { "@levelzero/core": "*" } }
+```
+
+**The test for composability:** a combination we did not anticipate
+(e.g. `plugin-drizzle` + `plugin-mongo` + `plugin-clerk` + `plugin-elysia`)
+must work with zero changes to other plugins or to core, as long as each
+implementation honors its slot contract.
+
 ## Worked example: a tiny Redis plugin
 
 Runs Redis in compose, registers a `portless` adapter against it, and adds a `redis:ping` command:
