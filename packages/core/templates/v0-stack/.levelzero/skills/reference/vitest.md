@@ -8,7 +8,7 @@ applies-to: reference
 
 Vitest runs every non-browser test in the repo. Configs live next to the code
 they test: `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, and
-`tools/cli/vitest.config.ts`. Run the full suite via
+`packages/core/vitest.config.ts`. Run the full suite via
 `levelzero test unit` or `levelzero test integration`.
 
 ## Test layout

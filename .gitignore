@@ -1,7 +1,7 @@
 node_modules/
 .DS_Store
 .levelzero/
-!tools/cli/templates/**/.levelzero/
+!packages/core/templates/**/.levelzero/
 *.tmp
 packages/*/node_modules
 packages/*/dist

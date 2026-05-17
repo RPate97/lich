@@ -50,7 +50,7 @@ The `peerDependency` is the contract: any host project running your plugin must 
 
 ## 3. Write the Plugin export
 
-A `Plugin` has three fields — `name`, `version`, and a `register(api, ctx)` function — defined in [`tools/cli/src/plugins/types.ts`](../tools/cli/src/plugins/types.ts). The loader calls `register()` exactly once during CLI bootstrap, handing you a `PluginAPI` whose `addX` methods let you contribute to the running CLI.
+A `Plugin` has three fields — `name`, `version`, and a `register(api, ctx)` function — defined in [`packages/core/src/plugins/types.ts`](../packages/core/src/plugins/types.ts). The loader calls `register()` exactly once during CLI bootstrap, handing you a `PluginAPI` whose `addX` methods let you contribute to the running CLI.
 
 Open `index.ts`:
 
@@ -116,7 +116,7 @@ export default {
 } satisfies LevelzeroConfig;
 ```
 
-Any specifier starting with `.` or `/` is treated as a local path and resolved relative to the project root (see [`loader.ts`](../tools/cli/src/plugins/loader.ts)). Run a CLI command and confirm your plugin booted:
+Any specifier starting with `.` or `/` is treated as a local path and resolved relative to the project root (see [`loader.ts`](../packages/core/src/plugins/loader.ts)). Run a CLI command and confirm your plugin booted:
 
 ```sh
 levelzero adapter list
@@ -205,6 +205,6 @@ The loader resolves bare specifiers through Node's algorithm rooted at the proje
 ## What to read next
 
 - [EXTENSION.md](./EXTENSION.md) — terse reference for the 8 adapter slots and every `addX` hook.
-- [`tools/cli/src/plugins/types.ts`](../tools/cli/src/plugins/types.ts) — the source of truth for the `Plugin`, `PluginAPI`, and `PluginContext` contracts.
-- [`tools/cli/src/plugins/loader.ts`](../tools/cli/src/plugins/loader.ts) — how local-path and npm specifiers are resolved.
+- [`packages/core/src/plugins/types.ts`](../packages/core/src/plugins/types.ts) — the source of truth for the `Plugin`, `PluginAPI`, and `PluginContext` contracts.
+- [`packages/core/src/plugins/loader.ts`](../packages/core/src/plugins/loader.ts) — how local-path and npm specifiers are resolved.
 - [build-strategy.md](./build-strategy.md) — full rationale for the tsup-based publish flow.

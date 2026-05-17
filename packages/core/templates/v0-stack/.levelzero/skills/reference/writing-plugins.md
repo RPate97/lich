@@ -11,7 +11,7 @@ adapters, commands, compose services, generators, rules, and skill
 directories. The CLI loads plugins listed in `.levelzero/config.ts` and
 calls each one's `register()` exactly once during bootstrap.
 
-The full contract lives in `tools/cli/src/plugins/types.ts` — read that
+The full contract lives in `packages/core/src/plugins/types.ts` — read that
 file before writing a plugin. The summary below mirrors it.
 
 ## The `Plugin` interface
@@ -96,4 +96,4 @@ already merged, but cannot observe them through `PluginAPI` — read
 
 - `examples/plugin-redis/` — full walkthrough of a plugin that
   contributes a compose service, an owned service, and a command.
-- `tools/cli/src/plugins/types.ts` — the source of truth.
+- `packages/core/src/plugins/types.ts` — the source of truth.

@@ -39,7 +39,7 @@ export default {
 
 The loader resolves any specifier starting with `.` or `/` relative to your
 project root and dynamic-imports it. See
-[`tools/cli/src/plugins/loader.ts`](../../tools/cli/src/plugins/loader.ts).
+[`packages/core/src/plugins/loader.ts`](../../packages/core/src/plugins/loader.ts).
 
 ### Option B: imported plugin object
 
@@ -81,5 +81,5 @@ levelzero redis.ping --port "$PORT"
   end-to-end walkthrough.
 - [EXTENSION.md](../../docs/EXTENSION.md) — terse reference for every `addX`
   hook and the eight adapter slots.
-- [`tools/cli/src/plugins/types.ts`](../../tools/cli/src/plugins/types.ts) —
+- [`packages/core/src/plugins/types.ts`](../../packages/core/src/plugins/types.ts) —
   the `Plugin`, `PluginAPI`, and `PluginContext` source of truth.

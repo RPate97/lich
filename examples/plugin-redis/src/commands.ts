@@ -12,7 +12,7 @@ import { redisCacheAdapter } from './adapter';
  *      the host directly).
  *
  * In a production plugin you'd read the active stack's allocated port from
- * the registry (see `tools/cli/src/registry.ts` `StackEntry.ports[redis]`).
+ * the registry (see `packages/core/src/registry.ts` `StackEntry.ports[redis]`).
  * The example keeps the dependency surface narrow — a flag + env var is
  * enough to demonstrate the command-contribution pattern without coupling
  * to internal CLI modules.
