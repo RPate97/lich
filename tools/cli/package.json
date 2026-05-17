@@ -11,11 +11,15 @@
   },
   "devDependencies": {
     "@types/node": "^20.12.0",
+    "@types/pg": "^8.11.0",
     "bun-types": "^1.2.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   },
   "dependencies": {
-    "concurrently": "^9.0.0"
+    "@prisma/client": "^5.18.0",
+    "concurrently": "^9.0.0",
+    "pg": "^8.12.0",
+    "prisma": "^5.18.0"
   }
 }
