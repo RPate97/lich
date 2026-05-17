@@ -30,6 +30,7 @@ import { dbSeedCommand } from './commands/db/seed';
 import { dbInspectCommand } from './commands/db/inspect';
 import { adapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand } from './commands/adapter/swap';
+import { skillsIndexCommand } from './commands/skills';
 
 export const VERSION = '0.0.0';
 
@@ -67,6 +68,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(dbInspectCommand);
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);
+  reg.register(skillsIndexCommand);
   return reg;
 }
 
