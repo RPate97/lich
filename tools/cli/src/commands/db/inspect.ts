@@ -4,15 +4,21 @@ import { CLIError } from '../../errors';
 import { Registry } from '../../registry';
 import { pgService } from '../../services/postgres';
 import { resolveStackContext } from '../../services/context';
-import { prismaAdapter } from '../../adapters/orm/prisma';
+import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { ORMAdapter } from '../../adapters/orm/types';
 import type { Command } from '../types';
 
 export interface DbInspectOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
-  /** ORM adapter; defaults to prismaAdapter. Tests inject a stub. */
+  /**
+   * ORM adapter. When omitted, resolved from the AdapterRegistry returned by
+   * `getAdapterRegistry` (default `getBuiltinAdapters()`); tests pass an
+   * explicit stub to bypass the registry entirely.
+   */
   adapter?: ORMAdapter;
+  /** AdapterRegistry provider used when `adapter` is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 /** Default row limit per the LEV-58 spec. */
@@ -54,7 +60,9 @@ function parseLimitFlag(value: string | boolean | undefined): number | undefined
  */
 export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const adapter = opts?.adapter ?? prismaAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  const resolveAdapter = (): ORMAdapter =>
+    opts?.adapter ?? (getAdapterRegistry().getActive('orm') as ORMAdapter);
 
   return {
     name: 'db.inspect',
@@ -113,6 +121,7 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
       }
 
       const ormCtx = { databaseUrl, projectRoot: stackCtx.worktreePath };
+      const adapter = resolveAdapter();
 
       if (schemaMode) {
         // --schema takes precedence if (somehow) both flags are set; this

@@ -1,13 +1,19 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { CLIError } from '../errors';
-import { playwrightAdapter } from '../adapters/browser/playwright';
+import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
 import type { BrowserAdapter, ScreenshotOptions } from '../adapters/browser/types';
 import type { Command } from './types';
 
 export interface ScreenshotCommandOptions {
-  /** Override the browser adapter; defaults to playwrightAdapter. Tests can inject mocks. */
+  /**
+   * Browser adapter. When omitted, resolved from the AdapterRegistry returned
+   * by `getAdapterRegistry` (default `getBuiltinAdapters()`); tests can still
+   * pass an explicit stub to bypass the registry entirely.
+   */
   adapter?: BrowserAdapter;
+  /** AdapterRegistry provider used when `adapter` is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 function parsePositiveInt(value: string, flag: string): number {
@@ -45,7 +51,12 @@ function validateUrl(raw: string): string {
 }
 
 export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command {
-  const adapter = opts?.adapter ?? playwrightAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  // Lazy resolve so an `adapter swap browser ...` between command construction
+  // and run-time is honored, and so tests that pass an explicit adapter never
+  // touch the global registry.
+  const resolveAdapter = (): BrowserAdapter =>
+    opts?.adapter ?? (getAdapterRegistry().getActive('browser') as BrowserAdapter);
   return {
     name: 'screenshot',
     describe: 'Capture a PNG screenshot of a URL and write it to disk',
@@ -76,7 +87,7 @@ export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command 
         screenshotOpts.fullPage = true;
       }
 
-      const png = await adapter.screenshot(url, screenshotOpts);
+      const png = await resolveAdapter().screenshot(url, screenshotOpts);
 
       const outFlag = ctx.flags['out'];
       const outRaw = typeof outFlag === 'string' ? outFlag : 'screenshot.png';

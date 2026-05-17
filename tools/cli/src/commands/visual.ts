@@ -1,9 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { CLIError } from '../errors';
-import { playwrightAdapter } from '../adapters/browser/playwright';
-import type { DiffOptions } from '../adapters/browser/types';
+import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
+import type { BrowserAdapter, DiffOptions } from '../adapters/browser/types';
 import type { Command } from './types';
+
+export interface VisualDiffOptions {
+  /**
+   * Browser adapter. When omitted, resolved from the AdapterRegistry returned
+   * by `getAdapterRegistry` (default `getBuiltinAdapters()`); tests can still
+   * pass an explicit stub to bypass the registry entirely.
+   */
+  adapter?: BrowserAdapter;
+  /** AdapterRegistry provider used when `adapter` is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
+}
 
 function resolvePath(cwd: string, p: string): string {
   return isAbsolute(p) ? p : resolve(cwd, p);
@@ -33,44 +44,61 @@ function parseNumberFlag(value: string | boolean | undefined, name: string): num
   return n;
 }
 
-export const visualDiffCommand: Command = {
-  name: 'visual.diff',
-  describe: 'Pixel-diff two PNGs (baseline vs current) and report the differing pixel count',
-  async run(ctx) {
-    const baselineArg = ctx.args[0];
-    const currentArg = ctx.args[1];
-    if (!baselineArg || !currentArg) {
-      throw new CLIError(
-        'CONFIG_INVALID',
-        'visual diff requires two PNG paths',
-        'usage: levelzero visual diff <baseline.png> <current.png> [--threshold N] [--alpha 0..1]',
-      );
-    }
+/**
+ * Build `levelzero visual diff`. Reads two PNGs from disk and runs them
+ * through the active `browser` adapter's `diff()` method, optionally
+ * thresholded.
+ *
+ * The adapter is resolved lazily (per run) so that swaps between command
+ * construction and execution are honored, and so callers passing an explicit
+ * adapter bypass the registry entirely.
+ */
+export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  const resolveAdapter = (): BrowserAdapter =>
+    opts?.adapter ?? (getAdapterRegistry().getActive('browser') as BrowserAdapter);
 
-    const baselinePath = resolvePath(ctx.cwd, baselineArg);
-    const currentPath = resolvePath(ctx.cwd, currentArg);
+  return {
+    name: 'visual.diff',
+    describe: 'Pixel-diff two PNGs (baseline vs current) and report the differing pixel count',
+    async run(ctx) {
+      const baselineArg = ctx.args[0];
+      const currentArg = ctx.args[1];
+      if (!baselineArg || !currentArg) {
+        throw new CLIError(
+          'CONFIG_INVALID',
+          'visual diff requires two PNG paths',
+          'usage: levelzero visual diff <baseline.png> <current.png> [--threshold N] [--alpha 0..1]',
+        );
+      }
 
-    const threshold = parseNumberFlag(ctx.flags['threshold'], 'threshold');
-    const alpha = parseNumberFlag(ctx.flags['alpha'], 'alpha');
+      const baselinePath = resolvePath(ctx.cwd, baselineArg);
+      const currentPath = resolvePath(ctx.cwd, currentArg);
 
-    const [baseline, current] = await Promise.all([
-      readPng(baselinePath),
-      readPng(currentPath),
-    ]);
+      const threshold = parseNumberFlag(ctx.flags['threshold'], 'threshold');
+      const alpha = parseNumberFlag(ctx.flags['alpha'], 'alpha');
 
-    const diffOpts: DiffOptions = {};
-    if (alpha !== undefined) diffOpts.threshold = alpha;
+      const [baseline, current] = await Promise.all([
+        readPng(baselinePath),
+        readPng(currentPath),
+      ]);
 
-    const result = await playwrightAdapter.diff(baseline, current, diffOpts);
+      const diffOpts: DiffOptions = {};
+      if (alpha !== undefined) diffOpts.threshold = alpha;
 
-    if (threshold !== undefined && result.diffPixels > threshold) {
-      throw new CLIError(
-        'CONFIG_INVALID',
-        `visual diff exceeded threshold: diffPixels=${result.diffPixels} > ${threshold} (total=${result.totalPixels}, ratio=${result.diffRatio})`,
-        'rebaseline the snapshot or raise --threshold',
-      );
-    }
+      const result = await resolveAdapter().diff(baseline, current, diffOpts);
 
-    return result;
-  },
-};
+      if (threshold !== undefined && result.diffPixels > threshold) {
+        throw new CLIError(
+          'CONFIG_INVALID',
+          `visual diff exceeded threshold: diffPixels=${result.diffPixels} > ${threshold} (total=${result.totalPixels}, ratio=${result.diffRatio})`,
+          'rebaseline the snapshot or raise --threshold',
+        );
+      }
+
+      return result;
+    },
+  };
+}
+
+export const visualDiffCommand: Command = makeVisualDiffCommand();

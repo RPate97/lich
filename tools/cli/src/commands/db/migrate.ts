@@ -4,15 +4,27 @@ import { CLIError } from '../../errors';
 import { Registry } from '../../registry';
 import { pgService } from '../../services/postgres';
 import { resolveStackContext } from '../../services/context';
-import { prismaAdapter } from '../../adapters/orm/prisma';
+import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { ORMAdapter } from '../../adapters/orm/types';
 import type { Command } from '../types';
 
 export interface DbMigrateOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
-  /** ORM adapter; defaults to prismaAdapter. Tests inject a stub. */
+  /**
+   * ORM adapter. When omitted, the command resolves the active impl from the
+   * AdapterRegistry returned by `getAdapterRegistry` (default:
+   * `getBuiltinAdapters()`), so `levelzero adapter swap orm ...` takes effect
+   * without changing this file. Tests pass an explicit stub to keep
+   * behavior independent of the global registry state.
+   */
   adapter?: ORMAdapter;
+  /**
+   * AdapterRegistry provider used when `adapter` is omitted. Defaults to
+   * `getBuiltinAdapters` — a fresh registry per call so tests don't share
+   * mutable state.
+   */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 function defaultRegistry(): Registry {
@@ -39,7 +51,12 @@ function defaultRegistry(): Registry {
  */
 export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const adapter = opts?.adapter ?? prismaAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry ?? getBuiltinAdapters;
+  // Resolve the adapter lazily so that tests that pass an explicit `adapter`
+  // never touch the AdapterRegistry, and so production builds pick up adapter
+  // swaps that happen between command construction and first run.
+  const resolveAdapter = (): ORMAdapter =>
+    opts?.adapter ?? (getAdapterRegistry().getActive('orm') as ORMAdapter);
 
   return {
     name: 'db.migrate',
@@ -74,7 +91,7 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
       void ctx.flags['schema'];
 
       try {
-        const result = await adapter.applyMigrations({
+        const result = await resolveAdapter().applyMigrations({
           databaseUrl,
           projectRoot: stackCtx.worktreePath,
         });

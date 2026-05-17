@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { CLIError } from '../errors';
 import { Registry, type StackEntry } from '../registry';
 import { findWorktree } from '../worktree';
-import { betterAuthAdapter } from '../adapters/auth/better-auth';
+import { AdapterRegistry, getBuiltinAdapters } from '../adapters/registry';
 import { getOrCreateUser, loginAs } from '../auth/helpers';
 import type { AuthAdapter, AuthContext } from '../adapters/auth/types';
 import type { Command, CommandContext } from './types';
@@ -24,8 +24,16 @@ export interface CurlResult {
 
 export interface MakeCurlCommandOptions {
   getRegistry: () => Registry;
-  /** Auth adapter for `--as` mode. Defaults to `betterAuthAdapter`. */
+  /**
+   * Auth adapter factory for `--as` mode. When omitted, the command resolves
+   * the active impl from the AdapterRegistry returned by `getAdapterRegistry`
+   * (default `getBuiltinAdapters()`), so `levelzero adapter swap auth ...`
+   * takes effect without changing this file. Existing tests still pass an
+   * explicit factory to bypass the registry entirely.
+   */
   getAuthAdapter?: () => AuthAdapter;
+  /** AdapterRegistry provider used when `getAuthAdapter` is omitted. */
+  getAdapterRegistry?: () => AdapterRegistry;
   /**
    * Resolver for the AuthContext (databaseUrl/secret) when `--as` is used.
    * Defaults to an in-memory sqlite context — fine for tests, but production
@@ -221,7 +229,13 @@ async function resolveBaseUrl(
  */
 export function makeCurlCommand(opts: MakeCurlCommandOptions): Command {
   const getRegistry = opts.getRegistry;
-  const getAuthAdapter = opts.getAuthAdapter ?? (() => betterAuthAdapter);
+  const getAdapterRegistry = opts.getAdapterRegistry ?? getBuiltinAdapters;
+  // Lazy: only build a registry when `--as` is actually used, and only when
+  // the caller didn't pass an explicit factory. Per-call lookup so adapter
+  // swaps land between command construction and run-time.
+  const getAuthAdapter =
+    opts.getAuthAdapter ??
+    ((): AuthAdapter => getAdapterRegistry().getActive('auth') as AuthAdapter);
   const getAuthCtx = opts.getAuthCtx ?? defaultAuthCtx;
   const doFetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
 
