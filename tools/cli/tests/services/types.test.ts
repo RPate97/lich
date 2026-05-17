@@ -57,3 +57,33 @@ describe('service contract types', () => {
     expectTypeOf<Service['kind']>().toEqualTypeOf<'docker' | 'owned'>();
   });
 });
+
+describe('OwnedService', () => {
+  it('can be constructed with cwd, command, dependsOn, and envContributions', () => {
+    const owned: import('../../src/services/types').OwnedService = {
+      name: 'api',
+      kind: 'owned',
+      portNames: ['api'],
+      cwd: 'apps/api',
+      command: 'bun --hot run src/index.ts',
+      envContributions: (ports) => ({ API_URL: `http://localhost:${ports.api}` }),
+      dependsOn: ['postgres'],
+    };
+    expect(owned.kind).toBe('owned');
+    expect(owned.dependsOn).toEqual(['postgres']);
+    expect(owned.envContributions({ api: 54124 }).API_URL).toBe('http://localhost:54124');
+  });
+
+  it('is assignable to Service', () => {
+    const owned: import('../../src/services/types').OwnedService = {
+      name: 'worker',
+      kind: 'owned',
+      portNames: [],
+      cwd: 'apps/worker',
+      command: 'bun --hot run src/main.ts',
+      envContributions: () => ({}),
+    };
+    const asService: import('../../src/services/types').Service = owned;
+    expect(asService.kind).toBe('owned');
+  });
+});

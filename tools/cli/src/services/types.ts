@@ -47,15 +47,20 @@ export interface DockerService {
 }
 
 /**
- * Owned-process service (managed by levelzero under concurrently).
- * Plan 03 fleshes this out; the placeholder keeps the discriminated union
- * forward-compatible without forcing every plan-02 consumer to branch on it.
+ * Service that levelzero spawns as a process (Hono api, Next web, project-added workers).
+ * Managed via concurrently; its command should be hot-reload-aware in dev.
  */
-export interface OwnedServicePlaceholder {
+export interface OwnedService {
   name: string;
   kind: 'owned';
   portNames: string[];
+  /** Working directory for the spawned process, relative to project root. */
+  cwd: string;
+  /** Shell-quoted command. By convention, hot-reload-aware (e.g. `bun --hot run src/index.ts`). */
+  command: string;
   envContributions: EnvContributions;
+  /** Names of other services this service depends on. The runner starts them first. */
+  dependsOn?: string[];
 }
 
-export type Service = DockerService | OwnedServicePlaceholder;
+export type Service = DockerService | OwnedService;
