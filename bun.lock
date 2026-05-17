@@ -17,6 +17,7 @@
         "levelzero": "./src/bin.ts",
       },
       "dependencies": {
+        "@levelzero/plugin-hono": "workspace:*",
         "@levelzero/plugin-portless": "workspace:*",
         "@prisma/client": "^5.18.0",
         "better-auth": "^1.6.11",
@@ -40,6 +41,20 @@
         "hono": "^4.12.19",
         "typescript": "^5.4.0",
         "vitest": "^1.6.0",
+      },
+    },
+    "packages/plugin-hono": {
+      "name": "@levelzero/plugin-hono",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
+        "hono": "^4.12.19",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
       },
     },
     "packages/plugin-portless": {
@@ -184,6 +199,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@levelzero/core": ["@levelzero/core@workspace:packages/core"],
+
+    "@levelzero/plugin-hono": ["@levelzero/plugin-hono@workspace:packages/plugin-hono"],
 
     "@levelzero/plugin-portless": ["@levelzero/plugin-portless@workspace:packages/plugin-portless"],
 

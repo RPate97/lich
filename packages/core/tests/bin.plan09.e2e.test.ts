@@ -19,7 +19,14 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // The `backend/hono` adapter lives in `@levelzero/plugin-hono` after
+  // LEV-150; `gen client` resolves it from the merged adapter registry, so
+  // the project config must declare the plugin or the command has no active
+  // backend impl to call.
+  writeFileSync(
+    join(projectDir, 'levelzero.config.ts'),
+    `export default { plugins: ['@levelzero/plugin-hono'] };`,
+  );
 
   // Tiny Hono app — same pattern as tests/adapters/backend/hono.test.ts.
   const apiSrc = join(projectDir, 'apps', 'api', 'src');

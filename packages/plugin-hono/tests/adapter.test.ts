@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { honoBackendAdapter } from '../../../src/adapters/backend/hono';
+import { honoBackendAdapter } from '../src/adapter';
 
 let tmp: string;
 
