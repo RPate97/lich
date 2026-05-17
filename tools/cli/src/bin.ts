@@ -15,6 +15,8 @@ import { makeResetCommand } from './commands/reset';
 import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
 import { makeLogsCommand } from './commands/logs';
 import { impactCommand } from './commands/impact';
+import { coverageCommand } from './commands/coverage';
+import { makeCheckCommand } from './commands/check';
 import { screenshotCommand } from './commands/screenshot';
 import { visualDiffCommand } from './commands/visual';
 
@@ -39,6 +41,8 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeStacksStopAllCommand(getReg));
   reg.register(makeLogsCommand(getReg));
   reg.register(impactCommand);
+  reg.register(coverageCommand);
+  reg.register(makeCheckCommand());
   reg.register(screenshotCommand);
   reg.register(visualDiffCommand);
   return reg;
