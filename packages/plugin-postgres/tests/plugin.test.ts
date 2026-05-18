@@ -6,7 +6,11 @@ import type {
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
-import plugin from '../src/index';
+import postgres from '../src/index';
+
+// LEV-186: the package now default-exports a factory. Instantiate once so the
+// rest of the file keeps using `plugin.register(...)` exactly as before.
+const plugin = postgres();
 
 /**
  * Minimal `PluginAPI` recorder. Only the methods this plugin actually calls

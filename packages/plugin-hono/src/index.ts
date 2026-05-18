@@ -14,6 +14,15 @@ export type { HonoExtractRoutesOptions } from './adapter';
 export const honoAdapter = honoBackendAdapter;
 
 /**
+ * Options for the `@levelzero/plugin-hono` factory. The `namespace` override
+ * exists so multi-instance setups can co-exist.
+ */
+export interface HonoOptions {
+  /** Override the default `'hono'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-hono` — extracts the Hono `BackendAdapter` impl out of
  * `@levelzero/core`.
  *
@@ -30,19 +39,28 @@ export const honoAdapter = honoBackendAdapter;
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import hono from '@levelzero/plugin-hono';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-hono'],
+ *   plugins: [hono()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-hono',
-  version: '0.1.0',
+export default function hono(opts: HonoOptions = {}): Plugin<
+  'hono',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-hono',
+    namespace: (opts.namespace ?? 'hono') as 'hono',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('backend', 'hono', honoAdapter);
-    api.setActiveAdapter('backend', 'hono');
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'hono'>, _ctx: PluginContext): void {
+      api.addAdapter('backend', 'hono', honoAdapter);
+      api.setActiveAdapter('backend', 'hono');
+    },
+  };
+}

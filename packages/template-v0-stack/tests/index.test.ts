@@ -56,9 +56,12 @@ describe('@levelzero/template-v0-stack', () => {
         config.includes(`import ${binding} from '${pkg}';`),
         `expected import line for ${pkg} (as ${binding})`,
       ).toBe(true);
+      // LEV-186: plugins are now factories, so each binding must appear as
+      // `<binding>()` inside the plugins array — not as a bare reference.
+      const pluginsBody = config.split('plugins:')[1] ?? '';
       expect(
-        new RegExp(`\\b${binding}\\b`).test(config.split('plugins:')[1] ?? ''),
-        `expected ${binding} to appear in the plugins array`,
+        new RegExp(`\\b${binding}\\(\\)`).test(pluginsBody),
+        `expected ${binding}() call in the plugins array`,
       ).toBe(true);
     }
   });

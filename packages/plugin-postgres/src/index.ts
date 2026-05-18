@@ -5,6 +5,17 @@ export { pgService } from './service';
 export { postgresComposeService, postgresPgdataVolume } from './compose';
 
 /**
+ * Options for the `@levelzero/plugin-postgres` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist (e.g. two postgres
+ * instances under different namespaces). The `S` source-manifest is stubbed
+ * out today — LEV-187 fills in the real env-source keys.
+ */
+export interface PostgresOptions {
+  /** Override the default `'postgres'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-postgres` — extracts the postgres builtin out of
  * `@levelzero/core` (LEV-148).
  *
@@ -19,29 +30,29 @@ export { postgresComposeService, postgresPgdataVolume } from './compose';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
- * export default {
- *   plugins: ['@levelzero/plugin-postgres'],
- * };
- * ```
- *
- * Or by importing the default export directly:
- *
- * ```ts
  * import postgres from '@levelzero/plugin-postgres';
  *
  * export default {
- *   plugins: [postgres],
+ *   plugins: [postgres()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-postgres',
-  version: '0.1.0',
+export default function postgres(opts: PostgresOptions = {}): Plugin<
+  'postgres',
+  {
+    // Filled in by LEV-187 (e.g. 'url' | 'host' | 'port' | 'database' | 'driver').
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-postgres',
+    namespace: (opts.namespace ?? 'postgres') as 'postgres',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addComposeService('postgres', postgresComposeService);
-    api.addComposeVolume('pgdata', postgresPgdataVolume);
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'postgres'>, _ctx: PluginContext): void {
+      api.addComposeService('postgres', postgresComposeService);
+      api.addComposeVolume('pgdata', postgresPgdataVolume);
+    },
+  };
+}

@@ -4,6 +4,15 @@ import { vitestAdapter } from './adapter';
 export { vitestAdapter } from './adapter';
 
 /**
+ * Options for the `@levelzero/plugin-vitest` factory. The `namespace` override
+ * exists so multi-instance setups can co-exist.
+ */
+export interface VitestOptions {
+  /** Override the default `'vitest'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-vitest` — contributes the vitest `TestRunnerAdapter`.
  *
  * Registers one impl under the `test-runner` adapter slot:
@@ -23,19 +32,28 @@ export { vitestAdapter } from './adapter';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import vitest from '@levelzero/plugin-vitest';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-vitest'],
+ *   plugins: [vitest()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-vitest',
-  version: '0.1.0',
+export default function vitest(opts: VitestOptions = {}): Plugin<
+  'vitest',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-vitest',
+    namespace: (opts.namespace ?? 'vitest') as 'vitest',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('test-runner', 'vitest', vitestAdapter);
-    // Intentionally no setActiveAdapter — see module docstring.
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'vitest'>, _ctx: PluginContext): void {
+      api.addAdapter('test-runner', 'vitest', vitestAdapter);
+      // Intentionally no setActiveAdapter — see module docstring.
+    },
+  };
+}

@@ -42,6 +42,15 @@ function defaultRegistryPath(): string {
 }
 
 /**
+ * Options for the `@levelzero/plugin-better-auth` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist.
+ */
+export interface BetterAuthOptions {
+  /** Override the default `'better-auth'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-better-auth` — extracts the Better Auth `AuthAdapter` impl
  * out of `@levelzero/core` (LEV-152), along with the `curl` command that
  * depends on it.
@@ -70,26 +79,35 @@ function defaultRegistryPath(): string {
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import betterAuth from '@levelzero/plugin-better-auth';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-better-auth'],
+ *   plugins: [betterAuth()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-better-auth',
-  version: '0.1.0',
+export default function betterAuth(opts: BetterAuthOptions = {}): Plugin<
+  'better-auth',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-better-auth',
+    namespace: (opts.namespace ?? 'better-auth') as 'better-auth',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('auth', 'better-auth', betterAuthAdapter);
-    api.setActiveAdapter('auth', 'better-auth');
+    register(api: PluginAPI<'better-auth'>, _ctx: PluginContext): void {
+      api.addAdapter('auth', 'better-auth', betterAuthAdapter);
+      api.setActiveAdapter('auth', 'better-auth');
 
-    api.addCommand(
-      makeCurlCommand({
-        getRegistry: () => new Registry(defaultRegistryPath()),
-        getAuthAdapter: (): AuthAdapter => betterAuthAdapter,
-      }),
-    );
-  },
-};
-
-export default plugin;
+      api.addCommand(
+        makeCurlCommand({
+          getRegistry: () => new Registry(defaultRegistryPath()),
+          getAuthAdapter: (): AuthAdapter => betterAuthAdapter,
+        }),
+      );
+    },
+  };
+}
