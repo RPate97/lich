@@ -44,7 +44,7 @@ There is no auto-discovery: a plugin not listed in `plugins[]` is not loaded.
 
 ## PluginAPI surface
 
-`PluginAPI` exposes ten contribution methods. Each is additive — re-registering with the same key overrides the previous entry; there is no removal method.
+`PluginAPI` exposes twelve contribution methods. Each is additive — re-registering with the same key overrides the previous entry; there is no removal method.
 
 | Method | Purpose |
 |---|---|
@@ -58,6 +58,26 @@ There is no auto-discovery: a plugin not listed in `plugins[]` is not loaded.
 | `addRule(rule)` | Register a check rule consumed by `levelzero check`. |
 | `addGenerator(gen)` | Register a code generator (typed clients, schemas, etc.). |
 | `addSkillsDir(absPath)` | Expose a directory of skills to the agent. |
+| `addEnvSource(name, source)` | Publish one named value (e.g. a URL, port, driver string) under the plugin's namespace. |
+| `addBulkEnvSource(source)` | Publish a `Record<string, string>` of values whose keys are determined at resolution time (dotenv, Infisical, AWS Secrets Manager). |
+
+### `addEnvSource(name, source)`
+
+Registers a **named EnvSource** under the plugin's declared namespace. The plugin author types the short local name (`'url'`); the framework composes the fully-qualified key (`${namespace}.${name}`, e.g. `postgres.url`) when storing the registration. Two plugins claiming the same `(namespace, name)` pair is a hard error at boot — the error names both plugins so consumers can attribute the collision.
+
+A `source` provides two resolvers, both receiving the same `EnvSourceContext` (ports, projectRoot, worktreeKey, consumerContext):
+
+- `host(ctx)` — value to use when the consumer is a host-spawned owned service (e.g. `next dev`). Typically `localhost:${ports.foo}`.
+- `container(ctx)` — value to use when the consumer is a compose-managed service. Typically the compose-DNS form (`foo:5432`).
+- `protocol` (optional) — open-ended identifier (`'postgres'`, `'redis'`, `'kafka'`, …) future tooling may dispatch on without coupling to any specific plugin.
+
+Both resolvers may be sync or async. See the chapter on EnvSources in [plugin-author-guide.md](./plugin-author-guide.md) for a full walkthrough.
+
+### `addBulkEnvSource(source)`
+
+Registers a **bulk EnvSource** for the plugin's namespace. Used by secret-loader and config-loader plugins — anything where the available keys are determined by the upstream store at resolution time, not by the plugin author at code time. The `source.resolve(ctx)` callback returns a `Record<string, string>`; the keys of that record ARE the env var names a consumer can reference (either via `importAll: ['<namespace>']` or via an explicit `'<namespace>.<key>'` entry in `envInjection`).
+
+A plugin may register **at most one** bulk source per namespace; a second registration is a hard error at boot. Bulk sources have no host/container distinction by default (a secret is the same value either way) — branch on `ctx.consumerContext` inside `resolve()` if you need it.
 
 ## Cross-plugin coordination
 
@@ -69,6 +89,50 @@ Plugins are processed **in declared order**. That ordering matters in two places
 `addAdapter`, `addCommand`, `addRule`, `addGenerator`, and `addSkillsDir` are also last-write-wins on their natural key (slot+name, command name, rule id, generator id, absolute path).
 
 A `register()` that throws aborts boot; the error is rewrapped with the offending plugin's `name` for attribution. See [`packages/core/src/plugins/boot.ts`](../packages/core/src/plugins/boot.ts) for the assembly order.
+
+## Configuring env injection
+
+Plugins **publish** values via `addEnvSource` / `addBulkEnvSource`. Consumers **wire** those values to env-var names by adding an `envInjection` block to `levelzero.config.ts`:
+
+```ts
+import { defineConfig } from '@levelzero/core';
+import postgres from '@levelzero/plugin-postgres';
+import redis    from '@levelzero/plugin-redis';
+import dotenv   from '@levelzero/plugin-dotenv';
+import infisical from '@levelzero/plugin-infisical';
+
+export default defineConfig({
+  plugins: [
+    postgres(),
+    redis(),
+    dotenv(),                                         // bulk: dotenv
+    infisical({ project: 'proj-abc', environment: 'dev' }), // bulk: infisical
+  ],
+  envInjection: {
+    DATABASE_URL:  'postgres.url',                    // named (typed)
+    REDIS_URL:     'redis.url',                       // named (typed)
+    STRIPE_API_KEY:'infisical.STRIPE_API_KEY',        // explicit bulk key
+    importAll:    ['dotenv', 'infisical'],            // every other key from these
+  },
+});
+```
+
+Rules (full algorithm in `packages/core/src/env/resolve.ts`):
+
+- **Explicit entries always win over `importAll`.** `importAll` populates first; explicit `ENV_VAR: 'ns.name'` lines run after and overwrite anything they collide with.
+- **Empty `envInjection` = nothing injected.** No magic auto-everything knob. If you want it, list it.
+- **Bulk-source collisions inside `importAll`** (two bulk sources both define `STRIPE_API_KEY`) follow plugin load order: last wins. Override the loser with an explicit entry to make intent obvious.
+- **Missing references fail fast at boot.** Reference `stripe.api_key` and no source provides it → `ENV_SOURCE_MISSING: ... did you forget to load @my-org/plugin-infisical?`. The error message lists every namespace the registry knows about.
+- **Types autocomplete the right-hand side.** When the config is wrapped in `defineConfig({ ... })`, the `plugins` tuple flows through to `envInjection` — IDEs autocomplete `postgres.url` etc., and a typo (`'postgres.urll'`) is a compile error. The `importAll` array is constrained to namespaces of plugins that actually declared `bulk: true`.
+
+### Host vs container resolution
+
+Each consumer service gets its own resolution pass:
+
+- **Host-spawned owned services** (e.g. `next dev`) — every named source resolves via its `host()` function. Values typically point at `localhost:${ports.<svc>}`.
+- **Compose-managed services** — every named source resolves via its `container()` function. Values typically point at the compose-DNS form (`postgres:5432`, `redis:6379`). Bulk-source secrets are the same either way unless the resolver branches on `ctx.consumerContext`.
+
+For inspection, every running service also has its merged env written to `.levelzero/state/<worktreeKey>/env/<service>.env`. `levelzero env list` and `levelzero env resolve <service>` print the same content from the CLI.
 
 ## Composability rule (READ THIS)
 
