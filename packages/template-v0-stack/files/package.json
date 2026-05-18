@@ -13,6 +13,17 @@
     "test": "turbo run test",
     "lint": "turbo run lint"
   },
+  "dependencies": {
+    "@levelzero/plugin-better-auth": "^0.1.0",
+    "@levelzero/plugin-hono": "^0.1.0",
+    "@levelzero/plugin-next": "^0.1.0",
+    "@levelzero/plugin-playwright": "^0.1.0",
+    "@levelzero/plugin-postgres": "^0.1.0",
+    "@levelzero/plugin-prisma": "^0.1.0",
+    "@levelzero/plugin-shadcn": "^0.1.0",
+    "@levelzero/plugin-typed-client": "^0.1.0",
+    "@levelzero/plugin-vitest": "^0.1.0"
+  },
   "devDependencies": {
     "turbo": "^2.0.0",
     "typescript": "^5.4.0"
