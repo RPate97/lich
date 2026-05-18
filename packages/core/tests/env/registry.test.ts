@@ -100,6 +100,49 @@ describe('EnvSourceRegistry — named sources', () => {
     });
     expect(r.listNamed().map((e) => e.fullKey).sort()).toEqual(['a.x', 'b.y']);
   });
+
+  it('findFirstNamed returns the first entry matching predicate (LEV-171)', () => {
+    // The predicate path lets slot consumers locate "whichever plugin
+    // provides protocol X" without coupling to a specific namespace —
+    // see plugin-prisma's `db.*` commands.
+    const r = new EnvSourceRegistry();
+    r.registerNamed({
+      namespace: 'postgres',
+      name: 'host',
+      fullKey: 'postgres.host',
+      source: { host: () => 'localhost', container: () => 'postgres' },
+      pluginName: 'plugin-postgres',
+    });
+    r.registerNamed({
+      namespace: 'postgres',
+      name: 'url',
+      fullKey: 'postgres.url',
+      source: {
+        protocol: 'postgres',
+        host: () => 'postgres://h',
+        container: () => 'postgres://c',
+      },
+      pluginName: 'plugin-postgres',
+    });
+
+    const urlEntry = r.findFirstNamed(
+      (e) => e.source.protocol === 'postgres' && e.name === 'url',
+    );
+    expect(urlEntry?.fullKey).toBe('postgres.url');
+  });
+
+  it('findFirstNamed returns undefined when nothing matches', () => {
+    const r = new EnvSourceRegistry();
+    r.registerNamed({
+      namespace: 'redis',
+      name: 'url',
+      fullKey: 'redis.url',
+      source: { protocol: 'redis', host: () => '', container: () => '' },
+      pluginName: 'plugin-redis',
+    });
+    const noMatch = r.findFirstNamed((e) => e.source.protocol === 'postgres');
+    expect(noMatch).toBeUndefined();
+  });
 });
 
 describe('EnvSourceRegistry — bulk sources', () => {

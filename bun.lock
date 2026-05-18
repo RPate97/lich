@@ -206,11 +206,11 @@
       "name": "@levelzero/plugin-prisma",
       "version": "0.1.0",
       "dependencies": {
-        "@levelzero/plugin-postgres": "workspace:*",
         "pg": "^8.12.0",
         "prisma": "^5.18.0",
       },
       "devDependencies": {
+        "@levelzero/plugin-postgres": "workspace:*",
         "@prisma/client": "^5.18.0",
         "@types/node": "^20.12.0",
         "@types/pg": "^8.11.0",

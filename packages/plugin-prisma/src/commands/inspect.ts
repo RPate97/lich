@@ -4,8 +4,10 @@ import { CLIError } from '@levelzero/core/errors';
 import { Registry } from '@levelzero/core/registry';
 import { resolveStackContext } from '@levelzero/core/services/context';
 import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
+import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import type { Command, ORMAdapter } from '@levelzero/core';
 import { prismaAdapter } from '../adapter';
+import { resolveDatabaseUrl } from './database-url';
 
 export interface DbInspectOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
@@ -21,6 +23,12 @@ export interface DbInspectOptions {
    * when omitted the command uses `prismaAdapter` directly.
    */
   getAdapterRegistry?: () => AdapterRegistry;
+  /**
+   * Boot-scoped {@link EnvSourceRegistry}. See `DbMigrateOptions` for the
+   * full rationale — db.* commands consume `DATABASE_URL` only via the
+   * registry to preserve the composability principle (Plan 15 / LEV-171).
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
 }
 
 /** Default row limit per the LEV-58 spec. */
@@ -55,13 +63,16 @@ function parseLimitFlag(value: string | boolean | undefined): number | undefined
  *
  * Output is always JSON in v0; the `--json` flag is accepted as a no-op alias.
  *
- * We resolve the worktree, look up its postgres port in the registry, and
- * derive DATABASE_URL via the same formula plugin-postgres' `addEnvSource('url')`
- * publishes (LEV-187) — every db.* command uses this formula so the URL stays
- * consistent with what the running container actually serves.
+ * We resolve the worktree, then ask the EnvSource registry for the active
+ * `postgres`-protocol `*.url` source (every db.* command uses the same
+ * lookup — see {@link resolveDatabaseUrl}). This keeps plugin-prisma free
+ * of any direct dependency on a sibling DB plugin; the composability
+ * principle (Plan 15 / LEV-171) requires plugins to talk through registry
+ * lookups rather than each other's package internals.
  */
 export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
   const resolveAdapter = (): ORMAdapter => {
     if (opts?.adapter) return opts.adapter;
     if (opts?.getAdapterRegistry) {
@@ -114,19 +125,12 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
         );
       }
 
-      // DATABASE_URL formula mirrors the postgres plugin's
-      // `addEnvSource('url', …)` registration (LEV-187). Inlined because the
-      // prisma commands run before EnvSource resolution is plumbed into the
-      // command-context (Plan 16 Tier 2 lands that separately).
-      const postgresPort = entry.ports['postgres'];
-      if (!postgresPort) {
-        throw new CLIError(
-          'NO_PROJECT',
-          'current stack has no postgres service',
-          'ensure postgres is part of the stack and `levelzero dev` has been run',
-        );
-      }
-      const databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
+      const databaseUrl = await resolveDatabaseUrl({
+        envSourceRegistry: getEnvSourceRegistry?.(),
+        ports: entry.ports,
+        projectRoot: stackCtx.worktreePath,
+        worktreeKey: stackCtx.worktreeKey,
+      });
 
       const ormCtx = { databaseUrl, projectRoot: stackCtx.worktreePath };
       const adapter = resolveAdapter();

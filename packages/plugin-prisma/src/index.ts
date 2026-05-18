@@ -51,6 +51,15 @@ export interface PrismaOptions {
  *     orm at runtime can override these via `addCommand` from a later plugin
  *     — `CommandRegistry.register` is last-write-wins.
  *
+ * Cross-plugin composition (LEV-171): the db.* commands derive
+ * `DATABASE_URL` from whichever DB plugin published a `<ns>.url` named
+ * EnvSource with `protocol: 'postgres'`. The plugin captures
+ * `PluginContext.getEnvSourceRegistry` here and threads it into every
+ * command factory so the closure resolves the FULLY populated registry at
+ * command-run time. plugin-prisma never imports any sibling DB plugin
+ * directly — composability lives in the EnvSource contract, not in
+ * package-level dependencies.
+ *
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
@@ -64,7 +73,7 @@ export interface PrismaOptions {
 export default function prisma(opts: PrismaOptions = {}): Plugin<
   'prisma',
   {
-    // Filled in by LEV-187 if prisma ends up publishing env sources.
+    // plugin-prisma is a pure ORM consumer — it doesn't publish env sources.
     named: never;
     bulk: never;
   }
@@ -74,14 +83,30 @@ export default function prisma(opts: PrismaOptions = {}): Plugin<
     namespace: (opts.namespace ?? 'prisma') as 'prisma',
     version: '0.1.0',
 
-    register(api: PluginAPI<'prisma'>, _ctx: PluginContext): void {
+    register(api: PluginAPI<'prisma'>, ctx: PluginContext): void {
       api.addAdapter('orm', 'prisma', prismaAdapter);
       api.setActiveAdapter('orm', 'prisma');
 
-      api.addCommand(makeDbMigrateCommand({ adapter: prismaAdapter }));
-      api.addCommand(makeDbMigrationNewCommand({ adapter: prismaAdapter }));
-      api.addCommand(makeDbSeedCommand({ adapter: prismaAdapter }));
-      api.addCommand(makeDbInspectCommand({ adapter: prismaAdapter }));
+      // Capture the EnvSource registry getter once; the closure resolves to
+      // the same mutable registry object at command-run time. The
+      // `?.()` chain stays optional-safe so synthetic PluginContexts
+      // produced by tests (without `getEnvSourceRegistry`) don't crash
+      // at command-construction. Commands surface a clear "registry not
+      // available" CLIError if they're invoked without one wired in.
+      const getEnvSourceRegistry = ctx.getEnvSourceRegistry;
+
+      api.addCommand(
+        makeDbMigrateCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
+      );
+      api.addCommand(
+        makeDbMigrationNewCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
+      );
+      api.addCommand(
+        makeDbSeedCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
+      );
+      api.addCommand(
+        makeDbInspectCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
+      );
     },
   };
 }

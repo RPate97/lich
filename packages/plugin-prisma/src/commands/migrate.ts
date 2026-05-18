@@ -4,8 +4,10 @@ import { CLIError } from '@levelzero/core/errors';
 import { Registry } from '@levelzero/core/registry';
 import { resolveStackContext } from '@levelzero/core/services/context';
 import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
+import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import type { Command, ORMAdapter } from '@levelzero/core';
 import { prismaAdapter } from '../adapter';
+import { resolveDatabaseUrl } from './database-url';
 
 export interface DbMigrateOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
@@ -25,6 +27,18 @@ export interface DbMigrateOptions {
    * adapter-swap dispatch without hard-coding the impl.
    */
   getAdapterRegistry?: () => AdapterRegistry;
+  /**
+   * Boot-scoped {@link EnvSourceRegistry}. Required for the command to derive
+   * `DATABASE_URL` from whichever DB plugin published `<ns>.url` with
+   * `protocol: 'postgres'`. Plumbed by the plugin's `register()` from
+   * `PluginContext.getEnvSourceRegistry`. Tests inject a stub registry pre-
+   * populated with a `postgres.url` named source.
+   *
+   * Composability (Plan 15 / LEV-171): this command must NOT import or
+   * otherwise reach into a sibling DB plugin to compute the URL — the
+   * EnvSource lookup is the only sanctioned cross-plugin channel.
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
 }
 
 function defaultRegistry(): Registry {
@@ -33,10 +47,10 @@ function defaultRegistry(): Registry {
 }
 
 /**
- * Build `levelzero db migrate`. Resolves the current worktree's stack, derives
- * DATABASE_URL from the running postgres service, and invokes the ORM
- * adapter's `applyMigrations` (which for prisma shells out to
- * `prisma migrate deploy`).
+ * Build `levelzero db migrate`. Resolves the current worktree's stack, asks
+ * the EnvSource registry for the active `postgres`-protocol URL source, and
+ * invokes the ORM adapter's `applyMigrations` (which for prisma shells out
+ * to `prisma migrate deploy`).
  *
  * Flags:
  *   --dev            accepted for forward-compat; the prisma adapter currently
@@ -51,6 +65,7 @@ function defaultRegistry(): Registry {
  */
 export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
   // Resolve the adapter lazily so tests that pass an explicit `adapter` or
   // `getAdapterRegistry` never construct a default registry, and so production
   // dispatch picks up an `adapter swap` that happens after command
@@ -82,21 +97,17 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
         );
       }
 
-      // DATABASE_URL formula mirrors the postgres plugin's
-      // `addEnvSource('url', …)` registration (LEV-187) — the single source of
-      // truth for connection-string shape lives in plugin-postgres' index.
-      // Inlined here because the prisma commands run before EnvSource
-      // resolution is plumbed into the command-context (Plan 16 Tier 2 lands
-      // that separately).
-      const postgresPort = entry.ports['postgres'];
-      if (!postgresPort) {
-        throw new CLIError(
-          'NO_PROJECT',
-          'current stack has no postgres service',
-          'ensure postgres is part of the stack and `levelzero dev` has been run',
-        );
-      }
-      const databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
+      // Resolve DATABASE_URL through the EnvSource registry. db.* commands run
+      // on the host (not in a container), so we explicitly pass
+      // `consumerContext: 'host'`. The lookup is by protocol so the command
+      // works against any DB plugin that registers a `<ns>.url` source with
+      // `protocol: 'postgres'` — plugin-prisma never imports plugin-postgres.
+      const databaseUrl = await resolveDatabaseUrl({
+        envSourceRegistry: getEnvSourceRegistry?.(),
+        ports: entry.ports,
+        projectRoot: stackCtx.worktreePath,
+        worktreeKey: stackCtx.worktreeKey,
+      });
 
       // Flags are accepted but the prisma adapter currently runs `migrate deploy`
       // for either mode. We touch the flags so they're not flagged as unused, and

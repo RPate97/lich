@@ -4,8 +4,10 @@ import { CLIError } from '@levelzero/core/errors';
 import { Registry } from '@levelzero/core/registry';
 import { resolveStackContext } from '@levelzero/core/services/context';
 import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
+import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import type { Command, ORMAdapter } from '@levelzero/core';
 import { prismaAdapter } from '../adapter';
+import { resolveDatabaseUrl } from './database-url';
 
 export interface DbMigrationNewOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
@@ -21,6 +23,12 @@ export interface DbMigrationNewOptions {
    * when omitted the command uses `prismaAdapter` directly.
    */
   getAdapterRegistry?: () => AdapterRegistry;
+  /**
+   * Boot-scoped {@link EnvSourceRegistry}. See `DbMigrateOptions` for the
+   * full rationale — db.* commands consume `DATABASE_URL` only via the
+   * registry to preserve the composability principle (Plan 15 / LEV-171).
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
 }
 
 function defaultRegistry(): Registry {
@@ -41,9 +49,9 @@ const MIGRATION_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 /**
  * Build `levelzero db migration new <name>`. Validates `<name>` as snake_case,
- * resolves the current worktree's stack to derive DATABASE_URL, then asks the
- * ORM adapter to scaffold a new migration. For prisma this shells out to
- * `prisma migrate dev --create-only`, producing
+ * resolves the current worktree's stack, asks the EnvSource registry for
+ * `DATABASE_URL`, then asks the ORM adapter to scaffold a new migration. For
+ * prisma this shells out to `prisma migrate dev --create-only`, producing
  * `prisma/migrations/<timestamp>_<name>/migration.sql`.
  *
  * On success the result includes the absolute path of the generated migration
@@ -52,6 +60,7 @@ const MIGRATION_NAME_RE = /^[a-z][a-z0-9_]*$/;
  */
 export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
   const resolveAdapter = (): ORMAdapter => {
     if (opts?.adapter) return opts.adapter;
     if (opts?.getAdapterRegistry) {
@@ -90,19 +99,12 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
         );
       }
 
-      // DATABASE_URL formula mirrors the postgres plugin's
-      // `addEnvSource('url', …)` registration (LEV-187). Inlined because the
-      // prisma commands run before EnvSource resolution is plumbed into the
-      // command-context (Plan 16 Tier 2 lands that separately).
-      const postgresPort = entry.ports['postgres'];
-      if (!postgresPort) {
-        throw new CLIError(
-          'NO_PROJECT',
-          'current stack has no postgres service',
-          'ensure postgres is part of the stack and `levelzero dev` has been run',
-        );
-      }
-      const databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
+      const databaseUrl = await resolveDatabaseUrl({
+        envSourceRegistry: getEnvSourceRegistry?.(),
+        ports: entry.ports,
+        projectRoot: stackCtx.worktreePath,
+        worktreeKey: stackCtx.worktreeKey,
+      });
 
       let result;
       try {

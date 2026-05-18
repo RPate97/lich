@@ -2,6 +2,7 @@ import type { AdapterSlot } from '../adapters/registry';
 import type { Command } from '../commands/types';
 import type { OwnedService } from '../services/types';
 import type { Rule } from '../check/types';
+import type { EnvSourceRegistry } from '../env/registry';
 import type { BulkEnvSource, EnvSource, SourceManifest } from '../env/types';
 
 // TODO(LEV-124): replace with `import type { Generator } from '../gen/types'`
@@ -117,15 +118,32 @@ export interface PluginAPI<NS extends string = string> {
 
 /**
  * Read-only context handed to every plugin's `register()`. Plugins should
- * treat both fields as immutable for the duration of the call.
+ * treat the fields as immutable for the duration of the call.
  *
  * `config` is `unknown` until the project-level config type lands; plugins
  * that need to read it should narrow/parse it themselves.
+ *
+ * `getEnvSourceRegistry` is a deferred handle to the shared, mutable
+ * `EnvSourceRegistry` that `bootPlugins` is building. The same object is
+ * passed to every plugin and gets populated as plugins call `addEnvSource` /
+ * `addBulkEnvSource`. Plugins that need to compose with sources contributed
+ * by OTHER plugins (e.g. plugin-prisma's `db.*` commands looking up the
+ * active `postgres.url` source) capture this closure in their command
+ * factories — by the time a command runs the registry is fully populated.
+ * Reading it during `register()` itself sees only the entries added by
+ * earlier plugins, which is rarely what you want.
  */
 export interface PluginContext {
   projectRoot: string;
   /** Typed once `LevelzeroConfig` is defined; `unknown` for now. */
   config: unknown;
+  /**
+   * Returns the boot-scoped EnvSource registry. Stable identity across calls
+   * within a single boot — capture once and reuse. Optional so test
+   * fixtures and synthetic PluginContext literals that don't care about
+   * cross-plugin composition continue to typecheck.
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
 }
 
 /**

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Registry } from '@levelzero/core/registry';
 import { computeWorktreeKey } from '@levelzero/core/worktree';
 import { CLIError } from '@levelzero/core/errors';
+import { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import {
   makeDbMigrationNewCommand,
   dbMigrationNewCommand,
@@ -24,6 +25,27 @@ function stubAdapter(
     resetDatabase: vi.fn(),
     generateClient: vi.fn(),
   } as unknown as ORMAdapter;
+}
+
+/**
+ * Build a stub EnvSourceRegistry pre-populated with a `postgres.url` named
+ * source — see migrate.test.ts for the full LEV-171 rationale.
+ */
+function envSourceRegistryWithPostgres(): EnvSourceRegistry {
+  const reg = new EnvSourceRegistry();
+  reg.registerNamed({
+    namespace: 'postgres',
+    name: 'url',
+    fullKey: 'postgres.url',
+    pluginName: '@levelzero/plugin-postgres',
+    source: {
+      protocol: 'postgres',
+      host: ({ ports }) =>
+        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
+      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+    },
+  });
+  return reg;
 }
 
 let projectDir: string;
@@ -63,7 +85,11 @@ describe('levelzero db migration new', () => {
       path: '/tmp/x/prisma/migrations/0_x',
       name: 'x',
     }));
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(/name/i);
@@ -76,7 +102,11 @@ describe('levelzero db migration new', () => {
       path: '/tmp/x/prisma/migrations/0_x',
       name: 'x',
     }));
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     // camelCase / kebab / leading-digit / spaces all rejected
     for (const bad of ['AddUsers', 'add-users', '1add_users', 'add users', '']) {
       await expect(
@@ -92,7 +122,11 @@ describe('levelzero db migration new', () => {
       path: '/tmp/x/prisma/migrations/0_x',
       name: 'x',
     }));
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: ['add_users'], flags: {} }),
     ).rejects.toThrow(CLIError);
@@ -104,36 +138,35 @@ describe('levelzero db migration new', () => {
       path: '/tmp/x/prisma/migrations/0_x',
       name: 'x',
     }));
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: ['add_users'], flags: {} }),
     ).rejects.toThrow(/no stack/i);
     expect(adapter.newMigration).not.toHaveBeenCalled();
   });
 
-  it('errors when the running stack has no postgres port', async () => {
-    await registry.upsert(computeWorktreeKey(projectDir), {
-      path: projectDir,
-      branch: 'main',
-      ports: {},
-      urls: {},
-      containers: [],
-      network: '',
-      logDir: '.levelzero/logs',
-      createdAt: new Date().toISOString(),
-    });
+  it('errors when no postgres EnvSource is registered (no DB plugin loaded)', async () => {
+    await seedRegistryEntry();
     const adapter = stubAdapter(async () => ({
       path: '/tmp/x/prisma/migrations/0_x',
       name: 'x',
     }));
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: () => new EnvSourceRegistry(),
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: ['add_users'], flags: {} }),
-    ).rejects.toThrow(/postgres/i);
+    ).rejects.toThrow(/postgres EnvSource/i);
     expect(adapter.newMigration).not.toHaveBeenCalled();
   });
 
-  it('invokes adapter.newMigration with the derived DATABASE_URL + projectRoot + name and returns the migration path', async () => {
+  it('invokes adapter.newMigration with the EnvSource-resolved DATABASE_URL + projectRoot + name and returns the migration path', async () => {
     await seedRegistryEntry();
     let captured: { ctx: ORMContext; name: string } | undefined;
     const expectedPath = join(projectDir, 'prisma', 'migrations', '20260517000000_add_users');
@@ -141,7 +174,11 @@ describe('levelzero db migration new', () => {
       captured = { ctx, name };
       return { path: expectedPath, name };
     });
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -166,7 +203,11 @@ describe('levelzero db migration new', () => {
     const adapter = stubAdapter(async () => {
       throw new Error('prisma migrate dev --create-only failed (exit 1): bad schema');
     });
-    const cmd = makeDbMigrationNewCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbMigrationNewCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
 
     const err = await cmd
       .run({ cwd: projectDir, format: 'json', args: ['add_users'], flags: {} })

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Registry } from '@levelzero/core/registry';
 import { computeWorktreeKey } from '@levelzero/core/worktree';
 import { CLIError } from '@levelzero/core/errors';
+import { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import { makeDbSeedCommand, dbSeedCommand } from '../../src/commands/seed';
 import type { ORMAdapter, ORMContext } from '@levelzero/core';
 
@@ -21,6 +22,29 @@ function stubAdapter(
     resetDatabase: vi.fn(),
     generateClient: vi.fn(),
   } as unknown as ORMAdapter;
+}
+
+/**
+ * Build a stub EnvSourceRegistry pre-populated with a `postgres.url` named
+ * source — mirrors the shape published by plugin-postgres without taking a
+ * direct dependency on that package. See migrate.test.ts for the full
+ * rationale (LEV-171).
+ */
+function envSourceRegistryWithPostgres(): EnvSourceRegistry {
+  const reg = new EnvSourceRegistry();
+  reg.registerNamed({
+    namespace: 'postgres',
+    name: 'url',
+    fullKey: 'postgres.url',
+    pluginName: '@levelzero/plugin-postgres',
+    source: {
+      protocol: 'postgres',
+      host: ({ ports }) =>
+        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
+      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+    },
+  });
+  return reg;
 }
 
 let projectDir: string;
@@ -57,7 +81,11 @@ describe('levelzero db seed', () => {
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-seed-outside-')));
     const adapter = stubAdapter(async () => ({ ok: true, output: '' }));
-    const cmd = makeDbSeedCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbSeedCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(CLIError);
@@ -66,40 +94,45 @@ describe('levelzero db seed', () => {
 
   it('errors with a clear message when no stack is running', async () => {
     const adapter = stubAdapter(async () => ({ ok: true, output: '' }));
-    const cmd = makeDbSeedCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbSeedCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(/no stack/i);
     expect(adapter.seed).not.toHaveBeenCalled();
   });
 
-  it('errors when the running stack has no postgres port', async () => {
-    await registry.upsert(computeWorktreeKey(projectDir), {
-      path: projectDir,
-      branch: 'main',
-      ports: {},
-      urls: {},
-      containers: [],
-      network: '',
-      logDir: '.levelzero/logs',
-      createdAt: new Date().toISOString(),
-    });
+  it('errors when no postgres EnvSource is registered (no DB plugin loaded)', async () => {
+    // LEV-171 acceptance: stack is up but no DB plugin contributed a
+    // `*.url` postgres source.
+    await seedRegistryEntry();
     const adapter = stubAdapter(async () => ({ ok: true, output: '' }));
-    const cmd = makeDbSeedCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbSeedCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: () => new EnvSourceRegistry(),
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(/postgres/i);
+    ).rejects.toThrow(/postgres EnvSource/i);
     expect(adapter.seed).not.toHaveBeenCalled();
   });
 
-  it('invokes prismaAdapter.seed with the derived DATABASE_URL + projectRoot and returns ok on success', async () => {
+  it('invokes prismaAdapter.seed with the EnvSource-resolved DATABASE_URL + projectRoot and returns ok on success', async () => {
     await seedRegistryEntry();
     let captured: ORMContext | undefined;
     const adapter = stubAdapter(async (ctx) => {
       captured = ctx;
       return { ok: true, output: 'Seeded 3 rows\n' };
     });
-    const cmd = makeDbSeedCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbSeedCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -123,7 +156,11 @@ describe('levelzero db seed', () => {
       ok: false,
       output: 'Error: seed script crashed\n',
     }));
-    const cmd = makeDbSeedCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbSeedCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
 
     const err = await cmd
       .run({ cwd: projectDir, format: 'json', args: [], flags: {} })
