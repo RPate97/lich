@@ -101,6 +101,107 @@ describe('buildComposeBundle', () => {
     // the legacy DockerService's pinned name from the first pass.
     expect(b.containerNames).toEqual(['levelzero-abcdef012345-postgres']);
   });
+
+  // LEV-182 — `serviceEnv` parameter merges into each service's
+  // `environment:` block. Validates the pre-existing-bug fix:
+  // compose services receive their resolved env now, where before
+  // `buildComposeBundle` had no env input at all.
+  it('merges per-service env into the compose `environment:` block', () => {
+    const b = buildComposeBundle(
+      ctx,
+      [],
+      { postgres: 54200 },
+      {
+        services: {
+          postgres: {
+            image: 'postgres:16-alpine',
+            ports: ['${PORT_postgres}:5432'],
+          },
+        },
+        volumes: {},
+        networks: {},
+      },
+      {
+        postgres: {
+          DATABASE_URL: 'postgres://u:p@postgres:5432/db',
+          API_BASE: 'http://api:3000',
+        },
+      },
+    );
+
+    expect(b.services.postgres!.environment).toEqual({
+      DATABASE_URL: 'postgres://u:p@postgres:5432/db',
+      API_BASE: 'http://api:3000',
+    });
+  });
+
+  it('resolved per-service env wins over the underlying definition env', () => {
+    const b = buildComposeBundle(
+      ctx,
+      [],
+      { postgres: 54200 },
+      {
+        services: {
+          postgres: {
+            image: 'postgres:16-alpine',
+            environment: { DATABASE_URL: 'old', POSTGRES_USER: 'levelzero' },
+          },
+        },
+        volumes: {},
+        networks: {},
+      },
+      {
+        postgres: { DATABASE_URL: 'new' },
+      },
+    );
+
+    // Resolved entry wins; entries it doesn't touch pass through.
+    expect(b.services.postgres!.environment).toEqual({
+      DATABASE_URL: 'new',
+      POSTGRES_USER: 'levelzero',
+    });
+  });
+
+  it('an empty per-service env map does not add an `environment:` block', () => {
+    const b = buildComposeBundle(
+      ctx,
+      [],
+      { postgres: 54200 },
+      {
+        services: {
+          postgres: { image: 'postgres:16-alpine' },
+        },
+        volumes: {},
+        networks: {},
+      },
+      { postgres: {} },
+    );
+    expect(b.services.postgres!.environment).toBeUndefined();
+  });
+
+  it('skips per-service env for services not in the merged set', () => {
+    // The dispatcher resolves env per name from the merged compose service
+    // set; in the rare case a name shows up only on the env map (e.g. a
+    // typo in a future migration), the bundle silently ignores it.
+    const b = buildComposeBundle(
+      ctx,
+      [],
+      { postgres: 54200 },
+      {
+        services: {
+          postgres: { image: 'postgres:16-alpine' },
+        },
+        volumes: {},
+        networks: {},
+      },
+      {
+        postgres: { A: '1' },
+        ghost: { B: '2' }, // not in compose set
+      },
+    );
+    expect(b.services.postgres!.environment).toEqual({ A: '1' });
+    expect(b.services.ghost).toBeUndefined();
+  });
 });
 
 describe('writeComposeFile', () => {

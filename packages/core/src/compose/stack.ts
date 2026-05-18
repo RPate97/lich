@@ -62,12 +62,20 @@ const EMPTY_PLUGIN_CONTRIBUTIONS: PluginComposeContributions = {
  * `pluginContributions` defaults to empty so callers that haven't been wired
  * through the plugin system (e.g. tests that drive the bundle directly with a
  * `DockerService[]`) keep working unchanged.
+ *
+ * `serviceEnv` (LEV-182) carries per-service env-var maps already resolved via
+ * `resolveEnvForService({ context: 'container' })`. The bundle merges these
+ * into each compose service's `environment:` block (last-write-wins over any
+ * env the service definition itself ships). When omitted the bundle still
+ * builds — the legacy behavior — but Plan 16's container-side injection is
+ * skipped. `dev`/`stop`/`reset` always pass a populated (possibly empty) map.
  */
 export function buildComposeBundle(
   ctx: StackContext,
   dockerServices: DockerService[],
   allocatedPorts: Record<string, number>,
   pluginContributions: PluginComposeContributions = EMPTY_PLUGIN_CONTRIBUTIONS,
+  serviceEnv: Record<string, Record<string, string>> = {},
 ): ComposeBundle {
   const services: Record<string, ComposeServiceDef> = {};
   const volumes: Record<string, ComposeVolumeDef> = {};
@@ -96,6 +104,24 @@ export function buildComposeBundle(
   }
   for (const [name, def] of Object.entries(pluginContributions.networks)) {
     networks[name] = def;
+  }
+
+  // LEV-182: inject the resolved per-service env into each compose service's
+  // `environment:` block. Runs after both the legacy DockerService→compose
+  // conversion AND the plugin-contributed services merge so it sees the final
+  // service set. The pre-existing "compose services receive no env" bug
+  // surfaced because nothing wrote into `service.environment` before now;
+  // this is the fix. Resolved env entries are added last so they win over any
+  // env the underlying definition carries (legacy `containerEnv` from
+  // `dockerServiceToCompose` becomes a base set the resolved values layer on
+  // top of — matching `envInjection`'s "explicit wins" intent).
+  for (const [name, env] of Object.entries(serviceEnv)) {
+    if (!services[name]) continue;
+    if (Object.keys(env).length === 0) continue;
+    services[name] = {
+      ...services[name],
+      environment: { ...(services[name].environment ?? {}), ...env },
+    };
   }
 
   const projectName = composeProjectName(ctx.worktreeKey);

@@ -34,12 +34,24 @@ export function topologicalSort(services: OwnedService[]): OwnedService[] {
   return ordered;
 }
 
+/**
+ * Spawn every owned service via `concurrently`, ordered by `dependsOn`. Each
+ * service inherits `process.env`, then layers `baseEnv` (shared across every
+ * service — Plan 16 host-side cross-service vars like the legacy `DATABASE_URL`
+ * derived from sibling docker services), then `serviceEnv[name]` (LEV-182:
+ * pre-resolved per-service env from `resolveEnvForService({ context: 'host' })`
+ * — explicit `envInjection` entries plus `importAll` payloads), then the
+ * service's own legacy `envContributions(ports)`. Last layer wins, matching
+ * `dev.ts`'s "explicit injection beats inherited stack env beats process env"
+ * ordering.
+ */
 export async function runOwnedServices(
   services: OwnedService[],
   _ctx: StackContext,
   ports: PortMap,
   baseEnv: Record<string, string>,
   opts: RunnerOptions,
+  serviceEnv: Record<string, Record<string, string>> = {},
 ): Promise<RunnerHandle> {
   if (services.length === 0) {
     return {
@@ -55,7 +67,12 @@ export async function runOwnedServices(
     name: s.name,
     command: s.command,
     cwd: s.cwd,
-    env: { ...process.env, ...baseEnv, ...s.envContributions(ports) },
+    env: {
+      ...process.env,
+      ...baseEnv,
+      ...(serviceEnv[s.name] ?? {}),
+      ...s.envContributions(ports),
+    },
   }));
 
   const { result, commands } = concurrently(inputs, {
