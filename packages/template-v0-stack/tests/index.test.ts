@@ -26,6 +26,9 @@ describe('@levelzero/template-v0-stack', () => {
       'apps/web/package.json',
       'apps/api/package.json',
       'prisma/schema.prisma',
+      // LEV-121: Prisma 7 moved the datasource URL out of `schema.prisma`
+      // and into a sibling `prisma.config.ts`. Both files must ship.
+      'prisma.config.ts',
     ];
     for (const rel of expected) {
       const p = join(templateRoot, rel);
@@ -117,6 +120,37 @@ describe('@levelzero/template-v0-stack', () => {
     for (const name of expected) {
       expect(deps[name], `expected ${name} in dependencies`).toBeTruthy();
     }
+  });
+
+  it('prisma setup follows Prisma 7 conventions (LEV-121)', () => {
+    // Prisma 7 deprecated `url = env(...)` on the `datasource` block in
+    // `schema.prisma`. The URL is now read by `prisma.config.ts` at config
+    // load time (via `process.env.DATABASE_URL`). Two guards:
+    //   1. schema.prisma's `datasource db { ... }` block must not contain a
+    //      `url =` assignment.
+    //   2. prisma.config.ts must import `defineConfig` from `prisma/config`
+    //      and pass a `datasource.url` derived from `process.env`.
+    const schema = readFileSync(join(templateRoot, 'prisma/schema.prisma'), 'utf8');
+    const datasourceBlock = schema.match(/datasource\s+\w+\s*\{[^}]*\}/);
+    expect(datasourceBlock, 'expected a datasource block in schema.prisma').not.toBeNull();
+    expect(
+      /\burl\s*=/.test(datasourceBlock?.[0] ?? ''),
+      'schema.prisma datasource block must NOT declare `url =` (moved to prisma.config.ts in Prisma 7)',
+    ).toBe(false);
+
+    const config = readFileSync(join(templateRoot, 'prisma.config.ts'), 'utf8');
+    expect(
+      /from\s+['"]prisma\/config['"]/.test(config),
+      'prisma.config.ts must import from prisma/config',
+    ).toBe(true);
+    expect(
+      /defineConfig\s*\(/.test(config),
+      'prisma.config.ts must call defineConfig(...)',
+    ).toBe(true);
+    expect(
+      config.includes('DATABASE_URL'),
+      'prisma.config.ts must reference DATABASE_URL for the datasource',
+    ).toBe(true);
   });
 
   it('ships the .levelzero/skills reference + workflow directories', () => {
