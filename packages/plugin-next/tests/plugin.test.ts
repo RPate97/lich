@@ -44,6 +44,11 @@ function makeRecordingApi(): {
     addRule: vi.fn(),
     addGenerator: vi.fn(),
     addSkillsDir: vi.fn(),
+    // Added by LEV-178 (`EnvSource` types + namespace-scoped `PluginAPI`).
+    // This plugin doesn't publish env sources today, so the mocks are no-ops
+    // — they exist purely to satisfy the typed `PluginAPI` surface.
+    addEnvSource: vi.fn(),
+    addBulkEnvSource: vi.fn(),
   };
   return { api, ownedServices, services, volumes, networks };
 }

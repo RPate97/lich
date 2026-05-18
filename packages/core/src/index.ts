@@ -15,6 +15,7 @@ export type {
   Plugin,
   PluginAPI,
   PluginContext,
+  PluginFactory,
   ComposeServiceDef,
   ComposeVolumeDef,
   ComposeNetworkDef,

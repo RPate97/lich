@@ -2,8 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadPlugin, loadPlugins } from '../../src/plugins/loader';
-import type { PluginContext } from '../../src/plugins/types';
+import {
+  loadPlugin,
+  loadPlugins,
+  resolvePluginEntry,
+  deriveNamespace,
+} from '../../src/plugins/loader';
+import type { Plugin, PluginContext } from '../../src/plugins/types';
 
 let projectRoot: string;
 const ctx: PluginContext = { projectRoot: '', config: {} };
@@ -161,6 +166,121 @@ describe('loadPlugin — npm package resolution', () => {
     } finally {
       rmSync(npmProject, { recursive: true, force: true });
     }
+  });
+});
+
+describe('deriveNamespace', () => {
+  it('strips the @scope/plugin- prefix from a scoped package name', () => {
+    expect(deriveNamespace('@levelzero/plugin-postgres')).toBe('postgres');
+    expect(deriveNamespace('@my-org/plugin-foo')).toBe('foo');
+  });
+
+  it('strips a bare plugin- prefix from an unscoped package name', () => {
+    expect(deriveNamespace('plugin-bar')).toBe('bar');
+  });
+
+  it('preserves digits and hyphens inside the namespace tail', () => {
+    expect(deriveNamespace('@levelzero/plugin-typed-client')).toBe('typed-client');
+    expect(deriveNamespace('plugin-redis-7')).toBe('redis-7');
+  });
+
+  it('returns the package name unchanged when no plugin- prefix matches', () => {
+    expect(deriveNamespace('whatever-else')).toBe('whatever-else');
+    expect(deriveNamespace('@levelzero/core')).toBe('@levelzero/core');
+  });
+});
+
+describe('resolvePluginEntry', () => {
+  /** Minimal valid plugin reused across the resolver cases. */
+  const samplePlugin: Plugin = {
+    name: '@levelzero/plugin-sample',
+    version: '0.0.1',
+    register() {},
+  };
+
+  it('returns a pre-built Plugin object as-is', async () => {
+    const out = await resolvePluginEntry(samplePlugin, ctx, 0);
+    expect(out).toBe(samplePlugin);
+  });
+
+  it('invokes a sync factory and uses its return value', async () => {
+    let calls = 0;
+    const factory = (): Plugin => {
+      calls++;
+      return { name: 'factory-sync', version: '1.0.0', register() {} };
+    };
+    const out = await resolvePluginEntry(factory, ctx, 0);
+    expect(calls).toBe(1);
+    expect(out.name).toBe('factory-sync');
+  });
+
+  it('awaits an async factory and uses its resolved value', async () => {
+    const factory = async (): Promise<Plugin> => ({
+      name: 'factory-async',
+      version: '2.0.0',
+      register() {},
+    });
+    const out = await resolvePluginEntry(factory, ctx, 0);
+    expect(out.name).toBe('factory-async');
+    expect(out.version).toBe('2.0.0');
+  });
+
+  it('auto-derives the namespace for a scoped plugin package when omitted', async () => {
+    const factory = (): Plugin => ({
+      name: '@levelzero/plugin-postgres',
+      version: '0.0.1',
+      register() {},
+    });
+    const out = await resolvePluginEntry(factory, ctx, 0);
+    expect(out.namespace).toBe('postgres');
+  });
+
+  it('keeps an explicit `namespace` field over the auto-derived one', async () => {
+    const factory = (): Plugin => ({
+      name: '@levelzero/plugin-postgres',
+      namespace: 'pg',
+      version: '0.0.1',
+      register() {},
+    });
+    const out = await resolvePluginEntry(factory, ctx, 0);
+    expect(out.namespace).toBe('pg');
+  });
+
+  it('auto-derives the namespace on plain Plugin entries too', async () => {
+    const plugin: Plugin = {
+      name: '@levelzero/plugin-foo',
+      version: '0.0.1',
+      register() {},
+    };
+    const out = await resolvePluginEntry(plugin, ctx, 0);
+    expect(out.namespace).toBe('foo');
+  });
+
+  it('unwraps a Promise resolving to { default: Plugin }', async () => {
+    const entry = Promise.resolve({ default: samplePlugin });
+    const out = await resolvePluginEntry(entry, ctx, 0);
+    expect(out).toBe(samplePlugin);
+  });
+
+  it('throws with the array index when a factory returns garbage', async () => {
+    const badFactory = (): unknown => ({ not: 'a plugin' });
+    await expect(
+      resolvePluginEntry(badFactory as () => Plugin, ctx, 3),
+    ).rejects.toThrow(/plugins\[3\]/);
+  });
+
+  it('throws with the array index when a factory itself throws', async () => {
+    const exploding = (): Plugin => {
+      throw new Error('boom in factory');
+    };
+    await expect(resolvePluginEntry(exploding, ctx, 2)).rejects.toThrow(
+      /plugins\[2\].*boom in factory/,
+    );
+  });
+
+  it('routes a string entry through loadPlugin', async () => {
+    const out = await resolvePluginEntry('./plugins/default-export.mjs', ctx, 0);
+    expect(out.name).toBe('default-export');
   });
 });
 

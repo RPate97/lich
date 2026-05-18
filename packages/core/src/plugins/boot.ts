@@ -7,7 +7,7 @@ import type { OwnedService } from '../services/types';
 import type { LevelzeroConfig, PluginEntry } from '../config';
 import { EnvSourceRegistry } from '../env/registry';
 import type { BulkEnvSource, EnvSource } from '../env/types';
-import { loadPlugin } from './loader';
+import { resolvePluginEntry } from './loader';
 import type {
   ComposeNetworkDef,
   ComposeServiceDef,
@@ -95,13 +95,11 @@ export interface BootResult {
  * a fresh `PluginAPI` backed by empty registries, then call each plugin's
  * `register(api, ctx)` in declared order.
  *
- * Resolution rules per `PluginEntry`:
- *
- *   - **string** — handed to {@link loadPlugin} (npm specifier or relative
- *     path resolved against `projectRoot`).
- *   - **Plugin object** — used as-is.
- *   - **Promise** — awaited; if the result is a CJS-style module namespace
- *     (`{ default: Plugin }`), the `default` is unwrapped.
+ * Each `PluginEntry` (string specifier, factory function, Promise, or
+ * pre-built `Plugin` object) is normalized by `resolvePluginEntry` in
+ * `./loader` — see its docs for the full dispatch table. That helper also
+ * fills in `plugin.namespace` from the package name when the plugin didn't
+ * set one explicitly.
  *
  * `register()` is invoked sequentially. Plugin order is meaningful for
  * `setActiveAdapter` (later calls win) and for any other mutations a plugin
@@ -109,8 +107,8 @@ export interface BootResult {
  *
  * Any failure during register() is rewrapped with the offending plugin's
  * `name` embedded so the caller can attribute it. Failures during plugin
- * resolution itself surface from {@link loadPlugin} unchanged (its messages
- * already carry the specifier).
+ * resolution itself surface from `resolvePluginEntry` unchanged (its messages
+ * already carry the entry's index).
  */
 export async function bootPlugins(
   config: LevelzeroConfig,
@@ -131,8 +129,9 @@ export async function bootPlugins(
   // Per-plugin facade. We re-create the API for every plugin so the closure
   // captures the *plugin name + namespace* used in error attribution and in
   // composing fully-qualified EnvSource keys (`${namespace}.${name}`). The
-  // namespace fallback (`plugin.namespace ?? plugin.name`) is the LEV-178
-  // baseline; LEV-179 will improve it to strip `@scope/plugin-` prefixes.
+  // namespace is guaranteed populated by `resolvePluginEntry` (LEV-179):
+  // explicit `plugin.namespace` always wins, otherwise the loader derives one
+  // by stripping the `@scope/plugin-` prefix from `plugin.name`.
   const makeApi = (plugin: Plugin): PluginAPI => {
     const namespace = plugin.namespace ?? plugin.name;
     return {
@@ -188,6 +187,11 @@ export async function bootPlugins(
   const entries = config.plugins ?? [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] as PluginEntry;
+    // `resolvePluginEntry` lives in `./loader` (LEV-179): it handles every
+    // `PluginEntry` variant — string specifier, factory function, Promise,
+    // or pre-built Plugin — and auto-derives a namespace from the package
+    // name when the plugin didn't set one. Boot stays agnostic to which
+    // shape the consumer used.
     const plugin = await resolvePluginEntry(entry, ctx, i);
     const api = makeApi(plugin);
     try {
@@ -216,62 +220,3 @@ export async function bootPlugins(
   };
 }
 
-/**
- * Normalize a single `PluginEntry` to a `Plugin`. The three accepted shapes
- * mirror what `LevelzeroConfig['plugins']` accepts:
- *
- *   - string — passed through {@link loadPlugin}.
- *   - Plugin — returned as-is.
- *   - Promise — awaited; if the resolved value is `{ default: Plugin }`, the
- *     default is unwrapped.
- *
- * Anything else is a programming error in the consumer's config; we throw
- * with the entry's index so the failure is locatable.
- */
-async function resolvePluginEntry(
-  entry: PluginEntry,
-  ctx: PluginContext,
-  index: number,
-): Promise<Plugin> {
-  if (typeof entry === 'string') {
-    return loadPlugin(entry, ctx);
-  }
-  if (isThenable(entry)) {
-    const resolved = await entry;
-    if (isPlugin(resolved)) return resolved;
-    if (
-      typeof resolved === 'object' &&
-      resolved !== null &&
-      isPlugin((resolved as { default?: unknown }).default)
-    ) {
-      return (resolved as { default: Plugin }).default;
-    }
-    throw new Error(
-      `plugins[${index}]: Promise resolved to a value that is not a Plugin or { default: Plugin }`,
-    );
-  }
-  if (isPlugin(entry)) {
-    return entry;
-  }
-  throw new Error(
-    `plugins[${index}]: entry is not a string, Plugin, or Promise (got ${typeof entry})`,
-  );
-}
-
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    value !== null &&
-    (typeof value === 'object' || typeof value === 'function') &&
-    typeof (value as { then?: unknown }).then === 'function'
-  );
-}
-
-function isPlugin(value: unknown): value is Plugin {
-  if (typeof value !== 'object' || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.name === 'string' &&
-    typeof v.version === 'string' &&
-    typeof v.register === 'function'
-  );
-}
