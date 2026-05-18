@@ -1,5 +1,13 @@
 # Plan 16 — Environment variable injection (EnvSource system)
 
+> **Status: complete** — every Tier ticket (LEV-178 through LEV-192) has shipped to `master`. The plan below remains as the architecture record. The implementation tickets:
+>
+> - Tier 1 (foundations): [LEV-178](https://linear.app/levelzero/issue/LEV-178), [LEV-179](https://linear.app/levelzero/issue/LEV-179), [LEV-180](https://linear.app/levelzero/issue/LEV-180)
+> - Tier 2 (resolution + injection): [LEV-181](https://linear.app/levelzero/issue/LEV-181), [LEV-182](https://linear.app/levelzero/issue/LEV-182), [LEV-183](https://linear.app/levelzero/issue/LEV-183), [LEV-184](https://linear.app/levelzero/issue/LEV-184)
+> - Tier 3 (backcompat + v0 plugin migration): [LEV-185](https://linear.app/levelzero/issue/LEV-185), [LEV-186](https://linear.app/levelzero/issue/LEV-186), [LEV-187](https://linear.app/levelzero/issue/LEV-187)
+> - Tier 4 (new plugins): [LEV-188](https://linear.app/levelzero/issue/LEV-188) dotenv, [LEV-189](https://linear.app/levelzero/issue/LEV-189) infisical, [LEV-190](https://linear.app/levelzero/issue/LEV-190) redis, [LEV-191](https://linear.app/levelzero/issue/LEV-191) kafka
+> - Tier 5 (docs): [LEV-192](https://linear.app/levelzero/issue/LEV-192) — the EnvSource chapter in `docs/plugin-author-guide.md` and reference updates in `docs/EXTENSION.md`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement each Tier task-by-task. The Linear tickets (LEV-178 … LEV-192) carry the code-level detail; this doc captures architecture and decomposition.
 
 **Goal:** Replace the ad-hoc `envContributions(ports)` system with a declarative, explicit, fully-typed `EnvSource` mechanism that injects environment variables into both compose-managed services and host-spawned owned services, while supporting bulk-loader plugins for secrets (dotenv, Infisical) and arbitrary new protocols (Kafka, Redis, MQTT, …).
