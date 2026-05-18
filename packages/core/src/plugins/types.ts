@@ -2,6 +2,7 @@ import type { AdapterSlot } from '../adapters/registry';
 import type { Command } from '../commands/types';
 import type { OwnedService } from '../services/types';
 import type { Rule } from '../check/types';
+import type { BulkEnvSource, EnvSource, SourceManifest } from '../env/types';
 
 // TODO(LEV-124): replace with `import type { Generator } from '../gen/types'`
 // once LEV-124 lands. Inlined here as the minimal shape so the plugin contract
@@ -78,10 +79,12 @@ export interface ComposeNetworkDef {
  * exposed — plugins should either override by re-registering with the same
  * name (e.g. `addAdapter`) or compose by reading the merged result downstream.
  *
- * Concrete runtime backing this interface lands in later LEV-125 tasks; this
- * file is the types-only contract.
+ * `PluginAPI` is generic over the plugin's namespace string literal so future
+ * source-manifest typing (`addEnvSource('url', …)`) can be checked against the
+ * plugin's declared `Plugin<NS, S>` manifest. The namespace prefix is added
+ * by the framework — plugin authors only type the short local name.
  */
-export interface PluginAPI {
+export interface PluginAPI<NS extends string = string> {
   addAdapter(slot: AdapterSlot, name: string, impl: unknown): void;
   setActiveAdapter(slot: AdapterSlot, name: string): void;
   addCommand(cmd: Command): void;
@@ -92,6 +95,24 @@ export interface PluginAPI {
   addRule(rule: Rule): void;
   addGenerator(gen: Generator): void;
   addSkillsDir(absPath: string): void;
+  /**
+   * Register a single named EnvSource under the plugin's namespace.
+   *
+   * The framework composes the fully-qualified key (`${namespace}.${name}`)
+   * before storing the registration in the EnvSourceRegistry. Two plugins
+   * publishing the same `(namespace, name)` pair is a hard error at boot.
+   *
+   * Plan 16 Tier 1 ships the type + plumbing; resolution happens in
+   * LEV-181/182.
+   */
+  addEnvSource<Name extends string>(name: Name, source: EnvSource): void;
+  /**
+   * Register a single bulk EnvSource under the plugin's namespace. Used for
+   * dotenv/Infisical-style loaders whose keys aren't known until resolution.
+   * At most one bulk source per namespace; a second registration is a hard
+   * error at boot.
+   */
+  addBulkEnvSource(source: BulkEnvSource): void;
 }
 
 /**
@@ -112,11 +133,29 @@ export interface PluginContext {
  * that satisfies one); the loader calls `register(api, ctx)` exactly once
  * during CLI bootstrap.
  *
+ * Generic over the namespace string literal `NS` (used to scope `addEnvSource`
+ * registrations) and the source manifest `S` (carries the union of named
+ * source keys + bulk-source flag through to `defineConfig()` for autocomplete
+ * on `envInjection`). Both parameters default to permissive shapes so
+ * existing plugins authored against the unparameterized `Plugin` continue to
+ * compile without changes.
+ *
+ *  - `namespace` is optional for backwards compatibility. LEV-179 will teach
+ *    the loader to derive a default namespace from `name`
+ *    (strip `@scope/plugin-` prefix); LEV-178 uses the simpler
+ *    `plugin.namespace ?? plugin.name` fallback.
+ *  - `__sources` is a phantom — never read at runtime, only typechecked so
+ *    `defineConfig()` can infer source keys from the plugin tuple.
+ *
  * `register()` may be sync or async — the loader awaits the returned value
  * either way.
  */
-export interface Plugin {
+export interface Plugin<NS extends string = string, S extends SourceManifest = SourceManifest> {
   name: string;
+  /** Optional in LEV-178; LEV-179 makes the loader auto-derive this from `name`. */
+  namespace?: NS;
   version: string;
-  register(api: PluginAPI, ctx: PluginContext): void | Promise<void>;
+  /** Phantom carrying the source manifest for `defineConfig()` type inference. */
+  __sources?: S;
+  register(api: PluginAPI<NS>, ctx: PluginContext): void | Promise<void>;
 }

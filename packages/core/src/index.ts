@@ -21,6 +21,22 @@ export type {
   Generator,
 } from './plugins/types';
 
+/**
+ * EnvSource contract (Plan 16 / LEV-178). Plugins use these types to publish
+ * values that the runtime injects as environment variables into services.
+ * The registry itself is exported so downstream wiring (LEV-181/182) and
+ * future `levelzero env` debug commands can consume it.
+ */
+export type {
+  EnvSource,
+  BulkEnvSource,
+  EnvSourceContext,
+  Protocol,
+  SourceManifest,
+} from './env/types';
+export { EnvSourceRegistry } from './env/registry';
+export type { NamedSourceEntry, BulkSourceEntry } from './env/registry';
+
 export type { AdapterSlot, AdapterEntry } from './adapters/registry';
 export type { Command, CommandContext } from './commands/types';
 export type { OwnedService } from './services/types';

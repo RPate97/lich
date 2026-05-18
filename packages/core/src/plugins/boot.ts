@@ -5,6 +5,8 @@ import type { Command } from '../commands/types';
 import type { Rule } from '../check/types';
 import type { OwnedService } from '../services/types';
 import type { LevelzeroConfig, PluginEntry } from '../config';
+import { EnvSourceRegistry } from '../env/registry';
+import type { BulkEnvSource, EnvSource } from '../env/types';
 import { loadPlugin } from './loader';
 import type {
   ComposeNetworkDef,
@@ -69,6 +71,12 @@ export interface BootResult {
   ownedServices: OwnedService[];
   compose: ComposeContributions;
   skillsDirs: string[];
+  /**
+   * Named + bulk EnvSource registrations collected from every plugin.
+   * Plan 16 Tier 2 (LEV-181/182) consumes this to resolve and inject env
+   * variables into services. Tier 1 only collects.
+   */
+  envSources: EnvSourceRegistry;
 }
 
 /**
@@ -104,51 +112,72 @@ export async function bootPlugins(
   const ownedServices: OwnedService[] = [];
   const compose: ComposeContributions = { services: {}, volumes: {}, networks: {} };
   const skillsDirs: string[] = [];
+  const envSources = new EnvSourceRegistry();
 
   const ctx: PluginContext = { projectRoot, config };
 
   // Per-plugin facade. We re-create the API for every plugin so the closure
-  // captures the *plugin name* used in error messages — `addCommand`, etc.,
-  // themselves never throw, but constructing one API per plugin keeps the
-  // contract symmetric with how `register()` errors are attributed.
-  const makeApi = (): PluginAPI => ({
-    addAdapter(slot: AdapterSlot, name: string, impl: unknown): void {
-      adapters.register({ slot, name, impl });
-    },
-    setActiveAdapter(slot: AdapterSlot, name: string): void {
-      adapters.setActive(slot, name);
-    },
-    addCommand(cmd: Command): void {
-      commands.register(cmd);
-    },
-    addOwnedService(service: OwnedService): void {
-      ownedServices.push(service);
-    },
-    addComposeService(name: string, def: ComposeServiceDef): void {
-      compose.services[name] = def;
-    },
-    addComposeVolume(name: string, def: ComposeVolumeDef): void {
-      compose.volumes[name] = def;
-    },
-    addComposeNetwork(name: string, def: ComposeNetworkDef): void {
-      compose.networks[name] = def;
-    },
-    addRule(rule: Rule): void {
-      rules.register(rule);
-    },
-    addGenerator(gen: Generator): void {
-      generators.register(gen);
-    },
-    addSkillsDir(absPath: string): void {
-      skillsDirs.push(absPath);
-    },
-  });
+  // captures the *plugin name + namespace* used in error attribution and in
+  // composing fully-qualified EnvSource keys (`${namespace}.${name}`). The
+  // namespace fallback (`plugin.namespace ?? plugin.name`) is the LEV-178
+  // baseline; LEV-179 will improve it to strip `@scope/plugin-` prefixes.
+  const makeApi = (plugin: Plugin): PluginAPI => {
+    const namespace = plugin.namespace ?? plugin.name;
+    return {
+      addAdapter(slot: AdapterSlot, name: string, impl: unknown): void {
+        adapters.register({ slot, name, impl });
+      },
+      setActiveAdapter(slot: AdapterSlot, name: string): void {
+        adapters.setActive(slot, name);
+      },
+      addCommand(cmd: Command): void {
+        commands.register(cmd);
+      },
+      addOwnedService(service: OwnedService): void {
+        ownedServices.push(service);
+      },
+      addComposeService(name: string, def: ComposeServiceDef): void {
+        compose.services[name] = def;
+      },
+      addComposeVolume(name: string, def: ComposeVolumeDef): void {
+        compose.volumes[name] = def;
+      },
+      addComposeNetwork(name: string, def: ComposeNetworkDef): void {
+        compose.networks[name] = def;
+      },
+      addRule(rule: Rule): void {
+        rules.register(rule);
+      },
+      addGenerator(gen: Generator): void {
+        generators.register(gen);
+      },
+      addSkillsDir(absPath: string): void {
+        skillsDirs.push(absPath);
+      },
+      addEnvSource(name: string, source: EnvSource): void {
+        envSources.registerNamed({
+          namespace,
+          name,
+          fullKey: `${namespace}.${name}`,
+          source,
+          pluginName: plugin.name,
+        });
+      },
+      addBulkEnvSource(source: BulkEnvSource): void {
+        envSources.registerBulk({
+          namespace,
+          source,
+          pluginName: plugin.name,
+        });
+      },
+    };
+  };
 
   const entries = config.plugins ?? [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] as PluginEntry;
     const plugin = await resolvePluginEntry(entry, ctx, i);
-    const api = makeApi();
+    const api = makeApi(plugin);
     try {
       await plugin.register(api, ctx);
     } catch (err) {
@@ -159,7 +188,16 @@ export async function bootPlugins(
     }
   }
 
-  return { commands, adapters, generators, rules, ownedServices, compose, skillsDirs };
+  return {
+    commands,
+    adapters,
+    generators,
+    rules,
+    ownedServices,
+    compose,
+    skillsDirs,
+    envSources,
+  };
 }
 
 /**
