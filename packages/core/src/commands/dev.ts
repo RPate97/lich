@@ -21,6 +21,7 @@ import {
   type BulkResolutionCache,
   type EnvInjectionMap,
 } from '../env/resolve';
+import { writeEnvFile } from '../env/writer';
 import {
   portlessAdapter,
   noopPortlessAdapter,
@@ -306,6 +307,21 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
               worktreeKey: stackCtx.worktreeKey,
               bulkCache,
             });
+            // LEV-183 — drop a dotenv snapshot of the container-resolved env to
+            // `.levelzero/state/<wt>/env/<service>.env` so users can `cat` it
+            // to see exactly what each compose service received. Overwrites on
+            // every dev run.
+            await writeEnvFile(
+              join(
+                stackCtx.worktreePath,
+                '.levelzero',
+                'state',
+                stackCtx.worktreeKey,
+                'env',
+                `${name}.env`,
+              ),
+              composeServiceEnv[name]!,
+            );
           }
         }
 
@@ -407,6 +423,21 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
             worktreeKey: stackCtx.worktreeKey,
             bulkCache,
           });
+          // LEV-183 — same snapshot as the compose path, but with the
+          // host-resolved values. Sits in the same dir so `ls
+          // .levelzero/state/<wt>/env/` shows one file per running service
+          // regardless of compose vs owned kind.
+          await writeEnvFile(
+            join(
+              stackCtx.worktreePath,
+              '.levelzero',
+              'state',
+              stackCtx.worktreeKey,
+              'env',
+              `${s.name}.env`,
+            ),
+            ownedServiceEnv[s.name]!,
+          );
         }
       }
 
