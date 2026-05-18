@@ -45,6 +45,20 @@ export type { Rule } from './check/types';
 export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
 
 /**
+ * `defineConfig()` authoring-time helper + supporting types (Plan 16 / LEV-180).
+ * Runtime no-op that flows the plugin tuple types into `envInjection` so
+ * consumers get autocomplete + typo errors on source references.
+ */
+export { defineConfig } from './define-config';
+export type {
+  TypedLevelzeroConfig,
+  EnvInjectionConfig,
+  EnvInjectionEntry,
+  NamedSourceKeys,
+  BulkSourceIds,
+} from './define-config';
+
+/**
  * Runtime values plugins need to author commands that participate in the CLI's
  * dispatch path (registry lookups, error reporting, worktree resolution,
  * AdapterRegistry access). Kept narrow on purpose — each export is part of the
