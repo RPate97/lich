@@ -100,10 +100,19 @@ describe('bin: plan-09 commands end-to-end', () => {
   }, 30_000);
 
   it('gen client is a registered command (does not error as UNKNOWN_COMMAND)', () => {
-    // Invoke with a project root that has no API entry so the command errors
-    // out for a different reason than command-not-found.
+    // Post-LEV-165 `gen client` is only registered when both a backend and a
+    // frontend plugin are declared (the inline seed was deleted in the Plan
+    // 14 Tier 7 cutover). Use the same hono + typed-client pair as the
+    // adjacent integration test so the dispatcher actually wires the
+    // command — without them the command would surface as UNKNOWN_COMMAND,
+    // which the assertion below explicitly forbids.
     const emptyProj = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-empty-')));
-    writeFileSync(join(emptyProj, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(
+      join(emptyProj, 'levelzero.config.ts'),
+      `export default { plugins: [${JSON.stringify(HONO_PLUGIN)}, ${JSON.stringify(TYPED_CLIENT_PLUGIN)}] };`,
+    );
+    // No API entry at apps/api/src/index.ts — the command should error on
+    // the missing entry, not on the registration.
     const res = spawnSync('bun', [BIN, 'gen', 'client', '--json'], {
       cwd: emptyProj,
       env: { ...process.env, LEVELZERO_HOME: homeDir },

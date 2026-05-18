@@ -59,7 +59,7 @@ describe('bin: --help / -h / help / no-args', () => {
     const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
     expect(res.status).toBe(0);
     // Sample a few from each curated group — `buildCommands` is the source
-    // of truth, and these are stable post-LEV-148–156 (the Tier 5 cutover).
+    // of truth, and these are stable post-LEV-165 (Plan 14 Tier 7 cutover).
     // If a command is later moved out into a plugin, the assertion for it
     // here doubles as a check that the inline registration was actually
     // removed.
@@ -74,18 +74,31 @@ describe('bin: --help / -h / help / no-args', () => {
     expect(out).toContain('impact');
     expect(out).toContain('coverage');
     expect(out).toContain('check');
-    expect(out).toContain('screenshot');
     expect(out).toContain('compose');
-    expect(out).toContain('test');
     // Dotted commands rendered with spaces (matches how they're typed).
     expect(out).toContain('stacks current');
     expect(out).toContain('stacks list');
     expect(out).toContain('stacks prune');
     expect(out).toContain('adapter list');
     expect(out).toContain('adapter swap');
-    expect(out).toContain('gen client');
-    expect(out).toContain('visual diff');
     expect(out).toContain('skills index');
+  });
+
+  it('does NOT list plugin-dependent commands outside a project (LEV-165 cutover)', () => {
+    // Post-LEV-165 these commands are only registered by the dispatch path
+    // when a project's `levelzero.config.ts` declares the contributing
+    // plugins. Outside a project the inline-only `buildCommands` registry
+    // omits them entirely — the rendered help must reflect that.
+    const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
+    expect(res.status).toBe(0);
+    const out = res.stdout;
+    expect(out).not.toContain('screenshot');
+    expect(out).not.toContain('gen client');
+    expect(out).not.toContain('visual diff');
+    // `test` is matched as a whole word — the literal `test` substring
+    // shows up incidentally in other strings (`coverage` mentions "test
+    // suite"), so we check the rendered command line specifically.
+    expect(out).not.toMatch(/^\s+test\s+/m);
   });
 
   it('with no project config in cwd, LOADED PLUGINS shows the empty-state message', () => {

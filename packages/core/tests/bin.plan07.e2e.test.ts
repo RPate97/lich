@@ -12,10 +12,19 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p07-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p07-home-')));
-  // resolveStackContext walks up looking for levelzero.config.ts; even though
-  // the smoke paths below never reach stack resolution, dropping the marker
-  // keeps the project shape parallel to the other bin.plan*.e2e tests.
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  // Post-LEV-165 the `test` command is no longer seeded by the inline
+  // `buildCommands` — it only lights up when a plugin contributes a
+  // `test-runner` adapter (the dispatch path registers the command against
+  // the merged plugin-aware registry). The smoke checks below exercise the
+  // command's arg-validation, which runs BEFORE adapter resolution, so any
+  // plugin that contributes a `test-runner` impl satisfies the registration.
+  // We declare `@levelzero/plugin-vitest` to make `test` a real registered
+  // command — without it the failures below would surface as
+  // UNKNOWN_COMMAND, which is exactly what the assertions guard against.
+  writeFileSync(
+    join(projectDir, 'levelzero.config.ts'),
+    `export default { plugins: ['@levelzero/plugin-vitest'] };`,
+  );
 });
 
 function run(args: string[]) {
