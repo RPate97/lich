@@ -19,7 +19,7 @@ import { redisCacheAdapter } from './adapter';
  */
 export const redisPingCommand: Command = {
   name: 'redis.ping',
-  describe: 'Ping the Redis instance contributed by @levelzero/example-plugin-redis',
+  describe: 'Ping the Redis instance contributed by @levelzero/plugin-redis',
   async run({ flags, format }) {
     const host = pickString(flags.host) ?? process.env.REDIS_HOST ?? '127.0.0.1';
     const port = pickNumber(flags.port) ?? envNumber('REDIS_PORT') ?? 6379;
