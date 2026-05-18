@@ -133,7 +133,15 @@ function collectPluginPortNames(
 
 function deriveEnv(services: Service[], ports: PortMap): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const s of services) Object.assign(env, s.envContributions(ports));
+  // `envContributions` is the legacy per-service env hook (Plan 16 / LEV-178+
+  // made it optional once v0 plugins migrated to `api.addEnvSource()` in
+  // LEV-187). Services without it simply contribute nothing here — the
+  // EnvSource resolver picks up their values via the new pipeline.
+  for (const s of services) {
+    if (typeof s.envContributions === 'function') {
+      Object.assign(env, s.envContributions(ports));
+    }
+  }
   return env;
 }
 

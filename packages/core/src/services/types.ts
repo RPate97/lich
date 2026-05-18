@@ -55,10 +55,11 @@ export interface DockerService {
    * @deprecated Plan 16 / LEV-178+ — use `api.addEnvSource()` in the plugin's
    * `register()`. The LEV-185 boot-time shim auto-promotes any remaining
    * `envContributions` on a service so plugins keep working during the
-   * migration; LEV-187 removes the per-plugin usage and Plan 17 retires the
-   * shim along with this field.
+   * migration; LEV-187 removes the per-plugin usage on the v0 plugins
+   * (making this field optional) and Plan 17 retires the shim along with
+   * this field.
    */
-  envContributions: EnvContributions;
+  envContributions?: EnvContributions;
   /** Optional shell-quoted docker healthcheck (e.g. ["pg_isready", "-U", "postgres"]). */
   healthCommand?: string[];
 }
@@ -79,10 +80,11 @@ export interface OwnedService {
    * @deprecated Plan 16 / LEV-178+ — use `api.addEnvSource()` in the plugin's
    * `register()`. The LEV-185 boot-time shim auto-promotes any remaining
    * `envContributions` on a service so plugins keep working during the
-   * migration; LEV-187 removes the per-plugin usage and Plan 17 retires the
-   * shim along with this field.
+   * migration; LEV-187 removes the per-plugin usage on the v0 plugins
+   * (making this field optional) and Plan 17 retires the shim along with
+   * this field.
    */
-  envContributions: EnvContributions;
+  envContributions?: EnvContributions;
   /** Names of other services this service depends on. The runner starts them first. */
   dependsOn?: string[];
   /**

@@ -66,6 +66,35 @@ describe('@levelzero/template-v0-stack', () => {
     }
   });
 
+  it('levelzero.config.ts uses defineConfig and declares an envInjection block (LEV-187)', () => {
+    // Post-LEV-187 every v0 plugin publishes its env values through
+    // `api.addEnvSource()`, so the scaffolded config maps DATABASE_URL /
+    // API_URL / WEB_URL to the qualified source keys exposed by the
+    // postgres / hono / next plugins. `defineConfig` is the typed-authoring
+    // wrapper (LEV-180) that flows the plugin tuple types into autocomplete
+    // on these values.
+    const config = readFileSync(join(templateRoot, 'levelzero.config.ts'), 'utf8');
+    expect(
+      config.includes(`import { defineConfig } from '@levelzero/core';`),
+      'expected defineConfig import from @levelzero/core',
+    ).toBe(true);
+    expect(
+      /export default defineConfig\(/.test(config),
+      'expected the config to be wrapped in defineConfig(...)',
+    ).toBe(true);
+
+    for (const [envVar, sourceKey] of [
+      ['DATABASE_URL', 'postgres.url'],
+      ['API_URL', 'hono.url'],
+      ['WEB_URL', 'next.url'],
+    ]) {
+      expect(
+        config.includes(`${envVar}: '${sourceKey}'`),
+        `expected ${envVar} → ${sourceKey} mapping inside envInjection`,
+      ).toBe(true);
+    }
+  });
+
   it('package.json declares every v0 plugin as a dependency', () => {
     // Mirror of the config test: every plugin imported by the scaffolded
     // levelzero.config.ts must also be a dependency so `bun install` resolves

@@ -176,7 +176,8 @@ function parseRequest(ctx: CommandContext): ParsedRequest {
 
 /**
  * Derive the api service's base URL for a stack entry. Mirrors
- * `apiService.envContributions` (services/builtins.ts) — keep these in lockstep.
+ * the hono plugin's `api.addEnvSource('url', …)` registration (LEV-187) —
+ * keep these in lockstep.
  *
  * Order of preference:
  *   1. `entry.urls.api` — populated by `dev` after portless registration.

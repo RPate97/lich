@@ -47,13 +47,21 @@ afterEach(() => {
 
 describeIfDocker('dev with owned services (DI)', () => {
   it('starts postgres + a mock owned service, tees its logs, returns exit codes', async () => {
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook. The echoer publishes it itself (constructing
+    // the URL the same way plugin-postgres' `addEnvSource('url')` does) so
+    // its sh fixture can still read `$DATABASE_URL`. Once Plan 16 Tier 2
+    // plumbs EnvSource resolution into the owned-runner this becomes
+    // unnecessary.
     const echoSvc: OwnedService = {
       name: 'echoer',
       kind: 'owned',
       portNames: [],
       cwd: projectDir,
       command: 'sh -c "echo DATABASE_URL=$DATABASE_URL; echo done-echoer"',
-      envContributions: () => ({}),
+      envContributions: (ports) => ({
+        DATABASE_URL: `postgres://levelzero:levelzero@localhost:${ports.postgres}/levelzero`,
+      }),
       dependsOn: ['postgres'],
     };
     const getServices = (): Service[] => [pgService, echoSvc];
@@ -62,6 +70,8 @@ describeIfDocker('dev with owned services (DI)', () => {
     const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
 
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54060);
+    // DATABASE_URL is now contributed by the echoer service itself (see
+    // comment above). Plan 16 Tier 2 will route EnvSources back into this slot.
     expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
     expect(result.containers).toContain(containerName(result.key, 'postgres'));
 

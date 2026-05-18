@@ -14,25 +14,14 @@ describe('getBuiltinServices', () => {
     expect(web).toBeUndefined();
   });
 
-  it('includes api as an OwnedService that depends on postgres', () => {
+  it('does not include api (extracted to @levelzero/plugin-hono in LEV-187)', () => {
     const list = getBuiltinServices();
     const api = list.find((s) => s.name === 'api');
-    expect(api).toBeDefined();
-    expect(api!.kind).toBe('owned');
-    expect(api!.portNames).toEqual(['api-http']);
-    if (api!.kind === 'owned') {
-      expect(api!.cwd).toBe('apps/api');
-      expect(api!.command).toBe('bun run dev');
-      expect(api!.dependsOn).toContain('postgres');
-      expect(api!.urlName).toBe('api');
-      expect(api!.envContributions({ 'api-http': 3001 }).API_URL).toBe(
-        'http://localhost:3001',
-      );
-    }
+    expect(api).toBeUndefined();
   });
 
-  it('returns exactly api (postgres now ships via @levelzero/plugin-postgres, web via @levelzero/plugin-next)', () => {
+  it('returns an empty list — every previously built-in service is now plugin-contributed', () => {
     const list = getBuiltinServices();
-    expect(list.map((s) => s.name).sort()).toEqual(['api']);
+    expect(list).toEqual([]);
   });
 });

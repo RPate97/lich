@@ -71,7 +71,11 @@ describe('OwnedService', () => {
     };
     expect(owned.kind).toBe('owned');
     expect(owned.dependsOn).toEqual(['postgres']);
-    expect(owned.envContributions({ api: 54124 }).API_URL).toBe('http://localhost:54124');
+    // LEV-187: `envContributions` is now optional (the v0 plugins moved to
+    // `addEnvSource()` instead). The narrowing below preserves coverage of
+    // the legacy hook's shape for the third-party services that still set it.
+    expect(owned.envContributions).toBeTypeOf('function');
+    expect(owned.envContributions!({ api: 54124 }).API_URL).toBe('http://localhost:54124');
   });
 
   it('is assignable to Service', () => {

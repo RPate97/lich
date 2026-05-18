@@ -24,11 +24,11 @@ describe('pgService (legacy DockerService re-export)', () => {
     expect(pgService.volumeMountPath).toBe('/var/lib/postgresql/data');
   });
 
-  it('contributes DATABASE_URL with the allocated host port', () => {
-    const env = pgService.envContributions({ postgres: 54123 });
-    expect(env.DATABASE_URL).toBe(
-      'postgres://levelzero:levelzero@localhost:54123/levelzero',
-    );
+  it('no longer carries an envContributions field (replaced by addEnvSource in LEV-187)', () => {
+    // The legacy `envContributions(ports)` shape was removed when the plugin
+    // migrated to explicit `api.addEnvSource('url', …)` calls. The plugin-level
+    // test (`plugin.test.ts`) covers the new contract.
+    expect(pgService.envContributions).toBeUndefined();
   });
 
   it('passes POSTGRES_USER/PASSWORD/DB into the container env', () => {

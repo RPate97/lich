@@ -125,7 +125,11 @@ describe('levelzero reset (unit, mocked compose)', () => {
 
     expect(result.key).toMatch(/^[0-9a-f]{12}$/);
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);
-    expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook — the postgres plugin's `addEnvSource('url')` is
+    // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
+    // into `result.env`.
+    expect(result.env.DATABASE_URL).toBeUndefined();
   });
 
   it('after dev, reset still tears down with the same project name', async () => {
@@ -194,7 +198,11 @@ describeIfDocker('levelzero reset (integration with real docker compose)', () =>
 
     expect(result.key).toBe(devResult.key);
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);
-    expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook — the postgres plugin's `addEnvSource('url')` is
+    // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
+    // into `result.env`.
+    expect(result.env.DATABASE_URL).toBeUndefined();
 
     const select = spawnSync(
       'docker',

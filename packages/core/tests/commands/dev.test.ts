@@ -139,7 +139,12 @@ describe('levelzero dev (unit, mocked compose)', () => {
       file: expectedPath,
     });
     expect(result.ports.postgres).toBeGreaterThan(0);
-    expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook, so the dev result's `env` map is empty for
+    // pgService-only stacks. The connection-string formula now lives in
+    // plugin-postgres' `addEnvSource('url')` registration — Plan 16 Tier 2
+    // plumbs the resolved values back into this slot.
+    expect(result.env.DATABASE_URL).toBeUndefined();
   });
 
   it('persists ports + containers in the registry under the worktree key', async () => {
@@ -253,7 +258,11 @@ describeIfDocker('levelzero dev (integration with real docker compose)', () => {
     expect(result.path).toBe(projectDir);
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54000);
     expect(result.ports.postgres).toBeLessThanOrEqual(54999);
-    expect(result.env.DATABASE_URL).toContain(`localhost:${result.ports.postgres}`);
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook — the postgres plugin's `addEnvSource('url')` is
+    // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
+    // into `result.env`.
+    expect(result.env.DATABASE_URL).toBeUndefined();
     expect(result.containers).toContain(containerName(result.key, 'postgres'));
 
     const entry = await registry.get(result.key);

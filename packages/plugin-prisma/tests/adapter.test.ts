@@ -45,7 +45,11 @@ beforeEach(async () => {
   });
   const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
   const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
-  databaseUrl = result.env.DATABASE_URL;
+  // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+  // envContributions hook (the postgres plugin's `addEnvSource('url')` is
+  // the new source of truth). Build the URL inline using the same formula
+  // — matches what `commands/test.ts` and the prisma db.* commands do.
+  databaseUrl = `postgres://levelzero:levelzero@localhost:${result.ports.postgres}/levelzero`;
   fixtureRoot = makePrismaFixture();
 }, 120_000);
 

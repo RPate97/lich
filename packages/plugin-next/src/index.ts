@@ -18,12 +18,15 @@ export interface NextOptions {
  *
  * Contributes a single `web` `OwnedService` via `api.addOwnedService`, with
  * the same shape the legacy core builtin published: `apps/web` working
- * directory, `bun run dev` command, dependency on `api`, and a `WEB_URL`
- * env contribution keyed off the `web-http` port. The service definition is
- * also re-exported (`webService`) so commands that still need the raw shape
- * during the transition — notably `levelzero test e2e`, which derives
- * `WEB_URL` from `webService.envContributions(ports)` — can import it
- * directly.
+ * directory, `bun run dev` command, dependency on `api`. The service
+ * definition is also re-exported (`webService`) so commands that still need
+ * the raw shape during the transition can import it directly.
+ *
+ * Also publishes the web URL as a named EnvSource under the `next` namespace
+ * (LEV-187): consumers reference `next.url` from their config's
+ * `envInjection` block. Host vs container resolvers diverge so a host-spawned
+ * process sees `http://localhost:<allocated-port>` while a co-located compose
+ * service sees `http://web:3000` (compose DNS).
  *
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
@@ -38,7 +41,7 @@ export interface NextOptions {
 export default function next(opts: NextOptions = {}): Plugin<
   'next',
   {
-    named: never;
+    named: 'url';
     bulk: never;
   }
 > {
@@ -49,6 +52,15 @@ export default function next(opts: NextOptions = {}): Plugin<
 
     register(api: PluginAPI<'next'>, _ctx: PluginContext): void {
       api.addOwnedService(webService);
+
+      // EnvSource (LEV-187) — replace the legacy `envContributions` shape
+      // that used to live on `webService`. Consumers reference `next.url`
+      // from their config's `envInjection`.
+      api.addEnvSource('url', {
+        host: ({ ports }) => `http://localhost:${ports['web-http'] ?? ''}`,
+        container: () => `http://web:3000`,
+        protocol: 'http',
+      });
     },
   };
 }

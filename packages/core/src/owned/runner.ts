@@ -67,11 +67,20 @@ export async function runOwnedServices(
     name: s.name,
     command: s.command,
     cwd: s.cwd,
+    // `serviceEnv[s.name]` comes from the EnvSource resolver (LEV-182): the
+    // booted plugin set produces a per-service env map that wins over both
+    // `process.env` and the shared `baseEnv`. The legacy per-service
+    // `envContributions(ports)` hook is now optional (LEV-187 — v0 plugins
+    // migrated to `api.addEnvSource()`); services without it contribute
+    // nothing through this code path. Legacy contributions still come LAST
+    // so that any plugin that hasn't migrated yet keeps overriding the
+    // EnvSource resolver result for its own service — matching the old
+    // precedence, which the LEV-185 compat shim relies on.
     env: {
       ...process.env,
       ...baseEnv,
       ...(serviceEnv[s.name] ?? {}),
-      ...s.envContributions(ports),
+      ...(typeof s.envContributions === 'function' ? s.envContributions(ports) : {}),
     },
   }));
 
