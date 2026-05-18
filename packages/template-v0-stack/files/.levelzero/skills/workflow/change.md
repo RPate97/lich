@@ -24,8 +24,8 @@ codebase relies on — skipping a step pushes that work onto the reviewer.
 - Run `levelzero impact <path>` on the file you plan to change. The output
   lists reverse dependencies — every test and module that could break.
 - If the impact list spans both `apps/api` and `apps/web`, plan to run
-  `levelzero types` after the edit; cross-app types are the easiest thing to
-  silently break.
+  `bun run build` after the edit; cross-app types are the easiest thing to
+  silently break (each app's `build` script is `tsc --noEmit`).
 
 ## 3. Test-first, then implement
 
@@ -40,6 +40,7 @@ codebase relies on — skipping a step pushes that work onto the reviewer.
 - Run `levelzero check` to execute the framework-level conformance rules
   (forbidden imports, missing migrations, stale generated files). Fix any
   failures before committing — the same rules run in CI.
-- Run `levelzero types` for a full typecheck across both apps.
+- Run `bun run build` for a full typecheck across both apps (each app's
+  `build` script is `tsc --noEmit`).
 - Commit with a message that explains *why*, not what. The diff already
   shows what.

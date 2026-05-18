@@ -14,9 +14,10 @@ shows itself.
 
 - Copy the full failing test output or stack trace into your scratchpad.
   The first non-framework frame is almost always the right place to look.
-- If the failure is a type error, run `levelzero types` to get the
-  unfiltered TypeScript output — Vitest's pretty-printer sometimes hides
-  the underlying diagnostic.
+- If the failure is a type error, run `bun run build` (which runs
+  `tsc --noEmit` in each app via Turborepo) to get the unfiltered
+  TypeScript output — Vitest's pretty-printer sometimes hides the
+  underlying diagnostic.
 
 ## 2. Inspect the runtime
 

@@ -31,7 +31,8 @@ api, then web). Logs stream via `levelzero logs api`.
 - Compose `RouterType` exports and import them into `apps/web` for end-to-end
   types via `hc<typeof appRouter>(baseUrl)`. This means the web app gets
   request/response inference without a code generator.
-- Run `levelzero types` to typecheck both apps after touching a route.
+- Run `bun run build` to typecheck both apps after touching a route (each
+  app's `build` script is `tsc --noEmit`).
 
 ## Testing
 
