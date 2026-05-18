@@ -153,6 +153,79 @@ async function withPgClient<T>(databaseUrl: string, fn: (c: Client) => Promise<T
   }
 }
 
+/**
+ * Map a datasource URL protocol to a Prisma-style driver name.
+ *
+ * The URL is the canonical source of truth — `plugin-postgres` publishes
+ * `'postgresql'` via `addEnvSource('driver')`, but the adapter's view of the
+ * active datasource is always whatever URL was passed in `ctx.databaseUrl`,
+ * so we derive the driver from that to avoid plumbing extra wiring through
+ * `ORMContext`. Returns the driver string (`'postgresql' | 'mysql' | ...`)
+ * or the raw protocol (without trailing colon) when we don't recognize it —
+ * callers throw an actionable "unsupported driver" error in that case.
+ */
+function deriveDriver(databaseUrl: string): string {
+  let protocol: string;
+  try {
+    protocol = new URL(databaseUrl).protocol;
+  } catch {
+    // SQLite Prisma URLs (`file:./dev.db`) are not valid WHATWG URLs because
+    // they're relative — fall back to a string check.
+    if (databaseUrl.startsWith('file:')) return 'sqlite';
+    return 'unknown';
+  }
+  // Strip the trailing colon (`postgres:` → `postgres`).
+  const scheme = protocol.replace(/:$/, '');
+  switch (scheme) {
+    case 'postgres':
+    case 'postgresql':
+      return 'postgresql';
+    case 'mysql':
+      return 'mysql';
+    case 'file':
+    case 'sqlite':
+      return 'sqlite';
+    case 'mongodb':
+    case 'mongodb+srv':
+      return 'mongodb';
+    case 'sqlserver':
+      return 'sqlserver';
+    default:
+      return scheme;
+  }
+}
+
+/**
+ * Postgres-specific "reset to empty" — drops every user table in the public
+ * schema (including the `_prisma_migrations` bookkeeping table) so the next
+ * `applyMigrations` starts from scratch.
+ *
+ * We enumerate tables and drop them one-by-one rather than nuking the schema
+ * wholesale because the latter is a postgres-specific concept that doesn't
+ * round-trip to MySQL/SQLite/etc. — keeping the teardown at the table grain
+ * makes the analogue for those drivers (when we add them) straightforward.
+ *
+ * Internal helper. Driver-specific code is allowed here (this function is
+ * never exported); it's the dispatch inside `resetDatabase` that keeps the
+ * adapter's public surface driver-agnostic.
+ */
+async function resetPostgres(ctx: ORMContext): Promise<void> {
+  await withPgClient(ctx.databaseUrl, async (client) => {
+    const res = await client.query<{ schemaname: string; tablename: string }>(
+      `SELECT schemaname, tablename
+         FROM pg_tables
+        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`,
+    );
+    if (res.rows.length === 0) return;
+    // Build one statement with all tables CASCADE — atomic, and order doesn't
+    // matter because CASCADE walks FK dependencies for us.
+    const list = res.rows
+      .map((r) => `"${r.schemaname.replace(/"/g, '""')}"."${r.tablename.replace(/"/g, '""')}"`)
+      .join(', ');
+    await client.query(`DROP TABLE IF EXISTS ${list} CASCADE`);
+  });
+}
+
 export const prismaAdapter: ORMAdapter = {
   name: 'prisma',
 
@@ -256,17 +329,27 @@ export const prismaAdapter: ORMAdapter = {
   },
 
   async resetDatabase(ctx: ORMContext): Promise<void> {
-    // Drop and recreate the public schema. This is equivalent to
-    // `prisma migrate reset --force` minus the re-apply step: it leaves the
-    // database empty so the next `applyMigrations` starts from scratch.
-    // We do this with pg directly rather than shelling out to prisma because
-    // `prisma db push --force-reset` would push the schema back in, leaving
-    // tables present — which is the opposite of what callers expect from a
-    // "reset to empty" primitive.
-    await withPgClient(ctx.databaseUrl, async (client) => {
-      await client.query('DROP SCHEMA IF EXISTS public CASCADE');
-      await client.query('CREATE SCHEMA public');
-    });
+    // "Reset to empty" primitive: leaves the database with no user tables so
+    // the next `applyMigrations` starts from scratch. We can't use
+    // `prisma migrate reset --force` (re-applies migrations) or
+    // `prisma db push --force-reset` (pushes the schema back in) — both put
+    // tables back, which is the opposite of what callers expect.
+    //
+    // Instead, dispatch on the active datasource's driver and let the
+    // driver-specific helper do the teardown. The dispatch table here is the
+    // ORM's responsibility (composability principle, plan-14): callers see
+    // `orm.resetDatabase(ctx)` and never touch driver-specific code.
+    const driver = deriveDriver(ctx.databaseUrl);
+    switch (driver) {
+      case 'postgresql':
+        return resetPostgres(ctx);
+      default:
+        throw new Error(
+          `prismaAdapter.resetDatabase: unsupported driver "${driver}" ` +
+            `(derived from datasource URL). Add a driver-specific helper to ` +
+            `packages/plugin-prisma/src/adapter.ts to extend support.`,
+        );
+    }
   },
 
   async generateClient(ctx: ORMContext): Promise<void> {
