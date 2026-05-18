@@ -85,6 +85,25 @@ export class EnvSourceRegistry {
     return this.bulk.get(namespace);
   }
 
+  /**
+   * Find the first named source matching `predicate`, scanning in insertion
+   * order. Used by slot-consumer commands (e.g. plugin-prisma's `db.*`) that
+   * need to locate "whichever plugin provides protocol X" without knowing the
+   * contributing plugin's namespace ahead of time — keeps consumers honest
+   * with the composability principle (no cross-plugin imports).
+   *
+   * Returns `undefined` when no entry matches; callers handle the absent case
+   * with their own structured error (typically `NO_DATABASE` or analogous).
+   */
+  findFirstNamed(
+    predicate: (entry: NamedSourceEntry) => boolean,
+  ): NamedSourceEntry | undefined {
+    for (const entry of this.named.values()) {
+      if (predicate(entry)) return entry;
+    }
+    return undefined;
+  }
+
   /** Snapshot of every named source — used by `env list` and the resolver. */
   listNamed(): NamedSourceEntry[] {
     return [...this.named.values()];

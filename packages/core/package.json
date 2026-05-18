@@ -12,7 +12,8 @@
     "./services/types": "./src/services/types.ts",
     "./commands/dev": "./src/commands/dev.ts",
     "./compose/naming": "./src/compose/naming.ts",
-    "./adapters/registry": "./src/adapters/registry.ts"
+    "./adapters/registry": "./src/adapters/registry.ts",
+    "./env/registry": "./src/env/registry.ts"
   },
   "bin": {
     "levelzero": "./src/bin.ts"

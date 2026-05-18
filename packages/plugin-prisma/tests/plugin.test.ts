@@ -5,6 +5,7 @@ import type {
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
+import { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import prisma, { prismaAdapter } from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
@@ -86,5 +87,45 @@ describe('@levelzero/plugin-prisma default export', () => {
       expect(typeof cmd.describe).toBe('string');
       expect(typeof cmd.run).toBe('function');
     }
+  });
+
+  it('register() typechecks against a PluginContext WITHOUT getEnvSourceRegistry (backwards-compat)', async () => {
+    // Synthetic PluginContext literals authored before LEV-171 don't carry
+    // `getEnvSourceRegistry`. The factory must still construct cleanly —
+    // command construction never throws, even when the boot wiring is
+    // absent. (Runtime invocation surfaces a CLIError instead, which is
+    // covered in `commands/migrate.test.ts`.)
+    const { api, commands } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+    expect(commands).toHaveLength(4);
+  });
+
+  it('register() threads PluginContext.getEnvSourceRegistry into command factories (LEV-171)', async () => {
+    // When the host plumbed `getEnvSourceRegistry` through PluginContext,
+    // the four db.* commands must close over it. The closure is called
+    // lazily at command-run time, not during register — proving with this
+    // test that:
+    //  (a) construction succeeds when the getter is present, and
+    //  (b) the getter is NOT invoked eagerly during register.
+    const { api, commands } = makeRecordingApi();
+    const envRegistry = new EnvSourceRegistry();
+    let registryCalls = 0;
+    const ctx: PluginContext = {
+      projectRoot: '/tmp/example',
+      config: {},
+      getEnvSourceRegistry: () => {
+        registryCalls++;
+        return envRegistry;
+      },
+    };
+    await plugin.register(api, ctx);
+
+    expect(commands).toHaveLength(4);
+    // Eager-invocation guard: the registry getter is only valuable when
+    // resolved at command-run time, after every plugin has had a chance to
+    // contribute its sources. Calling it during register would lock in a
+    // partial view.
+    expect(registryCalls).toBe(0);
   });
 });

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Registry } from '@levelzero/core/registry';
 import { computeWorktreeKey } from '@levelzero/core/worktree';
 import { CLIError } from '@levelzero/core/errors';
+import { EnvSourceRegistry } from '@levelzero/core/env/registry';
 import { makeDbInspectCommand, dbInspectCommand } from '../../src/commands/inspect';
 import type {
   ORMAdapter,
@@ -33,6 +34,27 @@ function stubAdapter(stubs: AdapterStubs = {}): ORMAdapter {
     resetDatabase: vi.fn(),
     generateClient: vi.fn(),
   } as unknown as ORMAdapter;
+}
+
+/**
+ * Build a stub EnvSourceRegistry pre-populated with a `postgres.url` named
+ * source — see migrate.test.ts for the full LEV-171 rationale.
+ */
+function envSourceRegistryWithPostgres(): EnvSourceRegistry {
+  const reg = new EnvSourceRegistry();
+  reg.registerNamed({
+    namespace: 'postgres',
+    name: 'url',
+    fullKey: 'postgres.url',
+    pluginName: '@levelzero/plugin-postgres',
+    source: {
+      protocol: 'postgres',
+      host: ({ ports }) =>
+        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
+      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+    },
+  });
+  return reg;
 }
 
 let projectDir: string;
@@ -69,7 +91,11 @@ describe('levelzero db inspect', () => {
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-inspect-outside-')));
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: { schema: true } }),
     ).rejects.toThrow(CLIError);
@@ -78,36 +104,39 @@ describe('levelzero db inspect', () => {
 
   it('errors with a clear message when no stack is running', async () => {
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: { schema: true } }),
     ).rejects.toThrow(/no stack/i);
     expect(adapter.inspectSchema).not.toHaveBeenCalled();
   });
 
-  it('errors when the running stack has no postgres port', async () => {
-    await registry.upsert(computeWorktreeKey(projectDir), {
-      path: projectDir,
-      branch: 'main',
-      ports: {},
-      urls: {},
-      containers: [],
-      network: '',
-      logDir: '.levelzero/logs',
-      createdAt: new Date().toISOString(),
-    });
+  it('errors when no postgres EnvSource is registered (no DB plugin loaded)', async () => {
+    await seedRegistryEntry();
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: () => new EnvSourceRegistry(),
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: { schema: true } }),
-    ).rejects.toThrow(/postgres/i);
+    ).rejects.toThrow(/postgres EnvSource/i);
     expect(adapter.inspectSchema).not.toHaveBeenCalled();
   });
 
   it('errors when neither --schema nor --rows flag is passed', async () => {
     await seedRegistryEntry();
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     const err = await cmd
       .run({ cwd: projectDir, format: 'json', args: [], flags: {} })
       .then(
@@ -120,7 +149,7 @@ describe('levelzero db inspect', () => {
     expect(adapter.inspectTable).not.toHaveBeenCalled();
   });
 
-  it('--schema invokes inspectSchema with derived DATABASE_URL and returns the schema JSON', async () => {
+  it('--schema invokes inspectSchema with EnvSource-resolved DATABASE_URL and returns the schema JSON', async () => {
     await seedRegistryEntry();
     let captured: ORMContext | undefined;
     const schema: SchemaDescription = {
@@ -139,7 +168,11 @@ describe('levelzero db inspect', () => {
         return schema;
       },
     });
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -171,7 +204,11 @@ describe('levelzero db inspect', () => {
         return rows;
       },
     });
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -200,7 +237,11 @@ describe('levelzero db inspect', () => {
         return [];
       },
     });
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -213,7 +254,11 @@ describe('levelzero db inspect', () => {
   it('--rows without a table name errors', async () => {
     await seedRegistryEntry();
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: { rows: true } }),
     ).rejects.toThrow(/table|--rows/i);
@@ -223,7 +268,11 @@ describe('levelzero db inspect', () => {
   it('--limit must be a positive integer', async () => {
     await seedRegistryEntry();
     const adapter = stubAdapter();
-    const cmd = makeDbInspectCommand({ getRegistry: () => registry, adapter });
+    const cmd = makeDbInspectCommand({
+      getRegistry: () => registry,
+      adapter,
+      getEnvSourceRegistry: envSourceRegistryWithPostgres,
+    });
     await expect(
       cmd.run({
         cwd: projectDir,

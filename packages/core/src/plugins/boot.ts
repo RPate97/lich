@@ -136,7 +136,19 @@ export async function bootPlugins(
   const resolvedBulkSources = new Map<string, Record<string, string>>();
   const loadedPlugins: Array<{ name: string; version: string }> = [];
 
-  const ctx: PluginContext = { projectRoot, config };
+  // `envSources` is the shared, mutable registry that every plugin's
+  // `register()` writes into via `api.addEnvSource(...)`. Exposing a getter on
+  // `PluginContext` lets a plugin's command factories close over the registry
+  // so they read its FULLY POPULATED state at command-run time (not at
+  // register-time, when only earlier plugins' sources are present). The
+  // closure captures `envSources` by reference, so identity is stable for the
+  // duration of the boot and the same registry instance is returned to every
+  // caller.
+  const ctx: PluginContext = {
+    projectRoot,
+    config,
+    getEnvSourceRegistry: () => envSources,
+  };
 
   // Plugin-name list per namespace, populated as plugins register. The
   // registry already catches per-`(namespace, name)` and per-bulk-namespace
