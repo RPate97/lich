@@ -18,11 +18,11 @@
   },
   "dependencies": {
     "pg": "^8.12.0",
-    "prisma": "^5.18.0"
+    "prisma": "^7.0.0"
   },
   "devDependencies": {
     "@levelzero/plugin-postgres": "workspace:*",
-    "@prisma/client": "^5.18.0",
+    "@prisma/client": "^7.0.0",
     "@types/node": "^20.12.0",
     "@types/pg": "^8.11.0",
     "bun-types": "^1.2.0",

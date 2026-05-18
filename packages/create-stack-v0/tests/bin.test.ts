@@ -44,6 +44,9 @@ describe('@levelzero/create-stack-v0 bin', () => {
     expect(existsSync(join(targetDir, 'apps', 'web', 'package.json'))).toBe(true);
     expect(existsSync(join(targetDir, 'apps', 'api', 'package.json'))).toBe(true);
     expect(existsSync(join(targetDir, 'prisma', 'schema.prisma'))).toBe(true);
+    // LEV-121: Prisma 7 split — the datasource URL lives in `prisma.config.ts`
+    // at the project root (not on the `datasource` block in `schema.prisma`).
+    expect(existsSync(join(targetDir, 'prisma.config.ts'))).toBe(true);
 
     // {{projectName}} substitution applied to package.json + levelzero.config.ts.
     const pkg = readFileSync(join(targetDir, 'package.json'), 'utf8');
