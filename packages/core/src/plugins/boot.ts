@@ -6,6 +6,8 @@ import type { Rule } from '../check/types';
 import type { OwnedService } from '../services/types';
 import type { LevelzeroConfig, PluginEntry } from '../config';
 import { EnvSourceRegistry } from '../env/registry';
+import { NamespaceCollisionError } from '../env/errors';
+import { validateEnvInjection } from '../env/resolve';
 import type { BulkEnvSource, EnvSource } from '../env/types';
 import { resolvePluginEntry } from './loader';
 import type {
@@ -78,6 +80,14 @@ export interface BootResult {
    */
   envSources: EnvSourceRegistry;
   /**
+   * Shared cache of resolved bulk sources keyed by namespace. Populated
+   * lazily by {@link resolveEnvForService} so multiple services in a single
+   * CLI invocation share work — each registered bulk source's `resolve()`
+   * runs at most once per boot. Empty at the point `bootPlugins` returns;
+   * the dispatcher threads this through to every per-service resolution.
+   */
+  resolvedBulkSources: Map<string, Record<string, string>>;
+  /**
    * The set of plugins that successfully booted, in declaration order. Each
    * entry is taken straight from the `Plugin` returned by
    * `resolvePluginEntry` — `name` and `version` are guaranteed by the
@@ -122,9 +132,18 @@ export async function bootPlugins(
   const compose: ComposeContributions = { services: {}, volumes: {}, networks: {} };
   const skillsDirs: string[] = [];
   const envSources = new EnvSourceRegistry();
+  const resolvedBulkSources = new Map<string, Record<string, string>>();
   const loadedPlugins: Array<{ name: string; version: string }> = [];
 
   const ctx: PluginContext = { projectRoot, config };
+
+  // Plugin-name list per namespace, populated as plugins register. The
+  // registry already catches per-`(namespace, name)` and per-bulk-namespace
+  // collisions at registration time; this map drives the higher-level
+  // "two different plugins claim the same namespace" check that runs after
+  // every plugin has registered. Same-plugin re-registration is fine —
+  // de-duplicated via a Set.
+  const namespacePlugins = new Map<string, Set<string>>();
 
   // Per-plugin facade. We re-create the API for every plugin so the closure
   // captures the *plugin name + namespace* used in error attribution and in
@@ -173,6 +192,7 @@ export async function bootPlugins(
           source,
           pluginName: plugin.name,
         });
+        recordNamespaceClaim(namespacePlugins, namespace, plugin.name);
       },
       addBulkEnvSource(source: BulkEnvSource): void {
         envSources.registerBulk({
@@ -180,6 +200,7 @@ export async function bootPlugins(
           source,
           pluginName: plugin.name,
         });
+        recordNamespaceClaim(namespacePlugins, namespace, plugin.name);
       },
     };
   };
@@ -207,6 +228,29 @@ export async function bootPlugins(
     loadedPlugins.push({ name: plugin.name, version: plugin.version });
   }
 
+  // Cross-plugin validation (Plan 16 / LEV-181). The per-plugin registry
+  // already caught duplicate `(namespace, name)` and duplicate bulk-namespace
+  // collisions at registration time. Two checks remain that need a full
+  // view of every loaded plugin:
+  //
+  //  1. Namespace collision — two *different* plugins claim the same
+  //     namespace (e.g. both pass `namespace: 'postgres'`). This can sneak
+  //     past the registry when the plugins contribute disjoint name sets
+  //     (one adds `postgres.url`, the other adds `postgres.host`).
+  //
+  //  2. `envInjection` reference validation — every explicit entry must
+  //     resolve to a registered named source or a registered bulk
+  //     namespace, and every `importAll` entry must reference a registered
+  //     bulk namespace. Runtime keys inside a bulk namespace can only be
+  //     checked after `resolve()` runs, so {@link resolveEnvForService}
+  //     repeats this validation at injection time.
+  for (const [namespace, plugins] of namespacePlugins) {
+    if (plugins.size > 1) {
+      throw new NamespaceCollisionError(namespace, [...plugins]);
+    }
+  }
+  validateEnvInjection(envSources, config.envInjection);
+
   return {
     commands,
     adapters,
@@ -216,7 +260,28 @@ export async function bootPlugins(
     compose,
     skillsDirs,
     envSources,
+    resolvedBulkSources,
     loadedPlugins,
   };
+}
+
+/**
+ * Append `pluginName` to the set of plugins claiming `namespace`. Used by
+ * the EnvSource wiring inside `bootPlugins` to detect cross-plugin namespace
+ * collisions (two distinct plugins each declaring `namespace: 'postgres'`).
+ * The same plugin registering multiple sources under its own namespace is
+ * fine — Set de-duplication makes that a no-op.
+ */
+function recordNamespaceClaim(
+  map: Map<string, Set<string>>,
+  namespace: string,
+  pluginName: string,
+): void {
+  let plugins = map.get(namespace);
+  if (!plugins) {
+    plugins = new Set();
+    map.set(namespace, plugins);
+  }
+  plugins.add(pluginName);
 }
 
