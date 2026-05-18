@@ -8,10 +8,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { templateRoot } from '@levelzero/template-v0-stack';
 import { copyTemplate } from '../src/scaffolder';
 
 const BIN = join(__dirname, '..', 'src', 'bin.ts');
-const TEMPLATE_DIR = join(__dirname, '..', 'templates', 'v0-stack');
+const TEMPLATE_DIR = templateRoot;
 
 /**
  * The 13 skills shipped with the v0-stack template — 3 workflow + 10
