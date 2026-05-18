@@ -18,9 +18,9 @@ import { impactCommand } from './commands/impact';
 import { coverageCommand } from './commands/coverage';
 import { makeCheckCommand } from './commands/check';
 import { getBuiltinRules } from './check/builtins';
-import { screenshotCommand, makeScreenshotCommand } from './commands/screenshot';
-import { visualDiffCommand, makeVisualDiffCommand } from './commands/visual';
-import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
+import { makeScreenshotCommand } from './commands/screenshot';
+import { makeVisualDiffCommand } from './commands/visual';
+import { makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { composeCommand } from './commands/compose';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
@@ -45,6 +45,28 @@ function defaultRegistryPath(): string {
   return join(home, '.levelzero', 'registry.json');
 }
 
+/**
+ * Build the inline-only command registry — the set of commands that ship with
+ * `@levelzero/core` itself and do not depend on a project plugin to function.
+ *
+ * Post-LEV-165 (Plan 14 Tier 7 cutover) this is the FINAL set of inline
+ * registrations. Commands that depend on plugin-contributed adapters
+ * (`screenshot`, `visual diff`, `gen client`, `test`) are NO LONGER seeded
+ * here — they are registered exclusively by {@link buildDispatchRegistry}
+ * after `bootPlugins()` runs, with their factories wired against the merged
+ * plugin-aware adapter registry. Outside a project (or when the relevant
+ * plugins aren't declared in `levelzero.config.ts`) these commands are
+ * intentionally absent from the registry, matching the pattern established
+ * for `curl`, `db.*`, and `ui.*` in earlier tiers.
+ *
+ * What stays here: infrastructure / framework commands (`init`, `doctor`,
+ * `dev`, `stop`, `reset`, `stacks.*`, `logs`, `impact`, `coverage`, `check`,
+ * `urls`, `compose`, `adapter.list`, `adapter.swap`, `env.list`,
+ * `env.resolve`, `skills.index`). Several of these are RE-REGISTERED by
+ * `buildDispatchRegistry` with plugin-aware closures (e.g. `dev`/`stop`/
+ * `reset` pick up `addComposeService`/`addOwnedService` contributions, and
+ * `check` rebinds against the active backend adapter for route coverage).
+ */
 export function buildCommands(registryPath: string): CommandRegistry {
   const reg = new CommandRegistry();
   const getReg = () => new Registry(registryPath);
@@ -61,9 +83,6 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(impactCommand);
   reg.register(coverageCommand);
   reg.register(makeCheckCommand());
-  reg.register(screenshotCommand);
-  reg.register(visualDiffCommand);
-  reg.register(genClientCommand);
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
   reg.register(composeCommand);
   reg.register(adapterListCommand);
@@ -71,7 +90,6 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(envListCommand);
   reg.register(envResolveCommand);
   reg.register(skillsIndexCommand);
-  reg.register(makeTestCommand({ getRegistry: getReg }));
   return reg;
 }
 
@@ -82,11 +100,15 @@ export function buildCommands(registryPath: string): CommandRegistry {
  * `levelzero.config.ts` declares a non-empty `plugins` array — boots every
  * declared plugin and merges its command contributions on top.
  *
- * This is the transitional wiring for LEV-130. The inline registrations remain
- * the source of truth for built-in commands; plugins can layer additional
- * commands (or override an inline one with a same-named contribution, since
- * `CommandRegistry.register` is last-write-wins). A later tier will move the
- * built-ins themselves into plugins and cut the seam.
+ * After LEV-165 (Plan 14 Tier 7 cutover) the inline seed is intentionally
+ * minimal: it covers only the infrastructure commands that don't depend on a
+ * plugin-contributed adapter. Plugin-dependent commands (`screenshot`,
+ * `visual diff`, `gen client`, `test`) are registered here exclusively, with
+ * factories closed over the merged plugin-aware adapter registry. Commands
+ * fully owned by plugins (`db.*`, `ui.*`, `curl`) flow in via
+ * `boot.commands.all()` below. The result: outside a project, only the
+ * infrastructure surface is dispatchable; inside a project, the full
+ * declared plugin set's commands light up.
  */
 export async function buildDispatchRegistry(
   cwd: string,
@@ -220,11 +242,11 @@ export async function buildDispatchRegistry(
   // last-write-wins, matching `AdapterRegistry.register` semantics.
   const merged = mergeAdapterRegistries(getBuiltinAdapters(), boot.adapters);
   cli.register(makeAdapterListCommand({ getRegistry: () => merged }));
-  // Re-bind `gen.client` to the merged registry too so commands that depend
-  // on plugin-contributed adapters (e.g. `backend` after LEV-150 extracted
-  // hono into `@levelzero/plugin-hono`) actually see them at dispatch time.
-  // The inline `genClientCommand` registered above closes over the built-in
-  // registry only, which after the extraction has no active `backend` impl.
+  // Register `gen.client` against the merged plugin-aware registry. After
+  // LEV-165 this is the SOLE registration of `gen.client` — the inline seed
+  // was deleted because the command can't function without both a `backend`
+  // adapter (contributed by `@levelzero/plugin-hono` or similar) and a
+  // `frontend` adapter (contributed by `@levelzero/plugin-typed-client`).
   cli.register(makeGenClientCommand({ getAdapterRegistry: () => merged }));
   // Re-bind `adapter swap` against the merged registry as well — its
   // validation step (`listBySlot(slot)`) needs to see plugin-contributed
@@ -233,11 +255,13 @@ export async function buildDispatchRegistry(
   // registration closes over the bare built-ins.
   cli.register(makeAdapterSwapCommand({ getRegistry: () => merged }));
 
-  // LEV-174 — `screenshot`, `visual diff`, and `test` all dropped their
-  // inline plugin-package imports (`@levelzero/plugin-playwright` /
-  // `@levelzero/plugin-vitest`). Re-register them here against the merged
-  // adapter registry so the CLI dispatch path still resolves the right impls
-  // when the plugins are loaded.
+  // Register `screenshot`, `visual diff`, and `test` against the merged
+  // plugin-aware adapter registry. After LEV-165 these are the SOLE
+  // registrations for each command — the inline seeds were deleted because
+  // none of them can function without a plugin-contributed adapter
+  // (`browser` for screenshot/visual diff, `test-runner` for test). Outside
+  // a project (or in a project that doesn't declare the relevant plugins)
+  // these commands are intentionally absent from the dispatch registry.
   cli.register(makeScreenshotCommand({ getAdapterRegistry: () => merged }));
   cli.register(makeVisualDiffCommand({ getAdapterRegistry: () => merged }));
   cli.register(
