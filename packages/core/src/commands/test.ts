@@ -2,9 +2,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CLIError } from '../errors';
 import { Registry } from '../registry';
-import { pgService } from '@levelzero/plugin-postgres';
-import { webService } from '@levelzero/plugin-next';
-import { apiService } from '../services/builtins';
 import { resolveStackContext } from '../services/context';
 import { vitestAdapter } from '@levelzero/plugin-vitest';
 import { playwrightTestAdapter } from '@levelzero/plugin-playwright';
@@ -36,14 +33,14 @@ function defaultRegistry(): Registry {
  *   - `integration` → vitest, `tests/integration/**`, env: { DATABASE_URL, API_URL }
  *   - `e2e`         → playwright, `tests/e2e/**`, env: { API_URL, WEB_URL }
  *
- * Env derivation mirrors the running stack's `pgService` / `apiService` /
- * `webService` envContributions — single source of truth lives in
- * `@levelzero/plugin-postgres` (for `pgService`, post-LEV-148),
- * `@levelzero/plugin-next` (for `webService`, post-LEV-154), and
- * `services/builtins.ts` (for `apiService`). `integration` and `e2e`
- * require a running stack (a registry entry for the current worktree);
- * `unit` skips the stack lookup entirely so unit tests stay runnable without
- * `levelzero dev`.
+ * URL derivation mirrors the formulas the postgres/hono/next plugins
+ * publish through their `addEnvSource('url', …)` registrations (LEV-187).
+ * Inlined here because EnvSource resolution isn't yet plumbed into the
+ * command-context (Plan 16 Tier 2 lands that separately); once it is, this
+ * helper collapses to a single registry-aware lookup. `integration` and
+ * `e2e` require a running stack (a registry entry for the current
+ * worktree); `unit` skips the stack lookup entirely so unit tests stay
+ * runnable without `levelzero dev`.
  */
 export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
@@ -128,9 +125,11 @@ interface ResolveNeeds {
 
 /**
  * Resolve the current worktree's stack entry and pull DATABASE_URL / API_URL /
- * WEB_URL from the live service envContributions. Throws a CLIError with a
- * NO_PROJECT code when the worktree isn't a levelzero project, when no stack
- * is running, or when a required service is missing from the running stack.
+ * WEB_URL via the same formulas the postgres / hono / next plugins publish
+ * through their `addEnvSource('url', …)` registrations (LEV-187). Throws a
+ * CLIError with a NO_PROJECT code when the worktree isn't a levelzero
+ * project, when no stack is running, or when a required service is missing
+ * from the running stack.
  */
 async function resolveStackEnv(
   ctx: CommandContext,
@@ -150,42 +149,39 @@ async function resolveStackEnv(
   const result: ResolvedStackEnv = {};
 
   if (needs.needPostgres) {
-    const env = pgService.envContributions(entry.ports);
-    const databaseUrl = env['DATABASE_URL'];
-    if (!databaseUrl || !entry.ports['postgres']) {
+    const postgresPort = entry.ports['postgres'];
+    if (!postgresPort) {
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no postgres service',
         'ensure postgres is part of the stack and `levelzero dev` has been run',
       );
     }
-    result.databaseUrl = databaseUrl;
+    result.databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
   }
 
   if (needs.needApi) {
-    const env = apiService.envContributions(entry.ports);
-    const apiUrl = env['API_URL'];
-    if (!apiUrl || !entry.ports['api-http']) {
+    const apiPort = entry.ports['api-http'];
+    if (!apiPort) {
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no api service',
         'ensure the api service is part of the stack and `levelzero dev` has been run',
       );
     }
-    result.apiUrl = apiUrl;
+    result.apiUrl = `http://localhost:${apiPort}`;
   }
 
   if (needs.needWeb) {
-    const env = webService.envContributions(entry.ports);
-    const webUrl = env['WEB_URL'];
-    if (!webUrl || !entry.ports['web-http']) {
+    const webPort = entry.ports['web-http'];
+    if (!webPort) {
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no web service',
         'ensure the web service is part of the stack and `levelzero dev` has been run',
       );
     }
-    result.webUrl = webUrl;
+    result.webUrl = `http://localhost:${webPort}`;
   }
 
   return result;

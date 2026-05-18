@@ -3,6 +3,8 @@ import type {
   ComposeNetworkDef,
   ComposeServiceDef,
   ComposeVolumeDef,
+  EnvSource,
+  EnvSourceContext,
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
@@ -22,10 +24,12 @@ function makeRecordingApi(): {
   services: Record<string, ComposeServiceDef>;
   volumes: Record<string, ComposeVolumeDef>;
   networks: Record<string, ComposeNetworkDef>;
+  envSources: Record<string, EnvSource>;
 } {
   const services: Record<string, ComposeServiceDef> = {};
   const volumes: Record<string, ComposeVolumeDef> = {};
   const networks: Record<string, ComposeNetworkDef> = {};
+  const envSources: Record<string, EnvSource> = {};
   const api: PluginAPI = {
     addAdapter: vi.fn(),
     setActiveAdapter: vi.fn(),
@@ -43,13 +47,24 @@ function makeRecordingApi(): {
     addRule: vi.fn(),
     addGenerator: vi.fn(),
     addSkillsDir: vi.fn(),
-    // Added by LEV-178 (`EnvSource` types + namespace-scoped `PluginAPI`).
-    // Postgres will publish env sources here in LEV-186/187; for now the
-    // mocks just satisfy the typed surface.
-    addEnvSource: vi.fn(),
+    addEnvSource: (name, source) => {
+      envSources[name] = source;
+    },
     addBulkEnvSource: vi.fn(),
   };
-  return { api, services, volumes, networks };
+  return { api, services, volumes, networks, envSources };
+}
+
+function makeEnvCtx(
+  ports: Record<string, number>,
+  consumerContext: 'host' | 'container' = 'host',
+): EnvSourceContext {
+  return {
+    ports,
+    projectRoot: '/tmp/example',
+    worktreeKey: 'abc123',
+    consumerContext,
+  };
 }
 
 describe('@levelzero/plugin-postgres default export', () => {
@@ -90,5 +105,58 @@ describe('@levelzero/plugin-postgres default export', () => {
     await plugin.register(api, ctx);
 
     expect(Object.keys(networks)).toEqual([]);
+  });
+
+  it('register() publishes the full postgres EnvSource manifest (LEV-187)', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    expect(Object.keys(envSources).sort()).toEqual([
+      'database',
+      'driver',
+      'host',
+      'password',
+      'port',
+      'url',
+      'user',
+    ]);
+  });
+
+  it('host-context EnvSource resolvers build localhost values from the allocated port', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    const ec = makeEnvCtx({ postgres: 54123 }, 'host');
+    expect(await envSources.host!.host(ec)).toBe('localhost');
+    expect(await envSources.port!.host(ec)).toBe('54123');
+    expect(await envSources.user!.host(ec)).toBe('levelzero');
+    expect(await envSources.password!.host(ec)).toBe('levelzero');
+    expect(await envSources.database!.host(ec)).toBe('levelzero');
+    expect(await envSources.driver!.host(ec)).toBe('postgresql');
+    expect(await envSources.url!.host(ec)).toBe(
+      'postgres://levelzero:levelzero@localhost:54123/levelzero',
+    );
+  });
+
+  it('container-context EnvSource resolvers route through compose DNS at port 5432', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    const ec = makeEnvCtx({ postgres: 54123 }, 'container');
+    expect(await envSources.host!.container(ec)).toBe('postgres');
+    expect(await envSources.port!.container(ec)).toBe('5432');
+    expect(await envSources.url!.container(ec)).toBe(
+      'postgres://levelzero:levelzero@postgres:5432/levelzero',
+    );
+  });
+
+  it('url EnvSource declares the postgres protocol', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+    expect(envSources.url!.protocol).toBe('postgres');
   });
 });

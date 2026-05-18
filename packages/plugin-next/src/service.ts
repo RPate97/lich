@@ -5,14 +5,13 @@ import type { OwnedService } from '@levelzero/core';
  * are registered in dependency order. `cwd` is relative to the project root.
  *
  * Re-exported from `@levelzero/plugin-next` so callers that still need the
- * raw `OwnedService` definition (notably the `levelzero test e2e` command,
- * which reads `webService.envContributions(ports)` to derive `WEB_URL`) can
- * keep importing it during the LEV-154+ transition. New plugin authors
- * should instead express the contribution through this plugin's `register()`.
+ * raw `OwnedService` definition (notably `commands/test.ts`, which derives
+ * `WEB_URL` inline during the LEV-187 transition) can keep importing it.
+ * New plugin authors should instead express the contribution through this
+ * plugin's `register()`.
  *
- * Kept byte-identical to the previous `packages/core/src/services/builtins.ts`
- * `webService` constant so the extraction is a pure move: behaviour (cwd,
- * command, dependsOn, urlName, env contributions) does not change.
+ * The legacy `envContributions` field was removed in LEV-187 — `next.url`
+ * is now published via `api.addEnvSource('url', …)` in `index.ts`.
  */
 export const webService: OwnedService = {
   name: 'web',
@@ -22,7 +21,4 @@ export const webService: OwnedService = {
   command: 'bun run dev',
   dependsOn: ['api'],
   urlName: 'web',
-  envContributions: (ports) => ({
-    WEB_URL: `http://localhost:${ports['web-http']}`,
-  }),
 };

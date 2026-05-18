@@ -1,8 +1,10 @@
 import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
 import { honoBackendAdapter } from './adapter';
+import { apiService } from './service';
 
 export { honoBackendAdapter } from './adapter';
 export type { HonoExtractRoutesOptions } from './adapter';
+export { apiService } from './service';
 
 /**
  * Alias for {@link honoBackendAdapter}. Exposes the canonical short name the
@@ -26,15 +28,20 @@ export interface HonoOptions {
  * `@levelzero/plugin-hono` — extracts the Hono `BackendAdapter` impl out of
  * `@levelzero/core`.
  *
- * Contributes one impl under the `backend` adapter slot:
+ * Contributes:
  *
- *   - `hono` — dynamically imports `apps/api/src/index.ts` and reads
- *     `app.routes` off the default-exported Hono instance to produce a
- *     `RouteManifest`.
- *
- * Activates `hono` by default so existing consumers (route-coverage rule,
- * gen client, etc.) keep observing the same behavior they did before the
- * extraction.
+ *   - `hono` impl under the `backend` adapter slot (activated by default so
+ *     existing consumers — route-coverage rule, gen client, etc. — keep
+ *     observing the same behavior they did before the extraction);
+ *   - the `api` owned service (`apps/api`, `bun run dev`), promoted out of
+ *     `packages/core/src/services/builtins.ts` so the plugin that provides
+ *     the backend adapter also owns the service definition (LEV-187); and
+ *   - a single named EnvSource under the `hono` namespace — `hono.url` —
+ *     publishing the base URL the api service serves at. Host vs container
+ *     resolvers diverge so a host-spawned process sees
+ *     `http://localhost:<allocated-port>` while a co-located compose service
+ *     sees `http://api:3000` (compose DNS placeholder for any future
+ *     sibling-service plumbing).
  *
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
@@ -49,7 +56,7 @@ export interface HonoOptions {
 export default function hono(opts: HonoOptions = {}): Plugin<
   'hono',
   {
-    named: never;
+    named: 'url';
     bulk: never;
   }
 > {
@@ -61,6 +68,16 @@ export default function hono(opts: HonoOptions = {}): Plugin<
     register(api: PluginAPI<'hono'>, _ctx: PluginContext): void {
       api.addAdapter('backend', 'hono', honoAdapter);
       api.setActiveAdapter('backend', 'hono');
+      api.addOwnedService(apiService);
+
+      // EnvSource (LEV-187) — replace the legacy `envContributions` shape that
+      // used to live on `apiService` in `core/src/services/builtins.ts`.
+      // Consumers reference `hono.url` from their config's `envInjection`.
+      api.addEnvSource('url', {
+        host: ({ ports }) => `http://localhost:${ports['api-http'] ?? ''}`,
+        container: () => `http://api:3000`,
+        protocol: 'http',
+      });
     },
   };
 }

@@ -55,7 +55,16 @@ export async function runOwnedServices(
     name: s.name,
     command: s.command,
     cwd: s.cwd,
-    env: { ...process.env, ...baseEnv, ...s.envContributions(ports) },
+    // `envContributions` is the legacy per-service hook (Plan 16 / LEV-178+
+    // made it optional once v0 plugins migrated to `api.addEnvSource()` in
+    // LEV-187). Services without it contribute nothing through this code
+    // path — the EnvSource resolver (LEV-182, parallel ticket) feeds the
+    // process via a separate plumbing path.
+    env: {
+      ...process.env,
+      ...baseEnv,
+      ...(typeof s.envContributions === 'function' ? s.envContributions(ports) : {}),
+    },
   }));
 
   const { result, commands } = concurrently(inputs, {

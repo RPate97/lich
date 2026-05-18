@@ -2,7 +2,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CLIError } from '@levelzero/core/errors';
 import { Registry } from '@levelzero/core/registry';
-import { pgService } from '@levelzero/plugin-postgres';
 import { resolveStackContext } from '@levelzero/core/services/context';
 import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
 import type { Command, ORMAdapter } from '@levelzero/core';
@@ -83,17 +82,21 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
         );
       }
 
-      // Keep DATABASE_URL derivation in lockstep with `dev` and `db seed` — pgService
-      // owns the single source of truth.
-      const env = pgService.envContributions(entry.ports);
-      const databaseUrl = env['DATABASE_URL'];
-      if (!databaseUrl || !entry.ports['postgres']) {
+      // DATABASE_URL formula mirrors the postgres plugin's
+      // `addEnvSource('url', …)` registration (LEV-187) — the single source of
+      // truth for connection-string shape lives in plugin-postgres' index.
+      // Inlined here because the prisma commands run before EnvSource
+      // resolution is plumbed into the command-context (Plan 16 Tier 2 lands
+      // that separately).
+      const postgresPort = entry.ports['postgres'];
+      if (!postgresPort) {
         throw new CLIError(
           'NO_PROJECT',
           'current stack has no postgres service',
           'ensure postgres is part of the stack and `levelzero dev` has been run',
         );
       }
+      const databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
 
       // Flags are accepted but the prisma adapter currently runs `migrate deploy`
       // for either mode. We touch the flags so they're not flagged as unused, and

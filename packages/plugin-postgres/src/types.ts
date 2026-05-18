@@ -30,6 +30,12 @@ export interface DockerService {
   containerPortName?: string;
   containerPortInContainer?: number;
   volumeMountPath?: string;
-  envContributions: EnvContributions;
+  /**
+   * @deprecated Plan 16 / LEV-187 — postgres now publishes env values via
+   * `api.addEnvSource()`. Field made optional so the legacy `pgService`
+   * re-export can omit it; kept in the structural type for compatibility
+   * with consumers that still attach a function during the transition.
+   */
+  envContributions?: EnvContributions;
   healthCommand?: string[];
 }

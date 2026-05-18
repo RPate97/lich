@@ -80,8 +80,11 @@ describeIfDocker('withRollback (integration)', () => {
       format: 'json',
       args: [],
       flags: {},
-    })) as { env: { DATABASE_URL: string } };
-    databaseUrl = result.env.DATABASE_URL;
+    })) as { ports: { postgres: number } };
+    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+    // envContributions hook (the postgres plugin's `addEnvSource('url')` is
+    // the new source of truth). Build the URL inline using the same formula.
+    databaseUrl = `postgres://levelzero:levelzero@localhost:${result.ports.postgres}/levelzero`;
     fixtureRoot = makePrismaFixture();
     await prismaAdapter.applyMigrations({ databaseUrl, projectRoot: fixtureRoot });
     prisma = new PrismaClient({ datasources: { db: { url: ipv4(databaseUrl) } } });

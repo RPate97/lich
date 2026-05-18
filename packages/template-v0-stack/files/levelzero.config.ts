@@ -1,3 +1,4 @@
+import { defineConfig } from '@levelzero/core';
 import postgres from '@levelzero/plugin-postgres';
 import prisma from '@levelzero/plugin-prisma';
 import hono from '@levelzero/plugin-hono';
@@ -8,7 +9,7 @@ import next from '@levelzero/plugin-next';
 import vitest from '@levelzero/plugin-vitest';
 import playwright from '@levelzero/plugin-playwright';
 
-export default {
+export default defineConfig({
   name: '{{projectName}}',
   plugins: [
     postgres(),
@@ -21,4 +22,9 @@ export default {
     vitest(),
     playwright(),
   ],
-};
+  envInjection: {
+    DATABASE_URL: 'postgres.url',
+    API_URL: 'hono.url',
+    WEB_URL: 'next.url',
+  },
+});
