@@ -38,6 +38,26 @@ export type {
 export { EnvSourceRegistry } from './env/registry';
 export type { NamedSourceEntry, BulkSourceEntry } from './env/registry';
 
+/**
+ * EnvSource resolution (Plan 16 / LEV-181). Boot-time validation +
+ * per-service resolution helpers consumed by the dispatcher.
+ */
+export {
+  resolveEnvForService,
+  prepareBulkResolutions,
+  validateEnvInjection,
+} from './env/resolve';
+export type {
+  EnvInjectionMap,
+  BulkResolutionCache,
+  ResolveEnvForServiceInput,
+} from './env/resolve';
+export {
+  EnvSourceMissingError,
+  NamespaceCollisionError,
+  BulkResolveError,
+} from './env/errors';
+
 export type { AdapterSlot, AdapterEntry } from './adapters/registry';
 export type { Command, CommandContext } from './commands/types';
 export type { OwnedService } from './services/types';
