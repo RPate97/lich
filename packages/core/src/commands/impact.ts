@@ -41,6 +41,9 @@ export const impactCommand: Command = {
       : resolve(ctx.cwd, 'tsconfig.json');
     const projectRoot = dirname(tsconfigPath);
 
-    return await reverseDeps(targetAbs, { projectRoot });
+    const deps = await reverseDeps(targetAbs, { projectRoot });
+    if (ctx.format === 'json') return deps;
+    if (deps.length === 0) return 'no reverse dependencies\n';
+    return deps.join('\n') + '\n';
   },
 };

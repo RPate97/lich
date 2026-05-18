@@ -431,7 +431,10 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
         },
       };
 
-      if (owned.length === 0) return baseResult;
+      if (owned.length === 0) {
+        if (ctx.format === 'json') return baseResult;
+        return renderDevPretty(baseResult, null);
+      }
 
       const logDir = join(stackCtx.worktreePath, entry.logDir);
       const runner = await runOwnedServices(
@@ -444,13 +447,52 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       );
       const { exitCodes } = await runner.done;
 
-      return {
+      const fullResult = {
         ...baseResult,
         owned: {
           exitCodes,
           pids: runner.pids,
         },
       };
+      if (ctx.format === 'json') return fullResult;
+      return renderDevPretty(baseResult, fullResult.owned);
     },
   };
+}
+
+interface DevPrettyBase {
+  key: string;
+  path: string;
+  ports: Record<string, number>;
+  services: Array<{ name: string; container: string }>;
+  compose: { projectName: string; file: string };
+}
+
+interface DevPrettyOwned {
+  exitCodes: Record<string, number>;
+  pids: Record<string, number>;
+}
+
+function renderDevPretty(base: DevPrettyBase, owned: DevPrettyOwned | null): string {
+  const lines: string[] = [];
+  lines.push(`Stack up: ${base.key}`);
+  lines.push(`  path:    ${base.path}`);
+  lines.push(`  compose: ${base.compose.file}`);
+  if (base.services.length > 0) {
+    lines.push('services:');
+    for (const s of base.services) lines.push(`  ${s.name}  (${s.container})`);
+  }
+  const portEntries = Object.entries(base.ports);
+  if (portEntries.length > 0) {
+    lines.push('ports:');
+    for (const [name, port] of portEntries) lines.push(`  ${name}=${port}`);
+  }
+  if (owned) {
+    const pidCount = Object.keys(owned.pids).length;
+    const exits = Object.entries(owned.exitCodes)
+      .map(([name, code]) => `${name}=${code}`)
+      .join(',');
+    lines.push(`owned: ${pidCount} process(es), exitCodes=[${exits}]`);
+  }
+  return lines.join('\n') + '\n';
 }

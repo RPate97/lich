@@ -56,7 +56,7 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
 
       if (ctx.flags['all']) {
         const all = await reg.list();
-        return {
+        const result = {
           stacks: all.map(({ key, entry }) => ({
             key,
             path: entry.path,
@@ -64,6 +64,8 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
             urls: rowsForEntry(entry),
           })),
         };
+        if (ctx.format === 'json') return result;
+        return renderAllStacksUrlsPretty(result.stacks);
       }
 
       const wt = await findWorktree(ctx.cwd);
@@ -75,10 +77,35 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
         );
       }
       const entry = await reg.get(wt.key);
-      if (!entry) return { urls: [] };
-      return { urls: rowsForEntry(entry) };
+      const urls = entry ? rowsForEntry(entry) : [];
+      if (ctx.format === 'json') return { urls };
+      return renderUrlsPretty(urls);
     },
   };
+}
+
+function renderUrlsPretty(urls: UrlRow[]): string {
+  if (urls.length === 0) return 'no urls registered (run `levelzero dev` to bring the stack up)\n';
+  // Emit `service=target` lines so the output is greppable and survives
+  // copy/paste into a shell `eval` without quoting headaches.
+  return urls.map((u) => `${u.service}=${u.target}`).join('\n') + '\n';
+}
+
+function renderAllStacksUrlsPretty(
+  stacks: Array<{ key: string; path: string; branch: string; urls: UrlRow[] }>,
+): string {
+  if (stacks.length === 0) return 'no stacks running\n';
+  const lines: string[] = [];
+  for (const s of stacks) {
+    lines.push(`# ${s.key} (${s.path})`);
+    if (s.urls.length === 0) {
+      lines.push('  (no urls)');
+    } else {
+      for (const u of s.urls) lines.push(`${u.service}=${u.target}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
 }
 
 function defaultRegistryPath(): string {

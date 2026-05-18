@@ -54,7 +54,16 @@ export function makeCoverageCommand(runCoverage: RunCoverageFn = defaultRunCover
           );
         }
       }
-      return summary;
+      if (ctx.format === 'json') return summary;
+      const t = summary.total;
+      const lines: string[] = [];
+      lines.push('coverage summary');
+      lines.push(`  lines:      ${t.lines.pct}% (${t.lines.covered}/${t.lines.total})`);
+      lines.push(`  statements: ${t.statements.pct}% (${t.statements.covered}/${t.statements.total})`);
+      lines.push(`  branches:   ${t.branches.pct}% (${t.branches.covered}/${t.branches.total})`);
+      lines.push(`  functions:  ${t.functions.pct}% (${t.functions.covered}/${t.functions.total})`);
+      lines.push(`  files:      ${summary.files.length}`);
+      return lines.join('\n') + '\n';
     },
   };
 }

@@ -73,8 +73,9 @@ describe('bin: plan-12 skills index end-to-end', () => {
     );
     expect(skillFiles).toHaveLength(EXPECTED_SKILL_COUNT);
 
-    // Run the command the user would run.
-    const res = run(['skills', 'index']);
+    // Run the command the user would run. Pass `--json` to parse the result
+    // (LEV-168 made pretty text the default).
+    const res = run(['skills', 'index', '--json']);
     expect(res.status, res.stderr).toBe(0);
 
     const parsed = JSON.parse(res.stdout) as {

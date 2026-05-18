@@ -48,8 +48,9 @@ function run(args: string[]) {
 }
 
 describe('bin: logs command end-to-end', () => {
+  // LEV-168 — all stdout JSON parses require `--json` now that pretty is the default.
   it('returns all log lines sorted by ts', () => {
-    const res = run(['logs']);
+    const res = run(['logs', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.lines.map((l: any) => l.message)).toEqual([
@@ -60,7 +61,7 @@ describe('bin: logs command end-to-end', () => {
   });
 
   it('--service api filters to just api', () => {
-    const res = run(['logs', '--service', 'api']);
+    const res = run(['logs', '--service', 'api', '--json']);
     expect(res.status).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.lines.every((l: any) => l.service === 'api')).toBe(true);
@@ -68,21 +69,21 @@ describe('bin: logs command end-to-end', () => {
   });
 
   it('--level error filters to errors', () => {
-    const res = run(['logs', '--level', 'error']);
+    const res = run(['logs', '--level', 'error', '--json']);
     expect(res.status).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.lines.map((l: any) => l.message)).toEqual(['ERROR: db timeout']);
   });
 
   it('--grep ERROR filters by regex on message', () => {
-    const res = run(['logs', '--grep', 'ERROR']);
+    const res = run(['logs', '--grep', 'ERROR', '--json']);
     expect(res.status).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.lines.map((l: any) => l.message)).toEqual(['ERROR: db timeout']);
   });
 
   it('--tail 1 returns the most recent line', () => {
-    const res = run(['logs', '--tail', '1']);
+    const res = run(['logs', '--tail', '1', '--json']);
     expect(res.status).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.lines.map((l: any) => l.message)).toEqual(['compiled successfully']);

@@ -75,22 +75,20 @@ async function initWithName(ctx: CommandContext, name: string): Promise<unknown>
   }
 
   const nextSteps = nextStepsLines(name, installed);
-  if (ctx.format === 'pretty') {
-    process.stdout.write(
-      `\nScaffolded ${name} at ${targetDir}\n\nNext steps:\n` +
-        nextSteps.map((l) => `  ${l}`).join('\n') +
-        '\n',
-    );
-  }
-
-  return {
-    created: true,
+  const result = {
+    created: true as const,
     projectName: name,
     targetDir,
     files,
     installed,
     nextSteps,
   };
+  if (ctx.format === 'json') return result;
+  return (
+    `\nScaffolded ${name} at ${targetDir}\n\nNext steps:\n` +
+    nextSteps.map((l) => `  ${l}`).join('\n') +
+    '\n'
+  );
 }
 
 export const initCommand: Command = {
@@ -111,6 +109,8 @@ export const initCommand: Command = {
       );
     }
     await writeFile(path, STUB, 'utf8');
-    return { created: true, configPath: path };
+    const result = { created: true as const, configPath: path };
+    if (ctx.format === 'json') return result;
+    return `Wrote levelzero.config.ts at ${path}\n`;
   },
 };

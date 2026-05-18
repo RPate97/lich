@@ -268,30 +268,8 @@ function isHelpInvocation(argv: string[]): boolean {
   return false;
 }
 
-/**
- * `env list` / `env resolve` are debug tools whose output is meant to be
- * read by humans — `KEY=value` lines and a printable header. The CLI
- * dispatcher defaults to JSON formatting, which would JSON-quote that
- * string (wrapping it in `""` with escaped newlines). Inject `--pretty`
- * when the user passes neither `--json` nor `--pretty` so the default
- * matches the documented "plain-text pretty" behavior from the plan,
- * without forcing every env-debug invocation to type `--pretty`.
- */
-function isEnvDebugInvocation(argv: string[]): boolean {
-  const positional = argv.filter((a) => !a.startsWith('-'));
-  if (positional[0] !== 'env') return false;
-  return positional[1] === 'list' || positional[1] === 'resolve';
-}
-
 async function main() {
-  let argv = process.argv.slice(2);
-  if (
-    isEnvDebugInvocation(argv) &&
-    !argv.includes('--pretty') &&
-    !argv.includes('--json')
-  ) {
-    argv = [...argv, '--pretty'];
-  }
+  const argv = process.argv.slice(2);
   const cli = await buildDispatchRegistry(process.cwd(), defaultRegistryPath());
 
   if (isHelpInvocation(argv)) {

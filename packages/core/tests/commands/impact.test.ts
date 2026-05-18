@@ -133,18 +133,33 @@ describe('levelzero impact', () => {
     expect(mockReverseDeps).not.toHaveBeenCalled();
   });
 
-  it('--pretty flag sets format on context (CLI layer formats; command still returns the array)', async () => {
-    // The CLI's runCli already picks the format based on --pretty; the command
-    // returns the raw value and the output layer handles serialization.
-    // Verify the command yields the bare array regardless of format value.
-    const dependents = [join(projectDir, 'src', 'a.ts')];
+  // LEV-168 — pretty mode is now the default. The command renders the
+  // dependent list as one-path-per-line text; --json returns the raw array.
+  it('pretty mode renders the dependent list as text', async () => {
+    const dependents = [
+      join(projectDir, 'src', 'a.ts'),
+      join(projectDir, 'src', 'b.ts'),
+    ];
     mockReverseDeps.mockResolvedValueOnce(dependents);
     const result = await impactCommand.run({
       cwd: projectDir,
       format: 'pretty',
       args: ['src/target.ts'],
-      flags: { pretty: true },
+      flags: {},
     });
-    expect(result).toEqual(dependents);
+    expect(typeof result).toBe('string');
+    expect(result as string).toContain(dependents[0]!);
+    expect(result as string).toContain(dependents[1]!);
+  });
+
+  it('pretty mode renders a friendly message when there are no dependents', async () => {
+    mockReverseDeps.mockResolvedValueOnce([]);
+    const result = await impactCommand.run({
+      cwd: projectDir,
+      format: 'pretty',
+      args: ['src/target.ts'],
+      flags: {},
+    });
+    expect(result).toBe('no reverse dependencies\n');
   });
 });

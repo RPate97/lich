@@ -95,7 +95,7 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Comman
       // and operators see compose's output in real time. The trade-off: we
       // can't capture stdout for programmatic callers — those should use the
       // ComposeRunner in src/compose/runner.ts instead.
-      return new Promise<ComposeResult>((resolve, reject) => {
+      return new Promise<unknown>((resolve, reject) => {
         const proc = spawn('docker', args, { stdio: 'inherit' });
         proc.on('error', (err: NodeJS.ErrnoException) => {
           // Most common case: docker isn't installed / not on PATH.
@@ -112,7 +112,13 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Comman
           );
         });
         proc.on('close', (code) => {
-          resolve({ exitCode: code ?? -1 });
+          const result: ComposeResult = { exitCode: code ?? -1 };
+          // Pretty mode: docker compose already wrote its output to inherited
+          // stdio, so we don't print anything extra — return an empty string
+          // so the bin caller doesn't append a stray blank line. JSON mode
+          // gets the structured shape so scripts can branch on `exitCode`.
+          if (ctx.format === 'json') resolve(result);
+          else resolve('');
         });
       });
     },

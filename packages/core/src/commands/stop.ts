@@ -97,7 +97,9 @@ export function makeStopCommand(
       return await reg.withLock(async () => {
         const entry = await reg.get(stackCtx.worktreeKey);
         if (!entry) {
-          return { stopped: false, key: stackCtx.worktreeKey, reason: 'not running' };
+          const result = { stopped: false, key: stackCtx.worktreeKey, reason: 'not running' };
+          if (ctx.format === 'json') return result;
+          return `no stack running for ${stackCtx.worktreeKey}\n`;
         }
 
         // Re-emit the compose file with the recorded ports so `docker compose
@@ -148,7 +150,15 @@ export function makeStopCommand(
         await runner.down({ volumes: false });
 
         await reg.remove(stackCtx.worktreeKey);
-        return { stopped: true, key: stackCtx.worktreeKey, containers: entry.containers };
+        const result = {
+          stopped: true as const,
+          key: stackCtx.worktreeKey,
+          containers: entry.containers,
+        };
+        if (ctx.format === 'json') return result;
+        const lines: string[] = [`Stopped stack ${stackCtx.worktreeKey}`];
+        for (const c of entry.containers) lines.push(`  removed ${c}`);
+        return lines.join('\n') + '\n';
       });
     },
   };

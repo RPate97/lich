@@ -104,7 +104,9 @@ export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command 
       await mkdir(dirname(outPath), { recursive: true });
       await writeFile(outPath, png);
 
-      return { path: outPath, bytes: png.length };
+      const result = { path: outPath, bytes: png.length };
+      if (ctx.format === 'json') return result;
+      return `Wrote screenshot to ${outPath} (${png.length} bytes)\n`;
     },
   };
 }

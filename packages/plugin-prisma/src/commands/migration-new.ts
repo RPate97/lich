@@ -123,7 +123,9 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
         });
       }
 
-      return { ok: true, path: result.path, name: result.name };
+      const json = { ok: true as const, path: result.path, name: result.name };
+      if (ctx.format === 'json') return json;
+      return `Created migration "${result.name}"\n  ${result.path}\n`;
     },
   };
 }

@@ -146,6 +146,41 @@ export default {
 
 Wire it in `levelzero.config.ts`: `export default { plugins: ['./plugins/redis.ts'] };`
 
+## Command output: pretty by default, `--json` to opt in (LEV-168)
+
+Every CLI command defaults to **pretty text** output. Pass `--json` on the invocation to get the structured shape instead. The two outputs must carry **the same fields** — `--json` is for piping; pretty is for humans.
+
+Inside a `Command.run(ctx)` implementation:
+
+```ts
+import type { Command } from '@levelzero/core';
+
+export const myCommand: Command = {
+  name: 'mything.list',
+  describe: 'List the things',
+  async run(ctx) {
+    const things = await collectThings();
+
+    // JSON path — the CLI's `formatOutput` JSON-encodes the object verbatim.
+    if (ctx.format === 'json') return { things };
+
+    // Pretty path — return a string. The CLI passes strings through unchanged
+    // (modulo trimming one trailing newline) so terminal output stays clean.
+    if (things.length === 0) return 'no things\n';
+    return things.map((t) => `${t.id}\t${t.name}`).join('\n') + '\n';
+  },
+};
+```
+
+The shape rules:
+
+- Branch on `ctx.format === 'json'` to pick between the structured object and a `string`.
+- The pretty string should end with a single `\n`; the CLI strips one trailing newline before writing to stdout, so a `'\n'`-terminated renderer gives you a single newline overall.
+- Both paths should carry the same fields. Don't drop information just because pretty mode renders it as `key=value` instead of an object.
+- Errors throw `CLIError(code, message, hint?)` exactly as before; `formatError` chooses `error: <msg>` / `hint: <text>` (pretty) vs the JSON shape (`--json`).
+
+For a worked example see `packages/core/src/commands/env/list.ts` and the LEV-117 help renderer in `packages/core/src/commands/help.ts`.
+
 ## Publishing a plugin
 
 External plugins ship as standalone npm packages. Versioning and changelog generation go through **changesets** (`.changeset/`). Build with **`tsup`** to emit dual ESM + CJS plus `.d.ts` declarations — the same template `@levelzero/core` uses. See [`docs/build-strategy.md`](./build-strategy.md) for the full decision and config template.

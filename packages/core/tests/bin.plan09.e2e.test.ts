@@ -60,6 +60,7 @@ describe('bin: plan-09 commands end-to-end', () => {
       'apps/api',
       '--out',
       'packages/api-client/src',
+      '--json',
     ]);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout);
@@ -82,7 +83,7 @@ describe('bin: plan-09 commands end-to-end', () => {
     // out for a different reason than command-not-found.
     const emptyProj = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-empty-')));
     writeFileSync(join(emptyProj, 'levelzero.config.ts'), 'export default {};');
-    const res = spawnSync('bun', [BIN, 'gen', 'client'], {
+    const res = spawnSync('bun', [BIN, 'gen', 'client', '--json'], {
       cwd: emptyProj,
       env: { ...process.env, LEVELZERO_HOME: homeDir },
       encoding: 'utf8',

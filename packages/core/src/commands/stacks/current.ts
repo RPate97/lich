@@ -17,13 +17,20 @@ export function makeStacksCurrentCommand(getRegistry: () => Registry): Command {
         );
       }
       const entry = await getRegistry().get(wt.key);
-      return {
+      const result = {
         key: wt.key,
         path: wt.path,
         configPath: wt.configPath,
         running: entry !== undefined,
         entry: entry ?? null,
       };
+      if (ctx.format === 'json') return result;
+      const lines: string[] = [];
+      lines.push(`key:     ${result.key}`);
+      lines.push(`path:    ${result.path}`);
+      lines.push(`config:  ${result.configPath}`);
+      lines.push(`running: ${result.running ? 'yes' : 'no'}`);
+      return lines.join('\n') + '\n';
     },
   };
 }

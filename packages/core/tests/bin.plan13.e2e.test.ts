@@ -42,7 +42,7 @@ interface ListEntry {
 describe('bin: plan-13 adapter commands end-to-end', () => {
   describe('adapter list', () => {
     it('exits 0 and returns JSON listing every known adapter with its slot', () => {
-      const res = run(['adapter', 'list']);
+      const res = run(['adapter', 'list', '--json']);
       expect(res.status, res.stderr).toBe(0);
 
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
@@ -104,7 +104,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
         `export default { plugins: ['@levelzero/plugin-portless'] };`,
       );
 
-      const res = run(['adapter', 'list']);
+      const res = run(['adapter', 'list', '--json']);
       expect(res.status, res.stderr).toBe(0);
 
       const out = JSON.parse(res.stdout) as { adapters: ListEntry[] };
@@ -136,7 +136,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
         `export default { plugins: ['@levelzero/plugin-prisma'] };`,
       );
 
-      const res = run(['adapter', 'swap', 'orm', 'prisma']);
+      const res = run(['adapter', 'swap', 'orm', 'prisma', '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout) as {
         ok: boolean;
@@ -156,7 +156,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
     });
 
     it('errors with usage when slot/name missing', () => {
-      const res = run(['adapter', 'swap']);
+      const res = run(['adapter', 'swap', '--json']);
       expect(res.status).toBe(1);
       const err = JSON.parse(res.stderr);
       expect(err.message).toMatch(/slot/i);

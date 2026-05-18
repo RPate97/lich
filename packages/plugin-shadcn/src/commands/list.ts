@@ -21,10 +21,13 @@ export function makeUiListCommand(opts?: UiListOptions): Command {
     describe: 'List installed shadcn components',
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
-      return adapter.list({
+      const result = await adapter.list({
         projectRoot: stackCtx.worktreePath,
         appDir: (ctx.flags['app-dir'] as string) || 'apps/web',
       });
+      if (ctx.format === 'json') return result;
+      if (result.installed.length === 0) return 'no shadcn components installed\n';
+      return result.installed.join('\n') + '\n';
     },
   };
 }

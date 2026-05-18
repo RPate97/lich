@@ -34,7 +34,7 @@ describe('bin: plan-07 test command end-to-end', () => {
   // (CONFIG_INVALID, not UNKNOWN_COMMAND) fires before any adapter work.
 
   it('rejects `test` with no subcommand as CONFIG_INVALID (proves the command is registered, not unknown)', () => {
-    const res = run(['test']);
+    const res = run(['test', '--json']);
     expect(res.status).toBe(1);
     // stderr is JSON-formatted CLIError output.
     const err = JSON.parse(res.stderr) as { code: string; message: string; hint?: string };
@@ -45,7 +45,7 @@ describe('bin: plan-07 test command end-to-end', () => {
   });
 
   it('rejects `test unknown-mode` as CONFIG_INVALID with the offending subcommand in the message', () => {
-    const res = run(['test', 'unknown-mode']);
+    const res = run(['test', 'unknown-mode', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr) as { code: string; message: string; hint?: string };
     expect(err.code).toBe('CONFIG_INVALID');

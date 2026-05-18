@@ -104,7 +104,8 @@ export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
         );
       }
 
-      return result;
+      if (ctx.format === 'json') return result;
+      return `${result.diffPixels} differing pixels (total=${result.totalPixels}, ratio=${result.diffRatio})\n`;
     },
   };
 }

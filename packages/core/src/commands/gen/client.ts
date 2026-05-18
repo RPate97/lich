@@ -135,7 +135,11 @@ export function makeGenClientCommand(opts?: GenClientOptions): Command {
         });
       }
 
-      return { generatedFiles: result.files };
+      if (ctx.format === 'json') return { generatedFiles: result.files };
+      const lines: string[] = [];
+      lines.push(`Generated ${result.files.length} file(s) at ${outDir}`);
+      for (const f of result.files) lines.push(`  ${f}`);
+      return lines.join('\n') + '\n';
     },
   };
 }

@@ -45,7 +45,7 @@ function run(args: string[], cwd: string = projectDir) {
  */
 describe('bin: plan-05 db.* commands end-to-end', () => {
   it('db migrate is registered when plugin-prisma is configured (errors NO_PROJECT, not UNKNOWN_COMMAND)', () => {
-    const res = run(['db', 'migrate']);
+    const res = run(['db', 'migrate', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -55,7 +55,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
   it('db migration new <name> is registered (errors NO_PROJECT, not UNKNOWN_COMMAND)', () => {
     // Pass a valid snake_case name so name-validation passes and we reach the
     // stack-resolution step — the failure mode we want to observe.
-    const res = run(['db', 'migration', 'new', 'add_users']);
+    const res = run(['db', 'migration', 'new', 'add_users', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -65,7 +65,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
   it('db migration new without a name fails CONFIG_INVALID (command is wired and validates args)', () => {
     // A missing <name> trips the command's own arg-validation before
     // resolveStackContext — proving the command is wired *and* its body executed.
-    const res = run(['db', 'migration', 'new']);
+    const res = run(['db', 'migration', 'new', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -73,7 +73,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
   });
 
   it('db seed is registered (errors NO_PROJECT, not UNKNOWN_COMMAND)', () => {
-    const res = run(['db', 'seed']);
+    const res = run(['db', 'seed', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -83,7 +83,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
   it('db inspect with no mode fails CONFIG_INVALID (command body reached, --schema/--rows required)', () => {
     // `db inspect` validates flags before stack lookup, so this proves the
     // command is wired regardless of project state.
-    const res = run(['db', 'inspect']);
+    const res = run(['db', 'inspect', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -91,7 +91,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
   });
 
   it('db inspect --schema is registered (errors NO_PROJECT, not UNKNOWN_COMMAND)', () => {
-    const res = run(['db', 'inspect', '--schema']);
+    const res = run(['db', 'inspect', '--schema', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).not.toBe('UNKNOWN_COMMAND');
@@ -104,7 +104,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
     // should fall back to bare `buildCommands()` — UNKNOWN_COMMAND.
     const bareDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p05-bare-')));
     writeFileSync(join(bareDir, 'levelzero.config.ts'), 'export default {};');
-    const res = run(['db', 'migrate'], bareDir);
+    const res = run(['db', 'migrate', '--json'], bareDir);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).toBe('UNKNOWN_COMMAND');

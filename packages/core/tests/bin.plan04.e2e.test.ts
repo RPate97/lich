@@ -61,7 +61,7 @@ describe('bin: plan-04 urls end-to-end', () => {
       createdAt: '2026-05-17T00:00:00Z',
     });
 
-    const res = run(['urls']);
+    const res = run(['urls', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout) as {
       urls: Array<{ service: string; host: string; target: string }>;
@@ -88,7 +88,7 @@ describe('bin: plan-04 urls end-to-end', () => {
       createdAt: '2026-05-17T00:00:00Z',
     });
 
-    const res = run(['urls']);
+    const res = run(['urls', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout) as {
       urls: Array<{ service: string; host: string; target: string }>;
@@ -121,7 +121,7 @@ describe('bin: plan-04 urls end-to-end', () => {
       createdAt: '',
     });
 
-    const res = run(['urls', '--all']);
+    const res = run(['urls', '--all', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout) as {
       stacks: Array<{
@@ -146,7 +146,7 @@ describe('bin: plan-04 urls end-to-end', () => {
 
   it('urls without --all errors NO_PROJECT when cwd is not a levelzero project', () => {
     const outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-out-')));
-    const res = spawnSync('bun', [BIN, 'urls'], {
+    const res = spawnSync('bun', [BIN, 'urls', '--json'], {
       cwd: outsideDir,
       env: { ...process.env, LEVELZERO_HOME: homeDir },
       encoding: 'utf8',
@@ -159,7 +159,7 @@ describe('bin: plan-04 urls end-to-end', () => {
   it('urls is registered in bin (not an UNKNOWN_COMMAND)', () => {
     // Sanity: even when the worktree has no entry, bin should reach the command
     // and return an empty urls array — never UNKNOWN_COMMAND.
-    const res = run(['urls']);
+    const res = run(['urls', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout) as { urls: unknown[] };
     expect(out.urls).toEqual([]);
