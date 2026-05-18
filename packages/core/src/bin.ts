@@ -24,6 +24,9 @@ import { makeUrlsCommand } from './commands/urls';
 import { composeCommand } from './commands/compose';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand, makeAdapterSwapCommand } from './commands/adapter/swap';
+import { envListCommand, makeEnvListCommand } from './commands/env/list';
+import { envResolveCommand, makeEnvResolveCommand } from './commands/env/resolve';
+import { resolveStackContext } from './services/context';
 import { AdapterRegistry, getBuiltinAdapters } from './adapters/registry';
 import { skillsIndexCommand } from './commands/skills';
 import { makeTestCommand } from './commands/test';
@@ -62,6 +65,8 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(composeCommand);
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);
+  reg.register(envListCommand);
+  reg.register(envResolveCommand);
   reg.register(skillsIndexCommand);
   reg.register(makeTestCommand({ getRegistry: getReg }));
   return reg;
@@ -182,6 +187,40 @@ export async function buildDispatchRegistry(
   // registration closes over the bare built-ins.
   cli.register(makeAdapterSwapCommand({ getRegistry: () => merged }));
 
+  // Re-bind `env list` / `env resolve` (Plan 16 / LEV-184) against the booted
+  // registry so the debug commands can introspect every named + bulk
+  // EnvSource a plugin contributed at runtime. The inline registrations in
+  // `buildCommands` close over an empty registry, which is the right
+  // behavior outside a project but useless once plugins are loaded.
+  cli.register(
+    makeEnvListCommand({ getEnvSourceRegistry: () => boot.envSources }),
+  );
+  cli.register(
+    makeEnvResolveCommand({
+      getEnvSourceRegistry: () => boot.envSources,
+      getEnvInjection: () => config.envInjection,
+      // Share the per-dispatch bulk-resolution cache with `dev`/`stop`/etc.
+      // so a debug `env resolve` immediately after a `dev` reuses already-
+      // resolved Infisical/dotenv values rather than refetching them.
+      getBulkCache: () => boot.resolvedBulkSources,
+      getStackInput: async (cwd) => {
+        // Use the running stack's allocated ports if present so the
+        // resolved env matches exactly what containers/owned services
+        // would see. Outside a registered stack we fall back to an empty
+        // port map — resolvers that need a port will surface a clear
+        // error, which is the right signal for "your stack isn't up yet".
+        const stackCtx = await resolveStackContext(cwd);
+        const reg = new Registry(registryPath);
+        const entry = await reg.get(stackCtx.worktreeKey);
+        return {
+          ports: entry?.ports ?? {},
+          projectRoot: stackCtx.worktreePath,
+          worktreeKey: stackCtx.worktreeKey,
+        };
+      },
+    }),
+  );
+
   return cli;
 }
 
@@ -229,8 +268,30 @@ function isHelpInvocation(argv: string[]): boolean {
   return false;
 }
 
+/**
+ * `env list` / `env resolve` are debug tools whose output is meant to be
+ * read by humans — `KEY=value` lines and a printable header. The CLI
+ * dispatcher defaults to JSON formatting, which would JSON-quote that
+ * string (wrapping it in `""` with escaped newlines). Inject `--pretty`
+ * when the user passes neither `--json` nor `--pretty` so the default
+ * matches the documented "plain-text pretty" behavior from the plan,
+ * without forcing every env-debug invocation to type `--pretty`.
+ */
+function isEnvDebugInvocation(argv: string[]): boolean {
+  const positional = argv.filter((a) => !a.startsWith('-'));
+  if (positional[0] !== 'env') return false;
+  return positional[1] === 'list' || positional[1] === 'resolve';
+}
+
 async function main() {
-  const argv = process.argv.slice(2);
+  let argv = process.argv.slice(2);
+  if (
+    isEnvDebugInvocation(argv) &&
+    !argv.includes('--pretty') &&
+    !argv.includes('--json')
+  ) {
+    argv = [...argv, '--pretty'];
+  }
   const cli = await buildDispatchRegistry(process.cwd(), defaultRegistryPath());
 
   if (isHelpInvocation(argv)) {
