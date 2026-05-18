@@ -3,18 +3,25 @@ import { join } from 'node:path';
 import { CLIError } from '../errors';
 import { Registry } from '../registry';
 import { resolveStackContext } from '../services/context';
-import { vitestAdapter } from '@levelzero/plugin-vitest';
-import { playwrightTestAdapter } from '@levelzero/plugin-playwright';
+import { AdapterRegistry } from '../adapters/registry';
 import type { TestRunnerAdapter } from '../adapters/test-runner/types';
 import type { Command, CommandContext } from './types';
 
 export interface MakeTestCommandOptions {
   /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
   getRegistry?: () => Registry;
-  /** Vitest adapter for unit + integration runs. Defaults to the real spawning adapter. */
+  /** Vitest adapter for unit + integration runs. When omitted, looked up by name `vitest` under the `test-runner` slot via `getAdapterRegistry`. */
   vitestAdapter?: TestRunnerAdapter;
-  /** Playwright adapter for e2e runs. Defaults to the real spawning adapter. */
+  /** Playwright adapter for e2e runs. When omitted, looked up by name `playwright` under the `test-runner` slot via `getAdapterRegistry`. */
   playwrightAdapter?: TestRunnerAdapter;
+  /**
+   * AdapterRegistry provider — used to resolve the vitest/playwright
+   * test-runner adapters when explicit adapter overrides are not supplied.
+   * The CLI dispatcher (`bin.ts`) injects the merged plugin-aware registry;
+   * tests typically pass adapters directly via `vitestAdapter` /
+   * `playwrightAdapter` instead.
+   */
+  getAdapterRegistry?: () => AdapterRegistry;
 }
 
 const USAGE_HINT = 'usage: levelzero test <unit|integration|e2e>';
@@ -44,8 +51,35 @@ function defaultRegistry(): Registry {
  */
 export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
-  const vitest = opts?.vitestAdapter ?? vitestAdapter;
-  const playwright = opts?.playwrightAdapter ?? playwrightTestAdapter;
+  const getAdapterRegistry = opts?.getAdapterRegistry;
+  // After LEV-174 the test command never imports plugin packages directly.
+  // Explicit adapter overrides (used by tests) win; otherwise resolve by name
+  // under the `test-runner` slot from the injected AdapterRegistry. The
+  // resolution happens at construction time so a missing adapter surfaces
+  // immediately rather than only when a particular subcommand is invoked.
+  const resolveAdapter = (name: 'vitest' | 'playwright'): TestRunnerAdapter => {
+    if (!getAdapterRegistry) {
+      throw new CLIError(
+        'CONFIG_INVALID',
+        `no ${name} test-runner adapter configured for \`test\``,
+        `load \`@levelzero/plugin-${name}\` in your levelzero.config.ts, or pass an explicit ${name}Adapter override`,
+      );
+    }
+    try {
+      return getAdapterRegistry().get('test-runner', name) as TestRunnerAdapter;
+    } catch {
+      throw new CLIError(
+        'CONFIG_INVALID',
+        `no ${name} test-runner adapter configured for \`test\``,
+        `load \`@levelzero/plugin-${name}\` in your levelzero.config.ts`,
+      );
+    }
+  };
+  const vitest = opts?.vitestAdapter ?? null;
+  const playwright = opts?.playwrightAdapter ?? null;
+  const getVitest = (): TestRunnerAdapter => vitest ?? resolveAdapter('vitest');
+  const getPlaywright = (): TestRunnerAdapter =>
+    playwright ?? resolveAdapter('playwright');
 
   return {
     name: 'test',
@@ -64,7 +98,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
       if (sub === 'unit') {
         // Unit tests are pure — they don't need DATABASE_URL/API_URL, and
         // forcing a running stack would be hostile to local TDD.
-        testResult = await vitest.run({
+        testResult = await getVitest().run({
           cwd: ctx.cwd,
           pattern: 'tests/unit/**',
           env: {},
@@ -75,7 +109,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
           needApi: true,
           needWeb: false,
         });
-        testResult = await vitest.run({
+        testResult = await getVitest().run({
           cwd: ctx.cwd,
           pattern: 'tests/integration/**',
           env: {
@@ -89,7 +123,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
           needApi: true,
           needWeb: true,
         });
-        testResult = await playwright.run({
+        testResult = await getPlaywright().run({
           cwd: ctx.cwd,
           pattern: 'tests/e2e/**',
           env: {

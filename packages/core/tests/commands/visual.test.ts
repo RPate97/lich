@@ -4,8 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 
-import { visualDiffCommand } from '../../src/commands/visual';
+import { visualDiffCommand, makeVisualDiffCommand } from '../../src/commands/visual';
 import { CLIError } from '../../src/errors';
+import { playwrightAdapter } from '@levelzero/plugin-playwright';
+
+// After LEV-174 core no longer imports `@levelzero/plugin-playwright`
+// directly, so the default `visualDiffCommand` has no adapter wired. Tests
+// that exercise the real diff() path construct the command with the real
+// adapter explicitly — this mirrors how the CLI dispatcher wires the merged
+// registry-resolved adapter in production.
+const cmd = makeVisualDiffCommand({ adapter: playwrightAdapter });
 
 /** Build a PNG buffer filled with the given RGBA color. */
 function solidPng(width: number, height: number, rgba: [number, number, number, number]): Buffer {
@@ -43,7 +51,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, red);
     writeFileSync(currentPath, red);
 
-    const result = (await visualDiffCommand.run({
+    const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [baselinePath, currentPath],
@@ -63,7 +71,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, red);
     writeFileSync(currentPath, blue);
 
-    const result = (await visualDiffCommand.run({
+    const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [baselinePath, currentPath],
@@ -80,7 +88,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, red);
     writeFileSync(currentPath, red);
 
-    const result = (await visualDiffCommand.run({
+    const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: ['baseline.png', 'current.png'],
@@ -92,7 +100,7 @@ describe('levelzero visual diff', () => {
 
   it('throws CLIError when baseline path is missing', async () => {
     await expect(
-      visualDiffCommand.run({
+      cmd.run({
         cwd: projectDir,
         format: 'json',
         args: [],
@@ -104,7 +112,7 @@ describe('levelzero visual diff', () => {
   it('throws CLIError when current path is missing', async () => {
     writeFileSync(baselinePath, solidPng(5, 5, [255, 0, 0, 255]));
     await expect(
-      visualDiffCommand.run({
+      cmd.run({
         cwd: projectDir,
         format: 'json',
         args: [baselinePath],
@@ -117,7 +125,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, solidPng(5, 5, [255, 0, 0, 255]));
     let caught: unknown;
     try {
-      await visualDiffCommand.run({
+      await cmd.run({
         cwd: projectDir,
         format: 'json',
         args: [baselinePath, join(projectDir, 'does-not-exist.png')],
@@ -134,7 +142,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, solidPng(10, 10, [255, 0, 0, 255]));
     writeFileSync(currentPath, solidPng(20, 10, [255, 0, 0, 255]));
     await expect(
-      visualDiffCommand.run({
+      cmd.run({
         cwd: projectDir,
         format: 'json',
         args: [baselinePath, currentPath],
@@ -151,7 +159,7 @@ describe('levelzero visual diff', () => {
 
     let caught: unknown;
     try {
-      await visualDiffCommand.run({
+      await cmd.run({
         cwd: projectDir,
         format: 'json',
         args: [baselinePath, currentPath],
@@ -170,7 +178,7 @@ describe('levelzero visual diff', () => {
     writeFileSync(baselinePath, red);
     writeFileSync(currentPath, red);
 
-    const result = (await visualDiffCommand.run({
+    const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [baselinePath, currentPath],
@@ -180,35 +188,50 @@ describe('levelzero visual diff', () => {
   });
 
   it('--alpha is forwarded to the adapter as DiffOptions.threshold', async () => {
-    // Mock the adapter to verify the option propagation.
-    vi.resetModules();
-    vi.doMock('@levelzero/plugin-playwright', () => ({
-      playwrightAdapter: {
-        name: 'playwright',
-        screenshot: vi.fn(),
-        diff: vi.fn(async () => ({ diffPixels: 0, totalPixels: 4, diffRatio: 0 })),
-      },
+    // Stub the adapter directly via the makeVisualDiffCommand opts so we can
+    // observe the resolved DiffOptions without re-running the full pixelmatch
+    // pipeline. After LEV-174 this is the canonical injection point for tests.
+    const diffSpy = vi.fn(async () => ({
+      diffPixels: 0,
+      totalPixels: 4,
+      diffRatio: 0,
     }));
-    const { visualDiffCommand: cmd } = await import('../../src/commands/visual');
-    const { playwrightAdapter } = await import('@levelzero/plugin-playwright');
+    const stub = {
+      name: 'playwright-stub',
+      screenshot: vi.fn(),
+      diff: diffSpy,
+    };
+    const cmdStub = makeVisualDiffCommand({
+      adapter: stub as unknown as import('../../src/adapters/browser/types').BrowserAdapter,
+    });
 
     const px = solidPng(2, 2, [255, 0, 0, 255]);
     writeFileSync(baselinePath, px);
     writeFileSync(currentPath, px);
 
-    await cmd.run({
+    await cmdStub.run({
       cwd: projectDir,
       format: 'json',
       args: [baselinePath, currentPath],
       flags: { alpha: '0.5' },
     });
 
-    expect(playwrightAdapter.diff).toHaveBeenCalledTimes(1);
-    const calledOpts = (playwrightAdapter.diff as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls[0]![2];
-    expect(calledOpts).toMatchObject({ threshold: 0.5 });
+    expect(diffSpy).toHaveBeenCalledTimes(1);
+    const callArgs = diffSpy.mock.calls[0] as unknown as [Buffer, Buffer, { threshold?: number } | undefined];
+    expect(callArgs[2]).toMatchObject({ threshold: 0.5 });
+  });
 
-    vi.doUnmock('@levelzero/plugin-playwright');
-    vi.resetModules();
+  it('default export (no adapter wired) throws a config CLIError pointing at the playwright plugin', async () => {
+    const px = solidPng(2, 2, [255, 0, 0, 255]);
+    writeFileSync(baselinePath, px);
+    writeFileSync(currentPath, px);
+    await expect(
+      visualDiffCommand.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [baselinePath, currentPath],
+        flags: {},
+      }),
+    ).rejects.toThrow(/browser adapter|playwright/i);
   });
 });

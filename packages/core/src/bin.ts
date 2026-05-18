@@ -17,8 +17,9 @@ import { makeLogsCommand } from './commands/logs';
 import { impactCommand } from './commands/impact';
 import { coverageCommand } from './commands/coverage';
 import { makeCheckCommand } from './commands/check';
-import { screenshotCommand } from './commands/screenshot';
-import { visualDiffCommand } from './commands/visual';
+import { getBuiltinRules } from './check/builtins';
+import { screenshotCommand, makeScreenshotCommand } from './commands/screenshot';
+import { visualDiffCommand, makeVisualDiffCommand } from './commands/visual';
 import { genClientCommand, makeGenClientCommand } from './commands/gen/client';
 import { makeUrlsCommand } from './commands/urls';
 import { composeCommand } from './commands/compose';
@@ -34,6 +35,8 @@ import { findWorktree } from './worktree';
 import { loadConfig } from './config';
 import { bootPlugins } from './plugins/boot';
 import { makeHelpCommand, renderHelp, type LoadedPluginInfo } from './commands/help';
+import type { BackendAdapter } from './adapters/backend/types';
+import type { PortlessAdapter } from './adapters/portless/types';
 
 export const VERSION = '0.0.0';
 
@@ -157,6 +160,49 @@ export async function buildDispatchRegistry(
   const getEnvSourceRegistry = () => boot.envSources;
   const getEnvInjection = () => config.envInjection;
   const getResolvedBulkSources = () => boot.resolvedBulkSources;
+  // LEV-174 — `dev` previously imported `portlessAdapter` and
+  // `noopPortlessAdapter` directly from `@levelzero/plugin-portless` and
+  // probed `available()` inline. Cutting the core → plugin dep moved that
+  // selection to the dispatcher: probe every `portless`-slot impl registered
+  // by the boot's plugins and pick the first whose `available()` returns
+  // true; fall back to the last registered impl (typically the noop) so
+  // `dev`/`reset` still get a typed adapter rather than no wiring at all.
+  // Runs eagerly at dispatch-build time so the per-command `getPortlessAdapter`
+  // injection can stay synchronous (matches the existing DevOptions contract).
+  let selectedPortless: PortlessAdapter | undefined;
+  const portlessEntries = boot.adapters.listBySlot('portless');
+  if (portlessEntries.length > 0) {
+    for (const e of portlessEntries) {
+      const impl = e.impl as PortlessAdapter;
+      try {
+        if (await impl.available()) {
+          selectedPortless = impl;
+          break;
+        }
+      } catch {
+        // available() shouldn't throw, but if it does treat as unavailable
+        // and keep probing siblings.
+      }
+    }
+    if (!selectedPortless) {
+      selectedPortless = portlessEntries[portlessEntries.length - 1]!
+        .impl as PortlessAdapter;
+    }
+  }
+  const inlineNoopPortlessAdapter: PortlessAdapter = {
+    name: 'noop',
+    async available() {
+      return false;
+    },
+    async register() {},
+    async unregister() {},
+    async list() {
+      return [];
+    },
+  };
+  const getPortlessAdapter = (): PortlessAdapter =>
+    selectedPortless ?? inlineNoopPortlessAdapter;
+
   const sharedOpts = {
     getPluginCompose,
     getPluginOwnedServices,
@@ -164,9 +210,9 @@ export async function buildDispatchRegistry(
     getEnvInjection,
     getResolvedBulkSources,
   };
-  cli.register(makeDevCommand(getReg, sharedOpts));
+  cli.register(makeDevCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
   cli.register(makeStopCommand(getReg, sharedOpts));
-  cli.register(makeResetCommand(getReg, sharedOpts));
+  cli.register(makeResetCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
 
   // Merge plugin-contributed adapters into the built-in registry so
   // `adapter list` reflects the full registered surface. Built-ins are
@@ -186,6 +232,32 @@ export async function buildDispatchRegistry(
   // with "unknown adapter slot 'orm'" post-LEV-149 because the inline
   // registration closes over the bare built-ins.
   cli.register(makeAdapterSwapCommand({ getRegistry: () => merged }));
+
+  // LEV-174 — `screenshot`, `visual diff`, and `test` all dropped their
+  // inline plugin-package imports (`@levelzero/plugin-playwright` /
+  // `@levelzero/plugin-vitest`). Re-register them here against the merged
+  // adapter registry so the CLI dispatch path still resolves the right impls
+  // when the plugins are loaded.
+  cli.register(makeScreenshotCommand({ getAdapterRegistry: () => merged }));
+  cli.register(makeVisualDiffCommand({ getAdapterRegistry: () => merged }));
+  cli.register(
+    makeTestCommand({ getRegistry: getReg, getAdapterRegistry: () => merged }),
+  );
+
+  // Re-bind `check` to a rule set wired with the active backend adapter so
+  // the route-coverage rule has something to extract route manifests from.
+  // The inline registration in `buildCommands` uses the bare `getBuiltinRules`,
+  // which (post-LEV-174) hands back the no-adapter skip-only variant.
+  let backendAdapter: BackendAdapter | undefined;
+  try {
+    backendAdapter = merged.getActive('backend') as BackendAdapter;
+  } catch {
+    backendAdapter = undefined;
+  }
+  const checkOpts = backendAdapter
+    ? { getRules: () => getBuiltinRules({ backendAdapter }) }
+    : { getRules: () => getBuiltinRules() };
+  cli.register(makeCheckCommand(checkOpts));
 
   // Re-bind `env list` / `env resolve` (Plan 16 / LEV-184) against the booted
   // registry so the debug commands can introspect every named + bulk

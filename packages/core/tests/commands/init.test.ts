@@ -49,6 +49,17 @@ async function writeFakeTemplate(root: string): Promise<void> {
 }
 
 describe('levelzero init <name>', () => {
+  it('throws CLIError pointing at create-stack-v0 when no --template-dir is supplied (LEV-174)', async () => {
+    await expect(
+      initCommand.run({
+        cwd: tmp,
+        format: 'json',
+        args: ['my-app'],
+        flags: { 'skip-install': true },
+      }),
+    ).rejects.toThrow(/template-dir|create-stack-v0/);
+  });
+
   it('copies the v0 template into ./<name>/ with projectName substitution', async () => {
     const templateDir = join(tmp, 'template');
     await writeFakeTemplate(templateDir);

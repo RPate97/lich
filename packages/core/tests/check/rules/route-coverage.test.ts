@@ -2,7 +2,17 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { routeCoverageRule } from '../../../src/check/rules/route-coverage';
+import {
+  makeRouteCoverageRule,
+  routeCoverageRule as defaultRouteCoverageRule,
+} from '../../../src/check/rules/route-coverage';
+import { honoBackendAdapter } from '@levelzero/plugin-hono';
+
+// After LEV-174 `route-coverage` is a factory rule — the bare exported rule
+// reports skip until a backend adapter is wired. Tests construct the
+// fully-wired variant via `makeRouteCoverageRule({ backendAdapter })` so the
+// end-to-end behavior against a real Hono manifest stays covered.
+const routeCoverageRule = makeRouteCoverageRule({ backendAdapter: honoBackendAdapter });
 
 let tmp: string;
 
@@ -36,6 +46,18 @@ describe('routeCoverageRule', () => {
     const result = await routeCoverageRule.check({ projectRoot: tmp });
     expect(result.status).toBe('skip');
     expect(result.message).toMatch(/no hono app/i);
+  });
+
+  it('default (bare) rule returns skip when no backend adapter is wired but a hono entry exists', async () => {
+    const apiSrc = join(tmp, 'apps', 'api', 'src');
+    mkdirSync(apiSrc, { recursive: true });
+    writeFileSync(
+      join(apiSrc, 'index.ts'),
+      "import { Hono } from 'hono'; const app = new Hono(); export default app;",
+    );
+    const result = await defaultRouteCoverageRule.check({ projectRoot: tmp });
+    expect(result.status).toBe('skip');
+    expect(result.message).toMatch(/backend adapter/i);
   });
 
   it('fails listing uncovered routes when only some routes have integration tests', async () => {

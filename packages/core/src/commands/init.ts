@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { writeFile, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { templateRoot as v0TemplateRoot } from '@levelzero/template-v0-stack';
 import { CLIError } from '../errors';
 import { copyTemplate } from '../scaffolder';
 import type { Command, CommandContext } from './types';
@@ -21,18 +20,6 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/**
- * Resolve the bundled v0 template directory.
- *
- * Delegates to `@levelzero/template-v0-stack`, which exports an absolute path
- * to its bundled `./files/` directory. Tests may override via the
- * `--template-dir` flag, which is why this is wrapped in a helper rather than
- * inlined at the call site.
- */
-function defaultTemplateDir(): string {
-  return v0TemplateRoot;
-}
-
 function nextStepsLines(projectName: string, installed: boolean): string[] {
   const lines = [`cd ${projectName}`];
   if (!installed) lines.push('bun install');
@@ -50,9 +37,25 @@ async function initWithName(ctx: CommandContext, name: string): Promise<unknown>
     );
   }
 
+  // After LEV-174 core no longer imports `@levelzero/template-v0-stack`
+  // directly — that cross-package dep was the last reason core had a
+  // hard-coded knowledge of any template. Project scaffolding now goes
+  // through `bunx create-stack-v0 <name>`, which owns the template root and
+  // delegates to `levelzero init <name> --template-dir <root>` under the
+  // hood. Running `levelzero init <name>` standalone (without a template
+  // override) surfaces a clear error pointing users at the right entry
+  // point.
   const templateDirFlag = ctx.flags['template-dir'];
-  const templateDir =
-    typeof templateDirFlag === 'string' ? resolve(ctx.cwd, templateDirFlag) : defaultTemplateDir();
+  if (typeof templateDirFlag !== 'string') {
+    throw new CLIError(
+      'CONFIG_INVALID',
+      `cannot scaffold "${name}": no --template-dir supplied`,
+      'run `bunx create-stack-v0 ' +
+        name +
+        '` to scaffold the v0 stack, or pass --template-dir <path>',
+    );
+  }
+  const templateDir = resolve(ctx.cwd, templateDirFlag);
 
   const { files } = await copyTemplate({
     from: templateDir,

@@ -12,6 +12,17 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const BIN = join(__dirname, '..', 'src', 'bin.ts');
+// Absolute paths into the workspace's plugin packages — see test setup below
+// for why we don't reference them by bare specifier.
+const HONO_PLUGIN = join(__dirname, '..', '..', 'plugin-hono', 'src', 'index.ts');
+const TYPED_CLIENT_PLUGIN = join(
+  __dirname,
+  '..',
+  '..',
+  'plugin-typed-client',
+  'src',
+  'index.ts',
+);
 
 let projectDir: string;
 let homeDir: string;
@@ -23,9 +34,19 @@ beforeEach(() => {
   // LEV-150; `gen client` resolves it from the merged adapter registry, so
   // the project config must declare the plugin or the command has no active
   // backend impl to call.
+  // After LEV-174 `gen client` no longer ships an inline
+  // `@levelzero/plugin-typed-client` fallback either — both adapters must be
+  // declared in the project config. We point at the workspace package
+  // sources by absolute path rather than by bare specifier because Bun
+  // 1.2.23 segfaults when resolving two `@levelzero/plugin-*` bare
+  // specifiers from a tmp-dir project that has no `node_modules` (the
+  // ancestor symlink to the workspace `node_modules` walks fine for one
+  // bare specifier but not two — likely a Bun resolver bug). The
+  // path-form `loadPlugin` branch bypasses `createRequire`/npm resolution
+  // entirely.
   writeFileSync(
     join(projectDir, 'levelzero.config.ts'),
-    `export default { plugins: ['@levelzero/plugin-hono'] };`,
+    `export default { plugins: [${JSON.stringify(HONO_PLUGIN)}, ${JSON.stringify(TYPED_CLIENT_PLUGIN)}] };`,
   );
 
   // Tiny Hono app — same pattern as tests/adapters/backend/hono.test.ts.
