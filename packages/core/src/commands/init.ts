@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { writeFile, access } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, resolve } from 'node:path';
+import { templateRoot as v0TemplateRoot } from '@levelzero/template-v0-stack';
 import { CLIError } from '../errors';
 import { copyTemplate } from '../scaffolder';
 import type { Command, CommandContext } from './types';
@@ -22,13 +22,15 @@ async function exists(p: string): Promise<boolean> {
 }
 
 /**
- * Resolve the bundled v0 template directory relative to this source file.
- * Tests may override via the `--template-dir` flag.
+ * Resolve the bundled v0 template directory.
+ *
+ * Delegates to `@levelzero/template-v0-stack`, which exports an absolute path
+ * to its bundled `./files/` directory. Tests may override via the
+ * `--template-dir` flag, which is why this is wrapped in a helper rather than
+ * inlined at the call site.
  */
 function defaultTemplateDir(): string {
-  // src/commands/init.ts -> ../../templates/v0-stack
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, '..', '..', 'templates', 'v0-stack');
+  return v0TemplateRoot;
 }
 
 function nextStepsLines(projectName: string, installed: boolean): string[] {

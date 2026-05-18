@@ -27,6 +27,7 @@
         "@levelzero/plugin-shadcn": "workspace:*",
         "@levelzero/plugin-typed-client": "workspace:*",
         "@levelzero/plugin-vitest": "workspace:*",
+        "@levelzero/template-v0-stack": "workspace:*",
         "@prisma/client": "^5.18.0",
         "concurrently": "^9.0.0",
         "pg": "^8.12.0",
@@ -197,6 +198,19 @@
         "@levelzero/core": "workspace:*",
       },
     },
+    "packages/template-v0-stack": {
+      "name": "@levelzero/template-v0-stack",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@ampproject/remapping": ["@ampproject/remapping@2.3.0", "", { "dependencies": { "@jridgewell/gen-mapping": "^0.3.5", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw=="],
@@ -346,6 +360,8 @@
     "@levelzero/plugin-typed-client": ["@levelzero/plugin-typed-client@workspace:packages/plugin-typed-client"],
 
     "@levelzero/plugin-vitest": ["@levelzero/plugin-vitest@workspace:packages/plugin-vitest"],
+
+    "@levelzero/template-v0-stack": ["@levelzero/template-v0-stack@workspace:packages/template-v0-stack"],
 
     "@manypkg/find-root": ["@manypkg/find-root@1.1.0", "", { "dependencies": { "@babel/runtime": "^7.5.5", "@types/node": "^12.7.1", "find-up": "^4.1.0", "fs-extra": "^8.1.0" } }, "sha512-mki5uBvhHzO8kYYix/WRy2WX8S3B5wdVSc9D6KcU5lQNglP2yt58/VfLuAK49glRXChosY8ap2oJ1qgma3GUVA=="],
 

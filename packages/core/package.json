@@ -44,6 +44,7 @@
     "@levelzero/plugin-shadcn": "workspace:*",
     "@levelzero/plugin-typed-client": "workspace:*",
     "@levelzero/plugin-vitest": "workspace:*",
+    "@levelzero/template-v0-stack": "workspace:*",
     "@prisma/client": "^5.18.0",
     "concurrently": "^9.0.0",
     "pg": "^8.12.0",
