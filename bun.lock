@@ -98,6 +98,19 @@
         "@levelzero/core": "workspace:*",
       },
     },
+    "packages/plugin-kafka": {
+      "name": "@levelzero/plugin-kafka",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+      },
+    },
     "packages/plugin-next": {
       "name": "@levelzero/plugin-next",
       "version": "0.1.0",
@@ -378,6 +391,8 @@
     "@levelzero/plugin-better-auth": ["@levelzero/plugin-better-auth@workspace:packages/plugin-better-auth"],
 
     "@levelzero/plugin-hono": ["@levelzero/plugin-hono@workspace:packages/plugin-hono"],
+
+    "@levelzero/plugin-kafka": ["@levelzero/plugin-kafka@workspace:packages/plugin-kafka"],
 
     "@levelzero/plugin-next": ["@levelzero/plugin-next@workspace:packages/plugin-next"],
 

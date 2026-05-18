@@ -1,0 +1,23 @@
+{
+  "name": "@levelzero/plugin-kafka",
+  "version": "0.1.0",
+  "description": "Levelzero plugin contributing a Kafka (KRaft, single-node) compose service plus EnvSources demonstrating a non-URL connection-string protocol (`bootstrap_servers` is a `host:port,host:port` list).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@levelzero/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "bun-types": "^1.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
