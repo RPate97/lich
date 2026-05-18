@@ -1,3 +1,24 @@
+/**
+ * BrowserAdapter — pluggable interface for the headless-browser slot.
+ *
+ * Hypothetical alternative implementations:
+ *   - Playwright   (current default; ships in `@levelzero/plugin-playwright`)
+ *   - Puppeteer    (Chromium-only headless driver)
+ *   - WebDriverIO  (WebDriver protocol; supports many browsers + mobile)
+ *   - Cypress      (in-browser runner; would need a shim for headless capture)
+ *   - HtmlRR       (snapshot-only impls for env-without-Chromium tests)
+ *
+ * Consumer-POV: callers want "a PNG of this URL" and "the pixel diff
+ * between two PNGs". They don't care which engine, which protocol, or
+ * which CSS rendering quirks are involved — those stay inside the impl.
+ *
+ * Returning a `Buffer` (raw PNG bytes) keeps the contract decoupled from
+ * any one library's image-handle type (no `playwright.Buffer`, no
+ * `Puppeteer.ScreenshotResult`). The diff is similarly defined in terms
+ * of pixel counts only — pixelmatch, odiff, looks-same, or a custom
+ * impl can all satisfy the contract.
+ */
+
 export interface ScreenshotOptions {
   /** Viewport width × height. Default 1280x800. */
   width?: number;
@@ -11,7 +32,7 @@ export interface ScreenshotOptions {
 }
 
 export interface DiffOptions {
-  /** 0-1; pixel similarity threshold passed to pixelmatch. Default 0.1. */
+  /** 0-1; pixel similarity threshold. Default 0.1. Semantics are impl-defined but all impls SHOULD treat 0 as exact-match and 1 as everything-counts. */
   threshold?: number;
 }
 
