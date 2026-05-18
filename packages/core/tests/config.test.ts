@@ -279,4 +279,72 @@ describe('loadConfig', () => {
     expect(cfg.name).toBe('legacy');
     expect(cfg.plugins).toBeUndefined();
   });
+
+  // ----- envInjection block (LEV-180) -------------------------------------
+
+  it('loads a config with an envInjection block of named source references', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(
+      path,
+      `export default {
+        envInjection: {
+          DATABASE_URL: 'postgres.url',
+          REDIS_URL: 'redis.url',
+        },
+      };`,
+    );
+    const cfg = await loadConfig(path);
+    expect(cfg.envInjection).toEqual({
+      DATABASE_URL: 'postgres.url',
+      REDIS_URL: 'redis.url',
+    });
+  });
+
+  it('loads a config with importAll bulk-source pass-through', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(
+      path,
+      `export default {
+        envInjection: {
+          DATABASE_URL: 'postgres.url',
+          importAll: ['infisical'],
+        },
+      };`,
+    );
+    const cfg = await loadConfig(path);
+    expect(cfg.envInjection?.DATABASE_URL).toBe('postgres.url');
+    expect(cfg.envInjection?.importAll).toEqual(['infisical']);
+  });
+
+  it('accepts an empty envInjection object', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(path, `export default { envInjection: {} };`);
+    const cfg = await loadConfig(path);
+    expect(cfg.envInjection).toEqual({});
+  });
+
+  it('throws a clear error when envInjection is not an object', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(path, `export default { envInjection: 'oops' };`);
+    await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
+  });
+
+  it('throws a clear error when envInjection is an array', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(path, `export default { envInjection: ['nope'] };`);
+    await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
+  });
+
+  it('throws a clear error when envInjection is null', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(path, `export default { envInjection: null };`);
+    await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
+  });
+
+  it('remains backward compatible when no envInjection block is present', async () => {
+    const path = join(tmp, 'levelzero.config.ts');
+    writeFileSync(path, 'export default { name: "legacy" };');
+    const cfg = await loadConfig(path);
+    expect(cfg.envInjection).toBeUndefined();
+  });
 });

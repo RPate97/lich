@@ -75,6 +75,18 @@ export interface LevelzeroConfig {
    * See `PluginEntry` for the full shape.
    */
   plugins?: PluginEntry[];
+  /**
+   * Optional env-injection map (Plan 16). Keys are environment variable names
+   * to inject into services; values are either:
+   *   - a fully-qualified named source reference (`"namespace.name"`)
+   *   - an array of bulk-source namespaces (`importAll: ['infisical']`)
+   *
+   * Authored via `defineConfig()` for type inference (see `./define-config.ts`).
+   * This base shape is intentionally loose — the runtime parser just confirms
+   * the field is an object. Source-key resolution + validation lands in Plan 16
+   * Tier 2 (LEV-181/182); for now the loader carries the field through verbatim.
+   */
+  envInjection?: Record<string, string | string[]>;
   // Other adapter slots and services land in later plans. Keep this surface
   // minimal in plan 01 — every later plan extends it via module declaration
   // merging or interface extension.
@@ -97,7 +109,27 @@ export async function loadConfig(configPath: string): Promise<LevelzeroConfig> {
   if (cfg.plugins !== undefined) {
     validatePlugins(cfg.plugins, configPath);
   }
+  if (cfg.envInjection !== undefined) {
+    validateEnvInjection(cfg.envInjection, configPath);
+  }
   return cfg;
+}
+
+/**
+ * Loose shape check for `envInjection`. LEV-180 only enforces "is an object";
+ * resolving the entries to real EnvSources + reporting missing references is
+ * Plan 16 Tier 2's job (LEV-181/182), where the EnvSourceRegistry is queried
+ * after plugin boot.
+ */
+function validateEnvInjection(
+  envInjection: unknown,
+  configPath: string,
+): asserts envInjection is Record<string, string | string[]> {
+  if (typeof envInjection !== 'object' || envInjection === null || Array.isArray(envInjection)) {
+    throw new Error(
+      `levelzero config at ${configPath}: \`envInjection\` must be an object (got ${describe(envInjection)})`,
+    );
+  }
 }
 
 function validatePlugins(plugins: unknown, configPath: string): asserts plugins is PluginEntry[] {
