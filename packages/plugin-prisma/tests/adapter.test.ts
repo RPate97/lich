@@ -84,7 +84,8 @@ describeIfDocker('prismaAdapter (integration)', () => {
   it('resetDatabase drops + recreates tables', async () => {
     await prismaAdapter.applyMigrations({ databaseUrl, projectRoot: fixtureRoot });
     await prismaAdapter.resetDatabase({ databaseUrl, projectRoot: fixtureRoot });
-    // After reset, no User table.
+    // After reset, no User table — and no `_prisma_migrations` either, so the
+    // next `applyMigrations` re-runs the init migration from scratch.
     const schema = await prismaAdapter.inspectSchema({ databaseUrl, projectRoot: fixtureRoot });
     expect(schema.tables.User).toBeUndefined();
   }, 180_000);
