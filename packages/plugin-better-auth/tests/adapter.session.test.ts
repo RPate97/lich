@@ -17,7 +17,7 @@ const TEST_SECRET = 'test-secret-32-chars-min-length-aaaa';
  * down to the Better Auth API directly.
  */
 async function bootstrapUser(ctx: AuthContext): Promise<string> {
-  const auth = getBetterAuthInstance(ctx);
+  const auth = await getBetterAuthInstance(ctx);
   // Migrations must run before signUpEmail can write to the `user` table.
   // The adapter itself runs them lazily inside signSession/inspectSession.
   const context = await auth.$context;
@@ -96,7 +96,7 @@ describe('betterAuthAdapter.signSession + inspectSession', () => {
       // Override the cache slot with a short-expiry instance before any other
       // adapter call. The adapter's cache key is (databaseUrl, secret) and the
       // factory pulls expiry from sessionConfig in opts.
-      getBetterAuthInstance(ctx, { session: { expiresIn: 1 } });
+      await getBetterAuthInstance(ctx, { session: { expiresIn: 1 } });
       const userId = await bootstrapUser(ctx);
 
       const { token } = await betterAuthAdapter.signSession(ctx, userId);

@@ -7,9 +7,74 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Application models
+// ---------------------------------------------------------------------------
+
 model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+}
+
+// ---------------------------------------------------------------------------
+// Better Auth required tables — keep field names in lockstep with the shapes
+// defined in `@better-auth/core/db/get-tables.mjs`. The `@better-auth/prisma-adapter`
+// (LEV-173) reads/writes these directly. Renaming any of these columns will
+// break auth without a corresponding `user.fields` / `session.fields` /
+// `account.fields` / `verification.fields` override in the better-auth
+// options.
+// ---------------------------------------------------------------------------
+
+model Session {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
 }

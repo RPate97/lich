@@ -1,8 +1,13 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  CLIError,
+  EnvSourceRegistry,
   Registry,
+  resolveStackContext,
   type AuthAdapter,
+  type AuthContext,
+  type CommandContext,
   type Plugin,
   type PluginAPI,
   type PluginContext,
@@ -39,6 +44,51 @@ export type { CurlResult, MakeCurlCommandOptions } from './curl';
 function defaultRegistryPath(): string {
   const home = process.env['LEVELZERO_HOME'] ?? homedir();
   return join(home, '.levelzero', 'registry.json');
+}
+
+/**
+ * Resolve `DATABASE_URL` for the active worktree from the EnvSource registry.
+ *
+ * Mirrors `plugin-prisma`'s `resolveDatabaseUrl` (LEV-171) — the contract is:
+ * scan named sources for one whose `name === 'url'` and whose declared
+ * `protocol === 'postgres'`. That pair uniquely identifies "the connection
+ * string a postgres-shaped DB plugin published" without coupling this plugin
+ * to a specific namespace. We keep the lookup local to plugin-better-auth
+ * to avoid a cross-package dep on plugin-prisma.
+ */
+async function resolveDatabaseUrl(input: {
+  envSourceRegistry: EnvSourceRegistry | undefined;
+  cmdCtx: CommandContext;
+}): Promise<string> {
+  if (!input.envSourceRegistry) {
+    throw new CLIError(
+      'INTERNAL',
+      'EnvSource registry not available to plugin-better-auth curl',
+      'this command requires the dispatch-wired CommandContext (post-bootPlugins).',
+    );
+  }
+  const stackCtx = await resolveStackContext(input.cmdCtx.cwd);
+  // We also need the running stack's port map so the source's host() resolver
+  // can substitute the host port. Pull it from the per-worktree registry.
+  const wtRegistry = new Registry(defaultRegistryPath());
+  const entry = await wtRegistry.get(stackCtx.worktreeKey);
+  const urlSrc = input.envSourceRegistry.findFirstNamed(
+    (e) => e.source.protocol === 'postgres' && e.name === 'url',
+  );
+  if (!urlSrc) {
+    throw new CLIError(
+      'NO_PROJECT',
+      'no postgres EnvSource active',
+      'add a postgres-protocol DB plugin to your `levelzero.config.ts` plugins list so a ' +
+        '`<ns>.url` source with `protocol: "postgres"` is registered.',
+    );
+  }
+  return urlSrc.source.host({
+    ports: entry?.ports ?? {},
+    projectRoot: stackCtx.worktreePath,
+    worktreeKey: stackCtx.worktreeKey,
+    consumerContext: 'host',
+  });
 }
 
 /**
@@ -98,14 +148,45 @@ export default function betterAuth(opts: BetterAuthOptions = {}): Plugin<
     namespace: (opts.namespace ?? 'better-auth') as 'better-auth',
     version: '0.1.0',
 
-    register(api: PluginAPI<'better-auth'>, _ctx: PluginContext): void {
+    register(api: PluginAPI<'better-auth'>, ctx: PluginContext): void {
       api.addAdapter('auth', 'better-auth', betterAuthAdapter);
       api.setActiveAdapter('auth', 'better-auth');
+
+      // LEV-173 composability wiring: capture the host closures here so they
+      // resolve at command-run time (gives plugins that load AFTER us a
+      // chance to set the active impl / publish env sources). The closures
+      // are threaded through the curl command's AuthContext so
+      // `--as alice@example.com` lands the user in whichever database the
+      // active ORM owns, not in a separate sqlite file. When no ORM is
+      // active, the in-memory sqlite test-mode fallback (NODE_ENV=test)
+      // still applies.
+      const getActiveOrm = ctx.getActiveOrm;
+      const getEnvSourceRegistry = ctx.getEnvSourceRegistry;
+
+      const buildAuthCtx = async (cmdCtx: CommandContext): Promise<AuthContext> => {
+        const secret =
+          process.env['LEVELZERO_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa';
+        const orm = getActiveOrm?.();
+        // No ORM → keep the legacy in-memory sqlite ctx. NODE_ENV=test (the
+        // test runner's default) is what unlocks the fallback inside the
+        // adapter.
+        if (!orm) {
+          return { databaseUrl: 'sqlite::memory:', secret, getActiveOrm };
+        }
+        // ORM active → resolve the real DATABASE_URL via the EnvSource
+        // registry, same lookup plugin-prisma's db.* commands use.
+        const databaseUrl = await resolveDatabaseUrl({
+          envSourceRegistry: getEnvSourceRegistry?.(),
+          cmdCtx,
+        });
+        return { databaseUrl, secret, getActiveOrm };
+      };
 
       api.addCommand(
         makeCurlCommand({
           getRegistry: () => new Registry(defaultRegistryPath()),
           getAuthAdapter: (): AuthAdapter => betterAuthAdapter,
+          getAuthCtx: buildAuthCtx,
         }),
       );
     },
