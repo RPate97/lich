@@ -13,6 +13,7 @@
     "./commands/dev": "./src/commands/dev.ts",
     "./compose/naming": "./src/compose/naming.ts",
     "./adapters/registry": "./src/adapters/registry.ts",
+    "./adapters/portless/types": "./src/adapters/portless/types.ts",
     "./env/registry": "./src/env/registry.ts"
   },
   "bin": {
@@ -35,17 +36,6 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
-    "@levelzero/plugin-better-auth": "workspace:*",
-    "@levelzero/plugin-hono": "workspace:*",
-    "@levelzero/plugin-next": "workspace:*",
-    "@levelzero/plugin-playwright": "workspace:*",
-    "@levelzero/plugin-portless": "workspace:*",
-    "@levelzero/plugin-postgres": "workspace:*",
-    "@levelzero/plugin-prisma": "workspace:*",
-    "@levelzero/plugin-shadcn": "workspace:*",
-    "@levelzero/plugin-typed-client": "workspace:*",
-    "@levelzero/plugin-vitest": "workspace:*",
-    "@levelzero/template-v0-stack": "workspace:*",
     "@prisma/client": "^5.18.0",
     "concurrently": "^9.0.0",
     "pg": "^8.12.0",

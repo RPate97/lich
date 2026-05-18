@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { CLIError } from '../errors';
 import { AdapterRegistry } from '../adapters/registry';
-import { playwrightAdapter } from '@levelzero/plugin-playwright';
 import type { BrowserAdapter, DiffOptions } from '../adapters/browser/types';
 import type { Command } from './types';
 
@@ -56,14 +55,18 @@ function parseNumberFlag(value: string | boolean | undefined, name: string): num
  */
 export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
   const getAdapterRegistry = opts?.getAdapterRegistry;
-  // See screenshot.ts for the rationale: when no registry provider is supplied
-  // we fall back to the playwright adapter imported directly from
-  // `@levelzero/plugin-playwright` (post-LEV-156 the `browser` slot is no
-  // longer populated by `getBuiltinAdapters()`).
+  // See screenshot.ts for the rationale: after LEV-174 core no longer imports
+  // `@levelzero/plugin-playwright` directly. Callers must supply either an
+  // explicit `adapter` (tests) or a `getAdapterRegistry` (CLI dispatch, where
+  // `bin.ts` injects the merged plugin-aware registry).
   const resolveAdapter = (): BrowserAdapter => {
     if (opts?.adapter) return opts.adapter;
     if (getAdapterRegistry) return getAdapterRegistry().getActive('browser') as BrowserAdapter;
-    return playwrightAdapter;
+    throw new CLIError(
+      'CONFIG_INVALID',
+      'no browser adapter configured for `visual diff`',
+      'load `@levelzero/plugin-playwright` (or another browser plugin) in your levelzero.config.ts',
+    );
   };
 
   return {

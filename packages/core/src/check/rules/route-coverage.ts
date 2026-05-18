@@ -1,10 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-// Direct dependency on the extracted plugin package — mirrors the
-// `commands/dev.ts` import of `@levelzero/plugin-portless`. Core's built-in
-// rules keep this import during the transition; once the rules themselves
-// move into plugins they can fetch the adapter from the registry instead.
-import { honoBackendAdapter } from '@levelzero/plugin-hono';
+import type { BackendAdapter } from '../../adapters/backend/types';
 import type { Rule } from '../types';
 
 const HONO_ENTRY = 'apps/api/src/index.ts';
@@ -31,46 +27,84 @@ function collectTestFiles(dir: string): string[] {
   return out;
 }
 
-export const routeCoverageRule: Rule = {
-  id: 'route-coverage',
-  describe: 'every Hono route has an integration test',
-  check: async ({ projectRoot }) => {
-    const entryAbs = join(projectRoot, HONO_ENTRY);
-    if (!existsSync(entryAbs)) {
-      return { status: 'skip', message: 'no Hono app found' };
-    }
+export interface RouteCoverageRuleOptions {
+  /**
+   * Backend adapter used to extract the route manifest from the Hono app
+   * entry. Wired by the dispatcher from the merged adapter registry
+   * (typically the `hono` impl contributed by `@levelzero/plugin-hono`).
+   * When omitted the rule returns `skip` so a project without a backend
+   * plugin doesn't see a hard failure on `levelzero check`.
+   */
+  backendAdapter?: BackendAdapter;
+}
 
-    const manifest = await honoBackendAdapter.extractRoutes(projectRoot);
-    if (manifest.routes.length === 0) {
-      return { status: 'pass' };
-    }
+/**
+ * Factory for the route-coverage rule. Accepting the backend adapter as an
+ * option keeps the rule decoupled from any particular plugin package
+ * (LEV-174) — core no longer imports `@levelzero/plugin-hono` directly.
+ * `getBuiltinRules` constructs the default no-op variant; the dispatcher
+ * upgrades to a fully-wired variant when a backend adapter is available.
+ */
+export function makeRouteCoverageRule(opts?: RouteCoverageRuleOptions): Rule {
+  const backendAdapter = opts?.backendAdapter;
+  return {
+    id: 'route-coverage',
+    describe: 'every Hono route has an integration test',
+    check: async ({ projectRoot }) => {
+      const entryAbs = join(projectRoot, HONO_ENTRY);
+      if (!existsSync(entryAbs)) {
+        return { status: 'skip', message: 'no Hono app found' };
+      }
+      if (!backendAdapter) {
+        return {
+          status: 'skip',
+          message:
+            'no backend adapter wired — load @levelzero/plugin-hono in your levelzero.config.ts',
+        };
+      }
 
-    const testFiles = collectTestFiles(join(projectRoot, INTEGRATION_TESTS_DIR));
-    // Concatenate all integration test sources once; a simple substring search
-    // on the joined haystack is faster than re-reading per route and is
-    // sufficient because route paths are distinctive literals (e.g.
-    // `/api/users`). False positives from unrelated comments are acceptable
-    // here — the rule's role is to surface obviously-missing coverage.
-    const haystack = testFiles
-      .map((p) => {
-        try {
-          return readFileSync(p, 'utf8');
-        } catch {
-          return '';
-        }
-      })
-      .join('\n');
+      const manifest = await backendAdapter.extractRoutes(projectRoot);
+      if (manifest.routes.length === 0) {
+        return { status: 'pass' };
+      }
 
-    const uncovered = manifest.routes
-      .filter((r) => !haystack.includes(r.path))
-      .map((r) => `${r.method} ${r.path}`);
+      const testFiles = collectTestFiles(join(projectRoot, INTEGRATION_TESTS_DIR));
+      // Concatenate all integration test sources once; a simple substring search
+      // on the joined haystack is faster than re-reading per route and is
+      // sufficient because route paths are distinctive literals (e.g.
+      // `/api/users`). False positives from unrelated comments are acceptable
+      // here — the rule's role is to surface obviously-missing coverage.
+      const haystack = testFiles
+        .map((p) => {
+          try {
+            return readFileSync(p, 'utf8');
+          } catch {
+            return '';
+          }
+        })
+        .join('\n');
 
-    if (uncovered.length === 0) {
-      return { status: 'pass' };
-    }
-    return {
-      status: 'fail',
-      message: `uncovered route(s): ${uncovered.join(', ')}`,
-    };
-  },
-};
+      const uncovered = manifest.routes
+        .filter((r) => !haystack.includes(r.path))
+        .map((r) => `${r.method} ${r.path}`);
+
+      if (uncovered.length === 0) {
+        return { status: 'pass' };
+      }
+      return {
+        status: 'fail',
+        message: `uncovered route(s): ${uncovered.join(', ')}`,
+      };
+    },
+  };
+}
+
+/**
+ * Default-wired route-coverage rule with no backend adapter — used by
+ * `getBuiltinRules()` outside the plugin-aware dispatch path. Reports skip
+ * once the Hono entry exists but no backend adapter is wired. The CLI
+ * dispatcher (`bin.ts`) constructs a fully-wired variant via
+ * `makeRouteCoverageRule({ backendAdapter })` when a `backend` impl is
+ * active in the merged adapter registry.
+ */
+export const routeCoverageRule: Rule = makeRouteCoverageRule();

@@ -5,19 +5,22 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { spawnSync } from 'node:child_process';
 
-vi.mock('@levelzero/plugin-playwright', () => ({
-  playwrightAdapter: {
-    name: 'playwright',
-    screenshot: vi.fn(),
-    diff: vi.fn(),
-  },
-}));
-
-import { playwrightAdapter } from '@levelzero/plugin-playwright';
-import { screenshotCommand } from '../../src/commands/screenshot';
+import { screenshotCommand, makeScreenshotCommand } from '../../src/commands/screenshot';
 import { CLIError } from '../../src/errors';
+import type { BrowserAdapter } from '../../src/adapters/browser/types';
 
-const mockScreenshot = vi.mocked(playwrightAdapter.screenshot);
+// After LEV-174 core no longer imports `@levelzero/plugin-playwright`
+// directly. Tests construct a stub adapter via the existing `adapter`
+// injection point on `makeScreenshotCommand`. The smoke check below still
+// imports the real adapter to keep the playwright-integration test
+// against a real chromium browser (gated on whether chromium is on disk).
+const mockScreenshot = vi.fn();
+const stubAdapter: BrowserAdapter = {
+  name: 'playwright',
+  screenshot: mockScreenshot as unknown as BrowserAdapter['screenshot'],
+  diff: vi.fn() as unknown as BrowserAdapter['diff'],
+};
+const cmd = makeScreenshotCommand({ adapter: stubAdapter });
 
 // A minimal valid PNG (1x1 transparent pixel) for fake adapter output.
 const FAKE_PNG = Buffer.from([
@@ -47,7 +50,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('throws CLIError when no URL argument is provided', async () => {
     await expect(
-      screenshotCommand.run({
+      cmd.run({
         cwd: workDir,
         format: 'json',
         args: [],
@@ -59,7 +62,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('throws CLIError when URL is syntactically invalid', async () => {
     await expect(
-      screenshotCommand.run({
+      cmd.run({
         cwd: workDir,
         format: 'json',
         args: ['not a url'],
@@ -72,7 +75,7 @@ describe('levelzero screenshot (unit)', () => {
   it('writes PNG bytes to default screenshot.png in cwd and returns the absolute path', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
 
-    const result = await screenshotCommand.run({
+    const result = await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -93,7 +96,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('writes to a relative --out path resolved against cwd', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
-    const result = await screenshotCommand.run({
+    const result = await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -107,7 +110,7 @@ describe('levelzero screenshot (unit)', () => {
   it('writes to an absolute --out path as-is', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
     const abs = join(workDir, 'nested', 'snap.png');
-    const result = await screenshotCommand.run({
+    const result = await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -120,7 +123,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('forwards --width / --height as viewport dims', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
-    await screenshotCommand.run({
+    await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -132,7 +135,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('forwards --full-page as fullPage:true', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
-    await screenshotCommand.run({
+    await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -144,7 +147,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('does not set fullPage when --full-page is absent', async () => {
     mockScreenshot.mockResolvedValueOnce(FAKE_PNG);
-    await screenshotCommand.run({
+    await cmd.run({
       cwd: workDir,
       format: 'json',
       args: ['http://example.com'],
@@ -156,7 +159,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('throws CLIError when --width is not a positive integer', async () => {
     await expect(
-      screenshotCommand.run({
+      cmd.run({
         cwd: workDir,
         format: 'json',
         args: ['http://example.com'],
@@ -168,7 +171,7 @@ describe('levelzero screenshot (unit)', () => {
 
   it('throws CLIError when --height is not a positive integer', async () => {
     await expect(
-      screenshotCommand.run({
+      cmd.run({
         cwd: workDir,
         format: 'json',
         args: ['http://example.com'],
@@ -176,6 +179,17 @@ describe('levelzero screenshot (unit)', () => {
       }),
     ).rejects.toThrow(CLIError);
     expect(mockScreenshot).not.toHaveBeenCalled();
+  });
+
+  it('default export (no adapter wired) throws a config CLIError pointing at the playwright plugin', async () => {
+    await expect(
+      screenshotCommand.run({
+        cwd: workDir,
+        format: 'json',
+        args: ['http://example.com'],
+        flags: {},
+      }),
+    ).rejects.toThrow(/browser adapter|playwright/i);
   });
 });
 
@@ -214,15 +228,16 @@ afterAll(async () => {
 
 describeIfBrowser('levelzero screenshot (real chromium)', () => {
   it('writes a non-empty PNG (magic bytes) for a real page', async () => {
-    // Use the un-mocked adapter for this end-to-end check.
-    const { playwrightAdapter: realAdapter } =
-      await vi.importActual<typeof import('@levelzero/plugin-playwright')>(
-        '@levelzero/plugin-playwright',
-      );
-    mockScreenshot.mockImplementationOnce((url, opts) => realAdapter.screenshot(url, opts));
+    // Construct the command with the real playwright adapter for this
+    // end-to-end check. After LEV-174 the real adapter is no longer the
+    // default inline import — tests opt in by passing it explicitly.
+    const { playwrightAdapter: realAdapter } = await import(
+      '@levelzero/plugin-playwright'
+    );
+    const realCmd = makeScreenshotCommand({ adapter: realAdapter });
 
     const out = resolve(workDir, 'real.png');
-    const result = await screenshotCommand.run({
+    const result = await realCmd.run({
       cwd: workDir,
       format: 'json',
       args: [`http://127.0.0.1:${port}`],

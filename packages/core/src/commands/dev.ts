@@ -22,11 +22,7 @@ import {
   type EnvInjectionMap,
 } from '../env/resolve';
 import { writeEnvFile } from '../env/writer';
-import {
-  portlessAdapter,
-  noopPortlessAdapter,
-  type PortlessAdapter,
-} from '@levelzero/plugin-portless';
+import type { PortlessAdapter } from '../adapters/portless/types';
 import { basename, join } from 'node:path';
 
 export interface DevOptions {
@@ -177,20 +173,33 @@ function reservedPortsFromOtherStacks(
 }
 
 /**
- * Default portless adapter selector: probe the real CLI-backed adapter and
- * fall back to the no-op when it isn't available. Tests bypass this via
- * `DevOptions.getPortlessAdapter` to avoid spawning the real `portless`.
+ * Inline no-op portless adapter — used when no `getPortlessAdapter` is
+ * supplied AND no plugin contributed one through the boot's adapter
+ * registry. Keeps `available()` returning false so the `dev` command skips
+ * URL registration entirely instead of failing.
+ *
+ * Production wiring lives in `bin.ts`: when `@levelzero/plugin-portless` is
+ * loaded via `levelzero.config.ts`, `bootPlugins()` registers a real
+ * `portless` adapter and a `noop` adapter under the `portless` slot. `bin.ts`
+ * then injects a `getPortlessAdapter` that probes the real impl's
+ * `available()` and falls back to the noop — the same selection logic that
+ * used to live here, only without the static plugin import.
  */
-async function defaultSelectPortlessAdapter(): Promise<PortlessAdapter> {
-  try {
-    if (await portlessAdapter.available()) return portlessAdapter;
-  } catch {
-    // Treat any probe failure as "not available". `available()` already
-    // swallows ENOENT etc., but we guard defensively in case a future impl
-    // surfaces them.
-  }
-  return noopPortlessAdapter;
-}
+const inlineNoopPortlessAdapter: PortlessAdapter = {
+  name: 'noop',
+  async available() {
+    return false;
+  },
+  async register() {
+    // intentional no-op
+  },
+  async unregister() {
+    // intentional no-op
+  },
+  async list() {
+    return [];
+  },
+};
 
 /**
  * Resolve the project name used for portless host construction.
@@ -365,7 +374,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       if (ownedWithUrl.length > 0) {
         const adapter = getPortlessAdapter
           ? getPortlessAdapter()
-          : await defaultSelectPortlessAdapter();
+          : inlineNoopPortlessAdapter;
         if (await adapter.available()) {
           const projectName = await resolveProjectName(stackCtx.worktreePath);
           // `branch` may be empty (detached HEAD); fall back to "main" so the

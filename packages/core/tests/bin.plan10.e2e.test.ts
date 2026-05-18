@@ -23,10 +23,17 @@ beforeEach(() => {
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p10-home-')));
   // `ui add` / `ui list` live in `@levelzero/plugin-shadcn` after LEV-153;
   // the project config must declare the plugin or the commands aren't
-  // registered against the dispatcher.
+  // registered against the dispatcher. After LEV-174 `screenshot` and
+  // `visual diff` no longer ship an inline `@levelzero/plugin-playwright`
+  // fallback either — the project config has to declare the playwright
+  // plugin to wire a `browser` adapter.
   writeFileSync(
     join(projectDir, 'levelzero.config.ts'),
-    `export default { plugins: ['@levelzero/plugin-shadcn'] };`,
+    // Plugin order matters here — Bun 1.2.23 segfaults at config evaluation
+    // when shadcn is imported before playwright (likely a Bun bug; reversed
+    // order works reliably). Both plugins must be present so the dispatcher
+    // can resolve the `browser` adapter for `visual diff` and `screenshot`.
+    `export default { plugins: ['@levelzero/plugin-playwright', '@levelzero/plugin-shadcn'] };`,
   );
 });
 

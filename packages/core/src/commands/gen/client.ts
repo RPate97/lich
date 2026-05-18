@@ -1,5 +1,4 @@
 import { isAbsolute, join } from 'node:path';
-import { typedClientFrontendAdapter } from '@levelzero/plugin-typed-client';
 import { CLIError } from '../../errors';
 import { resolveStackContext } from '../../services/context';
 import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
@@ -65,21 +64,35 @@ export function makeGenClientCommand(opts?: GenClientOptions): Command {
   // Lazy resolution so a swap landed between command construction and run
   // time is honored, and so tests that pass explicit adapters never touch
   // the registry at all.
-  const resolveBackend = (): BackendAdapter =>
-    opts?.backendAdapter ??
-    (getAdapterRegistry().getActive('backend') as BackendAdapter);
+  const resolveBackend = (): BackendAdapter => {
+    if (opts?.backendAdapter) return opts.backendAdapter;
+    try {
+      return getAdapterRegistry().getActive('backend') as BackendAdapter;
+    } catch {
+      throw new CLIError(
+        'CONFIG_INVALID',
+        'no backend adapter configured for `gen client`',
+        'load `@levelzero/plugin-hono` (or another backend plugin) in your levelzero.config.ts',
+      );
+    }
+  };
   // Frontend adapter resolution: prefer the explicit injection, then the
-  // registry's active impl. If the registry has no active frontend (the
-  // pre-LEV-151 default after extraction), fall back to the direct import
-  // from `@levelzero/plugin-typed-client` — this mirrors the dev/portless
-  // pattern: core commands still ship with a sane default for the extracted
-  // slot until the command itself moves into its own plugin.
+  // registry's active impl. After LEV-174 there is no inline fallback to a
+  // plugin package — the CLI dispatcher (`bin.ts`) hands `gen client` the
+  // merged adapter registry containing the active `frontend` impl
+  // contributed by `@levelzero/plugin-typed-client` (or another loaded
+  // frontend plugin). When neither path resolves, surface a clear
+  // configuration error instead of crashing on an `unknown` cast.
   const resolveFrontend = (): FrontendAdapter => {
     if (opts?.frontendAdapter) return opts.frontendAdapter;
     try {
       return getAdapterRegistry().getActive('frontend') as FrontendAdapter;
     } catch {
-      return typedClientFrontendAdapter;
+      throw new CLIError(
+        'CONFIG_INVALID',
+        'no frontend adapter configured for `gen client`',
+        'load `@levelzero/plugin-typed-client` (or another frontend plugin) in your levelzero.config.ts',
+      );
     }
   };
 

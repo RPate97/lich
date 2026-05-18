@@ -9,9 +9,9 @@
  *
  * Usage:
  * ```ts
- * import { defineConfig } from '@levelzero/core';
- * import postgres from '@levelzero/plugin-postgres';
- * import infisical from '@levelzero/plugin-infisical';
+ * import { defineConfig } from "@levelzero/core";
+ * import postgres from "@levelzero/plugin-postgres";
+ * import infisical from "@levelzero/plugin-infisical";
  *
  * export default defineConfig({
  *   plugins: [postgres(), infisical({ ... })],
