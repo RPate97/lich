@@ -1,0 +1,26 @@
+{
+  "name": "@levelzero/plugin-dotenv",
+  "version": "0.1.0",
+  "description": "Levelzero plugin contributing a bulk EnvSource that loads variables from `.env.local` / `.env` files (resolved against the project root, worktree-safe) and optionally the host `process.env`. Foundation for secret-loader plugins like Infisical.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@levelzero/core": "workspace:*"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "bun-types": "^1.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
