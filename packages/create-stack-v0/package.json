@@ -1,0 +1,31 @@
+{
+  "name": "@levelzero/create-stack-v0",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "create-stack-v0": "./src/bin.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@levelzero/core": "workspace:*",
+    "@levelzero/template-v0-stack": "workspace:*"
+  },
+  "devDependencies": {
+    "@levelzero/core": "workspace:*",
+    "@levelzero/template-v0-stack": "workspace:*",
+    "@types/node": "^20.12.0",
+    "bun-types": "^1.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

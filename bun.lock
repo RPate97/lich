@@ -48,6 +48,25 @@
         "vitest": "^1.6.0",
       },
     },
+    "packages/create-stack-v0": {
+      "name": "@levelzero/create-stack-v0",
+      "version": "0.1.0",
+      "bin": {
+        "create-stack-v0": "./src/bin.ts",
+      },
+      "devDependencies": {
+        "@levelzero/core": "workspace:*",
+        "@levelzero/template-v0-stack": "workspace:*",
+        "@types/node": "^20.12.0",
+        "bun-types": "^1.2.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.6.0",
+      },
+      "peerDependencies": {
+        "@levelzero/core": "workspace:*",
+        "@levelzero/template-v0-stack": "workspace:*",
+      },
+    },
     "packages/plugin-better-auth": {
       "name": "@levelzero/plugin-better-auth",
       "version": "0.1.0",
@@ -340,6 +359,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@levelzero/core": ["@levelzero/core@workspace:packages/core"],
+
+    "@levelzero/create-stack-v0": ["@levelzero/create-stack-v0@workspace:packages/create-stack-v0"],
 
     "@levelzero/plugin-better-auth": ["@levelzero/plugin-better-auth@workspace:packages/plugin-better-auth"],
 
