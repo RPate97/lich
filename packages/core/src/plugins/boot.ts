@@ -69,6 +69,17 @@ export interface BootResult {
   ownedServices: OwnedService[];
   compose: ComposeContributions;
   skillsDirs: string[];
+  /**
+   * The set of plugins that successfully booted, in declaration order. Each
+   * entry is taken straight from the `Plugin` returned by
+   * `resolvePluginEntry` — `name` and `version` are guaranteed by the
+   * `isPlugin` guard. The CLI's `--help` renderer surfaces this list under
+   * "LOADED PLUGINS"; other consumers can use it to attribute behavior or
+   * print diagnostic banners. Plugins that throw during `register()` short-
+   * circuit the boot before reaching this list, so it's safe to treat each
+   * entry as fully initialized.
+   */
+  loadedPlugins: Array<{ name: string; version: string }>;
 }
 
 /**
@@ -104,6 +115,7 @@ export async function bootPlugins(
   const ownedServices: OwnedService[] = [];
   const compose: ComposeContributions = { services: {}, volumes: {}, networks: {} };
   const skillsDirs: string[] = [];
+  const loadedPlugins: Array<{ name: string; version: string }> = [];
 
   const ctx: PluginContext = { projectRoot, config };
 
@@ -157,9 +169,21 @@ export async function bootPlugins(
         cause: err,
       });
     }
+    // Track successful boots only — a plugin that threw during register()
+    // already short-circuited above, so the loaded list never includes it.
+    loadedPlugins.push({ name: plugin.name, version: plugin.version });
   }
 
-  return { commands, adapters, generators, rules, ownedServices, compose, skillsDirs };
+  return {
+    commands,
+    adapters,
+    generators,
+    rules,
+    ownedServices,
+    compose,
+    skillsDirs,
+    loadedPlugins,
+  };
 }
 
 /**
