@@ -132,3 +132,12 @@ export type {
  * `@levelzero/plugin-shadcn` (LEV-153) and other command-extracting plugins.
  */
 export { resolveStackContext } from './services/context';
+
+/**
+ * Scaffolder helper re-exported so the `@levelzero/create-stack-v0` npx wrapper
+ * (LEV-159) can materialize a template tree without reaching into a deep path.
+ * The same helper powers `levelzero init <name>` internally — both entry points
+ * call into a single implementation to keep scaffolding behavior identical.
+ */
+export { copyTemplate } from './scaffolder';
+export type { CopyTemplateInput, CopyTemplateOutput } from './scaffolder';
