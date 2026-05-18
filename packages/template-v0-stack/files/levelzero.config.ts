@@ -10,5 +10,15 @@ import playwright from '@levelzero/plugin-playwright';
 
 export default {
   name: '{{projectName}}',
-  plugins: [postgres, prisma, hono, typedClient, betterAuth, shadcn, next, vitest, playwright],
+  plugins: [
+    postgres(),
+    prisma(),
+    hono(),
+    typedClient(),
+    betterAuth(),
+    shadcn(),
+    next(),
+    vitest(),
+    playwright(),
+  ],
 };

@@ -60,6 +60,33 @@ export function register(_api, _ctx) {}
 `,
   );
 
+  // Plugin default-exported as a zero-arg factory (Plan 16 / LEV-186 shape).
+  // `loadPlugin` must invoke it and unwrap to the returned Plugin.
+  writeFileSync(
+    join(projectRoot, 'plugins', 'factory-default.mjs'),
+    `export default function makePlugin() {
+  return {
+    name: 'factory-default',
+    version: '4.0.0',
+    register(_api, _ctx) {},
+  };
+}
+`,
+  );
+
+  // Async factory variant — the resolver must await it.
+  writeFileSync(
+    join(projectRoot, 'plugins', 'async-factory.mjs'),
+    `export default async function makePlugin() {
+  return {
+    name: 'async-factory',
+    version: '5.0.0',
+    register(_api, _ctx) {},
+  };
+}
+`,
+  );
+
   // Bad-shape plugin: missing `name`.
   writeFileSync(
     join(projectRoot, 'plugins', 'no-name.mjs'),
@@ -99,6 +126,23 @@ describe('loadPlugin — local path resolution', () => {
     const abs = join(projectRoot, 'plugins', 'default-export.mjs');
     const plugin = await loadPlugin(abs, ctx);
     expect(plugin.name).toBe('default-export');
+  });
+
+  // LEV-186: v0 plugins are factories. The string-specifier path needs to
+  // invoke a factory default export and unwrap to the produced Plugin so
+  // existing `plugins: ['@levelzero/plugin-x']` configs keep working after
+  // the conversion.
+  it('invokes a factory default export and unwraps the returned Plugin', async () => {
+    const plugin = await loadPlugin('./plugins/factory-default.mjs', ctx);
+    expect(plugin.name).toBe('factory-default');
+    expect(plugin.version).toBe('4.0.0');
+    expect(typeof plugin.register).toBe('function');
+  });
+
+  it('awaits an async factory default export', async () => {
+    const plugin = await loadPlugin('./plugins/async-factory.mjs', ctx);
+    expect(plugin.name).toBe('async-factory');
+    expect(plugin.version).toBe('5.0.0');
   });
 });
 

@@ -7,7 +7,11 @@ import type {
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
-import plugin, { webService } from '../src/index';
+import next, { webService } from '../src/index';
+
+// LEV-186: the package now default-exports a factory. Instantiate once so the
+// rest of the file keeps using `plugin.register(...)` exactly as before.
+const plugin = next();
 
 /**
  * Minimal `PluginAPI` recorder. Only the methods this plugin actually calls

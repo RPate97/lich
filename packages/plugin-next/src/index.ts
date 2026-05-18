@@ -4,6 +4,15 @@ import { webService } from './service';
 export { webService } from './service';
 
 /**
+ * Options for the `@levelzero/plugin-next` factory. The `namespace` override
+ * exists so multi-instance setups can co-exist.
+ */
+export interface NextOptions {
+  /** Override the default `'next'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-next` — extracts the Next.js `web` owned-service builtin
  * out of `@levelzero/core` (LEV-154).
  *
@@ -19,28 +28,27 @@ export { webService } from './service';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
- * export default {
- *   plugins: ['@levelzero/plugin-next'],
- * };
- * ```
- *
- * Or by importing the default export directly:
- *
- * ```ts
  * import next from '@levelzero/plugin-next';
  *
  * export default {
- *   plugins: [next],
+ *   plugins: [next()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-next',
-  version: '0.1.0',
+export default function next(opts: NextOptions = {}): Plugin<
+  'next',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-next',
+    namespace: (opts.namespace ?? 'next') as 'next',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addOwnedService(webService);
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'next'>, _ctx: PluginContext): void {
+      api.addOwnedService(webService);
+    },
+  };
+}

@@ -57,10 +57,24 @@ export async function loadPlugin(specifier: string, ctx: PluginContext): Promise
   }
 
   const shorthand = toCamelCase(shorthandSource);
-  const candidate =
+  let candidate: unknown =
     (mod as { default?: unknown }).default ??
     (shorthand in mod ? (mod as Record<string, unknown>)[shorthand] : undefined) ??
     mod;
+
+  // LEV-186: plugins may default-export a zero-arg factory (Plan 16 / LEV-179
+  // factory shape). When the resolved candidate is a function, invoke it and
+  // await the result so the same string-specifier path keeps working after
+  // the v0 plugins were converted to factories.
+  if (typeof candidate === 'function') {
+    try {
+      const factoryResult = (candidate as () => unknown)();
+      candidate = isThenable(factoryResult) ? await factoryResult : factoryResult;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`Plugin "${specifier}" factory threw: ${reason}`, { cause: err });
+    }
+  }
 
   if (!isPlugin(candidate)) {
     throw new Error(

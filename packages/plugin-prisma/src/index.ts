@@ -28,6 +28,15 @@ export {
 } from './commands/inspect';
 
 /**
+ * Options for the `@levelzero/plugin-prisma` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist.
+ */
+export interface PrismaOptions {
+  /** Override the default `'prisma'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-prisma` — extracts the Prisma `ORMAdapter` impl plus the
  * `db.*` command family out of `@levelzero/core` (LEV-149).
  *
@@ -45,34 +54,34 @@ export {
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
- * export default {
- *   plugins: ['@levelzero/plugin-prisma'],
- * };
- * ```
- *
- * Or by importing the default export directly:
- *
- * ```ts
  * import prisma from '@levelzero/plugin-prisma';
  *
  * export default {
- *   plugins: [prisma],
+ *   plugins: [prisma()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-prisma',
-  version: '0.1.0',
+export default function prisma(opts: PrismaOptions = {}): Plugin<
+  'prisma',
+  {
+    // Filled in by LEV-187 if prisma ends up publishing env sources.
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-prisma',
+    namespace: (opts.namespace ?? 'prisma') as 'prisma',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('orm', 'prisma', prismaAdapter);
-    api.setActiveAdapter('orm', 'prisma');
+    register(api: PluginAPI<'prisma'>, _ctx: PluginContext): void {
+      api.addAdapter('orm', 'prisma', prismaAdapter);
+      api.setActiveAdapter('orm', 'prisma');
 
-    api.addCommand(makeDbMigrateCommand({ adapter: prismaAdapter }));
-    api.addCommand(makeDbMigrationNewCommand({ adapter: prismaAdapter }));
-    api.addCommand(makeDbSeedCommand({ adapter: prismaAdapter }));
-    api.addCommand(makeDbInspectCommand({ adapter: prismaAdapter }));
-  },
-};
-
-export default plugin;
+      api.addCommand(makeDbMigrateCommand({ adapter: prismaAdapter }));
+      api.addCommand(makeDbMigrationNewCommand({ adapter: prismaAdapter }));
+      api.addCommand(makeDbSeedCommand({ adapter: prismaAdapter }));
+      api.addCommand(makeDbInspectCommand({ adapter: prismaAdapter }));
+    },
+  };
+}

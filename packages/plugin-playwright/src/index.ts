@@ -6,6 +6,15 @@ export { playwrightAdapter } from './adapters/browser';
 export { playwrightTestAdapter } from './adapters/test-runner';
 
 /**
+ * Options for the `@levelzero/plugin-playwright` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist.
+ */
+export interface PlaywrightOptions {
+  /** Override the default `'playwright'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-playwright` — extracts the Playwright `BrowserAdapter` and
  * `TestRunnerAdapter` impls out of `@levelzero/core`.
  *
@@ -28,22 +37,31 @@ export { playwrightTestAdapter } from './adapters/test-runner';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import playwright from '@levelzero/plugin-playwright';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-playwright'],
+ *   plugins: [playwright()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-playwright',
-  version: '0.1.0',
+export default function playwright(opts: PlaywrightOptions = {}): Plugin<
+  'playwright',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-playwright',
+    namespace: (opts.namespace ?? 'playwright') as 'playwright',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('browser', 'playwright', playwrightAdapter);
-    api.setActiveAdapter('browser', 'playwright');
-    api.addAdapter('test-runner', 'playwright', playwrightTestAdapter);
-    // Intentionally no setActiveAdapter for the test-runner slot — see module
-    // docstring. vitest also lives in that slot.
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'playwright'>, _ctx: PluginContext): void {
+      api.addAdapter('browser', 'playwright', playwrightAdapter);
+      api.setActiveAdapter('browser', 'playwright');
+      api.addAdapter('test-runner', 'playwright', playwrightTestAdapter);
+      // Intentionally no setActiveAdapter for the test-runner slot — see module
+      // docstring. vitest also lives in that slot.
+    },
+  };
+}

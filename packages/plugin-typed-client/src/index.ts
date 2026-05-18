@@ -4,6 +4,15 @@ import { typedClientFrontendAdapter } from './adapter';
 export { typedClientFrontendAdapter } from './adapter';
 
 /**
+ * Options for the `@levelzero/plugin-typed-client` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist.
+ */
+export interface TypedClientOptions {
+  /** Override the default `'typed-client'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-typed-client` — extracted from core in LEV-151.
  *
  * Contributes a single impl under the `frontend` adapter slot:
@@ -18,19 +27,28 @@ export { typedClientFrontendAdapter } from './adapter';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import typedClient from '@levelzero/plugin-typed-client';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-typed-client'],
+ *   plugins: [typedClient()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-typed-client',
-  version: '0.1.0',
+export default function typedClient(opts: TypedClientOptions = {}): Plugin<
+  'typed-client',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-typed-client',
+    namespace: (opts.namespace ?? 'typed-client') as 'typed-client',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('frontend', 'typed-client', typedClientFrontendAdapter);
-    api.setActiveAdapter('frontend', 'typed-client');
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'typed-client'>, _ctx: PluginContext): void {
+      api.addAdapter('frontend', 'typed-client', typedClientFrontendAdapter);
+      api.setActiveAdapter('frontend', 'typed-client');
+    },
+  };
+}

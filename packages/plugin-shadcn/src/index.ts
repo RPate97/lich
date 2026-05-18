@@ -10,6 +10,15 @@ export { makeUiListCommand, uiListCommand } from './commands/list';
 export type { UiListOptions } from './commands/list';
 
 /**
+ * Options for the `@levelzero/plugin-shadcn` factory. The `namespace` override
+ * exists so multi-instance setups can co-exist.
+ */
+export interface ShadcnOptions {
+  /** Override the default `'shadcn'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-shadcn` — extracts the shadcn `UIAdapter` impl and its
  * `ui.add` / `ui.list` commands out of `@levelzero/core` (LEV-153).
  *
@@ -28,21 +37,30 @@ export type { UiListOptions } from './commands/list';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import shadcn from '@levelzero/plugin-shadcn';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-shadcn'],
+ *   plugins: [shadcn()],
  * };
  * ```
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-shadcn',
-  version: '0.1.0',
+export default function shadcn(opts: ShadcnOptions = {}): Plugin<
+  'shadcn',
+  {
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-shadcn',
+    namespace: (opts.namespace ?? 'shadcn') as 'shadcn',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('ui', 'shadcn', shadcnAdapter);
-    api.setActiveAdapter('ui', 'shadcn');
-    api.addCommand(makeUiAddCommand({ adapter: shadcnAdapter }));
-    api.addCommand(makeUiListCommand({ adapter: shadcnAdapter }));
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'shadcn'>, _ctx: PluginContext): void {
+      api.addAdapter('ui', 'shadcn', shadcnAdapter);
+      api.setActiveAdapter('ui', 'shadcn');
+      api.addCommand(makeUiAddCommand({ adapter: shadcnAdapter }));
+      api.addCommand(makeUiListCommand({ adapter: shadcnAdapter }));
+    },
+  };
+}

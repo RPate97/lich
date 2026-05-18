@@ -5,7 +5,11 @@ import type {
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
-import plugin, { prismaAdapter } from '../src/index';
+import prisma, { prismaAdapter } from '../src/index';
+
+// LEV-186: the package now default-exports a factory. Instantiate once so the
+// rest of the file keeps using `plugin.register(...)` exactly as before.
+const plugin = prisma();
 
 /**
  * Minimal `PluginAPI` recorder. Captures the (slot, name, impl) tuples passed

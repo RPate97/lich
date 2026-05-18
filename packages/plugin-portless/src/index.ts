@@ -7,6 +7,16 @@ export { noopPortlessAdapter } from './noop';
 export type { PortlessAdapter, URLEntry } from './types';
 
 /**
+ * Options for the `@levelzero/plugin-portless` factory. The `namespace`
+ * override exists so multi-instance setups can co-exist; it's reserved for
+ * Plan 16 (LEV-186 onward) and not exercised today.
+ */
+export interface PortlessOptions {
+  /** Override the default `'portless'` namespace for multi-instance use. */
+  namespace?: string;
+}
+
+/**
  * `@levelzero/plugin-portless` — the pilot plugin extraction.
  *
  * Contributes two impls under the `portless` adapter slot:
@@ -22,20 +32,33 @@ export type { PortlessAdapter, URLEntry } from './types';
  * Wire it into a project by adding it to `levelzero.config.ts`:
  *
  * ```ts
+ * import portless from '@levelzero/plugin-portless';
+ *
  * export default {
- *   plugins: ['@levelzero/plugin-portless'],
+ *   plugins: [portless()],
  * };
  * ```
+ *
+ * The factory shape (LEV-186) is the seam for future per-instance options
+ * — for now the only knob is `namespace`, used for the multi-instance case.
  */
-const plugin: Plugin = {
-  name: '@levelzero/plugin-portless',
-  version: '0.1.0',
+export default function portless(opts: PortlessOptions = {}): Plugin<
+  'portless',
+  {
+    // Filled in by LEV-187 once portless publishes EnvSources.
+    named: never;
+    bulk: never;
+  }
+> {
+  return {
+    name: '@levelzero/plugin-portless',
+    namespace: (opts.namespace ?? 'portless') as 'portless',
+    version: '0.1.0',
 
-  register(api: PluginAPI, _ctx: PluginContext): void {
-    api.addAdapter('portless', 'portless', portlessAdapter);
-    api.addAdapter('portless', 'noop', noopPortlessAdapter);
-    api.setActiveAdapter('portless', 'noop');
-  },
-};
-
-export default plugin;
+    register(api: PluginAPI<'portless'>, _ctx: PluginContext): void {
+      api.addAdapter('portless', 'portless', portlessAdapter);
+      api.addAdapter('portless', 'noop', noopPortlessAdapter);
+      api.setActiveAdapter('portless', 'noop');
+    },
+  };
+}
