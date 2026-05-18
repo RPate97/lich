@@ -30,6 +30,7 @@ import { makeTestCommand } from './commands/test';
 import { findWorktree } from './worktree';
 import { loadConfig } from './config';
 import { bootPlugins } from './plugins/boot';
+import { makeHelpCommand, renderHelp, type LoadedPluginInfo } from './commands/help';
 
 export const VERSION = '0.0.0';
 
@@ -85,6 +86,23 @@ export async function buildDispatchRegistry(
 ): Promise<CommandRegistry> {
   const cli = buildCommands(registryPath);
 
+  // Track plugins booted for this dispatch so `--help` can list them under
+  // "LOADED PLUGINS". Populated below if (and only if) `bootPlugins` runs;
+  // for project-less dispatches and config-less projects it stays empty,
+  // which the help renderer handles with a friendly "no plugins" message.
+  const loadedPlugins: LoadedPluginInfo[] = [];
+
+  // Register the help command early so even the inline-only dispatch path
+  // (no project, no config) gets `--help` / `levelzero help`. The closures
+  // capture `cli` and `loadedPlugins` by reference, so plugin commands
+  // registered below still appear in the rendered output.
+  cli.register(
+    makeHelpCommand({
+      getRegistry: () => cli,
+      getLoadedPlugins: () => loadedPlugins,
+    }),
+  );
+
   const wt = await findWorktree(cwd).catch(() => null);
   if (wt === null) return cli;
 
@@ -104,6 +122,12 @@ export async function buildDispatchRegistry(
   const boot = await bootPlugins(config, wt.path);
   for (const cmd of boot.commands.all()) {
     cli.register(cmd);
+  }
+  // Surface the booted plugins to the (already-registered) help command. Push
+  // into the captured array rather than reassigning so the closure stays
+  // bound to the same reference.
+  for (const p of boot.loadedPlugins) {
+    loadedPlugins.push(p);
   }
 
   // Re-register dev/stop/reset with the plugin compose + owned-service
@@ -168,9 +192,54 @@ function mergeAdapterRegistries(
   return base;
 }
 
+/**
+ * Detect a help invocation from raw argv. Treated as help:
+ *   - no args at all (`levelzero`)
+ *   - `--help` or `-h` anywhere in argv
+ *   - first positional arg is `help` (so `levelzero help` works and the
+ *     deferred per-command form `levelzero help <topic>` parses)
+ *
+ * Returned ahead of dispatch so the rendered output bypasses `runCli`'s
+ * JSON-by-default formatting. The dispatched `helpCommand` is still wired
+ * into the registry (so `levelzero help` shows up in introspection and the
+ * unit tests can exercise it through the normal `Command.run` path); this
+ * interceptor exists purely to keep the stdout shape as plain text.
+ */
+function isHelpInvocation(argv: string[]): boolean {
+  if (argv.length === 0) return true;
+  if (argv.includes('--help') || argv.includes('-h')) return true;
+  const firstPositional = argv.find((a) => !a.startsWith('-'));
+  if (firstPositional === 'help') return true;
+  return false;
+}
+
 async function main() {
+  const argv = process.argv.slice(2);
   const cli = await buildDispatchRegistry(process.cwd(), defaultRegistryPath());
-  const result = await runCli(process.argv.slice(2), cli, { cwd: process.cwd() });
+
+  if (isHelpInvocation(argv)) {
+    // The help command is registered into `cli` by `buildDispatchRegistry`
+    // and closes over the live registry + loaded-plugin list. Resolve it
+    // through the same lookup path other commands use so the rendered help
+    // reflects exactly what's dispatchable.
+    const help = cli.lookup('help');
+    if (help) {
+      const rendered = (await help.run({
+        cwd: process.cwd(),
+        format: 'pretty',
+        args: [],
+        flags: {},
+      })) as string;
+      process.stdout.write(rendered);
+      process.exit(0);
+    }
+    // Defensive fallback: registry didn't get a help command for some
+    // reason — render directly so users still get something useful.
+    process.stdout.write(renderHelp(cli, []));
+    process.exit(0);
+  }
+
+  const result = await runCli(argv, cli, { cwd: process.cwd() });
   if (result.stdout) process.stdout.write(result.stdout + '\n');
   if (result.stderr) process.stderr.write(result.stderr + '\n');
   process.exit(result.exitCode);
