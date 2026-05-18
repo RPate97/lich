@@ -44,7 +44,9 @@ export function makeSkillsIndexCommand(opts?: SkillsIndexOptions): Command {
       const outputPath = join(stackCtx.worktreePath, OUTPUT_FILENAME);
       await writeFile(outputPath, contents, 'utf8');
 
-      return { skillCount: skills.length, outputPath };
+      const result = { skillCount: skills.length, outputPath };
+      if (ctx.format === 'json') return result;
+      return `Indexed ${skills.length} skill(s) — wrote ${outputPath}\n`;
     },
   };
 }

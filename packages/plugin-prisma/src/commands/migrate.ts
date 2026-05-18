@@ -109,12 +109,17 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
           databaseUrl,
           projectRoot: stackCtx.worktreePath,
         });
-        return {
-          ok: true,
+        const json = {
+          ok: true as const,
           applied: result.applied,
           names: result.names,
           output: result.output,
         };
+        if (ctx.format === 'json') return json;
+        const lines: string[] = [];
+        lines.push(`db migrate: applied ${result.applied} migration(s)`);
+        for (const n of result.names) lines.push(`  ${n}`);
+        return lines.join('\n') + '\n';
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new CLIError('INTERNAL', 'db migrate failed', {

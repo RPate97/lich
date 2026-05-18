@@ -96,7 +96,9 @@ export function makeEnvResolveCommand(opts?: EnvResolveOptions): Command {
         bulkCache: getBulkCache?.(),
       });
 
-      if (ctx.flags['json'] === true) {
+      // LEV-168 — pretty is now the default; `--json` opts back into the
+      // structured shape (mirrors `env list`).
+      if (ctx.format === 'json') {
         return { service, context, env } satisfies EnvResolveResult;
       }
       return renderPretty(service, context, env);

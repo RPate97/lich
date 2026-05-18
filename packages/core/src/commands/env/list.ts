@@ -51,7 +51,11 @@ export function makeEnvListCommand(opts?: EnvListOptions): Command {
     async run(ctx) {
       const registry = getRegistry();
       const entries = collectEntries(registry);
-      if (ctx.flags['json'] === true) {
+      // LEV-168 — pretty is now the default; `--json` opts back into the
+      // structured shape. The CLI's `pickFormat` sets `ctx.format` to
+      // 'json' iff `--json` is on the invocation, so this branch agrees
+      // with every other command in the suite.
+      if (ctx.format === 'json') {
         return { entries } satisfies EnvListResult;
       }
       return renderPretty(entries);

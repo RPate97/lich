@@ -12,7 +12,8 @@ function makeRegistry(commands: Command[]): CommandRegistry {
 }
 
 describe('runCli', () => {
-  it('dispatches to a top-level command and prints its result as JSON by default', async () => {
+  // LEV-168 — default output is pretty text; `--json` opts back into JSON.
+  it('dispatches to a top-level command and prints pretty output by default', async () => {
     const echo: Command = {
       name: 'echo',
       describe: 'echo back',
@@ -20,10 +21,22 @@ describe('runCli', () => {
     };
     const out = await runCli(['echo'], makeRegistry([echo]), { cwd: '/' });
     expect(out.exitCode).toBe(0);
+    // Pretty mode falls back to indented JSON for object results when the
+    // command doesn't supply its own renderer.
+    expect(out.stdout).toContain('"said": "hi"');
+  });
+
+  it('honors --json (LEV-168 opt-in for structured output)', async () => {
+    const echo: Command = {
+      name: 'echo',
+      describe: 'echo back',
+      run: async () => ({ said: 'hi' }),
+    };
+    const out = await runCli(['echo', '--json'], makeRegistry([echo]), { cwd: '/' });
     expect(out.stdout).toBe('{"said":"hi"}');
   });
 
-  it('honors --pretty', async () => {
+  it('honors --pretty as an explicit alias (default since LEV-168)', async () => {
     const echo: Command = {
       name: 'echo',
       describe: 'echo back',
@@ -40,19 +53,27 @@ describe('runCli', () => {
       describe: 'current',
       run: async () => ({ stack: 'x' }),
     };
-    const out = await runCli(['stacks', 'current'], makeRegistry([cur]), { cwd: '/' });
+    const out = await runCli(['stacks', 'current', '--json'], makeRegistry([cur]), { cwd: '/' });
     expect(out.exitCode).toBe(0);
     expect(JSON.parse(out.stdout).stack).toBe('x');
   });
 
-  it('returns a structured error when the command is unknown', async () => {
-    const out = await runCli(['nope'], makeRegistry([]), { cwd: '/' });
+  it('returns a structured error when the command is unknown (--json)', async () => {
+    const out = await runCli(['nope', '--json'], makeRegistry([]), { cwd: '/' });
     expect(out.exitCode).toBe(1);
     const parsed = JSON.parse(out.stderr);
     expect(parsed.code).toBe('UNKNOWN_COMMAND');
   });
 
-  it('renders a CLIError raised by a command', async () => {
+  it('returns a pretty error line by default for unknown commands (LEV-168)', async () => {
+    const out = await runCli(['nope'], makeRegistry([]), { cwd: '/' });
+    expect(out.exitCode).toBe(1);
+    expect(out.stderr).toContain('error:');
+    expect(out.stderr).toContain('unknown command: nope');
+    expect(out.stderr).toContain('hint:');
+  });
+
+  it('renders a CLIError raised by a command (--json)', async () => {
     const bad: Command = {
       name: 'bad',
       describe: 'bad',
@@ -60,7 +81,7 @@ describe('runCli', () => {
         throw new CLIError('NO_PROJECT', 'not inside a levelzero project');
       },
     };
-    const out = await runCli(['bad'], makeRegistry([bad]), { cwd: '/' });
+    const out = await runCli(['bad', '--json'], makeRegistry([bad]), { cwd: '/' });
     expect(out.exitCode).toBe(1);
     expect(JSON.parse(out.stderr).code).toBe('NO_PROJECT');
   });
@@ -73,7 +94,7 @@ describe('runCli', () => {
   // own tests.
   it('does not register curl in buildCommands (plugin-only after LEV-152)', async () => {
     const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
-    const out = await runCli(['curl'], reg, { cwd: '/' });
+    const out = await runCli(['curl', '--json'], reg, { cwd: '/' });
     expect(out.exitCode).toBe(1);
     const parsed = JSON.parse(out.stderr);
     expect(parsed.code).toBe('UNKNOWN_COMMAND');

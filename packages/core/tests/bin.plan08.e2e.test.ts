@@ -44,8 +44,9 @@ function run(args: string[]) {
 }
 
 describe('bin: plan-08 commands end-to-end', () => {
+  // LEV-168 — pretty is the default; pass `--json` where the test parses stdout/stderr.
   it('impact <path> returns dependents as a JSON array', () => {
-    const res = run(['impact', 'src/target.ts']);
+    const res = run(['impact', 'src/target.ts', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(Array.isArray(out)).toBe(true);
@@ -55,14 +56,14 @@ describe('bin: plan-08 commands end-to-end', () => {
   }, 30_000);
 
   it('impact with no arg exits 1 with a CLIError JSON', () => {
-    const res = run(['impact']);
+    const res = run(['impact', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     expect(err.code).toBe('CONFIG_INVALID');
   });
 
   it('check runs all registered rules and prints pass/skip/fail summary', () => {
-    const res = run(['check']);
+    const res = run(['check', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout);
     expect(out.ok).toBe(true);
@@ -84,7 +85,7 @@ describe('bin: plan-08 commands end-to-end', () => {
     // spawn vitest inside a vitest run and recurse. Instead, assert the
     // command is registered by checking that an unrelated failure mode
     // (not UNKNOWN_COMMAND) surfaces if we invoke it with a bogus flag.
-    const res = run(['coverage', '--threshold', 'not-a-number']);
+    const res = run(['coverage', '--threshold', 'not-a-number', '--json']);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);
     // Must NOT be UNKNOWN_COMMAND — that would mean the command isn't wired.

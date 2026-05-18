@@ -27,7 +27,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     // No config at all — the worktree lookup returns null, so bootPlugins is
     // never called and we only get the inline registrations. `init` is one of
     // those, so the command should succeed and produce a config file.
-    const res = run(['init']);
+    const res = run(['init', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout) as { created: boolean; configPath: string };
     expect(parsed.created).toBe(true);
@@ -39,7 +39,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     // no-op); inline registrations remain the only source. `stacks current`
     // (an inline command) should still resolve and run.
     writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
-    const res = run(['stacks', 'current']);
+    const res = run(['stacks', 'current', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout) as { path: string; running: boolean };
     expect(parsed.path).toBe(projectDir);
@@ -76,7 +76,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
       `export default { plugins: ['./lz-fixture-plugin.mjs'] };`,
     );
 
-    const res = run(['fixture', 'hello']);
+    const res = run(['fixture', 'hello', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout) as { from: string; greeting: string };
     expect(parsed.from).toBe('plugin');
@@ -102,7 +102,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
       `export default { plugins: ['@levelzero/plugin-portless'] };`,
     );
 
-    const res = run(['adapter', 'list']);
+    const res = run(['adapter', 'list', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const out = JSON.parse(res.stdout) as {
       adapters: Array<{ slot: string; name: string; active: boolean }>;
@@ -151,13 +151,13 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     );
 
     // Inline command still works.
-    const inlineRes = run(['stacks', 'current']);
+    const inlineRes = run(['stacks', 'current', '--json']);
     expect(inlineRes.status, inlineRes.stderr).toBe(0);
     const inlineParsed = JSON.parse(inlineRes.stdout) as { running: boolean };
     expect(inlineParsed.running).toBe(false);
 
     // Plugin command still works.
-    const pluginRes = run(['fixture', 'hello']);
+    const pluginRes = run(['fixture', 'hello', '--json']);
     expect(pluginRes.status, pluginRes.stderr).toBe(0);
     const pluginParsed = JSON.parse(pluginRes.stdout) as { ok: boolean };
     expect(pluginParsed.ok).toBe(true);

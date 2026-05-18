@@ -90,7 +90,9 @@ export function makeDbSeedCommand(opts?: DbSeedOptions): Command {
         });
       }
 
-      return { ok: true, output: result.output };
+      if (ctx.format === 'json') return { ok: true as const, output: result.output };
+      const out = result.output ? `\n${result.output}` : '';
+      return `db seed: ok${out}\n`;
     },
   };
 }

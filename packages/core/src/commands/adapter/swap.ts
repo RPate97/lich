@@ -94,7 +94,9 @@ export function makeAdapterSwapCommand(opts?: AdapterSwapOptions): Command {
       await mkdir(dirname(adapterPath), { recursive: true });
       await writeFile(adapterPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
 
-      return { ok: true, slot, name, path: adapterPath };
+      const result = { ok: true as const, slot, name, path: adapterPath };
+      if (ctx.format === 'json') return result;
+      return `swapped ${slot} -> ${name}\nwrote ${adapterPath}\n`;
     },
   };
 }

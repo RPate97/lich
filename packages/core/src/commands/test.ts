@@ -60,23 +60,22 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
         );
       }
 
+      let testResult;
       if (sub === 'unit') {
         // Unit tests are pure — they don't need DATABASE_URL/API_URL, and
         // forcing a running stack would be hostile to local TDD.
-        return await vitest.run({
+        testResult = await vitest.run({
           cwd: ctx.cwd,
           pattern: 'tests/unit/**',
           env: {},
         });
-      }
-
-      if (sub === 'integration') {
+      } else if (sub === 'integration') {
         const { databaseUrl, apiUrl } = await resolveStackEnv(ctx, getRegistry, {
           needPostgres: true,
           needApi: true,
           needWeb: false,
         });
-        return await vitest.run({
+        testResult = await vitest.run({
           cwd: ctx.cwd,
           pattern: 'tests/integration/**',
           env: {
@@ -84,15 +83,13 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
             API_URL: apiUrl!,
           },
         });
-      }
-
-      if (sub === 'e2e') {
+      } else if (sub === 'e2e') {
         const { apiUrl, webUrl } = await resolveStackEnv(ctx, getRegistry, {
           needPostgres: false,
           needApi: true,
           needWeb: true,
         });
-        return await playwright.run({
+        testResult = await playwright.run({
           cwd: ctx.cwd,
           pattern: 'tests/e2e/**',
           env: {
@@ -100,13 +97,20 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
             WEB_URL: webUrl!,
           },
         });
+      } else {
+        throw new CLIError(
+          'CONFIG_INVALID',
+          `unknown test subcommand: ${sub}`,
+          USAGE_HINT,
+        );
       }
 
-      throw new CLIError(
-        'CONFIG_INVALID',
-        `unknown test subcommand: ${sub}`,
-        USAGE_HINT,
+      if (ctx.format === 'json') return testResult;
+      const lines: string[] = [];
+      lines.push(
+        `test ${sub}: ${testResult.passed} passed, ${testResult.failed} failed, ${testResult.skipped} skipped (${testResult.total} total, ${testResult.durationMs}ms)`,
       );
+      return lines.join('\n') + '\n';
     },
   };
 }

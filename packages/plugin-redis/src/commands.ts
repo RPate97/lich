@@ -29,8 +29,8 @@ export const redisPingCommand: Command = {
     if (format === 'json') {
       return { ok: reply === 'PONG', host, port, reply };
     }
-    // text-format: just the reply, like `redis-cli ping`.
-    return reply;
+    // pretty-format (LEV-168 default): just the reply, like `redis-cli ping`.
+    return reply + '\n';
   },
 };
 

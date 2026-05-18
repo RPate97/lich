@@ -97,7 +97,14 @@ export function makeStacksStopAllCommand(getRegistry: () => Registry): Command {
         stoppedOrphans.push(cname);
       }
 
-      return { stoppedFromRegistry, stoppedOrphans };
+      const result = { stoppedFromRegistry, stoppedOrphans };
+      if (ctx.format === 'json') return result;
+      const lines: string[] = [];
+      lines.push(`stopped ${stoppedFromRegistry.length} registered stack(s)`);
+      for (const k of stoppedFromRegistry) lines.push(`  ${k}`);
+      lines.push(`stopped ${stoppedOrphans.length} orphan container(s)`);
+      for (const c of stoppedOrphans) lines.push(`  ${c}`);
+      return lines.join('\n') + '\n';
     },
   };
 }

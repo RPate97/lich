@@ -86,9 +86,10 @@ function detectPlaywrightChromium(): boolean {
 }
 
 describe('bin: plan-10 commands end-to-end', () => {
+  // LEV-168 — pretty is now the default; pass `--json` to parse stdout.
   describe('ui add', () => {
     it('dry-run returns the shadcn command without executing', () => {
-      const res = run(['ui', 'add', 'button', '--dry-run']);
+      const res = run(['ui', 'add', 'button', '--dry-run', '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.executed).toBe(false);
@@ -99,14 +100,14 @@ describe('bin: plan-10 commands end-to-end', () => {
     });
 
     it('--app-dir overrides the default apps/web', () => {
-      const res = run(['ui', 'add', 'button', '--dry-run', '--app-dir', 'apps/admin']);
+      const res = run(['ui', 'add', 'button', '--dry-run', '--app-dir', 'apps/admin', '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.cwd).toContain('apps/admin');
     });
 
     it('errors when no component arg is given', () => {
-      const res = run(['ui', 'add']);
+      const res = run(['ui', 'add', '--json']);
       expect(res.status).toBe(1);
       const err = JSON.parse(res.stderr);
       expect(err.message).toMatch(/component name/i);
@@ -115,7 +116,7 @@ describe('bin: plan-10 commands end-to-end', () => {
 
   describe('ui list', () => {
     it('returns empty installed array when apps/web does not exist', () => {
-      const res = run(['ui', 'list']);
+      const res = run(['ui', 'list', '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.installed).toEqual([]);
@@ -131,7 +132,7 @@ describe('bin: plan-10 commands end-to-end', () => {
       writeFileSync(baselinePath, solidPng(width, height, [255, 0, 0, 255]));
       writeFileSync(currentPath, solidPng(width, height, [0, 0, 255, 255]));
 
-      const res = run(['visual', 'diff', baselinePath, currentPath]);
+      const res = run(['visual', 'diff', baselinePath, currentPath, '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.totalPixels).toBe(width * height);
@@ -146,7 +147,7 @@ describe('bin: plan-10 commands end-to-end', () => {
       writeFileSync(baselinePath, red);
       writeFileSync(currentPath, red);
 
-      const res = run(['visual', 'diff', baselinePath, currentPath]);
+      const res = run(['visual', 'diff', baselinePath, currentPath, '--json']);
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.diffPixels).toBe(0);
@@ -194,6 +195,7 @@ describeIfBrowser('bin: plan-10 screenshot (real chromium)', () => {
       '400',
       '--height',
       '200',
+      '--json',
     ]);
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout);

@@ -32,16 +32,44 @@ export function makeAdapterListCommand(opts?: AdapterListOptions): Command {
   return {
     name: 'adapter.list',
     describe: 'List every registered adapter with its slot and active state',
-    async run() {
+    async run(ctx) {
       const registry = getRegistry();
       const adapters: AdapterListEntry[] = registry.list().map((entry) => ({
         slot: entry.slot,
         name: entry.name,
         active: isActive(registry, entry.slot, entry.name),
       }));
-      return { adapters };
+      if (ctx.format === 'json') return { adapters };
+      return renderAdapterListPretty(adapters);
     },
   };
+}
+
+/**
+ * Render the adapter list as a fixed-width 3-column table — `SLOT NAME ACTIVE`
+ * — sorted by slot then name so columns line up and successive invocations
+ * produce deterministic output. The active flag renders as `yes` / `no` for
+ * readability rather than a raw boolean.
+ */
+export function renderAdapterListPretty(adapters: AdapterListEntry[]): string {
+  if (adapters.length === 0) return 'no adapters registered\n';
+  const rows = [...adapters].sort((a, b) => {
+    const slotCmp = a.slot.localeCompare(b.slot);
+    if (slotCmp !== 0) return slotCmp;
+    return a.name.localeCompare(b.name);
+  });
+  const headers = { slot: 'SLOT', name: 'NAME', active: 'ACTIVE' };
+  const widthSlot = Math.max(headers.slot.length, ...rows.map((r) => r.slot.length));
+  const widthName = Math.max(headers.name.length, ...rows.map((r) => r.name.length));
+  const lines: string[] = [];
+  lines.push(
+    `${headers.slot.padEnd(widthSlot)}  ${headers.name.padEnd(widthName)}  ${headers.active}`,
+  );
+  for (const r of rows) {
+    const active = r.active ? 'yes' : 'no';
+    lines.push(`${r.slot.padEnd(widthSlot)}  ${r.name.padEnd(widthName)}  ${active}`);
+  }
+  return lines.join('\n') + '\n';
 }
 
 /**

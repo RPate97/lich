@@ -318,7 +318,20 @@ export function makeCurlCommand(opts: MakeCurlCommandOptions): Command {
         headers: respHeaders,
         body: parsedBody,
       };
-      return result;
+      if (ctx.format === 'json') return result;
+      // Pretty: status line + headers block + body. Body is JSON-stringified
+      // (indented) when it's an object so the output stays diff-friendly;
+      // strings pass through unchanged so an HTML response renders as HTML.
+      const lines: string[] = [];
+      lines.push(`HTTP ${result.status}`);
+      for (const [k, v] of Object.entries(result.headers)) lines.push(`${k}: ${v}`);
+      lines.push('');
+      if (typeof result.body === 'string') {
+        lines.push(result.body);
+      } else {
+        lines.push(JSON.stringify(result.body, null, 2));
+      }
+      return lines.join('\n') + '\n';
     },
   };
 }

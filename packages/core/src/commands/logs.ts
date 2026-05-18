@@ -52,14 +52,18 @@ export function makeLogsCommand(getRegistry: () => Registry): Command {
       const stackCtx = await resolveStackContext(ctx.cwd);
       const entry = await getRegistry().get(stackCtx.worktreeKey);
       if (!entry) {
-        return { lines: [], note: 'no stack running for this worktree (run `levelzero dev`)' };
+        const note = 'no stack running for this worktree (run `levelzero dev`)';
+        if (ctx.format === 'json') return { lines: [], note };
+        return note + '\n';
       }
       const logDir = join(stackCtx.worktreePath, entry.logDir);
       let files: string[];
       try {
         files = (await readdir(logDir)).filter((f) => f.endsWith('.jsonl'));
       } catch {
-        return { lines: [], note: `log dir does not exist yet: ${logDir}` };
+        const note = `log dir does not exist yet: ${logDir}`;
+        if (ctx.format === 'json') return { lines: [], note };
+        return note + '\n';
       }
 
       const serviceFilter = getServiceFilter(ctx.flags);
@@ -88,7 +92,14 @@ export function makeLogsCommand(getRegistry: () => Registry): Command {
       }
       all.sort((a, b) => a.ts.localeCompare(b.ts));
       const result = tail !== null ? all.slice(-tail) : all;
-      return { lines: result };
+      if (ctx.format === 'json') return { lines: result };
+      if (result.length === 0) return 'no log lines matched\n';
+      const out: string[] = [];
+      for (const r of result) {
+        const lvl = r.level.toUpperCase();
+        out.push(`${r.ts} [${lvl}] ${r.service} ${r.message}`);
+      }
+      return out.join('\n') + '\n';
     },
   };
 }

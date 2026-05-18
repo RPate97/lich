@@ -40,7 +40,14 @@ export function makeUiAddCommand(opts?: UiAddOptions): Command {
         component,
         { dryRun },
       );
-      return result;
+      if (ctx.format === 'json') return result;
+      const lines: string[] = [];
+      const verb = result.executed ? 'Added' : 'Would add';
+      lines.push(`${verb} component "${component}"`);
+      lines.push(`  command: ${result.command}`);
+      lines.push(`  cwd:     ${result.cwd}`);
+      if (result.output) lines.push(result.output);
+      return lines.join('\n') + '\n';
     },
   };
 }

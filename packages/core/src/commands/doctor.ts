@@ -144,7 +144,21 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       }
 
       const ok = checks.every((c) => c.status !== 'error');
-      return { ok, checks };
+      const out = { ok, checks };
+      if (ctx.format === 'json') return out;
+      const lines: string[] = [];
+      for (const c of checks) {
+        const marker = c.status === 'ok' ? '[OK]' : c.status === 'skipped' ? '[SKIP]' : '[FAIL]';
+        const detail = c.message
+          ? ` — ${c.message}`
+          : c.version
+            ? ` (${c.version})`
+            : '';
+        lines.push(`${marker} ${c.id}${detail}`);
+      }
+      lines.push('');
+      lines.push(ok ? 'doctor: ok' : 'doctor: failed');
+      return lines.join('\n') + '\n';
     },
   };
 }

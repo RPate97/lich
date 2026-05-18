@@ -14,11 +14,15 @@ interface RunCtxOpts {
 }
 
 function ctx(opts?: RunCtxOpts) {
+  const flags = opts?.flags ?? {};
+  // LEV-168 — pretty is the new default; the CLI's `pickFormat` sets
+  // `format: 'json'` only when `--json` is on the invocation, so mirror
+  // that here when the test set `flags.json = true`.
   return {
     cwd: '/tmp/lz-env-resolve-test',
-    format: 'pretty' as const,
+    format: (flags['json'] ? 'json' : 'pretty') as 'json' | 'pretty',
     args: opts?.args ?? [],
-    flags: opts?.flags ?? {},
+    flags,
   };
 }
 

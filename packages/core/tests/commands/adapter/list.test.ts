@@ -6,6 +6,7 @@ import { AdapterRegistry, getBuiltinAdapters } from '../../../src/adapters/regis
 import {
   makeAdapterListCommand,
   adapterListCommand,
+  renderAdapterListPretty,
 } from '../../../src/commands/adapter/list';
 
 interface ListEntry {
@@ -75,5 +76,43 @@ describe('levelzero adapter list', () => {
     const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
     const result = (await cmd.run(ctx(tmp))) as { adapters: ListEntry[] };
     expect(result.adapters).toEqual([]);
+  });
+
+  // LEV-168 — pretty is now the default and renders a 3-column table.
+  describe('pretty rendering (LEV-168)', () => {
+    it('renders a "no adapters registered" message when the registry is empty', () => {
+      expect(renderAdapterListPretty([])).toBe('no adapters registered\n');
+    });
+
+    it('renders a SLOT NAME ACTIVE table sorted by slot then name', () => {
+      const out = renderAdapterListPretty([
+        { slot: 'orm', name: 'prisma', active: true },
+        { slot: 'auth', name: 'better-auth', active: true },
+        { slot: 'orm', name: 'drizzle', active: false },
+      ]);
+      const lines = out.trimEnd().split('\n');
+      expect(lines[0]).toMatch(/^SLOT\s+NAME\s+ACTIVE$/);
+      expect(lines[1]).toMatch(/^auth\s+better-auth\s+yes$/);
+      expect(lines[2]).toMatch(/^orm\s+drizzle\s+no$/);
+      expect(lines[3]).toMatch(/^orm\s+prisma\s+yes$/);
+    });
+
+    it('returns the pretty string when the command runs with format=pretty', async () => {
+      const registry = new AdapterRegistry();
+      registry.register({ slot: 'orm', name: 'prisma', impl: {} });
+      registry.setActive('orm', 'prisma');
+      const cmd = makeAdapterListCommand({ getRegistry: () => registry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      const result = await cmd.run({
+        cwd: tmp,
+        format: 'pretty',
+        args: [],
+        flags: {},
+      });
+      expect(typeof result).toBe('string');
+      expect(result as string).toContain('SLOT');
+      expect(result as string).toContain('orm');
+      expect(result as string).toContain('prisma');
+    });
   });
 });

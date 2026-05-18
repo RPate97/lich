@@ -134,13 +134,49 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
       if (schemaMode) {
         // --schema takes precedence if (somehow) both flags are set; this
         // matches the docs which describe the two modes as alternatives.
-        return await adapter.inspectSchema(ormCtx);
+        const schema = await adapter.inspectSchema(ormCtx);
+        if (ctx.format === 'json') return schema;
+        return renderSchemaPretty(schema);
       }
 
       // rowsMode is true here (we validated above); table is set.
-      return await adapter.inspectTable(ormCtx, table as string, limit);
+      const rows = await adapter.inspectTable(ormCtx, table as string, limit);
+      if (ctx.format === 'json') return rows;
+      return renderRowsPretty(table as string, rows);
     },
   };
+}
+
+interface InspectSchema {
+  tables: Record<string, { columns: Array<{ name: string; type: string; nullable: boolean }> }>;
+}
+
+function renderSchemaPretty(schema: InspectSchema): string {
+  const tables = Object.keys(schema.tables).sort();
+  if (tables.length === 0) return 'no tables\n';
+  const lines: string[] = [];
+  for (const t of tables) {
+    lines.push(`# ${t}`);
+    const cols = schema.tables[t]?.columns ?? [];
+    for (const c of cols) {
+      const nullable = c.nullable ? '?' : '';
+      lines.push(`  ${c.name}: ${c.type}${nullable}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function renderRowsPretty(table: string, rows: Array<Record<string, unknown>>): string {
+  if (rows.length === 0) return `# ${table}\n(no rows)\n`;
+  const lines: string[] = [`# ${table} (${rows.length} row(s))`];
+  for (const r of rows) {
+    const entries = Object.entries(r)
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join('  ');
+    lines.push(entries);
+  }
+  return lines.join('\n') + '\n';
 }
 
 export const dbInspectCommand: Command = makeDbInspectCommand();

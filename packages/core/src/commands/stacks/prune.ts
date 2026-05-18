@@ -15,7 +15,7 @@ export function makeStacksPruneCommand(getRegistry: () => Registry): Command {
   return {
     name: 'stacks.prune',
     describe: 'Remove registry entries for worktrees that no longer exist on disk',
-    async run() {
+    async run(ctx) {
       const reg = getRegistry();
       const entries = await reg.list();
       const pruned: string[] = [];
@@ -25,7 +25,11 @@ export function makeStacksPruneCommand(getRegistry: () => Registry): Command {
           pruned.push(key);
         }
       }
-      return { pruned };
+      if (ctx.format === 'json') return { pruned };
+      if (pruned.length === 0) return 'no stale stacks to prune\n';
+      const lines: string[] = [`pruned ${pruned.length} stale stack(s):`];
+      for (const key of pruned) lines.push(`  ${key}`);
+      return lines.join('\n') + '\n';
     },
   };
 }

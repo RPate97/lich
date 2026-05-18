@@ -15,9 +15,13 @@ interface RunCtxOpts {
 function ctx(opts?: RunCtxOpts) {
   const flags: Record<string, string | boolean> = {};
   if (opts?.json) flags['json'] = true;
+  // LEV-168 — the CLI's `pickFormat` sets `format: 'json'` whenever
+  // `--json` is on the invocation. The env command branches on
+  // `ctx.format === 'json'`, so the test context has to mirror what
+  // `runCli` would produce.
   return {
     cwd: '/tmp/lz-env-list-test',
-    format: 'pretty' as const,
+    format: (opts?.json ? 'json' : 'pretty') as 'json' | 'pretty',
     args: [] as string[],
     flags,
   };

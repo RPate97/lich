@@ -20,11 +20,21 @@ export function makeCheckCommand(opts?: CheckOptions): Command {
       const pass = results.filter((r) => r.result.status === 'pass').length;
       const fail = results.filter((r) => r.result.status === 'fail').length;
       const skip = results.filter((r) => r.result.status === 'skip').length;
-      return {
+      const out = {
         ok: fail === 0,
         summary: { pass, fail, skip, total: results.length },
         results,
       };
+      if (ctx.format === 'json') return out;
+      const lines: string[] = [];
+      for (const r of results) {
+        const status = r.result.status.toUpperCase();
+        const msg = r.result.message ? ` — ${r.result.message}` : '';
+        lines.push(`[${status}] ${r.id}${msg}`);
+      }
+      lines.push('');
+      lines.push(`summary: ${pass} pass, ${fail} fail, ${skip} skip (${results.length} total)`);
+      return lines.join('\n') + '\n';
     },
   };
 }
