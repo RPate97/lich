@@ -2,6 +2,9 @@
   "name": "levelzero",
   "private": true,
   "packageManager": "bun@1.2.23",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "workspaces": ["packages/*"],
   "devDependencies": {
     "@changesets/cli": "2.31.0",

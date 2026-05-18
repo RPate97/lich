@@ -86,6 +86,21 @@ describe('levelzero doctor', () => {
     expect(result.checks.find((c: any) => c.id === 'registry').status).toBe('ok');
   });
 
+  it('includes a node-version check reporting the running Node (LEV-114)', async () => {
+    setNextSpawn({
+      exitCode: 0,
+      stdout: JSON.stringify({ version: 'v2.30.3' }),
+    });
+    const cmd = makeDoctorCommand(() => reg);
+    const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+    const node = result.checks.find((c: any) => c.id === 'node');
+    expect(node).toBeDefined();
+    // The test runner itself runs on the floor (Node 20+) or vitest wouldn't
+    // have started — so we expect a pass here, with the version surfaced.
+    expect(node.status).toBe('ok');
+    expect(node.version).toBe(process.versions.node);
+  });
+
   it('reports project ok when inside a valid project', async () => {
     setNextSpawn({
       exitCode: 0,

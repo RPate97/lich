@@ -9,6 +9,9 @@
   "bin": {
     "create-stack-v0": "./src/bin.ts"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "files": [
     "src"
   ],

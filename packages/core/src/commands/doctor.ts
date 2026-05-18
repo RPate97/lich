@@ -2,6 +2,11 @@ import { spawn } from 'node:child_process';
 import { access, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { loadConfig } from '../config';
+import {
+  MIN_NODE_VERSION,
+  formatNodeVersionError,
+  isNodeVersionAtLeast,
+} from '../node-version';
 import type { Registry } from '../registry';
 import { findWorktree } from '../worktree';
 import type { Command } from './types';
@@ -110,6 +115,23 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
     describe: 'Diagnose the local environment',
     async run(ctx) {
       const checks: Check[] = [];
+
+      // LEV-114 — Node version. In practice this won't ever fail inside `bin.ts`
+      // because the startup gate would have exited the process already, but we
+      // surface it here too so `levelzero doctor` reports an explicit "node:
+      // ok (20.20.2)" line alongside the other infra checks, and so anyone
+      // invoking the `doctor` command programmatically (e.g. tests, embedded
+      // runners) still gets a structured signal.
+      const nodeVersion = process.versions.node;
+      if (isNodeVersionAtLeast(nodeVersion, MIN_NODE_VERSION)) {
+        checks.push({ id: 'node', status: 'ok', version: nodeVersion });
+      } else {
+        checks.push({
+          id: 'node',
+          status: 'error',
+          message: formatNodeVersionError(nodeVersion),
+        });
+      }
 
       // Registry directory writable
       const regPath = (getRegistry() as any).path as string;

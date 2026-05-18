@@ -19,6 +19,9 @@
   "bin": {
     "levelzero": "./src/bin.ts"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

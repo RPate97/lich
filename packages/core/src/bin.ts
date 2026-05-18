@@ -1,4 +1,13 @@
 #!/usr/bin/env bun
+// LEV-114 — Gate the runtime on Node ≥ 20 BEFORE any other import resolves.
+// `node:timers/promises` and friends are pulled in transitively by the imports
+// below; on an older runtime they throw `ERR_UNKNOWN_BUILTIN_MODULE` with no
+// hint about the real fix. Keeping this import + call ordered first (and the
+// `node-version` module itself dependency-free) means a too-old Node hits a
+// clear, actionable error instead of a cryptic stack trace.
+import { checkNodeVersion } from './node-version';
+checkNodeVersion();
+
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './cli';
