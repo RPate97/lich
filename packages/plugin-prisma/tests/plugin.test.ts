@@ -40,6 +40,11 @@ function makeRecordingApi(): {
     addRule: vi.fn(),
     addGenerator: vi.fn(),
     addSkillsDir: vi.fn(),
+    // Added by LEV-178 (`EnvSource` types + namespace-scoped `PluginAPI`).
+    // Prisma doesn't publish env sources today; mocks satisfy the typed
+    // surface so the recorder still constructs.
+    addEnvSource: vi.fn(),
+    addBulkEnvSource: vi.fn(),
   };
   return { api, adapters, actives, commands };
 }

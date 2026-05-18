@@ -140,10 +140,10 @@ export interface PluginContext {
  * existing plugins authored against the unparameterized `Plugin` continue to
  * compile without changes.
  *
- *  - `namespace` is optional for backwards compatibility. LEV-179 will teach
- *    the loader to derive a default namespace from `name`
- *    (strip `@scope/plugin-` prefix); LEV-178 uses the simpler
- *    `plugin.namespace ?? plugin.name` fallback.
+ *  - `namespace` is optional for backwards compatibility. LEV-179 teaches
+ *    the loader to auto-derive a default by stripping the standard
+ *    `@scope/plugin-` prefix from `name` (e.g. `@levelzero/plugin-postgres`
+ *    → `'postgres'`). Explicit `namespace` always wins.
  *  - `__sources` is a phantom — never read at runtime, only typechecked so
  *    `defineConfig()` can infer source keys from the plugin tuple.
  *
@@ -152,10 +152,26 @@ export interface PluginContext {
  */
 export interface Plugin<NS extends string = string, S extends SourceManifest = SourceManifest> {
   name: string;
-  /** Optional in LEV-178; LEV-179 makes the loader auto-derive this from `name`. */
+  /**
+   * Optional. When omitted the loader auto-derives a default from `name`
+   * (strips the standard `@scope/plugin-` prefix); explicit value always wins.
+   */
   namespace?: NS;
   version: string;
   /** Phantom carrying the source manifest for `defineConfig()` type inference. */
   __sources?: S;
   register(api: PluginAPI<NS>, ctx: PluginContext): void | Promise<void>;
 }
+
+/**
+ * A zero-argument factory returning a `Plugin` (or a Promise of one). Plan 16
+ * (LEV-179) introduces this shape so plugins can be authored as parameterised
+ * factories (`export default function postgres(opts) { return { ... } }`) and
+ * still be wired into a config as `plugins: [postgres()]`.
+ *
+ * The factory may be async — the loader awaits the returned value either way.
+ */
+export type PluginFactory<
+  NS extends string = string,
+  S extends SourceManifest = SourceManifest,
+> = () => Plugin<NS, S> | Promise<Plugin<NS, S>>;

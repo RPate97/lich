@@ -39,6 +39,11 @@ function makeRecordingApi(): {
     addRule: vi.fn(),
     addGenerator: vi.fn(),
     addSkillsDir: vi.fn(),
+    // Added by LEV-178 (`EnvSource` types + namespace-scoped `PluginAPI`).
+    // Postgres will publish env sources here in LEV-186/187; for now the
+    // mocks just satisfy the typed surface.
+    addEnvSource: vi.fn(),
+    addBulkEnvSource: vi.fn(),
   };
   return { api, services, volumes, networks };
 }

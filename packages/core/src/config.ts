@@ -1,5 +1,5 @@
 import type { AdapterSlot } from './adapters/registry';
-import type { Plugin } from './plugins/types';
+import type { Plugin, PluginFactory } from './plugins/types';
 
 /**
  * Entry in the `plugins` array of `levelzero.config.ts`. May be:
@@ -8,14 +8,19 @@ import type { Plugin } from './plugins/types';
  *    dynamic-import at boot
  *  - a thenable (typically `import('@levelzero/plugin-x')`) resolving to a
  *    `Plugin` or a CJS-style `{ default: Plugin }` module namespace
+ *  - a zero-argument factory (sync or async) returning a `Plugin` — the shape
+ *    Plan 16 / LEV-179 standardizes on so plugins can take options at
+ *    construction time (`plugins: [postgres({ port: 5433 })]`)
  *
  * The parser only validates the *shape* of each entry — it does not resolve
- * Promises or import strings. That work happens later in the plugin loader.
+ * Promises, invoke factories, or import strings. That work happens later in
+ * the plugin loader.
  */
 export type PluginEntry =
   | Plugin
   | string
-  | Promise<Plugin | { default: Plugin }>;
+  | Promise<Plugin | { default: Plugin }>
+  | PluginFactory;
 
 /**
  * Set of valid adapter slot names. Kept here (rather than imported as a value
@@ -104,10 +109,11 @@ function validatePlugins(plugins: unknown, configPath: string): asserts plugins 
   for (let i = 0; i < plugins.length; i++) {
     const entry: unknown = plugins[i];
     if (typeof entry === 'string') continue;
+    if (typeof entry === 'function') continue; // PluginFactory — invoked at boot
     if (isThenable(entry)) continue;
     if (isPluginObject(entry)) continue;
     throw new Error(
-      `levelzero config at ${configPath}: \`plugins[${i}]\` must be a string specifier, a Plugin object ({ name, version, register }), or a Promise resolving to one (got ${describe(entry)})`,
+      `levelzero config at ${configPath}: \`plugins[${i}]\` must be a string specifier, a Plugin object ({ name, version, register }), a factory function returning a Plugin, or a Promise resolving to one (got ${describe(entry)})`,
     );
   }
 }

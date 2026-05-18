@@ -1,6 +1,7 @@
 import { isAbsolute, resolve, basename, extname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import type { PluginEntry } from '../config';
 import type { Plugin, PluginContext } from './types';
 
 /**
@@ -124,4 +125,106 @@ function isPlugin(value: unknown): value is Plugin {
  */
 function toCamelCase(input: string): string {
   return input.replace(/[-_]([a-zA-Z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
+ * Normalize a single `PluginEntry` into a `Plugin`. The shapes accepted here
+ * are the same union `LevelzeroConfig['plugins']` permits — see `PluginEntry`
+ * in `config.ts`. The dispatch order is:
+ *
+ *  - **string** — handed to {@link loadPlugin} (npm specifier or relative path
+ *    resolved against `ctx.projectRoot`).
+ *  - **function** — invoked with no arguments (Plan 16 / LEV-179 factory
+ *    pattern); the result may be a `Plugin` or a `Promise<Plugin>`.
+ *  - **Promise** — awaited; if the resolved value is a CJS-style namespace
+ *    (`{ default: Plugin }`), the `default` is unwrapped.
+ *  - **Plugin** — returned as-is.
+ *
+ * After the entry resolves to a `Plugin`, the loader fills in a default
+ * `namespace` when none was set (see {@link deriveNamespace}).
+ *
+ * Failures surface with the entry's array index embedded in the message so
+ * config authors can locate the offender. String entries surface their own
+ * (specifier-bearing) errors from {@link loadPlugin}.
+ */
+export async function resolvePluginEntry(
+  entry: PluginEntry,
+  ctx: PluginContext,
+  index: number,
+): Promise<Plugin> {
+  let resolved: unknown;
+
+  if (typeof entry === 'string') {
+    resolved = await loadPlugin(entry, ctx);
+  } else if (typeof entry === 'function') {
+    let factoryResult: unknown;
+    try {
+      factoryResult = (entry as () => unknown)();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`plugins[${index}]: factory function threw: ${reason}`, { cause: err });
+    }
+    resolved = isThenable(factoryResult) ? await factoryResult : factoryResult;
+  } else if (isThenable(entry)) {
+    resolved = await entry;
+  } else {
+    resolved = entry;
+  }
+
+  // Unwrap a CJS-style `{ default: Plugin }` namespace if we got one.
+  if (
+    !isPlugin(resolved) &&
+    typeof resolved === 'object' &&
+    resolved !== null &&
+    isPlugin((resolved as { default?: unknown }).default)
+  ) {
+    resolved = (resolved as { default: Plugin }).default;
+  }
+
+  if (!isPlugin(resolved)) {
+    throw new Error(
+      `plugins[${index}]: entry did not resolve to a valid Plugin (expected an object with string \`name\`, string \`version\`, and function \`register\`)`,
+    );
+  }
+
+  return ensureNamespace(resolved);
+}
+
+/**
+ * Derive a short namespace from a plugin package name by stripping the
+ * standard `@scope/plugin-` (or bare `plugin-`) prefix. Examples:
+ *
+ *   `@levelzero/plugin-postgres` → `postgres`
+ *   `@my-org/plugin-foo`         → `foo`
+ *   `plugin-bar`                 → `bar`
+ *   `whatever-else`              → `whatever-else` (no prefix match → identity)
+ *
+ * Used by the loader to populate `plugin.namespace` when the plugin didn't set
+ * one explicitly. Plugin authors who want a different namespace should set
+ * `namespace: '...'` on their `Plugin` object — explicit always wins.
+ */
+export function deriveNamespace(packageName: string): string {
+  const match = packageName.match(/(?:^|\/)plugin-([a-z0-9-]+)$/i);
+  return match ? match[1]! : packageName;
+}
+
+/**
+ * Mutating helper: fill in `plugin.namespace` from `plugin.name` when missing,
+ * using {@link deriveNamespace}. Returns the same plugin instance so callers
+ * can chain. Idempotent — a plugin that already declared a namespace is
+ * returned untouched.
+ */
+function ensureNamespace(plugin: Plugin): Plugin {
+  if (!plugin.namespace) {
+    (plugin as { namespace?: string }).namespace = deriveNamespace(plugin.name);
+  }
+  return plugin;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
 }
