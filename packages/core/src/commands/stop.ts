@@ -9,6 +9,12 @@ import { makeComposeRunner, type ComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, OwnedService, Service } from '../services/types';
+import type { EnvSourceRegistry } from '../env/registry';
+import {
+  resolveEnvForService,
+  type BulkResolutionCache,
+  type EnvInjectionMap,
+} from '../env/resolve';
 
 export interface StopOptions {
   /** Service provider; defaults to getBuiltinServices. Tests can inject custom lists. */
@@ -35,10 +41,39 @@ export interface StopOptions {
    * future-proofs any per-owned teardown logic.
    */
   getPluginOwnedServices?: () => OwnedService[];
+  /**
+   * Boot-collected EnvSource registry (Plan 16 / LEV-181). Accepted for parity
+   * with {@link DevOptions} so the dispatcher passes the same wiring through.
+   * `stop` re-emits the compose file with the same resolved env `dev` used so
+   * `docker compose down` operates on a byte-identical file. Without it the
+   * env layer is skipped — sufficient for teardown since compose only needs
+   * the project name to match.
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
+  /** See {@link DevOptions.getEnvInjection}. */
+  getEnvInjection?: () => EnvInjectionMap | undefined;
+  /** See {@link DevOptions.getResolvedBulkSources}. */
+  getResolvedBulkSources?: () => BulkResolutionCache;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
   return list.filter((s): s is DockerService => s.kind === 'docker');
+}
+
+/**
+ * Merged compose service-name set. Mirrors {@link buildComposeBundle}'s merge
+ * order: legacy DockerService entries first (service name === `s.name`), then
+ * plugin-contributed `addComposeService` entries. De-duplicated so a same-name
+ * collision contributes one entry to the resolution loop above.
+ */
+function collectComposeServiceNames(
+  docker: DockerService[],
+  pluginCompose: PluginComposeContributions,
+): string[] {
+  const seen = new Set<string>();
+  for (const s of docker) seen.add(s.name);
+  for (const name of Object.keys(pluginCompose.services)) seen.add(name);
+  return [...seen];
 }
 
 export function makeStopCommand(
@@ -48,6 +83,9 @@ export function makeStopCommand(
   const getServices = opts?.getServices ?? getBuiltinServices;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
   const getPluginCompose = opts?.getPluginCompose;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
+  const getEnvInjection = opts?.getEnvInjection;
+  const getResolvedBulkSources = opts?.getResolvedBulkSources;
 
   return {
     name: 'stop',
@@ -72,7 +110,38 @@ export function makeStopCommand(
           volumes: {},
           networks: {},
         };
-        const bundle = buildComposeBundle(stackCtx, docker, entry.ports, pluginCompose);
+
+        // LEV-182 — re-resolve container-context env per compose service so
+        // the regenerated compose file matches what `dev` produced. Compose
+        // teardown only matches on project name, so the env round-trip is
+        // belt-and-suspenders, but it keeps the on-disk file consistent for
+        // operators inspecting `.levelzero/<key>/docker-compose.yml`.
+        const envRegistry = getEnvSourceRegistry?.();
+        const envInjection = getEnvInjection?.();
+        const bulkCache = getResolvedBulkSources?.();
+        const composeServiceNames = collectComposeServiceNames(docker, pluginCompose);
+        const composeServiceEnv: Record<string, Record<string, string>> = {};
+        if (envRegistry) {
+          for (const name of composeServiceNames) {
+            composeServiceEnv[name] = await resolveEnvForService({
+              serviceName: name,
+              context: 'container',
+              registry: envRegistry,
+              injection: envInjection,
+              ports: entry.ports,
+              projectRoot: stackCtx.worktreePath,
+              worktreeKey: stackCtx.worktreeKey,
+              bulkCache,
+            });
+          }
+        }
+        const bundle = buildComposeBundle(
+          stackCtx,
+          docker,
+          entry.ports,
+          pluginCompose,
+          composeServiceEnv,
+        );
         await writeComposeFile(bundle);
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);

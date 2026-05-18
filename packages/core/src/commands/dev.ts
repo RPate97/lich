@@ -15,6 +15,12 @@ import type { Command } from './types';
 import type { DockerService, OwnedService, PortMap, Service } from '../services/types';
 import { findWorktree } from '../worktree';
 import { loadConfig } from '../config';
+import type { EnvSourceRegistry } from '../env/registry';
+import {
+  resolveEnvForService,
+  type BulkResolutionCache,
+  type EnvInjectionMap,
+} from '../env/resolve';
 import {
   portlessAdapter,
   noopPortlessAdapter,
@@ -55,6 +61,35 @@ export interface DevOptions {
    * directly typically don't exercise this path).
    */
   getPluginOwnedServices?: () => OwnedService[];
+  /**
+   * Boot-collected EnvSource registry (Plan 16 / LEV-181). When provided,
+   * `dev` runs the per-service resolver (LEV-182) for every compose-managed
+   * and owned service: container-context for compose services (writes into
+   * each service's `environment:` block, fixing the pre-existing "compose
+   * services receive no env" bug) and host-context for owned services
+   * (passed into the spawned process env). Without this getter the resolver
+   * is skipped and behavior matches the pre-LEV-182 legacy path — used by
+   * tests that don't exercise the EnvSource layer.
+   */
+  getEnvSourceRegistry?: () => EnvSourceRegistry;
+  /**
+   * Project config's `envInjection` map (Plan 16). Paired with
+   * `getEnvSourceRegistry`: explicit `ENV_VAR -> sourceKey` entries plus
+   * `importAll: [namespace, ...]` bulk pass-throughs. Loaded by the
+   * dispatcher from `LevelzeroConfig.envInjection`. Defaults to undefined
+   * (empty injection — every service receives no Plan-16 vars but the
+   * legacy `envContributions` paths still run).
+   */
+  getEnvInjection?: () => EnvInjectionMap | undefined;
+  /**
+   * Optional shared bulk-resolution cache (Plan 16 / LEV-181). When the
+   * dispatcher provides one, every per-service `resolveEnvForService` call in
+   * a single CLI invocation reuses the same map — each registered bulk
+   * source's `resolve()` runs at most once even across compose + owned
+   * services. Omit in tests; the resolver creates an ephemeral cache per
+   * call.
+   */
+  getResolvedBulkSources?: () => BulkResolutionCache;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -100,6 +135,24 @@ function deriveEnv(services: Service[], ports: PortMap): Record<string, string> 
   const env: Record<string, string> = {};
   for (const s of services) Object.assign(env, s.envContributions(ports));
   return env;
+}
+
+/**
+ * Compose service-name set used for per-service env resolution (LEV-182). Same
+ * merge order as {@link buildComposeBundle}: legacy `DockerService` entries
+ * first (converted via `dockerServiceToCompose` — name === `s.name`), then
+ * plugin-contributed `addComposeService` entries on top. De-duplicates so a
+ * plugin that re-declares a same-named docker service contributes one entry
+ * (matching the bundle's last-write-wins behavior).
+ */
+function collectComposeServiceNames(
+  docker: DockerService[],
+  pluginCompose: PluginComposeContributions,
+): string[] {
+  const seen = new Set<string>();
+  for (const s of docker) seen.add(s.name);
+  for (const name of Object.keys(pluginCompose.services)) seen.add(name);
+  return [...seen];
 }
 
 function reservedPortsFromOtherStacks(
@@ -155,6 +208,9 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
   const getPluginCompose = opts?.getPluginCompose;
   const getPluginOwnedServices = opts?.getPluginOwnedServices;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
+  const getEnvInjection = opts?.getEnvInjection;
+  const getResolvedBulkSources = opts?.getResolvedBulkSources;
 
   return {
     name: 'dev',
@@ -216,7 +272,42 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           ports = await allocatePorts(portNames, { reservedPorts: reserved });
         }
 
-        const bundle = buildComposeBundle(stackCtx, docker, ports, pluginCompose);
+        // Plan 16 / LEV-182 — resolve container-context env for every compose
+        // service before emitting the YAML so the resolved values land inside
+        // each service's `environment:` block. The "compose services receive
+        // no env" pre-existing bug is fixed here: previously
+        // `buildComposeBundle` had no env input at all and `dockerServiceToCompose`
+        // dropped the legacy `envContributions` on the floor for the
+        // container side. Now every name in the merged compose service set
+        // (legacy docker services + plugin `addComposeService` contributions)
+        // gets its resolved env injected.
+        const envRegistry = getEnvSourceRegistry?.();
+        const envInjection = getEnvInjection?.();
+        const bulkCache = getResolvedBulkSources?.();
+        const composeServiceNames = collectComposeServiceNames(docker, pluginCompose);
+        const composeServiceEnv: Record<string, Record<string, string>> = {};
+        if (envRegistry) {
+          for (const name of composeServiceNames) {
+            composeServiceEnv[name] = await resolveEnvForService({
+              serviceName: name,
+              context: 'container',
+              registry: envRegistry,
+              injection: envInjection,
+              ports,
+              projectRoot: stackCtx.worktreePath,
+              worktreeKey: stackCtx.worktreeKey,
+              bulkCache,
+            });
+          }
+        }
+
+        const bundle = buildComposeBundle(
+          stackCtx,
+          docker,
+          ports,
+          pluginCompose,
+          composeServiceEnv,
+        );
         await writeComposeFile(bundle);
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);
@@ -284,6 +375,33 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       const dockerEnv = deriveEnv(docker, entry.ports);
       const allEnv = deriveEnv(allServices, entry.ports);
 
+      // Plan 16 / LEV-182 — resolve host-context env per owned service. Same
+      // resolver as the compose path, different `context` so named sources
+      // pick `host()` and bulk resolvers see `consumerContext: 'host'`. The
+      // runner layers this on top of the inherited `process.env` + the shared
+      // `dockerEnv` (legacy cross-service vars like the derived DATABASE_URL).
+      // Reuses the shared bulk cache so each registered bulk source's
+      // `resolve()` runs at most once even across compose + owned services
+      // in a single `dev` invocation.
+      const envRegistry = getEnvSourceRegistry?.();
+      const envInjection = getEnvInjection?.();
+      const bulkCache = getResolvedBulkSources?.();
+      const ownedServiceEnv: Record<string, Record<string, string>> = {};
+      if (envRegistry) {
+        for (const s of owned) {
+          ownedServiceEnv[s.name] = await resolveEnvForService({
+            serviceName: s.name,
+            context: 'host',
+            registry: envRegistry,
+            injection: envInjection,
+            ports: entry.ports,
+            projectRoot: stackCtx.worktreePath,
+            worktreeKey: stackCtx.worktreeKey,
+            bulkCache,
+          });
+        }
+      }
+
       const serviceSummaries = docker.map((s) => ({
         name: s.name,
         container: containerName(stackCtx.worktreeKey, s.name),
@@ -308,7 +426,14 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       if (owned.length === 0) return baseResult;
 
       const logDir = join(stackCtx.worktreePath, entry.logDir);
-      const runner = await runOwnedServices(owned, stackCtx, entry.ports, dockerEnv, { logDir });
+      const runner = await runOwnedServices(
+        owned,
+        stackCtx,
+        entry.ports,
+        dockerEnv,
+        { logDir },
+        ownedServiceEnv,
+      );
       const { exitCodes } = await runner.done;
 
       return {

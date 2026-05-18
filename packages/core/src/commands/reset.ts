@@ -10,9 +10,27 @@ import type { Registry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, Service } from '../services/types';
 import { makeDevCommand, type DevOptions } from './dev';
+import { resolveEnvForService } from '../env/resolve';
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
   return list.filter((s): s is DockerService => s.kind === 'docker');
+}
+
+/**
+ * Merged compose service-name set — same shape as in `stop.ts`. Keeps the
+ * resolver loop here independent of the dev/stop helpers; LEV-182 keeps
+ * dev/stop/reset self-contained because each command's lifecycle is different
+ * (reset → down -v → dev → up) and a shared helper would force one of them to
+ * import a sibling.
+ */
+function collectComposeServiceNames(
+  docker: DockerService[],
+  pluginCompose: PluginComposeContributions,
+): string[] {
+  const seen = new Set<string>();
+  for (const s of docker) seen.add(s.name);
+  for (const name of Object.keys(pluginCompose.services)) seen.add(name);
+  return [...seen];
 }
 
 /**
@@ -32,6 +50,9 @@ export function makeResetCommand(
   const getServices = opts?.getServices ?? getBuiltinServices;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
   const getPluginCompose = opts?.getPluginCompose;
+  const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
+  const getEnvInjection = opts?.getEnvInjection;
+  const getResolvedBulkSources = opts?.getResolvedBulkSources;
 
   return {
     name: 'reset',
@@ -54,8 +75,38 @@ export function makeResetCommand(
         // choices, but compose only needs `name:` to identify the project
         // for teardown — so emit a services-less bundle. Any orphan
         // containers from a prior run will still be removed by name.
+        //
+        // LEV-182 — when an entry is present we also re-resolve container-
+        // context env so the emitted compose file matches what dev produced.
+        // The services-less fallback skips resolution (no services to
+        // resolve env for).
+        const envRegistry = getEnvSourceRegistry?.();
+        const envInjection = getEnvInjection?.();
+        const bulkCache = getResolvedBulkSources?.();
+        const composeServiceEnv: Record<string, Record<string, string>> = {};
+        if (entry && envRegistry) {
+          const composeServiceNames = collectComposeServiceNames(services, pluginCompose);
+          for (const name of composeServiceNames) {
+            composeServiceEnv[name] = await resolveEnvForService({
+              serviceName: name,
+              context: 'container',
+              registry: envRegistry,
+              injection: envInjection,
+              ports: entry.ports,
+              projectRoot: stackCtx.worktreePath,
+              worktreeKey: stackCtx.worktreeKey,
+              bulkCache,
+            });
+          }
+        }
         const bundle = entry
-          ? buildComposeBundle(stackCtx, services, entry.ports, pluginCompose)
+          ? buildComposeBundle(
+              stackCtx,
+              services,
+              entry.ports,
+              pluginCompose,
+              composeServiceEnv,
+            )
           : buildComposeBundle(stackCtx, [], {}, pluginCompose);
         await writeComposeFile(bundle);
 

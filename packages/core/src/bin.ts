@@ -143,9 +143,25 @@ export async function buildDispatchRegistry(
   const getReg = () => new Registry(registryPath);
   const getPluginCompose = () => boot.compose;
   const getPluginOwnedServices = () => boot.ownedServices;
-  cli.register(makeDevCommand(getReg, { getPluginCompose, getPluginOwnedServices }));
-  cli.register(makeStopCommand(getReg, { getPluginCompose, getPluginOwnedServices }));
-  cli.register(makeResetCommand(getReg, { getPluginCompose, getPluginOwnedServices }));
+  // Plan 16 / LEV-182 — thread the env-source registry, the consumer's
+  // `envInjection` config, and the shared bulk-resolution cache through to
+  // every command that emits a compose file or spawns owned processes. The
+  // resolver picks `host()` vs `container()` per-service based on which
+  // command path is in scope; all three commands re-use the same registry
+  // collected during `bootPlugins`.
+  const getEnvSourceRegistry = () => boot.envSources;
+  const getEnvInjection = () => config.envInjection;
+  const getResolvedBulkSources = () => boot.resolvedBulkSources;
+  const sharedOpts = {
+    getPluginCompose,
+    getPluginOwnedServices,
+    getEnvSourceRegistry,
+    getEnvInjection,
+    getResolvedBulkSources,
+  };
+  cli.register(makeDevCommand(getReg, sharedOpts));
+  cli.register(makeStopCommand(getReg, sharedOpts));
+  cli.register(makeResetCommand(getReg, sharedOpts));
 
   // Merge plugin-contributed adapters into the built-in registry so
   // `adapter list` reflects the full registered surface. Built-ins are
