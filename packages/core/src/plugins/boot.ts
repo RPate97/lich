@@ -5,6 +5,7 @@ import type { Command } from '../commands/types';
 import type { Rule } from '../check/types';
 import type { OwnedService } from '../services/types';
 import type { LevelzeroConfig, PluginEntry } from '../config';
+import { promoteEnvContributions } from '../env/compat';
 import { EnvSourceRegistry } from '../env/registry';
 import type { BulkEnvSource, EnvSource } from '../env/types';
 import { resolvePluginEntry } from './loader';
@@ -134,7 +135,7 @@ export async function bootPlugins(
   // by stripping the `@scope/plugin-` prefix from `plugin.name`.
   const makeApi = (plugin: Plugin): PluginAPI => {
     const namespace = plugin.namespace ?? plugin.name;
-    return {
+    const api: PluginAPI = {
       addAdapter(slot: AdapterSlot, name: string, impl: unknown): void {
         adapters.register({ slot, name, impl });
       },
@@ -146,6 +147,15 @@ export async function bootPlugins(
       },
       addOwnedService(service: OwnedService): void {
         ownedServices.push(service);
+        // LEV-185 backwards-compat shim: legacy plugins still ship an
+        // `envContributions(ports) => Record<string, string>` function on
+        // their `OwnedService`. Promote those keys to named EnvSources under
+        // the plugin's namespace so the new resolver picks them up. Plugins
+        // migrated to explicit `api.addEnvSource()` calls (LEV-187) keep
+        // working — duplicate registrations are silently skipped inside the
+        // shim. Once every v0 plugin is migrated, the shim sees no
+        // `envContributions` functions and stays silent; Plan 17 removes it.
+        promoteEnvContributions(service, api, plugin.name);
       },
       addComposeService(name: string, def: ComposeServiceDef): void {
         compose.services[name] = def;
@@ -182,6 +192,7 @@ export async function bootPlugins(
         });
       },
     };
+    return api;
   };
 
   const entries = config.plugins ?? [];
