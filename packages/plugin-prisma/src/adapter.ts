@@ -364,4 +364,39 @@ export const prismaAdapter: ORMAdapter = {
       );
     }
   },
+
+  /**
+   * Hand out a `PrismaClient` instance bound to `ctx.databaseUrl`.
+   *
+   * Used by composable consumers (LEV-173 — `plugin-better-auth` passes
+   * this client to `@better-auth/prisma-adapter` so auth writes land in
+   * the project's actual database instead of a separate sqlite file).
+   *
+   * `@prisma/client` is imported lazily: it isn't pinned as a runtime
+   * dependency of this package (the consumer's own `prisma generate` is
+   * what produces the client in their `node_modules`), and we don't want
+   * `getClient` to crash the rest of the adapter when prisma isn't
+   * installed. The lazy require + try/catch surfaces an actionable
+   * "install @prisma/client" hint instead.
+   */
+  async getClient(ctx: ORMContext): Promise<unknown> {
+    let PrismaClient: new (opts: { datasourceUrl: string }) => unknown;
+    try {
+      // Use createRequire so we resolve against the consumer's node_modules
+      // tree, not ours — the generated client lives wherever the user ran
+      // `prisma generate`. The lazy import keeps this off the cold path.
+      const mod = localRequire('@prisma/client') as {
+        PrismaClient: new (opts: { datasourceUrl: string }) => unknown;
+      };
+      PrismaClient = mod.PrismaClient;
+    } catch (err) {
+      throw new Error(
+        `prismaAdapter.getClient: failed to load @prisma/client. ` +
+          `Install it as a dependency in your project and run \`prisma generate\`. ` +
+          `(${(err as Error).message})`,
+        { cause: err },
+      );
+    }
+    return new PrismaClient({ datasourceUrl: normalizeDatabaseUrlForPg(ctx.databaseUrl) });
+  },
 };

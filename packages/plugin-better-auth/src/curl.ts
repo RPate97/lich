@@ -41,11 +41,17 @@ export interface MakeCurlCommandOptions {
   /** AdapterRegistry provider used when `getAuthAdapter` is omitted. */
   getAdapterRegistry?: () => AdapterRegistry;
   /**
-   * Resolver for the AuthContext (databaseUrl/secret) when `--as` is used.
-   * Defaults to an in-memory sqlite context — fine for tests, but production
-   * usage will inject a context that points at the real auth database.
+   * Resolver for the AuthContext (databaseUrl/secret/getActiveOrm) when
+   * `--as` is used. Receives the `CommandContext` so it can resolve runtime
+   * inputs (current stack's database URL, active ORM, …). Defaults to an
+   * in-memory sqlite context — fine for tests, but production usage
+   * (see `plugin-better-auth/src/index.ts`) injects a context that wires
+   * `getActiveOrm` and a real database URL.
+   *
+   * May be async because resolving `databaseUrl` typically involves an
+   * EnvSource lookup (LEV-171 pattern).
    */
-  getAuthCtx?: () => AuthContext;
+  getAuthCtx?: (cmdCtx: CommandContext) => AuthContext | Promise<AuthContext>;
   /** Override `fetch` for tests; defaults to the global fetch. */
   fetch?: typeof fetch;
 }
@@ -265,7 +271,7 @@ export function makeCurlCommand(opts: MakeCurlCommandOptions): Command {
       // any deviation here would silently break auth.
       if (parsed.asEmail) {
         const adapter = getAuthAdapter();
-        const authCtx = getAuthCtx();
+        const authCtx = await getAuthCtx(ctx);
         // getOrCreateUser is also called by loginAs, but invoking it
         // explicitly first matches the documented behavior and surfaces
         // user-creation failures separately from session-signing ones.
@@ -351,7 +357,10 @@ function defaultRegistryPath(): string {
 
 function defaultAuthCtx(): AuthContext {
   // In-memory SQLite is fine for ephemeral CLI sessions during plan 06/11.
-  // A later plan will wire this to the running stack's auth database.
+  // After LEV-173 the better-auth plugin injects a richer context that wires
+  // `getActiveOrm` so authenticated requests land in the active ORM's
+  // database — see `plugin-better-auth/src/index.ts`. This default exists
+  // only as a fallback for callers that bypass the plugin's wiring.
   return {
     databaseUrl: 'sqlite::memory:',
     secret: process.env['LEVELZERO_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa',

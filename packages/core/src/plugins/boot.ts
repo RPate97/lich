@@ -1,4 +1,5 @@
 import { AdapterRegistry, type AdapterSlot } from '../adapters/registry';
+import type { ORMAdapter } from '../adapters/orm/types';
 import { CommandRegistry } from '../commands/registry';
 import { RuleRegistry } from '../check/registry';
 import type { Command } from '../commands/types';
@@ -144,10 +145,24 @@ export async function bootPlugins(
   // closure captures `envSources` by reference, so identity is stable for the
   // duration of the boot and the same registry instance is returned to every
   // caller.
+  // LEV-173: expose the active ORM via a getter so auth plugins (and other
+  // composable consumers) can pick it up at command-run time. We resolve
+  // lazily — calling `adapters.getActive('orm')` here would throw because
+  // no plugin has registered yet, but the closure runs after every
+  // `register()` call has had a chance to populate the registry. Returns
+  // `undefined` when no ORM plugin is loaded so callers can branch cleanly
+  // without try/catching on the registry's strict-throw semantics.
   const ctx: PluginContext = {
     projectRoot,
     config,
     getEnvSourceRegistry: () => envSources,
+    getActiveOrm: () => {
+      try {
+        return adapters.getActive('orm') as ORMAdapter;
+      } catch {
+        return undefined;
+      }
+    },
   };
 
   // Plugin-name list per namespace, populated as plugins register. The

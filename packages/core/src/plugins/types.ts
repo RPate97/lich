@@ -1,4 +1,5 @@
 import type { AdapterSlot } from '../adapters/registry';
+import type { ORMAdapter } from '../adapters/orm/types';
 import type { Command } from '../commands/types';
 import type { OwnedService } from '../services/types';
 import type { Rule } from '../check/types';
@@ -144,6 +145,24 @@ export interface PluginContext {
    * cross-plugin composition continue to typecheck.
    */
   getEnvSourceRegistry?: () => EnvSourceRegistry;
+  /**
+   * Returns the active `ORMAdapter` from the boot-scoped AdapterRegistry, or
+   * `undefined` when no ORM plugin is loaded. Parallels
+   * `getEnvSourceRegistry` (LEV-171): plugins capture this closure during
+   * `register()` and resolve it at command-run time so the dispatch sees
+   * whichever ORM was activated by the time the plugin order finished
+   * (a later plugin can `setActiveAdapter('orm', ...)` and the lookup
+   * picks that up).
+   *
+   * Optional so synthetic `PluginContext` literals in tests continue to
+   * typecheck without wiring the registry.
+   *
+   * Introduced in LEV-173 so `plugin-better-auth` can compose with the
+   * active ORM instead of hardcoding `better-sqlite3`. See
+   * `docs/superpowers/plans/2026-05-17-levelzero-14-plugin-architecture.md`
+   * "Composability principle" for the why.
+   */
+  getActiveOrm?: () => ORMAdapter | undefined;
 }
 
 /**

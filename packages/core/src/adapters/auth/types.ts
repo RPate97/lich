@@ -19,14 +19,20 @@
  * not bring their own database driver to the party. See
  * `docs/EXTENSION.md` "Composability rule".
  *
- * TODO(LEV-122 / composability): `AuthContext.databaseUrl` exists because
- * the current better-auth impl needs a connection string. A fully
- * composability-correct impl would consume the active ORM via context
- * lookup and never see a raw URL. When LEV-122 lands, `AuthContext` should
- * shrink to `{ secret }` (or be replaced by a capability lookup entirely)
- * so that `Clerk`-style impls — which have no DB of their own — can honor
- * the contract without inventing a fake URL.
+ * LEV-173 wired this for real: `AuthContext.getActiveOrm` returns the
+ * active `ORMAdapter` (populated by the host from
+ * `bootResult.adapters.getActive('orm')`). The better-auth impl uses this
+ * to construct a Better Auth Prisma adapter that writes to the SAME tables
+ * the rest of the app reads from — no separate sqlite file. Managed-identity
+ * impls (Clerk, WorkOS) are free to ignore the field entirely.
+ *
+ * `databaseUrl` survives the transition for backwards-compat: existing
+ * sqlite-mode tests still pass it directly and the better-auth impl uses
+ * it as a NODE_ENV=test fallback when no ORM is active. Future tickets can
+ * narrow this further once every caller plumbs `getActiveOrm`.
  */
+
+import type { ORMAdapter } from '../orm/types';
 
 export interface AuthContext {
   /**
@@ -35,12 +41,30 @@ export interface AuthContext {
    * NOTE: this field is a known composability leak (see LEV-122). It works
    * for DB-backed auth impls (BetterAuth, Lucia) but managed-identity impls
    * (Clerk, WorkOS) have no DB connection of their own — they would have
-   * to ignore this field. Future work moves this lookup behind the active
-   * ORM / capability registry.
+   * to ignore this field. LEV-173 made the better-auth impl prefer
+   * `getActiveOrm` when available and only fall back to this URL under
+   * NODE_ENV=test; the field stays for the fallback path until every
+   * call site provides a real ORM.
    */
   databaseUrl: string;
   /** Shared signing secret used to mint/verify session references. */
   secret: string;
+  /**
+   * Returns the active `ORMAdapter` from the host's AdapterRegistry, or
+   * `undefined` when no ORM plugin is loaded. Optional so synthetic
+   * `AuthContext` literals in tests / out-of-tree callers continue to
+   * typecheck without plumbing.
+   *
+   * Auth impls that need a database (BetterAuth, Lucia, …) should consult
+   * this first and dispatch on `orm.name` to pick the right downstream
+   * adapter shape (e.g. `@better-auth/prisma-adapter` vs
+   * `@better-auth/drizzle-adapter`). Managed-identity impls (Clerk,
+   * WorkOS) can ignore it.
+   *
+   * The host populates this from `bootResult.adapters.getActive('orm')`
+   * — see `plugin-better-auth/src/index.ts` for the wiring.
+   */
+  getActiveOrm?: () => ORMAdapter | undefined;
 }
 
 export interface CreateUserInput {

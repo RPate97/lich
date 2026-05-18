@@ -72,10 +72,12 @@
       "version": "0.1.0",
       "dependencies": {
         "better-auth": "^1.6.11",
-        "better-sqlite3": "^12.10.0",
       },
       "devDependencies": {
+        "@levelzero/plugin-prisma": "workspace:*",
+        "@prisma/client": "^5.18.0",
         "@types/node": "^20.12.0",
+        "better-sqlite3": "^12.10.0",
         "bun-types": "^1.2.0",
         "typescript": "^5.4.0",
         "vitest": "^1.6.0",

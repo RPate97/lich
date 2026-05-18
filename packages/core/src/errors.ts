@@ -10,7 +10,12 @@ export type CLIErrorCode =
   // existing CLIError formatting picks them up unchanged.
   | 'ENV_SOURCE_MISSING'
   | 'NAMESPACE_COLLISION'
-  | 'BULK_RESOLVE_FAILED';
+  | 'BULK_RESOLVE_FAILED'
+  // Plan 15 / LEV-173 — auth-slot impls that need a database surface this
+  // when no ORM plugin is loaded (and the test-mode fallback isn't active).
+  // Raised by `@levelzero/plugin-better-auth`'s adapter when
+  // `AuthContext.getActiveOrm()` returns undefined.
+  | 'AUTH_NO_ORM';
 
 export interface CLIErrorOptions {
   hint?: string;
