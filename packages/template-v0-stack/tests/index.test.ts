@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statSync, existsSync } from 'node:fs';
+import { statSync, existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { templateRoot } from '../src/index';
 
@@ -30,6 +30,60 @@ describe('@levelzero/template-v0-stack', () => {
     for (const rel of expected) {
       const p = join(templateRoot, rel);
       expect(existsSync(p), `expected ${rel} to exist under templateRoot`).toBe(true);
+    }
+  });
+
+  it('levelzero.config.ts imports and declares every v0 plugin', () => {
+    // The scaffolded config is what makes a fresh `levelzero init` project
+    // actually runnable — after Tier 5 the core ships zero built-in adapters,
+    // so every slot has to be filled by a plugin declared here. Guard against
+    // accidental drops/renames with a literal string match on each import line
+    // plus the `plugins:` array entry.
+    const config = readFileSync(join(templateRoot, 'levelzero.config.ts'), 'utf8');
+    const expectedPlugins: Array<{ binding: string; pkg: string }> = [
+      { binding: 'postgres', pkg: '@levelzero/plugin-postgres' },
+      { binding: 'prisma', pkg: '@levelzero/plugin-prisma' },
+      { binding: 'hono', pkg: '@levelzero/plugin-hono' },
+      { binding: 'typedClient', pkg: '@levelzero/plugin-typed-client' },
+      { binding: 'betterAuth', pkg: '@levelzero/plugin-better-auth' },
+      { binding: 'shadcn', pkg: '@levelzero/plugin-shadcn' },
+      { binding: 'next', pkg: '@levelzero/plugin-next' },
+      { binding: 'vitest', pkg: '@levelzero/plugin-vitest' },
+      { binding: 'playwright', pkg: '@levelzero/plugin-playwright' },
+    ];
+    for (const { binding, pkg } of expectedPlugins) {
+      expect(
+        config.includes(`import ${binding} from '${pkg}';`),
+        `expected import line for ${pkg} (as ${binding})`,
+      ).toBe(true);
+      expect(
+        new RegExp(`\\b${binding}\\b`).test(config.split('plugins:')[1] ?? ''),
+        `expected ${binding} to appear in the plugins array`,
+      ).toBe(true);
+    }
+  });
+
+  it('package.json declares every v0 plugin as a dependency', () => {
+    // Mirror of the config test: every plugin imported by the scaffolded
+    // levelzero.config.ts must also be a dependency so `bun install` resolves
+    // it (via workspace symlink in the monorepo, via npm in a real project).
+    const pkg = JSON.parse(
+      readFileSync(join(templateRoot, 'package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+    const deps = pkg.dependencies ?? {};
+    const expected = [
+      '@levelzero/plugin-postgres',
+      '@levelzero/plugin-prisma',
+      '@levelzero/plugin-hono',
+      '@levelzero/plugin-typed-client',
+      '@levelzero/plugin-better-auth',
+      '@levelzero/plugin-shadcn',
+      '@levelzero/plugin-next',
+      '@levelzero/plugin-vitest',
+      '@levelzero/plugin-playwright',
+    ];
+    for (const name of expected) {
+      expect(deps[name], `expected ${name} in dependencies`).toBeTruthy();
     }
   });
 
