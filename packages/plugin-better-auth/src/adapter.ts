@@ -301,10 +301,12 @@ async function ensureMigrated(instance: BetterAuthInstance): Promise<any> {
     const { runMigrations } = await getMigrations(instance.options);
     await runMigrations();
   } catch (err: unknown) {
-    // Better Auth's CREATE TABLE statements don't use IF NOT EXISTS, so a
-    // second runMigrations call (or one racing with the test's own pre-migration)
-    // fails. Swallow "already exists" errors — the schema is in the desired
-    // state either way.
+    // LEV-118: Better Auth's CREATE TABLE statements don't use IF NOT EXISTS,
+    // so a second runMigrations call (or one racing with the test's own
+    // pre-migration) fails with "table already exists". Swallow that specific
+    // failure — the schema is in the desired state either way. Other errors
+    // (connectivity, type mismatch, …) still propagate. Regression coverage
+    // lives in `tests/adapter.migrations.test.ts`.
     const e = err as { code?: string; message?: string };
     if (e.code !== 'SQLITE_ERROR' || !/already exists/i.test(e.message ?? '')) {
       throw err;
