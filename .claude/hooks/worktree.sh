@@ -25,6 +25,22 @@ WT_BRANCH="wt/$SLUG"
 mkdir -p "$WT_ROOT"
 cd "$PROJECT_DIR"
 
+# link_and_verify <source> <dest>
+# Creates a symlink at <dest> pointing to <source>, then asserts the
+# resulting link both exists (-L) and resolves to a real path (-e).
+# On failure logs to stderr and returns non-zero so the caller can fall
+# back to a real install. Idempotent: if <dest> already exists as a
+# valid symlink to <source> the function is a no-op.
+link_and_verify() {
+  local src="$1" dest="$2"
+  ln -sfn "$src" "$dest"
+  if [[ -L "$dest" && -e "$dest" ]]; then
+    return 0
+  fi
+  echo "worktree hook: symlink verification failed for $dest -> $src" >&2
+  return 1
+}
+
 case "$EVENT" in
   WorktreeCreate)
     # Reuse an existing worktree+branch if both already exist.
@@ -37,24 +53,54 @@ case "$EVENT" in
     else
       git worktree add "$WT_DIR" -b "$WT_BRANCH" >&2
     fi
+
     # Symlink shared node_modules to avoid per-worktree reinstall.
     # Workspace root + each package's node_modules (post LEV-140 monorepo split).
+    # Each link is verified after creation; on verification failure we fall
+    # back to a real `bun install` inside the worktree so the agent still
+    # gets a working tree (slower, but correct beats silent breakage).
+    root_ok=1
     if [[ -d "$PROJECT_DIR/node_modules" && ! -e "$WT_DIR/node_modules" ]]; then
-      ln -sfn "$PROJECT_DIR/node_modules" "$WT_DIR/node_modules"
+      if ! link_and_verify "$PROJECT_DIR/node_modules" "$WT_DIR/node_modules"; then
+        root_ok=0
+      fi
     fi
+
     if [[ -d "$PROJECT_DIR/packages" ]]; then
       for pkg_dir in "$PROJECT_DIR/packages"/*/; do
         pkg_name=$(basename "$pkg_dir")
         if [[ -d "$pkg_dir/node_modules" && ! -e "$WT_DIR/packages/$pkg_name/node_modules" ]]; then
           mkdir -p "$WT_DIR/packages/$pkg_name"
-          ln -sfn "$pkg_dir/node_modules" "$WT_DIR/packages/$pkg_name/node_modules"
+          if ! link_and_verify "$pkg_dir/node_modules" "$WT_DIR/packages/$pkg_name/node_modules"; then
+            # A bad per-package link is enough to force a full reinstall —
+            # the workspace is consistent or it isn't.
+            root_ok=0
+          fi
         fi
       done
     fi
+
     # Legacy tools/cli/node_modules symlink (only if both paths exist in this worktree)
     if [[ -d "$PROJECT_DIR/tools/cli/node_modules" && -d "$WT_DIR/tools/cli" && ! -e "$WT_DIR/tools/cli/node_modules" ]]; then
-      ln -sfn "$PROJECT_DIR/tools/cli/node_modules" "$WT_DIR/tools/cli/node_modules"
+      link_and_verify "$PROJECT_DIR/tools/cli/node_modules" "$WT_DIR/tools/cli/node_modules" || root_ok=0
     fi
+
+    # Fallback: if any symlink verification failed, drop the bad links and
+    # do a real install inside the worktree. Slower but the worktree ends
+    # up usable instead of subtly broken.
+    if [[ "$root_ok" -eq 0 ]]; then
+      echo "worktree hook: falling back to 'bun install' inside $WT_DIR" >&2
+      # Strip broken symlinks so bun install can populate fresh.
+      [[ -L "$WT_DIR/node_modules" ]] && rm -f "$WT_DIR/node_modules"
+      if [[ -d "$WT_DIR/packages" ]]; then
+        for pkg_dir in "$WT_DIR/packages"/*/; do
+          [[ -L "$pkg_dir/node_modules" ]] && rm -f "$pkg_dir/node_modules"
+        done
+      fi
+      (cd "$WT_DIR" && bun install >&2) || \
+        echo "worktree hook: 'bun install' fallback also failed; worktree may be broken" >&2
+    fi
+
     echo "$WT_DIR"
     ;;
 

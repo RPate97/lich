@@ -27,3 +27,40 @@ The pilot moved two small files with no command surface. The nine Tier 5 plugins
 - **Plugins that contribute commands.** Use `api.addCommand(cmd)` inside `register`. The command's factory needs whatever registry/services it currently closes over in `bin.ts` — pass them through `PluginContext` rather than reaching back into core. Add a `commands` section to the smoke test (invoke the contributed command in the tmpdir and assert exit 0).
 - **Plugins with multiple adapter impls across slots.** A single `register()` can call `addAdapter` for several slots; that's fine, but pick the default `setActiveAdapter` per slot carefully — extracted plugins should preserve whatever the pre-extraction default was so existing consumers don't observe a behavior change.
 - **Shared helpers.** Anything currently imported by both the extracted code and remaining core code (e.g. a logger, a path helper) must either stay in core and be exported from the barrel, or move into a third internal package. Do not duplicate it into the plugin — that's how drift starts.
+
+## Troubleshooting
+
+### Stale or broken `@levelzero/*` resolutions in an agent worktree
+
+Symptoms (any of):
+
+- `tsc` reports "module not found" for `@levelzero/*` workspace packages.
+- An agent imports a plugin and gets behaviour from a *prior* agent's worktree (the symlink under `node_modules/@levelzero/<pkg>` was a relative path into a sibling worktree that has since been removed or rewritten).
+- `bun install` complains about missing packages in a freshly-created worktree.
+
+Quick recovery (run from inside the worktree):
+
+```bash
+# Drop the stale workspace links and let bun rebuild them in place.
+rm -rf node_modules/@levelzero && bun install
+```
+
+If the workspace root symlink itself is bad (`ls -la node_modules` shows a broken arrow), do a full reset:
+
+```bash
+rm node_modules packages/*/node_modules 2>/dev/null
+bun install
+```
+
+### Pre-flight check
+
+To assert symlink health before doing real work — useful as the first step in a long task or after any worktree mutation — run:
+
+```bash
+bash .claude/hooks/worktree-verify.sh        # checks the current worktree
+bash .claude/hooks/worktree-verify.sh <dir>  # checks a specific worktree
+```
+
+Exit 0 with `OK` means every shared-node_modules link is either absent, a real install, or a valid symlink into the project root. Exit 1 prints a one-line diagnosis (`MISSING`, `BROKEN`, or `STALE`) suitable for `tail -1` consumption.
+
+The `WorktreeCreate` hook (`.claude/hooks/worktree.sh`) verifies each symlink at creation time and falls back to a real `bun install` if any link is unhealthy, so a freshly-created worktree should always start `OK`. The verifier is for catching drift that happens *after* creation — e.g. when a sibling worktree is removed and the link target disappears.
