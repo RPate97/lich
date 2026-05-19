@@ -93,7 +93,11 @@ describe('bin: --help / -h / help / no-args', () => {
     expect(res.status).toBe(0);
     const out = res.stdout;
     expect(out).not.toContain('screenshot');
-    expect(out).not.toContain('gen client');
+    // LEV-124: `gen client` was retired in favor of the unified `gen` top-
+    // level command. Outside a project (no plugins booted) the dispatcher
+    // omits the `gen` registration entirely, so it shouldn't appear in
+    // help either.
+    expect(out).not.toMatch(/^\s+gen\s+/m);
     expect(out).not.toContain('visual diff');
     // `test` is matched as a whole word — the literal `test` substring
     // shows up incidentally in other strings (`coverage` mentions "test

@@ -101,17 +101,18 @@ describe('runCli', () => {
   });
 
   // Post-LEV-165 (Plan 14 Tier 7 cutover): `screenshot`, `visual.diff`,
-  // `gen.client`, and `test` all dropped their inline seeds in
-  // `buildCommands`. They only register through `buildDispatchRegistry`
-  // after `bootPlugins()` wires up the merged adapter registry — without a
-  // project + plugins they're UNKNOWN_COMMAND, matching the curl pattern
-  // above. Project-level dispatch is exercised by tests/bin.plan{07,09,10}.
-  it('does not register screenshot/visual.diff/gen.client/test in buildCommands (plugin-only after LEV-165)', async () => {
+  // `gen` (LEV-124 — replaced the one-off `gen client`), and `test` all
+  // dropped their inline seeds in `buildCommands`. They only register
+  // through `buildDispatchRegistry` after `bootPlugins()` wires up the
+  // merged adapter / generator registries — without a project + plugins
+  // they're UNKNOWN_COMMAND, matching the curl pattern above. Project-level
+  // dispatch is exercised by tests/bin.plan{07,09,10}.
+  it('does not register screenshot/visual.diff/gen/test in buildCommands (plugin-only after LEV-165)', async () => {
     const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
     for (const argv of [
       ['screenshot', '--json'],
       ['visual', 'diff', '--json'],
-      ['gen', 'client', '--json'],
+      ['gen', '--json'],
       ['test', '--json'],
     ]) {
       const out = await runCli(argv, reg, { cwd: '/' });

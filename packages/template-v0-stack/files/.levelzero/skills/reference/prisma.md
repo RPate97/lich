@@ -17,7 +17,8 @@ schema and let the tooling regenerate.
   SQL migration and apply it to the running dev database. This wraps
   `prisma migrate dev` and the appropriate codegen step.
 - After the migration succeeds the Prisma client is regenerated automatically.
-  If you need to regenerate manually, run `levelzero gen client`.
+  If you need to regenerate manually, run `levelzero gen --only prisma`
+  (or `levelzero gen` to also run the typed API client generator).
 - Inspect the live schema with `levelzero db inspect`. Use this to verify a
   migration applied the columns and indexes you expected before committing.
 

@@ -4,8 +4,10 @@ import { makeDbMigrateCommand } from './commands/migrate';
 import { makeDbMigrationNewCommand } from './commands/migration-new';
 import { makeDbSeedCommand } from './commands/seed';
 import { makeDbInspectCommand } from './commands/inspect';
+import { prismaGenerator } from './generator';
 
 export { prismaAdapter } from './adapter';
+export { prismaGenerator, makePrismaGenerator } from './generator';
 export {
   makeDbMigrateCommand,
   dbMigrateCommand,
@@ -86,6 +88,12 @@ export default function prisma(opts: PrismaOptions = {}): Plugin<
     register(api: PluginAPI<'prisma'>, ctx: PluginContext): void {
       api.addAdapter('orm', 'prisma', prismaAdapter);
       api.setActiveAdapter('orm', 'prisma');
+
+      // LEV-124: contribute the `prisma` generator so `levelzero gen` can
+      // drive `prisma generate` alongside other plugin-contributed
+      // generators from a single invocation. Skips cleanly when the project
+      // has no `prisma/schema.prisma` (see `./generator.ts`).
+      api.addGenerator(prismaGenerator);
 
       // Capture the EnvSource registry getter once; the closure resolves to
       // the same mutable registry object at command-run time. The

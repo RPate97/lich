@@ -31,8 +31,9 @@ export interface HonoOptions {
  * Contributes:
  *
  *   - `hono` impl under the `backend` adapter slot (activated by default so
- *     existing consumers — route-coverage rule, gen client, etc. — keep
- *     observing the same behavior they did before the extraction);
+ *     existing consumers — route-coverage rule, the api-client generator
+ *     dispatched by `levelzero gen`, etc. — keep observing the same
+ *     behavior they did before the extraction);
  *   - the `api` owned service (`apps/api`, `bun run dev`), promoted out of
  *     `packages/core/src/services/builtins.ts` so the plugin that provides
  *     the backend adapter also owns the service definition (LEV-187); and

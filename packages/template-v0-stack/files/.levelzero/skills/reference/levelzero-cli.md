@@ -68,9 +68,19 @@ into the worktree first. Run any command with `--help` for flags.
 
 ## Code generation
 
-- `levelzero gen.client [--api-dir apps/api] [--out ...]` — emit a fully
-  typed client for the Hono API so `apps/web` can call it with end-to-end
-  type inference.
+- `levelzero gen` — run every registered generator (plugin-extensible).
+  Each plugin contributes its own generators via `api.addGenerator(...)`;
+  the command iterates them and reports per-id status.
+- `levelzero gen --only <id1,id2,...>` — restrict the run to specific
+  generator ids. Example: `levelzero gen --only api-client` only emits
+  the typed API client; `levelzero gen --only prisma` only runs
+  `prisma generate`.
+- `levelzero gen --list` — show the registered generators with their
+  one-line descriptions.
+- `levelzero gen [--api-dir apps/api] [--out ...]` — unknown flags pass
+  through to each generator. The `api-client` generator (from
+  `@levelzero/plugin-typed-client`) understands `--api-dir` and `--out`;
+  other generators ignore them.
 
 ## Quality and review
 

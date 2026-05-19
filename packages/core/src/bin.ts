@@ -29,7 +29,7 @@ import { makeCheckCommand } from './commands/check';
 import { getBuiltinRules } from './check/builtins';
 import { makeScreenshotCommand } from './commands/screenshot';
 import { makeVisualDiffCommand } from './commands/visual';
-import { makeGenClientCommand } from './commands/gen/client';
+import { makeGenCommand } from './commands/gen';
 import { makeUrlsCommand } from './commands/urls';
 import { composeCommand } from './commands/compose';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
@@ -59,9 +59,9 @@ function defaultRegistryPath(): string {
  * `@levelzero/core` itself and do not depend on a project plugin to function.
  *
  * Post-LEV-165 (Plan 14 Tier 7 cutover) this is the FINAL set of inline
- * registrations. Commands that depend on plugin-contributed adapters
- * (`screenshot`, `visual diff`, `gen client`, `test`) are NO LONGER seeded
- * here — they are registered exclusively by {@link buildDispatchRegistry}
+ * registrations. Commands that depend on plugin-contributed adapters /
+ * generators (`screenshot`, `visual diff`, `gen`, `test`) are NO LONGER
+ * seeded here — they are registered exclusively by {@link buildDispatchRegistry}
  * after `bootPlugins()` runs, with their factories wired against the merged
  * plugin-aware adapter registry. Outside a project (or when the relevant
  * plugins aren't declared in `levelzero.config.ts`) these commands are
@@ -112,9 +112,9 @@ export function buildCommands(registryPath: string): CommandRegistry {
  * After LEV-165 (Plan 14 Tier 7 cutover) the inline seed is intentionally
  * minimal: it covers only the infrastructure commands that don't depend on a
  * plugin-contributed adapter. Plugin-dependent commands (`screenshot`,
- * `visual diff`, `gen client`, `test`) are registered here exclusively, with
- * factories closed over the merged plugin-aware adapter registry. Commands
- * fully owned by plugins (`db.*`, `ui.*`, `curl`) flow in via
+ * `visual diff`, `gen`, `test`) are registered here exclusively, with
+ * factories closed over the merged plugin-aware adapter/generator registries.
+ * Commands fully owned by plugins (`db.*`, `ui.*`, `curl`) flow in via
  * `boot.commands.all()` below. The result: outside a project, only the
  * infrastructure surface is dispatchable; inside a project, the full
  * declared plugin set's commands light up.
@@ -251,12 +251,21 @@ export async function buildDispatchRegistry(
   // last-write-wins, matching `AdapterRegistry.register` semantics.
   const merged = mergeAdapterRegistries(getBuiltinAdapters(), boot.adapters);
   cli.register(makeAdapterListCommand({ getRegistry: () => merged }));
-  // Register `gen.client` against the merged plugin-aware registry. After
-  // LEV-165 this is the SOLE registration of `gen.client` — the inline seed
-  // was deleted because the command can't function without both a `backend`
-  // adapter (contributed by `@levelzero/plugin-hono` or similar) and a
-  // `frontend` adapter (contributed by `@levelzero/plugin-typed-client`).
-  cli.register(makeGenClientCommand({ getAdapterRegistry: () => merged }));
+  // Register `gen` against the merged plugin-aware registries (LEV-124). The
+  // unified command walks every generator the boot collected via
+  // `api.addGenerator(...)` — `api-client` from `@levelzero/plugin-typed-client`,
+  // `prisma` from `@levelzero/plugin-prisma`, plus any out-of-tree plugin
+  // that contributes one. Outside a project (no `BootResult`) the inline
+  // seed is omitted entirely; inside a project with no generator-contributing
+  // plugins the command still registers and reports the friendly
+  // "no generators registered" line.
+  cli.register(
+    makeGenCommand({
+      getGeneratorRegistry: () => boot.generators,
+      getEnvSourceRegistry: () => boot.envSources,
+      getAdapterRegistry: () => merged,
+    }),
+  );
   // Re-bind `adapter swap` against the merged registry as well — its
   // validation step (`listBySlot(slot)`) needs to see plugin-contributed
   // (slot, name) pairs. Without this, `adapter swap orm prisma` would fail

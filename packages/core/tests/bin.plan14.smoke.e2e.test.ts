@@ -5,7 +5,7 @@
  * then walks the canonical user flow against it:
  *
  *   scaffold → --help → adapter list → env list → env resolve →
- *   (docker-gated) dev → db migrate → gen client → curl --as → stop
+ *   (docker-gated) dev → db migrate → gen --only api-client → curl --as → stop
  *
  * The point of having one file that covers the whole arc is to catch
  * regressions where any single seam — scaffolder, plugin loader, command
@@ -197,10 +197,10 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
   // Phase 2: `--help` lists plugin-contributed commands (non-docker)
   //
   // Post-LEV-165 (Plan 14 Tier 7 cutover) the inline registry no longer
-  // ships db.*, ui.*, gen client, curl, test, screenshot, visual diff —
-  // those are contributed by plugin-prisma, plugin-shadcn, plugin-hono +
-  // plugin-typed-client, plugin-better-auth, plugin-vitest, and
-  // plugin-playwright respectively. The fact that they appear here proves
+  // ships db.*, ui.*, gen, curl, test, screenshot, visual diff — those are
+  // contributed by plugin-prisma, plugin-shadcn, plugin-hono + plugin-typed-
+  // client, plugin-better-auth, plugin-vitest, and plugin-playwright
+  // respectively. The fact that they appear here proves
   // (a) loadConfig succeeded, (b) bootPlugins resolved every workspace
   // package, (c) each plugin's `register()` ran, and (d) the contributed
   // commands actually reached the rendered help.
@@ -219,7 +219,11 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
     // their plugins.
     expect(out).toContain('db migrate');
     expect(out).toContain('ui add');
-    expect(out).toContain('gen client');
+    // LEV-124: `gen client` was retired in favor of the unified `gen` top-
+    // level command, which is registered by the dispatcher whenever any
+    // plugin contributes a generator (api-client from plugin-typed-client,
+    // prisma from plugin-prisma).
+    expect(out).toMatch(/^\s+gen\s+/m);
     expect(out).toContain('curl');
     // LOADED PLUGINS footer lists every v0 plugin.
     expect(out).toContain('@levelzero/plugin-postgres');
@@ -405,12 +409,17 @@ describe.skipIf(!dockerUsable)(
     );
 
     it(
-      'gen client emits a typed client from the api routes',
+      'gen --only api-client emits a typed client from the api routes',
       { timeout: 60_000 },
       () => {
+        // LEV-124: the typed-client codegen is now one of several generators
+        // driven by the unified `gen` command. We scope to `--only api-client`
+        // here so the smoke test doesn't also run `prisma generate` (which
+        // we cover separately via `db migrate`).
         const res = run([
           'gen',
-          'client',
+          '--only',
+          'api-client',
           '--api-dir',
           'apps/api',
           '--out',
@@ -418,9 +427,15 @@ describe.skipIf(!dockerUsable)(
           '--json',
         ]);
         expect(res.status, res.stderr).toBe(0);
-        const out = JSON.parse(res.stdout) as { generatedFiles: string[] };
-        expect(Array.isArray(out.generatedFiles)).toBe(true);
-        expect(out.generatedFiles.length).toBeGreaterThan(0);
+        const out = JSON.parse(res.stdout) as {
+          results: Array<{ id: string; status: string; filesWritten: string[] | null }>;
+          ok: number;
+        };
+        expect(out.ok).toBe(1);
+        const apiClient = out.results.find((r) => r.id === 'api-client');
+        expect(apiClient?.status).toBe('ok');
+        expect(Array.isArray(apiClient?.filesWritten)).toBe(true);
+        expect((apiClient?.filesWritten ?? []).length).toBeGreaterThan(0);
         expect(
           existsSync(join(projectDir, 'packages', 'api-client', 'src', 'index.ts')),
         ).toBe(true);

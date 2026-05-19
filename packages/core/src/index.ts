@@ -19,8 +19,14 @@ export type {
   ComposeServiceDef,
   ComposeVolumeDef,
   ComposeNetworkDef,
-  Generator,
 } from './plugins/types';
+
+/**
+ * Generator contract (LEV-124). Plugins contribute generators via
+ * `api.addGenerator(...)`; the unified `levelzero gen` command drives every
+ * registered generator through a single dispatch path.
+ */
+export type { Generator, GeneratorContext, GeneratorResult } from './gen/types';
 
 /**
  * EnvSource contract (Plan 16 / LEV-178). Plugins use these types to publish
