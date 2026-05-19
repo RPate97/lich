@@ -79,6 +79,8 @@ describe('levelzero doctor', () => {
       exitCode: 0,
       stdout: JSON.stringify({ version: 'v2.30.3' }),
     });
+    // docker network ls → no levelzero networks
+    setNextSpawn({ exitCode: 0, stdout: '' });
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     expect(result.ok).toBe(true);
@@ -91,6 +93,7 @@ describe('levelzero doctor', () => {
       exitCode: 0,
       stdout: JSON.stringify({ version: 'v2.30.3' }),
     });
+    setNextSpawn({ exitCode: 0, stdout: '' });
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     const node = result.checks.find((c: any) => c.id === 'node');
@@ -106,6 +109,7 @@ describe('levelzero doctor', () => {
       exitCode: 0,
       stdout: JSON.stringify({ version: 'v2.30.3' }),
     });
+    setNextSpawn({ exitCode: 0, stdout: '' });
     writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
@@ -119,6 +123,7 @@ describe('levelzero doctor', () => {
       exitCode: 0,
       stdout: JSON.stringify({ version: 'v2.30.3' }),
     });
+    setNextSpawn({ exitCode: 0, stdout: '' });
     writeFileSync(join(tmp, 'levelzero.config.ts'), 'export const foo = 1;');
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
@@ -134,6 +139,7 @@ describe('levelzero doctor', () => {
         exitCode: 0,
         stdout: JSON.stringify({ version: 'v2.30.3' }),
       });
+      setNextSpawn({ exitCode: 0, stdout: '' });
       const cmd = makeDoctorCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
 
@@ -155,6 +161,7 @@ describe('levelzero doctor', () => {
         exitCode: 0,
         stdout: JSON.stringify({ version: '2.29.0' }),
       });
+      setNextSpawn({ exitCode: 0, stdout: '' });
       const cmd = makeDoctorCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
 
@@ -164,6 +171,10 @@ describe('levelzero doctor', () => {
     });
 
     it('skips cleanly with a reason when docker itself is not on PATH', async () => {
+      // Compose check fails with ENOENT; network check then also fires and
+      // hits the same ENOENT (mock returns default-{exitCode:0} after the
+      // queue empties, so we queue a second ENOENT explicitly).
+      setNextSpawn({ errorCode: 'ENOENT' });
       setNextSpawn({ errorCode: 'ENOENT' });
       const cmd = makeDoctorCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
@@ -180,6 +191,7 @@ describe('levelzero doctor', () => {
         exitCode: 1,
         stderr: "docker: 'compose' is not a docker command.\n",
       });
+      setNextSpawn({ exitCode: 0, stdout: '' });
       const cmd = makeDoctorCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
 
@@ -194,6 +206,7 @@ describe('levelzero doctor', () => {
         exitCode: 0,
         stdout: 'not json at all',
       });
+      setNextSpawn({ exitCode: 0, stdout: '' });
       const cmd = makeDoctorCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
 
@@ -201,6 +214,82 @@ describe('levelzero doctor', () => {
       expect(dc.status).toBe('error');
       expect(dc.message).toMatch(/parse|json/i);
       expect(result.ok).toBe(false);
+    });
+  });
+
+  describe('levelzero-networks check (LEV-120)', () => {
+    it('reports ok with the count when below the warn threshold', async () => {
+      // docker compose ok
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      // docker network ls → 3 networks
+      setNextSpawn({
+        exitCode: 0,
+        stdout: 'levelzero-aaa111\nlevelzero-bbb222\nlevelzero-ccc333\n',
+      });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+
+      const nc = result.checks.find((c: any) => c.id === 'levelzero-networks');
+      expect(nc).toBeDefined();
+      expect(nc.status).toBe('ok');
+      expect(nc.message).toMatch(/3 network/);
+      expect(result.ok).toBe(true);
+
+      // Second spawn must be the network-ls invocation.
+      expect(spawnCalls[1]).toMatchObject({
+        cmd: 'docker',
+        args: ['network', 'ls', '--filter', 'name=levelzero-', '--format', '{{.Name}}'],
+      });
+    });
+
+    it('warns (but does not fail overall) when more than 20 levelzero-* networks exist', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      // 25 networks → exceeds the 20 threshold
+      const lines = Array.from({ length: 25 }, (_, i) => `levelzero-${i.toString(16).padStart(12, '0')}`);
+      setNextSpawn({ exitCode: 0, stdout: lines.join('\n') + '\n' });
+
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+
+      const nc = result.checks.find((c: any) => c.id === 'levelzero-networks');
+      expect(nc.status).toBe('warn');
+      expect(nc.message).toMatch(/25.*address pool/i);
+      expect(nc.message).toMatch(/stacks prune --all/);
+      // Warnings must not poison the overall ok signal.
+      expect(result.ok).toBe(true);
+    });
+
+    it('skips cleanly when docker is not on PATH', async () => {
+      // compose check sees ENOENT
+      setNextSpawn({ errorCode: 'ENOENT' });
+      // network check sees ENOENT too
+      setNextSpawn({ errorCode: 'ENOENT' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const nc = result.checks.find((c: any) => c.id === 'levelzero-networks');
+      expect(nc.status).toBe('skipped');
+      expect(result.ok).toBe(true);
+    });
+
+    it('skips when `docker network ls` itself fails (daemon down)', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 1, stderr: 'Cannot connect to the Docker daemon\n' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const nc = result.checks.find((c: any) => c.id === 'levelzero-networks');
+      expect(nc.status).toBe('skipped');
+      expect(nc.message).toMatch(/docker network ls failed/);
+    });
+
+    it('renders a [WARN] marker in pretty output when warning', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      const lines = Array.from({ length: 25 }, (_, i) => `levelzero-${i.toString(16).padStart(12, '0')}`);
+      setNextSpawn({ exitCode: 0, stdout: lines.join('\n') + '\n' });
+      const cmd = makeDoctorCommand(() => reg);
+      const out = (await cmd.run({ cwd: tmp, format: 'pretty', args: [], flags: {} })) as string;
+      expect(out).toContain('[WARN] levelzero-networks');
+      // Despite the warning the bottom line must still say `doctor: ok`.
+      expect(out).toMatch(/doctor: ok/);
     });
   });
 });

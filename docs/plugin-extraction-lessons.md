@@ -64,3 +64,36 @@ bash .claude/hooks/worktree-verify.sh <dir>  # checks a specific worktree
 Exit 0 with `OK` means every shared-node_modules link is either absent, a real install, or a valid symlink into the project root. Exit 1 prints a one-line diagnosis (`MISSING`, `BROKEN`, or `STALE`) suitable for `tail -1` consumption.
 
 The `WorktreeCreate` hook (`.claude/hooks/worktree.sh`) verifies each symlink at creation time and falls back to a real `bun install` if any link is unhealthy, so a freshly-created worktree should always start `OK`. The verifier is for catching drift that happens *after* creation — e.g. when a sibling worktree is removed and the link target disappears.
+
+### Docker address-pool exhaustion (`all predefined address pools have been fully subnetted`) (LEV-120)
+
+Symptoms:
+
+- `docker compose up` (or any `dev` invocation) fails with `Error response from daemon: all predefined address pools have been fully subnetted`.
+- `docker network ls | grep levelzero | wc -l` reports more than ~20 networks.
+- `levelzero doctor` shows `[WARN] levelzero-networks — N levelzero-* networks detected (>20)`.
+
+Cause: every `levelzero dev` creates a fresh bridge network (`levelzero-<key>`), which carves a `/24` (or similar) out of Docker's default address pool. The default pool is small — typically ~30 subnets — so a fleet of parallel agent worktrees can exhaust it. When an agent's run crashes without tearing the stack down (e.g. SIGKILL during `dev`), the network is left behind and continues to occupy a subnet.
+
+Recovery, in increasing order of force:
+
+```bash
+# Prefer: reap stale levelzero-* containers and networks system-wide. Safe to
+# run any time — only touches resources whose name starts with `levelzero-`.
+levelzero stacks prune --all
+
+# Same, plus reap named volumes (destructive — wipes local DB state held by
+# `levelzero-<key>-<service>-data` volumes).
+levelzero stacks prune --all --volumes
+
+# Last resort: ask docker itself to reap every unused network. Affects
+# non-levelzero networks too, so only use this if the targeted prune above
+# didn't free enough subnets.
+docker network prune -f
+```
+
+Prevention:
+
+- Add `levelzero stacks prune --all` as the first step of a flaky integration test's setup, OR have its `afterAll` call `docker compose -p levelzero-<key> down --volumes --remove-orphans` so the network is released even if the test crashes mid-run.
+- Watch the `levelzero-networks` doctor check during long agent sessions. The 20-network warn threshold gives a few stacks of headroom before the daemon actually refuses to allocate.
+- If you regularly run >20 parallel stacks, expand Docker's address pool at the daemon level. Out of scope here — see Docker's docs on `default-address-pools` in `/etc/docker/daemon.json` for the host-level fix.
