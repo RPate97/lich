@@ -31,12 +31,13 @@ beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-home-')));
   // The `backend/hono` adapter lives in `@levelzero/plugin-hono` after
-  // LEV-150; `gen client` resolves it from the merged adapter registry, so
-  // the project config must declare the plugin or the command has no active
-  // backend impl to call.
-  // After LEV-174 `gen client` no longer ships an inline
-  // `@levelzero/plugin-typed-client` fallback either — both adapters must be
-  // declared in the project config. We point at the workspace package
+  // LEV-150; the `api-client` generator (LEV-124 — registered by
+  // `@levelzero/plugin-typed-client`) resolves it from the merged adapter
+  // registry, so the project config must declare the plugin or the
+  // generator skips.
+  // After LEV-174 the typed-client codegen no longer ships an inline
+  // `@levelzero/plugin-typed-client` fallback either — both plugins must
+  // be declared in the project config. We point at the workspace package
   // sources by absolute path rather than by bare specifier because Bun
   // 1.2.23 segfaults when resolving two `@levelzero/plugin-*` bare
   // specifiers from a tmp-dir project that has no `node_modules` (the
@@ -73,10 +74,15 @@ function run(args: string[]) {
 }
 
 describe('bin: plan-09 commands end-to-end', () => {
-  it('gen client extracts Hono routes and writes a typed client file', () => {
+  it('gen --only api-client extracts Hono routes and writes a typed client file', () => {
+    // LEV-124: the typed-client codegen is now the `api-client` generator,
+    // dispatched through the unified `gen` command. The output shape is
+    // {results, ok, skipped, failed} rather than {generatedFiles}; the
+    // file list lives at results[0].filesWritten.
     const res = run([
       'gen',
-      'client',
+      '--only',
+      'api-client',
       '--api-dir',
       'apps/api',
       '--out',
@@ -84,12 +90,18 @@ describe('bin: plan-09 commands end-to-end', () => {
       '--json',
     ]);
     expect(res.status, res.stderr).toBe(0);
-    const out = JSON.parse(res.stdout);
-    expect(Array.isArray(out.generatedFiles)).toBe(true);
-    expect(out.generatedFiles.length).toBeGreaterThan(0);
+    const out = JSON.parse(res.stdout) as {
+      results: Array<{ id: string; status: string; filesWritten: string[] | null }>;
+      ok: number;
+    };
+    expect(out.ok).toBe(1);
+    const apiClient = out.results.find((r) => r.id === 'api-client');
+    expect(apiClient?.status).toBe('ok');
+    expect(Array.isArray(apiClient?.filesWritten)).toBe(true);
+    expect((apiClient?.filesWritten ?? []).length).toBeGreaterThan(0);
 
     const generated = join(projectDir, 'packages/api-client/src/index.ts');
-    expect(out.generatedFiles).toContain(generated);
+    expect(apiClient?.filesWritten).toContain(generated);
     expect(existsSync(generated)).toBe(true);
 
     const contents = readFileSync(generated, 'utf8');
@@ -99,21 +111,23 @@ describe('bin: plan-09 commands end-to-end', () => {
     expect(contents).toContain('postApiUsers');
   }, 30_000);
 
-  it('gen client is a registered command (does not error as UNKNOWN_COMMAND)', () => {
-    // Post-LEV-165 `gen client` is only registered when both a backend and a
-    // frontend plugin are declared (the inline seed was deleted in the Plan
-    // 14 Tier 7 cutover). Use the same hono + typed-client pair as the
-    // adjacent integration test so the dispatcher actually wires the
-    // command — without them the command would surface as UNKNOWN_COMMAND,
-    // which the assertion below explicitly forbids.
+  it('gen is a registered command (does not error as UNKNOWN_COMMAND)', () => {
+    // Post-LEV-165 + LEV-124 `gen` is only registered when at least one
+    // plugin contributes a generator (the inline seed was deleted in the
+    // Plan 14 Tier 7 cutover; `gen client` itself was retired in LEV-124).
+    // Use the same hono + typed-client pair as the adjacent integration
+    // test so the dispatcher actually wires the command — without them the
+    // command would surface as UNKNOWN_COMMAND, which the assertion below
+    // explicitly forbids.
     const emptyProj = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-empty-')));
     writeFileSync(
       join(emptyProj, 'levelzero.config.ts'),
       `export default { plugins: [${JSON.stringify(HONO_PLUGIN)}, ${JSON.stringify(TYPED_CLIENT_PLUGIN)}] };`,
     );
-    // No API entry at apps/api/src/index.ts — the command should error on
-    // the missing entry, not on the registration.
-    const res = spawnSync('bun', [BIN, 'gen', 'client', '--json'], {
+    // No API entry at apps/api/src/index.ts — the generator should report a
+    // fail status (and the command should exit non-zero), but it should NOT
+    // be UNKNOWN_COMMAND.
+    const res = spawnSync('bun', [BIN, 'gen', '--json'], {
       cwd: emptyProj,
       env: { ...process.env, LEVELZERO_HOME: homeDir },
       encoding: 'utf8',

@@ -30,7 +30,7 @@ describe('groupKey', () => {
   it('uses the first dotted segment as the group key', () => {
     expect(groupKey('stacks.current')).toBe('stacks');
     expect(groupKey('adapter.swap')).toBe('adapter');
-    expect(groupKey('gen.client')).toBe('gen');
+    expect(groupKey('env.list')).toBe('env');
   });
 
   it('collapses deeper namespaces to the top-level prefix', () => {

@@ -5,15 +5,13 @@ import type { OwnedService } from '../services/types';
 import type { Rule } from '../check/types';
 import type { EnvSourceRegistry } from '../env/registry';
 import type { BulkEnvSource, EnvSource, SourceManifest } from '../env/types';
+import type { Generator } from '../gen/types';
 
-// TODO(LEV-124): replace with `import type { Generator } from '../gen/types'`
-// once LEV-124 lands. Inlined here as the minimal shape so the plugin contract
-// can be defined without a dependency on the not-yet-existent `src/gen/` module.
-export interface Generator {
-  id: string;
-  describe: string;
-  generate(ctx: unknown): Promise<unknown>;
-}
+// LEV-124: re-exported so existing imports (`PluginAPI`, etc.) continue
+// pointing at this module without forcing every consumer to update their path.
+// The canonical definition now lives in `src/gen/types.ts` alongside the
+// `GeneratorContext` / `GeneratorResult` shapes the dispatcher uses.
+export type { Generator };
 
 /**
  * Subset of a Docker Compose v2 service definition that plugins can contribute

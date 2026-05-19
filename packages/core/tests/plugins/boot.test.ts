@@ -151,8 +151,12 @@ describe('bootPlugins', () => {
         api.addGenerator({
           id: 'fixture.gen',
           describe: 'fixture generator',
+          // LEV-124 tightened `Generator.generate` to return a structured
+          // `GeneratorResult` (status + optional message/files). The fixture
+          // returns a minimal `ok` shape — boot only cares that the
+          // registration round-trips, not what `generate()` does.
           async generate() {
-            return undefined;
+            return { status: 'ok' as const };
           },
         });
         api.addSkillsDir('/abs/path/to/skills');

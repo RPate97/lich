@@ -2,11 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import type {
   AdapterSlot,
   Command,
+  Generator,
   PluginAPI,
   PluginContext,
 } from '@levelzero/core';
 import { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import prisma, { prismaAdapter } from '../src/index';
+import prisma, { prismaAdapter, prismaGenerator } from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
 // rest of the file keeps using `plugin.register(...)` exactly as before.
@@ -24,10 +25,12 @@ function makeRecordingApi(): {
   adapters: Array<{ slot: AdapterSlot; name: string; impl: unknown }>;
   actives: Array<{ slot: AdapterSlot; name: string }>;
   commands: Command[];
+  generators: Generator[];
 } {
   const adapters: Array<{ slot: AdapterSlot; name: string; impl: unknown }> = [];
   const actives: Array<{ slot: AdapterSlot; name: string }> = [];
   const commands: Command[] = [];
+  const generators: Generator[] = [];
   const api: PluginAPI = {
     addAdapter: (slot, name, impl) => {
       adapters.push({ slot, name, impl });
@@ -43,7 +46,9 @@ function makeRecordingApi(): {
     addComposeVolume: vi.fn(),
     addComposeNetwork: vi.fn(),
     addRule: vi.fn(),
-    addGenerator: vi.fn(),
+    addGenerator: (gen) => {
+      generators.push(gen);
+    },
     addSkillsDir: vi.fn(),
     // Added by LEV-178 (`EnvSource` types + namespace-scoped `PluginAPI`).
     // Prisma doesn't publish env sources today; mocks satisfy the typed
@@ -51,7 +56,7 @@ function makeRecordingApi(): {
     addEnvSource: vi.fn(),
     addBulkEnvSource: vi.fn(),
   };
-  return { api, adapters, actives, commands };
+  return { api, adapters, actives, commands, generators };
 }
 
 describe('@levelzero/plugin-prisma default export', () => {
@@ -69,6 +74,21 @@ describe('@levelzero/plugin-prisma default export', () => {
     expect(adapters).toHaveLength(1);
     expect(adapters[0]).toEqual({ slot: 'orm', name: 'prisma', impl: prismaAdapter });
     expect(actives).toEqual([{ slot: 'orm', name: 'prisma' }]);
+  });
+
+  it('register() contributes the prisma generator (LEV-124)', async () => {
+    const { api, generators } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    expect(generators).toHaveLength(1);
+    const gen = generators[0]!;
+    expect(gen.id).toBe('prisma');
+    expect(typeof gen.describe).toBe('string');
+    expect(typeof gen.generate).toBe('function');
+    // The exported pre-built instance is the exact one the plugin registers
+    // — keeps re-export and registration in sync without extra wrapping.
+    expect(gen).toBe(prismaGenerator);
   });
 
   it('register() contributes the four db.* commands', async () => {
