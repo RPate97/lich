@@ -2,6 +2,7 @@ import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
 import { prismaAdapter } from './adapter';
 import { makeDbMigrateCommand } from './commands/migrate';
 import { makeDbMigrationNewCommand } from './commands/migration-new';
+import { makeDbResetCommand } from './commands/reset';
 import { makeDbSeedCommand } from './commands/seed';
 import { makeDbInspectCommand } from './commands/inspect';
 import { prismaGenerator } from './generator';
@@ -28,6 +29,11 @@ export {
   dbInspectCommand,
   type DbInspectOptions,
 } from './commands/inspect';
+export {
+  makeDbResetCommand,
+  dbResetCommand,
+  type DbResetOptions,
+} from './commands/reset';
 
 /**
  * Options for the `@levelzero/plugin-prisma` factory. The `namespace`
@@ -114,6 +120,9 @@ export default function prisma(opts: PrismaOptions = {}): Plugin<
       );
       api.addCommand(
         makeDbInspectCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
+      );
+      api.addCommand(
+        makeDbResetCommand({ adapter: prismaAdapter, getEnvSourceRegistry }),
       );
     },
   };

@@ -91,7 +91,7 @@ describe('@levelzero/plugin-prisma default export', () => {
     expect(gen).toBe(prismaGenerator);
   });
 
-  it('register() contributes the four db.* commands', async () => {
+  it('register() contributes the five db.* commands', async () => {
     const { api, commands } = makeRecordingApi();
     const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
     await plugin.register(api, ctx);
@@ -101,6 +101,7 @@ describe('@levelzero/plugin-prisma default export', () => {
       'db.inspect',
       'db.migrate',
       'db.migration.new',
+      'db.reset',
       'db.seed',
     ]);
     for (const cmd of commands) {
@@ -118,7 +119,7 @@ describe('@levelzero/plugin-prisma default export', () => {
     const { api, commands } = makeRecordingApi();
     const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
     await plugin.register(api, ctx);
-    expect(commands).toHaveLength(4);
+    expect(commands).toHaveLength(5);
   });
 
   it('register() threads PluginContext.getEnvSourceRegistry into command factories (LEV-171)', async () => {
@@ -141,7 +142,7 @@ describe('@levelzero/plugin-prisma default export', () => {
     };
     await plugin.register(api, ctx);
 
-    expect(commands).toHaveLength(4);
+    expect(commands).toHaveLength(5);
     // Eager-invocation guard: the registry getter is only valuable when
     // resolved at command-run time, after every plugin has had a chance to
     // contribute its sources. Calling it during register would lock in a
