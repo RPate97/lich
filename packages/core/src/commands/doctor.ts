@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { LEVELZERO_PREFIX } from '../compose/naming';
 import { loadConfig } from '../config';
 import {
   MIN_NODE_VERSION,
@@ -11,13 +12,23 @@ import type { Registry } from '../registry';
 import { findWorktree } from '../worktree';
 import type { Command } from './types';
 
-type Status = 'ok' | 'error' | 'skipped';
+type Status = 'ok' | 'error' | 'skipped' | 'warn';
 interface Check {
   id: string;
   status: Status;
   message?: string;
   version?: string;
 }
+
+/**
+ * LEV-120 — warn when the local Docker daemon is approaching pool exhaustion
+ * from stale `levelzero-*` networks. Default address pools typically support
+ * only ~30 subnets; once exhausted, every `docker compose up` fails with
+ * "all predefined address pools have been fully subnetted". 20 is a
+ * conservative high-water mark that gives the developer time to run
+ * `levelzero stacks prune --all` before things actually break.
+ */
+const NETWORK_WARN_THRESHOLD = 20;
 
 interface SpawnResult {
   stdout: string;
@@ -109,6 +120,61 @@ async function checkDockerCompose(): Promise<Check> {
   return { id: 'docker-compose', status: 'ok', version };
 }
 
+/**
+ * Count live `levelzero-*` networks on the daemon and warn if we're close to
+ * exhausting the default address pool. Skips cleanly when docker isn't on
+ * PATH (the docker-compose check above will have already surfaced that).
+ * A non-zero exit from `docker network ls` (e.g. daemon down) is also
+ * treated as `skipped` — we don't want to make this check a hard failure
+ * when the underlying signal isn't available.
+ */
+async function checkLevelzeroNetworks(): Promise<Check> {
+  let r: SpawnResult;
+  try {
+    r = await runDocker([
+      'network',
+      'ls',
+      '--filter',
+      `name=${LEVELZERO_PREFIX}`,
+      '--format',
+      '{{.Name}}',
+    ]);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      id: 'levelzero-networks',
+      status: 'skipped',
+      message:
+        code === 'ENOENT'
+          ? 'docker is not installed or not on PATH'
+          : `cannot run docker: ${(err as Error).message}`,
+    };
+  }
+
+  if (r.exitCode !== 0) {
+    return {
+      id: 'levelzero-networks',
+      status: 'skipped',
+      message: `docker network ls failed: ${(r.stderr || r.stdout).trim() || `exit ${r.exitCode}`}`,
+    };
+  }
+
+  const names = r.stdout
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+  const count = names.length;
+
+  if (count > NETWORK_WARN_THRESHOLD) {
+    return {
+      id: 'levelzero-networks',
+      status: 'warn',
+      message: `${count} levelzero-* networks detected (>${NETWORK_WARN_THRESHOLD}); docker may exhaust its default address pool. Run \`levelzero stacks prune --all\` to reclaim subnets.`,
+    };
+  }
+  return { id: 'levelzero-networks', status: 'ok', message: `${count} network(s)` };
+}
+
 export function makeDoctorCommand(getRegistry: () => Registry): Command {
   return {
     name: 'doctor',
@@ -150,6 +216,12 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       // Docker Compose availability
       checks.push(await checkDockerCompose());
 
+      // LEV-120 — warn when stale levelzero-* networks are piling up. Pure
+      // warning channel: never flips overall `ok` to false. The signal lets
+      // a developer pre-empt the "all predefined address pools have been
+      // fully subnetted" failure mode that hit Plan 14/15 era agent fleets.
+      checks.push(await checkLevelzeroNetworks());
+
       // Worktree presence
       const wt = await findWorktree(ctx.cwd);
       if (!wt) {
@@ -170,7 +242,14 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       if (ctx.format === 'json') return out;
       const lines: string[] = [];
       for (const c of checks) {
-        const marker = c.status === 'ok' ? '[OK]' : c.status === 'skipped' ? '[SKIP]' : '[FAIL]';
+        const marker =
+          c.status === 'ok'
+            ? '[OK]'
+            : c.status === 'skipped'
+              ? '[SKIP]'
+              : c.status === 'warn'
+                ? '[WARN]'
+                : '[FAIL]';
         const detail = c.message
           ? ` — ${c.message}`
           : c.version
