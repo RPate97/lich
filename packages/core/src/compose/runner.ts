@@ -9,7 +9,15 @@ import { spawn } from 'node:child_process';
  */
 export interface ComposeRunner {
   up(opts?: { detach?: boolean; waitForHealthy?: boolean }): Promise<void>;
-  down(opts?: { volumes?: boolean }): Promise<void>;
+  /**
+   * Tear down the stack. `volumes` adds `-v` (drops named volumes — DESTRUCTIVE,
+   * `levelzero stop`/SIGINT teardown leave it false to preserve user data).
+   * `removeOrphans` adds `--remove-orphans` so containers that linger from a
+   * previously-emitted compose file (e.g. an old plugin set that since changed)
+   * get cleaned up too — LEV-203 SIGINT teardown sets this so a partial up
+   * leaves no postgres survivor.
+   */
+  down(opts?: { volumes?: boolean; removeOrphans?: boolean }): Promise<void>;
   ps(): Promise<Array<{ name: string; state: string; ports: string[] }>>;
   logs(svc?: string, opts?: { since?: string; tail?: number }): Promise<string>;
   exec(svc: string, cmd: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }>;
@@ -150,6 +158,7 @@ export function makeComposeRunner(projectName: string, composeFile: string): Com
     async down(opts = {}) {
       const args: string[] = ['down'];
       if (opts.volumes) args.push('-v');
+      if (opts.removeOrphans) args.push('--remove-orphans');
       await runOrThrow(args, 120_000);
     },
 

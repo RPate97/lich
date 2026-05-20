@@ -19,6 +19,7 @@ import type { Command } from './types';
 import type { DockerService, OwnedService, PortMap, Service } from '../services/types';
 import { findWorktree } from '../worktree';
 import { loadConfig } from '../config';
+import { addCleanup } from '../signal-handlers';
 import type { EnvSourceRegistry } from '../env/registry';
 import {
   resolveEnvForService,
@@ -232,6 +233,67 @@ async function resolveProjectName(worktreePath: string): Promise<string> {
     // Fall through to basename below.
   }
   return basename(worktreePath);
+}
+
+/**
+ * Tear down a `--live` stack: `docker compose down --remove-orphans` (volumes
+ * preserved — same default as `levelzero stop`) plus the registry entry
+ * removed. Idempotent: the FIRST call kicks off the work and parks the
+ * resulting promise on `state.promise`; concurrent + later calls await that
+ * same promise and never re-issue the underlying `docker compose down` or
+ * registry write. This matters because both the SIGINT signal-cleanup path
+ * AND the `--live` branch's `finally` may fire near-simultaneously (Ctrl-C
+ * → concurrently kills children → `runner.done` resolves → `finally` runs,
+ * while in parallel the shared signal handler is also driving our cleanup
+ * callback); a plain boolean guard would have a TOCTOU window where both
+ * paths observed `false` and double-dispatched the teardown.
+ *
+ * LEV-203: this is the whole bug fix. Pre-LEV-203, Ctrl-C during `dev --live`
+ * killed the foreground concurrently runner (api+web) but the compose-managed
+ * containers (postgres, redis, etc.) survived because nothing called
+ * `docker compose down` on the way out. Now we do — via the shared
+ * `addCleanup` registry, which composes cleanly with LEV-199's lock-file
+ * cleanup (registered first, runs first, but during `runOwnedServices` the
+ * registry lock from the up phase is already released so its sync unlink
+ * loop is a no-op).
+ */
+export interface LiveTeardownState {
+  promise: Promise<void> | null;
+}
+
+export interface LiveTeardownDeps {
+  runner: ComposeRunner;
+  registry: Registry;
+  stackKey: string;
+  state: LiveTeardownState;
+}
+
+export function teardownLiveStack(deps: LiveTeardownDeps): Promise<void> {
+  if (deps.state.promise) return deps.state.promise;
+  const work = (async () => {
+    // Order matches `stop`: compose containers first, then registry. If the
+    // compose down throws we still attempt to remove the registry entry so a
+    // partial teardown doesn't leave a phantom stack record around. Errors
+    // are swallowed at this layer — the signal-handler dispatcher already
+    // wraps each cleanup in try/catch, but the `finally`-driven path needs
+    // explicit best-effort semantics too so a `down` failure (e.g. docker
+    // daemon dead) doesn't bubble up and replace the original exit reason
+    // with a teardown error.
+    try {
+      await deps.runner.down({ volumes: false, removeOrphans: true });
+    } catch {
+      /* best-effort */
+    }
+    try {
+      await deps.registry.withLock(async () => {
+        await deps.registry.remove(deps.stackKey);
+      });
+    } catch {
+      /* best-effort */
+    }
+  })();
+  deps.state.promise = work;
+  return work;
 }
 
 export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): Command {
@@ -504,26 +566,67 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
 
       if (live) {
         const logDir = join(stackCtx.worktreePath, entry.logDir);
-        const runner = await runOwnedServices(
-          owned,
-          stackCtx,
-          entry.ports,
-          dockerEnv,
-          { logDir },
-          ownedServiceEnv,
-        );
-        const { exitCodes } = await runner.done;
 
-        const fullResult = {
-          ...baseResult,
-          live: true as const,
-          owned: {
-            exitCodes,
-            pids: runner.pids,
-          },
-        };
-        if (ctx.format === 'json') return fullResult;
-        return renderDevPretty(baseResult, fullResult.owned, null);
+        // LEV-203 — wire the live stack into the shared signal-handler so
+        // Ctrl-C during `dev --live` triggers `docker compose down` (without
+        // this the concurrently runner dies, api+web exit, but postgres etc.
+        // survive — see ticket). The cleanup state is shared between the
+        // SIGINT path and the natural-exit `finally` path below so whichever
+        // fires first parks the work on `state.promise` and the second
+        // observes the existing promise and awaits it instead of re-issuing.
+        const teardownState: LiveTeardownState = { promise: null };
+        const composeRunner = composeRunnerFactory(
+          bundle.projectName,
+          bundle.composeFilePath,
+        );
+        const unregisterCleanup = addCleanup(async () => {
+          // User feedback on stderr so the "what's happening?" question after
+          // Ctrl-C has an immediate answer; stdout may already be tangled
+          // with concurrently's last frame.
+          process.stderr.write('\nshutting down stack...\n');
+          await teardownLiveStack({
+            runner: composeRunner,
+            registry: reg,
+            stackKey: stackCtx.worktreeKey,
+            state: teardownState,
+          });
+        });
+
+        try {
+          const runner = await runOwnedServices(
+            owned,
+            stackCtx,
+            entry.ports,
+            dockerEnv,
+            { logDir },
+            ownedServiceEnv,
+          );
+          const { exitCodes } = await runner.done;
+
+          const fullResult = {
+            ...baseResult,
+            live: true as const,
+            owned: {
+              exitCodes,
+              pids: runner.pids,
+            },
+          };
+          if (ctx.format === 'json') return fullResult;
+          return renderDevPretty(baseResult, fullResult.owned, null);
+        } finally {
+          // Always run on normal exit, throw, AND after the signal-handler
+          // cleanup already ran (idempotency in `teardownLiveStack` makes
+          // the double-call safe). Unregistering first means a SIGINT that
+          // arrives AFTER `finally` started doesn't re-enter the cleanup
+          // via the signal path.
+          unregisterCleanup();
+          await teardownLiveStack({
+            runner: composeRunner,
+            registry: reg,
+            stackKey: stackCtx.worktreeKey,
+            state: teardownState,
+          });
+        }
       }
 
       // Default detached path — spawn each owned service via the detached
