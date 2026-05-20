@@ -25,6 +25,8 @@ export default defineConfig({
   envInjection: {
     DATABASE_URL: 'postgres.url',
     API_URL: 'hono.url',
+    API_PORT: 'hono.port',
     WEB_URL: 'next.url',
+    WEB_PORT: 'next.port',
   },
 });

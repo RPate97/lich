@@ -110,7 +110,7 @@ describe('@levelzero/plugin-next default export', () => {
     const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
     await plugin.register(api, ctx);
 
-    expect(Object.keys(envSources)).toEqual(['url']);
+    expect(Object.keys(envSources).sort()).toEqual(['port', 'url']);
     expect(envSources.url!.protocol).toBe('http');
 
     const ec = makeEnvCtx({ 'web-http': 3002 }, 'host');
@@ -118,6 +118,24 @@ describe('@levelzero/plugin-next default export', () => {
     expect(await envSources.url!.container(makeEnvCtx({ 'web-http': 3002 }, 'container'))).toBe(
       'http://web:3000',
     );
+  });
+
+  // LEV-200 — `next dev` does NOT read PORT from env; it requires `--port <n>`
+  // on the CLI. The web template's `dev` script substitutes `$WEB_PORT` into
+  // the command, so this plugin must publish the host-allocated port for
+  // `envInjection: { WEB_PORT: 'next.port' }` to resolve.
+  it('register() publishes a `port` EnvSource (LEV-200)', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    expect(envSources.port).toBeDefined();
+    expect(await envSources.port!.host(makeEnvCtx({ 'web-http': 54001 }, 'host'))).toBe(
+      '54001',
+    );
+    expect(
+      await envSources.port!.container(makeEnvCtx({ 'web-http': 54001 }, 'container')),
+    ).toBe('3000');
   });
 });
 

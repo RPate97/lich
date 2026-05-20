@@ -41,7 +41,7 @@ export interface NextOptions {
 export default function next(opts: NextOptions = {}): Plugin<
   'next',
   {
-    named: 'url';
+    named: 'url' | 'port';
     bulk: never;
   }
 > {
@@ -60,6 +60,19 @@ export default function next(opts: NextOptions = {}): Plugin<
         host: ({ ports }) => `http://localhost:${ports['web-http'] ?? ''}`,
         container: () => `http://web:3000`,
         protocol: 'http',
+      });
+
+      // LEV-200 — publish the allocated host port as a separate EnvSource so
+      // the web template's `next dev --port "$WEB_PORT"` script can bind to
+      // it (consumed as `WEB_PORT` via the template's
+      // `envInjection: { WEB_PORT: 'next.port' }`). `next dev` does NOT read
+      // `PORT` from env by default — it requires `--port <n>` on the CLI —
+      // hence this separate source. Container context always reports `3000`
+      // because a future containerized web service would listen on the
+      // standard internal port.
+      api.addEnvSource('port', {
+        host: ({ ports }) => String(ports['web-http'] ?? ''),
+        container: () => '3000',
       });
     },
   };
