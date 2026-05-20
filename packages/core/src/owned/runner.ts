@@ -85,7 +85,7 @@ export async function runOwnedServices(
   }));
 
   const { result, commands } = concurrently(inputs, {
-    killOthers: ['failure', 'success'],
+    killOthersOn: ['failure', 'success'],
     prefix: 'name',
     raw: false,
   });
