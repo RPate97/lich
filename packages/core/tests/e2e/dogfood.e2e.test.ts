@@ -560,13 +560,18 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           const stderr = res.stderr;
           // The LEV-197 regression target: stderr MUST surface the actual
           // underlying error, not just the opaque "1 generator(s) failed"
-          // summary. The real install probe shows the missing-module path
-          // produces "Cannot find module 'prisma/config'" (or similar
-          // module-resolution error) inside the generator's diagnostics.
+          // summary. Acceptable diagnostics include the node-style
+          // "Cannot find module" / MODULE_NOT_FOUND / ENOENT phrasings,
+          // and Prisma 7's wording ("Could not resolve @prisma/client.
+          // Please try to install it with npm i @prisma/client"), which
+          // is the same class of error surfaced when @prisma/client is
+          // missing in a real install (post-LEV-204).
           // If this matcher stops matching after a code change, the
           // probable cause is that the inner error got swallowed again
           // (LEV-197 regression) — not that the error string changed.
-          expect(stderr).toMatch(/cannot find module|MODULE_NOT_FOUND|ENOENT/i);
+          expect(stderr).toMatch(
+            /cannot find module|could not resolve|MODULE_NOT_FOUND|ENOENT/i,
+          );
           // And stderr MUST NOT be ONLY the opaque summary. The bug
           // LEV-197 fixed was stderr being a bare "gen: N generator(s)
           // failed: <name>" with no underlying cause attached. We
@@ -578,7 +583,9 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           const withoutSummary = stderr
             .replace(/\d+ generator\(s\) failed:[^\n"]*/g, '')
             .toLowerCase();
-          expect(withoutSummary).toMatch(/cannot find module|module_not_found|enoent/);
+          expect(withoutSummary).toMatch(
+            /cannot find module|could not resolve|module_not_found|enoent/,
+          );
         } finally {
           renameSync(stash, target);
         }
