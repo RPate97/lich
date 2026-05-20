@@ -337,11 +337,15 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       },
     );
 
-    // LEV-204 — `levelzero db migrate` fails in a fresh scaffold today.
-    // Wrapped in `it.fails` so the test PASSES on master (asserting bug
-    // present); when LEV-204 lands, the maintainer removes `.fails` and
-    // it becomes a forward regression check.
-    it.fails(
+    // LEV-204 regression: `levelzero db migrate` used to fail in a fresh
+    // scaffold because the template's `prisma.config.ts` imports from
+    // `'prisma/config'` but the template `package.json` didn't declare
+    // `prisma` as a direct devDep — so bun had no reason to materialize
+    // `node_modules/prisma` at the demo root, and Prisma 7's `config`
+    // subpath was unresolvable. Adding `prisma: ^7.0.0` to the template
+    // root's devDeps is the fix; this test now asserts the forward
+    // behavior.
+    it(
       'LEV-204 regression: db migrate --json exits 0 in a fresh scaffold',
       { timeout: 120_000 },
       () => {
@@ -355,13 +359,11 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     );
 
     // `db seed` can only succeed after a successful `db migrate` — the
-    // seed script needs the schema applied to insert rows. Today this
-    // fails for the same reason as `db migrate` (LEV-204): in a fresh
-    // scaffold the migrate step never produces a usable schema, so seed
-    // has nothing to write against. Marked `.fails` with the same LEV-204
-    // tag so the migrate → seed chain is documented; when LEV-204 lands,
-    // BOTH `.fails` markers come off together.
-    it.fails(
+    // seed script needs the schema applied to insert rows. Pre-LEV-204,
+    // the migrate step never produced a usable schema, so seed had
+    // nothing to write against. Now that LEV-204 is fixed, the
+    // migrate → seed chain works end-to-end in a fresh scaffold.
+    it(
       'LEV-204 regression: db seed --json exits 0 after migrate in a fresh scaffold',
       { timeout: 120_000 },
       () => {

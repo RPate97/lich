@@ -234,6 +234,34 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
+  it('package.json declares prisma as a devDependency (LEV-204)', () => {
+    // LEV-204: `prisma.config.ts` at the project root imports from
+    // `'prisma/config'` (Prisma 7's subpath export). Bun's module resolver
+    // walks `node_modules` upward from the importing file's directory, so
+    // unless `prisma` is hoisted to the demo root `node_modules`, every
+    // `db.*` command (migrate / seed / inspect / reset) and `gen --only
+    // prisma` blow up with "Cannot find module 'prisma/config'".
+    //
+    // The fix is to pin `prisma` at the template root so a scaffolded
+    // project gets `node_modules/prisma/` reachable from `prisma.config.ts`.
+    // Pinning the major version here (in lockstep with `@levelzero/plugin-
+    // prisma`'s own `prisma` dep) is what prevents bun from hoisting an
+    // older v5 transitive that wouldn't have the `config` subpath at all.
+    const pkg = JSON.parse(
+      readFileSync(join(templateRoot, 'package.json'), 'utf8'),
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const devDeps = pkg.devDependencies ?? {};
+    expect(
+      devDeps['prisma'],
+      'expected `prisma` in devDependencies so prisma.config.ts can resolve `prisma/config`',
+    ).toBeTruthy();
+    // Must be v7+ — that's where the `config` subpath export was added.
+    expect(devDeps['prisma']).toMatch(/^[\^~]?7\./);
+  });
+
   it('ships the .levelzero/skills reference + workflow directories', () => {
     // The skills tree is load-bearing for plan-12's `skills index`; assert a
     // couple of representative files to guard against an accidental drop of
