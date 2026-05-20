@@ -375,6 +375,10 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           network: networkName(stackCtx.worktreeKey),
           logDir: '.levelzero/logs',
           createdAt: existing?.createdAt ?? new Date().toISOString(),
+          // LEV-208 — record the absolute compose file path so passthrough
+          // commands (`levelzero compose ps`, etc.) can shell into the same
+          // file `dev` wrote without reconstructing the per-worktree path.
+          composeFile: bundle.composeFilePath,
         };
         await reg.upsert(stackCtx.worktreeKey, newEntry);
         return { entry: newEntry, bundle };

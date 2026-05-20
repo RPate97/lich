@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CLIError } from '../../src/errors';
 import { makeComposeCommand } from '../../src/commands/compose';
+import { Registry, type StackEntry } from '../../src/registry';
+import { computeWorktreeKey } from '../../src/worktree';
 
 /**
  * Lightweight spawn double. Returns a fake ChildProcess that emits a close
@@ -64,19 +66,55 @@ function makeSpawnDouble() {
 
 let projectDir: string;
 let composeFile: string;
+let registry: Registry;
+let registryPath: string;
+let worktreeKey: string;
+
+/**
+ * Seed a registry entry mirroring what `dev` writes — most importantly,
+ * `composeFile` set to the actual on-disk file path so the passthrough finds
+ * it. The path lives under the per-worktree subdir (`.levelzero/<key>/…`),
+ * matching what `buildComposeBundle` produces post-LEV-208.
+ */
+function seedRegistryEntry(overrides: Partial<StackEntry> = {}): Promise<void> {
+  const entry: StackEntry = {
+    path: projectDir,
+    branch: 'main',
+    ports: {},
+    urls: {},
+    containers: [],
+    network: `levelzero-${worktreeKey}`,
+    logDir: '.levelzero/logs',
+    createdAt: new Date().toISOString(),
+    composeFile,
+    ...overrides,
+  };
+  return registry.upsert(worktreeKey, entry);
+}
 
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-compose-proj-')));
   writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
-  mkdirSync(join(projectDir, '.levelzero'), { recursive: true });
-  composeFile = join(projectDir, '.levelzero', 'docker-compose.yml');
+  worktreeKey = computeWorktreeKey(projectDir);
+  // Compose file lives under the per-worktree subdir, matching what `dev`
+  // writes (LEV-208 — passthrough reads `entry.composeFile` from the
+  // registry, so this is the path that has to be on disk).
+  const composeDir = join(projectDir, '.levelzero', worktreeKey);
+  mkdirSync(composeDir, { recursive: true });
+  composeFile = join(composeDir, 'docker-compose.yml');
   writeFileSync(composeFile, "version: '3'\nservices: {}\n");
+
+  // Per-test registry isolated to a tempdir — no risk of leaking entries
+  // between tests or polluting the dev user's `~/.levelzero/registry.json`.
+  const regDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-compose-reg-')));
+  registryPath = join(regDir, 'registry.json');
+  registry = new Registry(registryPath);
 });
 
 describe('levelzero compose', () => {
   it('exports a Command named "compose"', () => {
     const { spawn } = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn });
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
     expect(cmd.name).toBe('compose');
     expect(typeof cmd.describe).toBe('string');
   });
@@ -84,15 +122,16 @@ describe('levelzero compose', () => {
   it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
     const { spawn } = makeSpawnDouble();
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-compose-outside-')));
-    const cmd = makeComposeCommand({ spawn });
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: ['ps'], flags: {} }),
     ).rejects.toThrow(CLIError);
   });
 
   it('forwards `ps` to `docker compose -p levelzero-<key> -f <compose-file> ps`', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -114,9 +153,26 @@ describe('levelzero compose', () => {
     expect(call.args).toHaveLength(6);
   });
 
-  it('forwards trailing args transparently (e.g., `logs postgres`)', async () => {
+  it('reads the compose file path from the registry entry, not a hardcoded subpath (LEV-208)', async () => {
+    // Place the compose file at a NON-default location and record that path
+    // in the registry. The passthrough must follow what the registry says,
+    // not where it guesses the file might live.
+    const customDir = join(projectDir, '.levelzero', 'custom-location');
+    mkdirSync(customDir, { recursive: true });
+    const customComposeFile = join(customDir, 'docker-compose.yml');
+    writeFileSync(customComposeFile, "version: '3'\nservices: {}\n");
+    await seedRegistryEntry({ composeFile: customComposeFile });
+
     const dbl = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
+    await cmd.run({ cwd: projectDir, format: 'json', args: ['ps'], flags: {} });
+    expect(dbl.spawnCalls[0]!.args[4]).toBe(customComposeFile);
+  });
+
+  it('forwards trailing args transparently (e.g., `logs postgres`)', async () => {
+    await seedRegistryEntry();
+    const dbl = makeSpawnDouble();
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -129,8 +185,9 @@ describe('levelzero compose', () => {
   });
 
   it('forwards multi-word args like `exec postgres psql -U levelzero` transparently', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -142,8 +199,9 @@ describe('levelzero compose', () => {
   });
 
   it('uses stdio: "inherit" so compose output streams to the operator', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -155,9 +213,10 @@ describe('levelzero compose', () => {
   });
 
   it('propagates non-zero exit code from docker compose', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
     dbl.queueExit(2);
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -169,38 +228,64 @@ describe('levelzero compose', () => {
 
   it('requires a subcommand and errors CLIError when none is given', async () => {
     const { spawn } = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn });
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(CLIError);
   });
 
-  it('errors with a clear hint when the compose file does not exist yet', async () => {
+  it('errors with a clear hint when no registry entry exists yet (stack not running)', async () => {
     const { spawn } = makeSpawnDouble();
-    // Fresh project without a generated compose file.
+    // Fresh project without ever calling `dev` — no registry entry.
     const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'lz-compose-fresh-')));
     writeFileSync(join(fresh, 'levelzero.config.ts'), 'export default {};');
-    const cmd = makeComposeCommand({ spawn });
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
     await expect(
       cmd.run({ cwd: fresh, format: 'json', args: ['ps'], flags: {} }),
-    ).rejects.toThrow(/dev|compose/i);
+    ).rejects.toThrow(/dev|compose|stack/i);
+  });
+
+  it('errors when the registry entry points at a missing file', async () => {
+    // Entry recorded but the file was deleted out from under us — surface
+    // a NO_PROJECT with a hint to re-run `dev`.
+    const missing = join(projectDir, '.levelzero', worktreeKey, 'gone.yml');
+    await seedRegistryEntry({ composeFile: missing });
+    const { spawn } = makeSpawnDouble();
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
+    await expect(
+      cmd.run({ cwd: projectDir, format: 'json', args: ['ps'], flags: {} }),
+    ).rejects.toThrow(/no compose file|dev/i);
+  });
+
+  it('errors for legacy registry entries with an empty composeFile', async () => {
+    // Pre-LEV-208 registry entries written without `composeFile` get `''`
+    // from the read path. Treat that as "stack not running from this
+    // command's perspective" — operator re-runs `dev` to refresh.
+    await seedRegistryEntry({ composeFile: '' });
+    const { spawn } = makeSpawnDouble();
+    const cmd = makeComposeCommand({ spawn, getRegistry: () => registry });
+    await expect(
+      cmd.run({ cwd: projectDir, format: 'json', args: ['ps'], flags: {} }),
+    ).rejects.toThrow(/dev|stack/i);
   });
 
   it('surfaces spawn errors (e.g., docker not on PATH) as CLIError', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
     const err = Object.assign(new Error('spawn docker ENOENT'), {
       code: 'ENOENT',
     }) as NodeJS.ErrnoException;
     dbl.queueError(err);
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     await expect(
       cmd.run({ cwd: projectDir, format: 'json', args: ['ps'], flags: {} }),
     ).rejects.toThrow(CLIError);
   });
 
   it('uses the worktree key (12-char hex) for the project name suffix', async () => {
+    await seedRegistryEntry();
     const dbl = makeSpawnDouble();
-    const cmd = makeComposeCommand({ spawn: dbl.spawn });
+    const cmd = makeComposeCommand({ spawn: dbl.spawn, getRegistry: () => registry });
     await cmd.run({
       cwd: projectDir,
       format: 'json',

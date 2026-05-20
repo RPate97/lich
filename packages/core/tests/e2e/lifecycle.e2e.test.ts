@@ -364,12 +364,13 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       expect(urlsOut.urls.length).toBeGreaterThan(0);
     });
 
-    // LEV-208 — `compose` looks for `<worktree>/.levelzero/docker-compose.
-    // yml` but `dev` writes it under `<worktree>/.levelzero/<key>/docker-
-    // compose.yml`. So `compose ps` fails with NO_PROJECT today even though
-    // the stack IS up. Marked `it.fails` so the suite stays green while the
-    // bug is present; drop `.fails` when LEV-208 lands.
-    it.fails(
+    // LEV-208 — `compose` now reads the absolute compose file path from the
+    // runtime registry entry `dev` writes (`entry.composeFile`), so the
+    // passthrough always points at the same file `dev`/`stop` use regardless
+    // of the on-disk subdir layout. Pre-fix the passthrough reconstructed
+    // `<worktree>/.levelzero/docker-compose.yml` and never found the
+    // per-worktree file under `<worktree>/.levelzero/<key>/…`.
+    it(
       'LEV-208 regression: compose ps --json succeeds while dev is up',
       { timeout: 30_000 },
       () => {

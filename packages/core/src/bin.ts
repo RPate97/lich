@@ -31,7 +31,7 @@ import { makeScreenshotCommand } from './commands/screenshot';
 import { makeVisualDiffCommand } from './commands/visual';
 import { makeGenCommand } from './commands/gen';
 import { makeUrlsCommand } from './commands/urls';
-import { composeCommand } from './commands/compose';
+import { makeComposeCommand } from './commands/compose';
 import { adapterListCommand, makeAdapterListCommand } from './commands/adapter/list';
 import { adapterSwapCommand, makeAdapterSwapCommand } from './commands/adapter/swap';
 import { envListCommand, makeEnvListCommand } from './commands/env/list';
@@ -93,7 +93,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(coverageCommand);
   reg.register(makeCheckCommand());
   reg.register(makeUrlsCommand({ getRegistry: getReg }));
-  reg.register(composeCommand);
+  reg.register(makeComposeCommand({ getRegistry: getReg }));
   reg.register(adapterListCommand);
   reg.register(adapterSwapCommand);
   reg.register(envListCommand);
