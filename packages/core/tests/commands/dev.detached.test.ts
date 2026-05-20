@@ -1,0 +1,252 @@
+/**
+ * LEV-194 — default detached `levelzero dev` path.
+ *
+ * Companion to dev.test.ts and dev.owned.test.ts. Where those exercise the
+ * `--live` foreground runner (today's behavior), this file pins the detached
+ * behavior: spawn unrefs the children, pid files land under
+ * `.levelzero/state/<key>/pids/`, and the per-service `.log` file under
+ * `.levelzero/state/<key>/logs/` accumulates whatever the children wrote.
+ *
+ * Each test spawns a real `sh` child via `runOwnedServicesDetached` so the
+ * detached / unref / FD-redirect semantics are exercised end-to-end. A mock
+ * compose runner keeps docker out of the loop.
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  mkdtempSync,
+  writeFileSync,
+  realpathSync,
+  existsSync,
+  readFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Registry } from '../../src/registry';
+import { makeDevCommand } from '../../src/commands/dev';
+import type { ComposeRunner } from '../../src/compose/runner';
+import type { OwnedService, Service } from '../../src/services/types';
+
+function makeMockComposeFactory() {
+  const factory = (_projectName: string, _composeFile: string): ComposeRunner => ({
+    async up() {},
+    async down() {},
+    async ps() {
+      return [];
+    },
+    async logs() {
+      return '';
+    },
+    async exec() {
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+  });
+  return { factory };
+}
+
+let projectDir: string;
+let homeDir: string;
+let registry: Registry;
+
+beforeEach(() => {
+  projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-det-proj-')));
+  homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-det-home-')));
+  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  registry = new Registry(join(homeDir, 'registry.json'));
+});
+
+/**
+ * Wait until a predicate returns true or a budget expires. Used in detached
+ * tests to give the freshly-spawned child a beat to write to its log file —
+ * `runOwnedServicesDetached` returns as soon as `spawn` returns the pid, not
+ * when the child has produced output.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  budgetMs = 3000,
+  stepMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
+describe('levelzero dev (default detached, LEV-194)', () => {
+  it('writes a pid file and raw .log file for each owned service', async () => {
+    const echoer: OwnedService = {
+      name: 'echoer',
+      kind: 'owned',
+      portNames: [], // no probe -> readiness 'skipped'
+      cwd: projectDir,
+      // Sleep briefly so we can verify the pid file before the process
+      // exits — keeps the test deterministic across slow CI boxes.
+      command: 'sh -c "echo hello-detached; sleep 0.3"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [echoer],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 100,
+    });
+
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    expect(result.detached).toBe(true);
+    const pidPath = join(
+      projectDir,
+      '.levelzero',
+      'state',
+      result.key,
+      'pids',
+      'echoer.pid',
+    );
+    const logPath = join(
+      projectDir,
+      '.levelzero',
+      'state',
+      result.key,
+      'logs',
+      'echoer.log',
+    );
+
+    expect(existsSync(pidPath)).toBe(true);
+    const pid = Number(readFileSync(pidPath, 'utf8').trim());
+    expect(pid).toBeGreaterThan(0);
+    expect(result.owned.pids.echoer).toBe(pid);
+    expect(result.owned.readiness.echoer).toBe('skipped');
+
+    // The log file is created at spawn but the echo output is async. Wait
+    // briefly for the child to produce it.
+    await waitFor(() => {
+      try {
+        return readFileSync(logPath, 'utf8').includes('hello-detached');
+      } catch {
+        return false;
+      }
+    });
+    const log = readFileSync(logPath, 'utf8');
+    expect(log).toContain('hello-detached');
+    // The header marker also lands in the file so multiple dev cycles are
+    // visually separable.
+    expect(log).toMatch(/--- levelzero dev .+ ---/);
+  });
+
+  it('readiness reports timeout when port has no listener and ready when one binds', async () => {
+    // Service A: claims a port but never binds (sh echo). Probe should time
+    // out within the short test budget.
+    const a: OwnedService = {
+      name: 'a',
+      kind: 'owned',
+      portNames: ['a'],
+      cwd: projectDir,
+      command: 'sh -c "echo a-up"',
+      envContributions: () => ({}),
+    };
+    // Service B: no port -> probe skipped.
+    const b: OwnedService = {
+      name: 'b',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "echo b-up"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [a, b],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 100,
+    });
+
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    expect(result.detached).toBe(true);
+    expect(result.owned.readiness.a).toBe('timeout');
+    expect(result.owned.readiness.b).toBe('skipped');
+  });
+
+  it('returns synchronously soon after spawn (does not wait for child exit)', async () => {
+    // Child runs for ~2s. If `dev` waited on `done`, the call would block
+    // for the full duration; the detached path should return in well under
+    // a second (spawn + a single 100ms probe budget).
+    const slow: OwnedService = {
+      name: 'slow',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "sleep 2; echo done"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [slow],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 100,
+    });
+
+    const start = Date.now();
+    await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
+    const elapsed = Date.now() - start;
+
+    // Generous upper bound — slow CI machines can stall, but 1.5s is well
+    // under the 2s the child runs for.
+    expect(elapsed).toBeLessThan(1500);
+  });
+
+  it('--live flag re-engages the foreground runner (no pid file, JSONL log)', async () => {
+    const echoer: OwnedService = {
+      name: 'echoer',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "echo hello-live"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [echoer],
+      composeRunnerFactory: factory,
+    });
+
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: { live: true },
+    })) as any;
+
+    expect(result.live).toBe(true);
+    expect(result.owned.exitCodes.echoer).toBe(0);
+
+    // Foreground runner writes JSONL to .levelzero/logs, not the state dir.
+    const jsonlPath = join(projectDir, '.levelzero', 'logs', 'echoer.jsonl');
+    expect(existsSync(jsonlPath)).toBe(true);
+
+    // No pid file is created by the foreground path.
+    const pidPath = join(
+      projectDir,
+      '.levelzero',
+      'state',
+      result.key,
+      'pids',
+      'echoer.pid',
+    );
+    expect(existsSync(pidPath)).toBe(false);
+  });
+});

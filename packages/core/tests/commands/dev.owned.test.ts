@@ -67,7 +67,10 @@ describeIfDocker('dev with owned services (DI)', () => {
     const getServices = (): Service[] => [pgService, echoSvc];
     const dev = makeDevCommand(() => registry, { getServices });
 
-    const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
+    // LEV-194 — `--live` runs the concurrently foreground runner so exit
+    // codes and JSONL logs are captured (the detached default returns
+    // before child exits and writes raw `.log` files instead).
+    const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: { live: true } })) as any;
 
     expect(result.ports.postgres).toBeGreaterThanOrEqual(54060);
     // DATABASE_URL is now contributed by the echoer service itself (see

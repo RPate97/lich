@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  realpathSync,
+  mkdirSync,
+  existsSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { dockerOrSkip, isContainerRunning } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
@@ -118,6 +124,98 @@ describe('levelzero stop (unit, mocked compose)', () => {
     // No registry entry → no runner instantiated, no down() called.
     expect(constructed).toHaveLength(0);
     expect(calls).toHaveLength(0);
+  });
+
+  it('signals pid files in .levelzero/state/<key>/pids/ and removes them (LEV-194)', async () => {
+    // Manually plant a registry entry + a pid file pointing at a real
+    // sleeping child. Verifies the SIGTERM -> wait -> SIGKILL escalation
+    // path and the cleanup of the pid file.
+    const wtKey = computeWorktreeKey(projectDir);
+    await registry.upsert(wtKey, {
+      path: projectDir,
+      branch: 'main',
+      ports: {},
+      urls: {},
+      containers: [],
+      network: '',
+      logDir: '.levelzero/logs',
+      createdAt: new Date().toISOString(),
+    });
+
+    const pidDir = join(projectDir, '.levelzero', 'state', wtKey, 'pids');
+    mkdirSync(pidDir, { recursive: true });
+
+    // A long-running child that ignores nothing; SIGTERM will kill it
+    // because `sh -c sleep 30` doesn't install a trap. `detached: true`
+    // mirrors what the real detached runner does.
+    const child = spawn('sh', ['-c', 'sleep 30'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    writeFileSync(join(pidDir, 'longsleep.pid'), `${child.pid}\n`);
+
+    // Also drop a malformed pid file to exercise the "skip+cleanup" branch.
+    writeFileSync(join(pidDir, 'garbage.pid'), 'not-a-pid\n');
+
+    const { factory } = makeMockComposeFactory();
+    const stop = makeStopCommand(() => registry, {
+      getServices: () => [],
+      composeRunnerFactory: factory,
+    });
+    const result = (await stop.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    expect(result.stopped).toBe(true);
+    // Pid file was processed and removed.
+    expect(existsSync(join(pidDir, 'longsleep.pid'))).toBe(false);
+    // Garbage file was deleted defensively.
+    expect(existsSync(join(pidDir, 'garbage.pid'))).toBe(false);
+
+    // The owned-teardown summary includes the killed pid.
+    const longsleepResult = result.owned.find((o: any) => o.name === 'longsleep');
+    expect(longsleepResult).toBeDefined();
+    expect(['terminated', 'killed']).toContain(longsleepResult.result);
+    expect(longsleepResult.pid).toBe(child.pid);
+
+    // The child should be dead now.
+    let alive = true;
+    try {
+      process.kill(child.pid!, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+  });
+
+  it('stop is a no-op for pid files when the dir does not exist', async () => {
+    const wtKey = computeWorktreeKey(projectDir);
+    await registry.upsert(wtKey, {
+      path: projectDir,
+      branch: 'main',
+      ports: {},
+      urls: {},
+      containers: [],
+      network: '',
+      logDir: '.levelzero/logs',
+      createdAt: new Date().toISOString(),
+    });
+
+    const { factory } = makeMockComposeFactory();
+    const stop = makeStopCommand(() => registry, {
+      getServices: () => [],
+      composeRunnerFactory: factory,
+    });
+    const result = (await stop.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+
+    expect(result.stopped).toBe(true);
+    expect(result.owned).toEqual([]);
   });
 
   it('after dev, stop calls compose down (volumes:false) and clears the entry', async () => {

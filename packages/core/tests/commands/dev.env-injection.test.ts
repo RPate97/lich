@@ -178,11 +178,14 @@ describe('levelzero dev — Plan 16 env injection (LEV-182)', () => {
       getEnvInjection: () => ({ DATABASE_URL: 'postgres.url' }),
     });
 
+    // LEV-194 — `--live` keeps the foreground concurrently runner so the
+    // test can read each owned service's JSONL log to verify the env it
+    // received. The default detached path dumps raw stdout instead.
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [],
-      flags: {},
+      flags: { live: true },
     })) as { key: string; ports: Record<string, number>; owned?: unknown };
 
     expect(result.owned).toBeDefined();
@@ -228,11 +231,14 @@ describe('levelzero dev — Plan 16 env injection (LEV-182)', () => {
       getEnvInjection: () => ({ DATABASE_URL: 'postgres.url' }),
     });
 
+    // LEV-194 — `--live` keeps the foreground concurrently runner so the
+    // test can read each owned service's JSONL log to verify the env it
+    // received.
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [],
-      flags: {},
+      flags: { live: true },
     })) as { key: string; ports: Record<string, number> };
 
     // Compose side: container URL.
@@ -299,11 +305,12 @@ describe('levelzero dev — Plan 16 env injection (LEV-182)', () => {
       getEnvInjection: () => ({ importAll: ['secrets'] }),
     });
 
+    // LEV-194 — `--live` so JSONL log read is meaningful.
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
       args: [],
-      flags: {},
+      flags: { live: true },
     })) as { key: string };
 
     const yamlPath = join(

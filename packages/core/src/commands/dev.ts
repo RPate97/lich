@@ -2,7 +2,11 @@ import { resolveStackContext } from '../services/context';
 import { getBuiltinServices } from '../services/builtins';
 import { allocatePorts } from '../ports/allocator';
 import { containerName, networkName } from '../compose/naming';
-import { runOwnedServices } from '../owned/runner';
+import {
+  runOwnedServices,
+  runOwnedServicesDetached,
+  type DetachedRunnerHandle,
+} from '../owned/runner';
 import {
   buildComposeBundle,
   writeComposeFile,
@@ -87,6 +91,16 @@ export interface DevOptions {
    * call.
    */
   getResolvedBulkSources?: () => BulkResolutionCache;
+  /**
+   * Override the per-service HTTP readiness probe deadline used by the
+   * default detached owned-service runner (LEV-194). The runner probes
+   * `http://localhost:<port>/` for any service with a `portNames[0]` and
+   * stops waiting once this many milliseconds elapse. Defaults to 10s — a
+   * generous budget for `next dev`'s startup. Tests inject something small
+   * (e.g. 200ms) so they don't sit there waiting on a service that never
+   * binds (e.g. a quick-exit echo command with a port name).
+   */
+  readinessTimeoutMs?: number;
 }
 
 function dockerServicesOnly(list: Service[]): DockerService[] {
@@ -229,10 +243,12 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
   const getEnvSourceRegistry = opts?.getEnvSourceRegistry;
   const getEnvInjection = opts?.getEnvInjection;
   const getResolvedBulkSources = opts?.getResolvedBulkSources;
+  const readinessTimeoutMs = opts?.readinessTimeoutMs;
 
   return {
     name: 'dev',
-    describe: 'Bring up every service for the current worktree (idempotent)',
+    describe:
+      'Bring up every service for the current worktree (idempotent). Detached by default; pass --live to stream logs to the foreground.',
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
       // Built-in services first; plugin-contributed `OwnedService` entries
@@ -473,29 +489,83 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
 
       if (owned.length === 0) {
         if (ctx.format === 'json') return baseResult;
-        return renderDevPretty(baseResult, null);
+        return renderDevPretty(baseResult, null, null);
       }
 
-      const logDir = join(stackCtx.worktreePath, entry.logDir);
-      const runner = await runOwnedServices(
+      // LEV-194 — `--live` opts back into the original concurrently-based
+      // foreground runner (stdout/stderr inherited via JSONL writers, Ctrl-C
+      // tears the stack down). The new default detaches owned services so
+      // `dev` returns control to the shell as soon as services are healthy.
+      const live = ctx.flags['live'] === true;
+
+      if (live) {
+        const logDir = join(stackCtx.worktreePath, entry.logDir);
+        const runner = await runOwnedServices(
+          owned,
+          stackCtx,
+          entry.ports,
+          dockerEnv,
+          { logDir },
+          ownedServiceEnv,
+        );
+        const { exitCodes } = await runner.done;
+
+        const fullResult = {
+          ...baseResult,
+          live: true as const,
+          owned: {
+            exitCodes,
+            pids: runner.pids,
+          },
+        };
+        if (ctx.format === 'json') return fullResult;
+        return renderDevPretty(baseResult, fullResult.owned, null);
+      }
+
+      // Default detached path — spawn each owned service via the detached
+      // runner, write pid files, probe readiness, then return so the user
+      // gets their shell back. `levelzero stop` reads the pid files to
+      // tear things down later; `levelzero logs` reads the per-service
+      // `.log` files under the state dir.
+      const detachedLogDir = join(
+        stackCtx.worktreePath,
+        '.levelzero',
+        'state',
+        stackCtx.worktreeKey,
+        'logs',
+      );
+      const pidDir = join(
+        stackCtx.worktreePath,
+        '.levelzero',
+        'state',
+        stackCtx.worktreeKey,
+        'pids',
+      );
+      const detached = await runOwnedServicesDetached(
         owned,
         stackCtx,
         entry.ports,
         dockerEnv,
-        { logDir },
+        {
+          logDir: detachedLogDir,
+          pidDir,
+          ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
+        },
         ownedServiceEnv,
       );
-      const { exitCodes } = await runner.done;
 
       const fullResult = {
         ...baseResult,
+        detached: true as const,
         owned: {
-          exitCodes,
-          pids: runner.pids,
+          pids: detached.pids,
+          readiness: detached.readiness,
+          logPaths: detached.logPaths,
+          pidPaths: detached.pidPaths,
         },
       };
       if (ctx.format === 'json') return fullResult;
-      return renderDevPretty(baseResult, fullResult.owned);
+      return renderDevPretty(baseResult, null, detached);
     },
   };
 }
@@ -513,7 +583,11 @@ interface DevPrettyOwned {
   pids: Record<string, number>;
 }
 
-function renderDevPretty(base: DevPrettyBase, owned: DevPrettyOwned | null): string {
+function renderDevPretty(
+  base: DevPrettyBase,
+  ownedLive: DevPrettyOwned | null,
+  ownedDetached: DetachedRunnerHandle | null,
+): string {
   const lines: string[] = [];
   lines.push(`Stack up: ${base.key}`);
   lines.push(`  path:    ${base.path}`);
@@ -527,12 +601,21 @@ function renderDevPretty(base: DevPrettyBase, owned: DevPrettyOwned | null): str
     lines.push('ports:');
     for (const [name, port] of portEntries) lines.push(`  ${name}=${port}`);
   }
-  if (owned) {
-    const pidCount = Object.keys(owned.pids).length;
-    const exits = Object.entries(owned.exitCodes)
+  if (ownedLive) {
+    const pidCount = Object.keys(ownedLive.pids).length;
+    const exits = Object.entries(ownedLive.exitCodes)
       .map(([name, code]) => `${name}=${code}`)
       .join(',');
     lines.push(`owned: ${pidCount} process(es), exitCodes=[${exits}]`);
+  }
+  if (ownedDetached) {
+    lines.push('owned (detached):');
+    for (const [name, pid] of Object.entries(ownedDetached.pids)) {
+      const status = ownedDetached.readiness[name] ?? 'skipped';
+      lines.push(`  ${name}  pid=${pid}  ${status}`);
+    }
+    lines.push('  logs:  levelzero logs <service> --follow');
+    lines.push('  stop:  levelzero stop');
   }
   return lines.join('\n') + '\n';
 }
