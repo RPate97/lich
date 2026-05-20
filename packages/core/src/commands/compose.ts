@@ -102,13 +102,17 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Comman
           // Surface as a CLIError so the runner formats it nicely instead of
           // letting the raw spawn error bubble up.
           reject(
-            new CLIError(
-              'INTERNAL',
-              `failed to spawn docker: ${err.message}`,
-              err.code === 'ENOENT'
-                ? 'install Docker Desktop (or ensure `docker` is on PATH) and try again'
-                : undefined,
-            ),
+            new CLIError('INTERNAL', `failed to spawn docker: ${err.message}`, {
+              hint:
+                err.code === 'ENOENT'
+                  ? 'install Docker Desktop (or ensure `docker` is on PATH) and try again'
+                  : undefined,
+              cause: err,
+              details: {
+                command: `docker ${args.join(' ')}`,
+                errno: err.code,
+              },
+            }),
           );
         });
         proc.on('close', (code) => {

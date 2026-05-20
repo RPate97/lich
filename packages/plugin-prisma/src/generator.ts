@@ -68,6 +68,12 @@ export function makePrismaGenerator(opts?: { adapter?: ORMAdapter }): Generator 
         });
         return { status: 'ok' };
       } catch (err) {
+        // LEV-197 — the message MUST include the captured stderr so the
+        // `gen` summary renders the actual reason (e.g. "Could not resolve
+        // @prisma/client") inline. `makeChildFailureError` in the adapter
+        // already builds that string; we forward it verbatim. Non-CLIError
+        // throws (e.g. a thrown string from a test stub) fall back to the
+        // default Error.message extraction.
         const msg = err instanceof Error ? err.message : String(err);
         return {
           status: 'fail',

@@ -208,10 +208,87 @@ describe('levelzero gen', () => {
       } catch (err) {
         const e = err as CLIError;
         expect(e).toBeInstanceOf(CLIError);
-        const details = e.details as GenRunResult & { pretty: string };
+        // LEV-197 renamed `details.results` to `details.generators` so the
+        // pretty renderer's array-aware handler (which special-cases
+        // generator rows) picks the right field up.
+        const details = e.details as {
+          generators: Array<{ id: string; status: string; message: string | null }>;
+          ok: number;
+          skipped: number;
+          failed: number;
+        };
         expect(details.failed).toBe(1);
-        expect(details.results.map((r) => r.status)).toEqual(['ok', 'fail']);
-        expect(typeof details.pretty).toBe('string');
+        expect(details.generators.map((r) => r.status)).toEqual(['ok', 'fail']);
+      }
+    });
+
+    it('carries the underlying thrown error as CLIError.cause on failure', async () => {
+      // LEV-197 — when a generator throws, the original Error reaches the
+      // summary CLIError as `cause` so the renderer can walk the chain and
+      // surface the real stderr / message instead of swallowing it.
+      const cmd = makeGenCommand({
+        getGeneratorRegistry: () =>
+          registry(stubGen('boom', { throws: 'underlying explosion' })),
+      });
+      try {
+        await cmd.run(ctx({ json: true, cwd: projectDir }));
+        expect.fail('expected CLIError');
+      } catch (err) {
+        const e = err as CLIError;
+        expect(e).toBeInstanceOf(CLIError);
+        expect(e.cause).toBeInstanceOf(Error);
+        expect((e.cause as Error).message).toBe('underlying explosion');
+      }
+    });
+
+    it('surfaces the failing generator message in the rendered pretty error', async () => {
+      // LEV-197 — the user-facing pretty error MUST include the per-
+      // generator failure message so the underlying reason isn't swallowed
+      // behind a generic "see messages above" hint.
+      const cmd = makeGenCommand({
+        getGeneratorRegistry: () =>
+          registry(
+            stubGen('prisma', {
+              status: 'fail',
+              message: 'prisma generate failed (exit 1): Could not resolve @prisma/client',
+            }),
+          ),
+      });
+      const { formatError } = await import('../../src/output');
+      try {
+        await cmd.run(ctx({ cwd: projectDir }));
+        expect.fail('expected CLIError');
+      } catch (err) {
+        const e = err as CLIError;
+        const pretty = formatError(e, 'pretty');
+        expect(pretty).toContain('error: gen: 1 generator(s) failed: prisma');
+        // The underlying generator message must appear inline so the user
+        // doesn't need to re-run with `--json` to find it.
+        expect(pretty).toContain('Could not resolve @prisma/client');
+      }
+    });
+
+    it('surfaces the failing generator message in the rendered --json error', async () => {
+      const cmd = makeGenCommand({
+        getGeneratorRegistry: () =>
+          registry(
+            stubGen('prisma', {
+              status: 'fail',
+              message: 'prisma generate failed: schema missing',
+            }),
+          ),
+      });
+      const { formatError } = await import('../../src/output');
+      try {
+        await cmd.run(ctx({ json: true, cwd: projectDir }));
+        expect.fail('expected CLIError');
+      } catch (err) {
+        const e = err as CLIError;
+        const json = JSON.parse(formatError(e, 'json'));
+        expect(json.code).toBe('INTERNAL');
+        expect(json.details.generators).toHaveLength(1);
+        expect(json.details.generators[0].status).toBe('fail');
+        expect(json.details.generators[0].message).toContain('schema missing');
       }
     });
   });

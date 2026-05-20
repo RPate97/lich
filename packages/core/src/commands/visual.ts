@@ -27,7 +27,11 @@ async function readPng(path: string): Promise<Buffer> {
     throw new CLIError(
       'CONFIG_INVALID',
       `could not read PNG at ${path}: ${err instanceof Error ? err.message : String(err)}`,
-      'pass a path to an existing PNG file',
+      {
+        hint: 'pass a path to an existing PNG file',
+        cause: err,
+        details: { path },
+      },
     );
   }
 }

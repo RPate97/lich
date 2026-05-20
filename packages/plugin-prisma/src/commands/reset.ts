@@ -108,11 +108,7 @@ export function makeDbResetCommand(opts?: DbResetOptions): Command {
       try {
         await adapter.resetDatabase(ormCtx);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new CLIError('INTERNAL', 'db reset: drop step failed', {
-          hint: 'see details.output for the adapter’s error',
-          details: { output: message },
-        });
+        throw wrapStepFailure('db reset: drop step failed', err);
       }
 
       // Step 2: re-create schema from migrations. Same wrap-and-rethrow as
@@ -122,11 +118,7 @@ export function makeDbResetCommand(opts?: DbResetOptions): Command {
       try {
         await adapter.applyMigrations(ormCtx);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new CLIError('INTERNAL', 'db reset: migrate step failed', {
-          hint: 'see details.output for the adapter’s error',
-          details: { output: message },
-        });
+        throw wrapStepFailure('db reset: migrate step failed', err);
       }
 
       // Step 3: seed (optional). Unlike step 1/2 the adapter returns
@@ -140,18 +132,14 @@ export function makeDbResetCommand(opts?: DbResetOptions): Command {
           const seedResult = await adapter.seed(ormCtx);
           if (!seedResult.ok) {
             throw new CLIError('INTERNAL', 'db reset: seed step failed', {
-              hint: 'see details.output for the seed script’s stdout/stderr',
+              hint: 'see details for the seed script’s stdout/stderr',
               details: { output: seedResult.output },
             });
           }
           seeded = true;
         } catch (err) {
           if (err instanceof CLIError) throw err;
-          const message = err instanceof Error ? err.message : String(err);
-          throw new CLIError('INTERNAL', 'db reset: seed step failed', {
-            hint: 'see details.output for the adapter’s error',
-            details: { output: message },
-          });
+          throw wrapStepFailure('db reset: seed step failed', err);
         }
       }
 
@@ -172,3 +160,25 @@ export function makeDbResetCommand(opts?: DbResetOptions): Command {
 }
 
 export const dbResetCommand: Command = makeDbResetCommand();
+
+/**
+ * LEV-197 — preserve the adapter's structured failure when one of the three
+ * db.reset steps throws. The adapter throws a {@link CLIError} carrying
+ * `{ stderr, stdout, exitCode, command }` in `details` for prisma CLI
+ * failures; we forward those keys verbatim AND chain the original error
+ * via `cause` so the renderer can walk to it. Non-CLIError throws fall
+ * back to a single `output:` blob for back-compat with the prior shape
+ * (and to keep test stubs that throw plain `Error` instances working).
+ */
+function wrapStepFailure(message: string, err: unknown): CLIError {
+  const adapterDetails =
+    err instanceof CLIError && err.details && typeof err.details === 'object'
+      ? (err.details as Record<string, unknown>)
+      : undefined;
+  const msg = err instanceof Error ? err.message : String(err);
+  return new CLIError('INTERNAL', message, {
+    hint: 'see details for the adapter’s error',
+    cause: err,
+    details: adapterDetails ?? { output: msg },
+  });
+}

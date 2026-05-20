@@ -116,12 +116,19 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
           rawName,
         );
       } catch (e) {
-        // Wrap adapter throws so the CLI driver returns a non-zero exit code
-        // with a structured error rather than an unhandled rejection.
+        // LEV-197 — forward the adapter's structured `stderr`/`exitCode`
+        // details (when it threw a CLIError) so the renderer surfaces the
+        // actual prisma error inline. Plain Error throws fall back to a
+        // single `output:` blob for back-compat.
+        const adapterDetails =
+          e instanceof CLIError && e.details && typeof e.details === 'object'
+            ? (e.details as Record<string, unknown>)
+            : undefined;
         const msg = e instanceof Error ? e.message : String(e);
         throw new CLIError('INTERNAL', 'db migration new failed', {
-          hint: 'see details.output for the adapter’s stdout/stderr',
-          details: { output: msg },
+          hint: 'see details for the adapter’s stdout/stderr',
+          cause: e,
+          details: adapterDetails ?? { output: msg },
         });
       }
 
