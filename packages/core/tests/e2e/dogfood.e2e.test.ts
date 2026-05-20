@@ -56,22 +56,27 @@ import {
 } from './_helpers/playwright';
 
 /**
- * Evaluated at file-parse time for `describe.skipIf`. Both expensive (network
- * probe for docker, dynamic import for playwright), so we cache via the
- * helpers' internal state. The playwright kick-off is asynchronous; the
- * gating describe re-checks in its predicate.
+ * Evaluated at file-parse time for `describe.skipIf`. The docker probe is
+ * synchronous (it shells out to `docker network create` and tears it back
+ * down). The playwright probe is async and runs in `beforeAll`; phase 4
+ * re-checks its cached result inside the test body so a late-arriving
+ * playwright stays useful rather than being masked as "skipped".
  */
 const DOCKER = dockerAvailable();
-// Kick off the playwright probe so `ensurePlaywrightProbed()` in `beforeAll`
-// resolves quickly. The predicate `playwrightAvailable()` (sync) is checked
-// at the describe.skipIf call site after the module finishes loading.
-let PLAYWRIGHT = false;
 
 const PROJECT_NAME = 'demo';
 
 let tmpdir: string;
 let projectDir: string;
 let composeProjectName: string | null = null;
+/**
+ * Snapshot of the scaffolded `package.json` captured BEFORE `installDeps`
+ * patches in workspace overrides (and currently a `@levelzero/core` dep —
+ * see LEV-205). Phase 1's template-bug regression test reads this so it
+ * sees what the user actually gets out of `create-stack-v0`, not the
+ * harness-modified file.
+ */
+let scaffoldedRootPkgJson: string | null = null;
 
 describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   beforeAll(async () => {
@@ -87,14 +92,21 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     });
     projectDir = dir;
 
+    // Snapshot the scaffolded `package.json` BEFORE `installDeps` patches
+    // it (see LEV-205 — the harness currently injects `@levelzero/core`
+    // because the template doesn't declare it). Phase 1's template-bug
+    // regression test asserts on this snapshot.
+    scaffoldedRootPkgJson = readFileSync(join(projectDir, 'package.json'), 'utf8');
+
     // Real `bun install` with `file:` overrides pointing at the local
     // workspace. Throws (with bun's stderr) if install fails.
     await installDeps(projectDir);
 
     // Probe playwright after install — `@levelzero/core`'s devDependencies
     // include playwright, but the chromium binary may not be downloaded on
-    // this host. The helper caches the result; phase 4 reads it.
-    PLAYWRIGHT = await ensurePlaywrightProbed();
+    // this host. The helper caches the result; phase 4 reads it by calling
+    // `ensurePlaywrightProbed()` again (which hits the cache).
+    await ensurePlaywrightProbed();
   }, 240_000);
 
   afterAll(async () => {
@@ -145,30 +157,52 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       ).toBe(true);
     });
 
-    it('apps/web has next installed (root or per-app)', () => {
-      const rootNext = join(projectDir, 'node_modules', '.bin', 'next');
-      const perAppNext = join(
-        projectDir,
-        'apps',
-        'web',
-        'node_modules',
-        '.bin',
-        'next',
-      );
-      expect(existsSync(rootNext) || existsSync(perAppNext)).toBe(true);
+    // LEV-205 — `create-stack-v0`'s template `package.json` lists every
+    // `@levelzero/plugin-*` but does NOT declare `@levelzero/core` as a
+    // direct dep. Bun has no reason to materialize the `levelzero` bin
+    // under `node_modules/.bin/` from a transitive, so the documented
+    // first-time-user flow (`bunx @levelzero/create-stack-v0 my-app &&
+    // cd my-app && bun install && bun run levelzero --help`) breaks with
+    // "Script not found 'levelzero'". The e2e harness patches `@levelzero/
+    // core: "*"` in before running `bun install` (see install.ts
+    // applyWorkspaceOverrides) — that's a workaround, not a fix, so we
+    // assert the underlying template bug here against the SNAPSHOT taken
+    // BEFORE the harness patch.
+    //
+    // `it.fails` today (the bug is present); when LEV-205 lands the
+    // implementer drops `.fails` AND removes the harness patch.
+    it.fails(
+      'LEV-205 regression: template package.json declares @levelzero/core as a direct dep',
+      () => {
+        expect(scaffoldedRootPkgJson).not.toBeNull();
+        const pkg = JSON.parse(scaffoldedRootPkgJson!) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        };
+        const declared =
+          !!pkg.dependencies?.['@levelzero/core'] ||
+          !!pkg.devDependencies?.['@levelzero/core'];
+        expect(declared).toBe(true);
+      },
+    );
+
+    // Bun hoists every workspace dep to the root `node_modules` in this
+    // scaffold — `apps/*/node_modules/` are not created at all (verified by
+    // probing a real install of the scaffolded tree, see LEV-198 review
+    // notes). Pin both assertions to the hoisted root path; if bun's
+    // resolution strategy changes (e.g. it starts using per-app
+    // `node_modules` for deduplication conflicts) these will fail loudly
+    // and the comment can be revisited.
+    it('next is hoisted to the root node_modules', () => {
+      expect(
+        existsSync(join(projectDir, 'node_modules', '.bin', 'next')),
+      ).toBe(true);
     });
 
-    it('@prisma/client is installed (root or per-app)', () => {
-      const root = join(projectDir, 'node_modules', '@prisma', 'client');
-      const perApp = join(
-        projectDir,
-        'apps',
-        'api',
-        'node_modules',
-        '@prisma',
-        'client',
-      );
-      expect(existsSync(root) || existsSync(perApp)).toBe(true);
+    it('@prisma/client is hoisted to the root node_modules', () => {
+      expect(
+        existsSync(join(projectDir, 'node_modules', '@prisma', 'client')),
+      ).toBe(true);
     });
 
     it('bun run levelzero --help lists the canonical command set', () => {
@@ -324,6 +358,26 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       },
     );
 
+    // `db seed` can only succeed after a successful `db migrate` — the
+    // seed script needs the schema applied to insert rows. Today this
+    // fails for the same reason as `db migrate` (LEV-204): in a fresh
+    // scaffold the migrate step never produces a usable schema, so seed
+    // has nothing to write against. Marked `.fails` with the same LEV-204
+    // tag so the migrate → seed chain is documented; when LEV-204 lands,
+    // BOTH `.fails` markers come off together.
+    it.fails(
+      'LEV-204 regression: db seed --json exits 0 after migrate in a fresh scaffold',
+      { timeout: 120_000 },
+      () => {
+        const res = runCli(projectDir, ['db', 'seed', '--json'], {
+          timeoutMs: 90_000,
+        });
+        expect(res.exitCode, res.stderr).toBe(0);
+        const out = JSON.parse(res.stdout) as { ok: boolean };
+        expect(out.ok).toBe(true);
+      },
+    );
+
     it(
       'levelzero gen --json exits 0',
       { timeout: 90_000 },
@@ -397,11 +451,11 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // -------------------------------------------------------------------------
   // Phase 4 — browser drive (docker + playwright-gated)
   //
-  // The describe.skipIf predicate runs at file-parse time and uses the
-  // `PLAYWRIGHT` module-level flag, which is populated in `beforeAll`. We
-  // therefore double-gate inside the test body using `ensurePlaywrightProbed`
-  // so a late-arriving playwright stays useful, and avoid masking a real
-  // failure as "skipped".
+  // The describe.skipIf only gates on docker (sync probe). The playwright
+  // gate is enforced inside the test body via `ensurePlaywrightProbed()`,
+  // which hits the cache populated in `beforeAll`. This avoids masking a
+  // real failure as "skipped" when playwright lands late, and lets the
+  // test emit a soft-skip diagnostic when playwright is genuinely absent.
   // -------------------------------------------------------------------------
   describe.skipIf(!DOCKER)('phase 4: browser drive', () => {
     // LEV-195 / LEV-200 — the landing page renders the projectName + an api
@@ -485,15 +539,30 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           const res = runCli(projectDir, ['gen', '--only', 'prisma', '--json'], {
             timeoutMs: 30_000,
           });
-          // The exact form of the failure is implementation-defined; what
-          // matters is that the CLI does NOT silently succeed and that the
-          // diagnostic mentions prisma (so a user can act on it).
-          const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-          const succeededSilently =
-            res.exitCode === 0 && !combined.includes('error') && !combined.includes('fail');
-          expect(succeededSilently).toBe(false);
-          // Strong signal: the diagnostic mentions prisma somewhere.
-          expect(combined).toMatch(/prisma|cannot find module/);
+          // Must fail loudly — exit non-zero with diagnostic output.
+          expect(res.exitCode).not.toBe(0);
+          const stderr = res.stderr;
+          // The LEV-197 regression target: stderr MUST surface the actual
+          // underlying error, not just the opaque "1 generator(s) failed"
+          // summary. The real install probe shows the missing-module path
+          // produces "Cannot find module 'prisma/config'" (or similar
+          // module-resolution error) inside the generator's diagnostics.
+          // If this matcher stops matching after a code change, the
+          // probable cause is that the inner error got swallowed again
+          // (LEV-197 regression) — not that the error string changed.
+          expect(stderr).toMatch(/cannot find module|MODULE_NOT_FOUND|ENOENT/i);
+          // And stderr MUST NOT be ONLY the opaque summary. The bug
+          // LEV-197 fixed was stderr being a bare "gen: N generator(s)
+          // failed: <name>" with no underlying cause attached. We
+          // therefore strip out every occurrence of that summary phrase
+          // and assert the remainder still contains substantive content
+          // (a module-resolution error, a path, etc.) — that proves the
+          // underlying cause is being surfaced ALONGSIDE the summary,
+          // not as a replacement for it.
+          const withoutSummary = stderr
+            .replace(/\d+ generator\(s\) failed:[^\n"]*/g, '')
+            .toLowerCase();
+          expect(withoutSummary).toMatch(/cannot find module|module_not_found|enoent/);
         } finally {
           renameSync(stash, target);
         }
@@ -504,10 +573,13 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       'LEV-197 regression: dev fails loudly when docker is unreachable',
       { timeout: 30_000 },
       () => {
-        // Point DOCKER_HOST at a bogus address so the docker CLI's
-        // first call (`docker info` / `docker compose`) fails before
-        // any compose work runs. Should surface an error within seconds,
-        // not hang or silently exit 0.
+        // Simulate docker being unreachable by pointing DOCKER_HOST at a
+        // bogus address (tcp://127.0.0.1:1 — no daemon listening). The
+        // docker CLI's first call (`docker info` / `docker compose`)
+        // fails before any compose work runs. Should surface an error
+        // within seconds, not hang or silently exit 0. We deliberately
+        // do NOT actually stop the host's docker daemon — that would
+        // affect concurrent tests on the same host.
         const res = runCli(projectDir, ['dev', '--json'], {
           timeoutMs: 20_000,
           env: { DOCKER_HOST: 'tcp://127.0.0.1:1' },

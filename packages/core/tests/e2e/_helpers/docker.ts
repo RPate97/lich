@@ -1,28 +1,15 @@
 /**
  * E2E harness — docker helpers.
  *
- * Augments the existing `tests/_helpers/docker.ts` with:
- *   - A "can we actually create networks" probe (catches address-pool
- *     exhaustion that `docker info` alone misses — see LEV-120 / LEV-202).
- *   - `withDockerStack`: a try/finally wrapper that guarantees a
- *     `docker compose down --volumes` regardless of how the body exits.
- *     Mirrors the LEV-202 cleanup pattern; lives here so the new e2e
- *     suite has the helper available even before LEV-202 lands as a
- *     core feature.
- *
- * Keeping this co-located with the e2e suite (rather than under
- * `tests/_helpers/`) so the e2e tier owns its own cleanup story —
- * `withDockerStack` calls `docker compose down`, which is exactly what
- * the legacy smoke test does NOT do (it leaks containers when assertions
- * fail mid-test).
+ * Augments the existing `tests/_helpers/docker.ts` with a "can we actually
+ * create networks" probe (catches address-pool exhaustion that
+ * `docker info` alone misses — see LEV-120 / LEV-202), plus a
+ * `dockerComposeDown` teardown helper used by the dogfood suite's
+ * `afterAll`. Keeping this co-located with the e2e suite (rather than
+ * under `tests/_helpers/`) so the e2e tier owns its own cleanup story.
  */
 import { spawnSync } from 'node:child_process';
-import {
-  dockerOrSkip,
-  isContainerRunning,
-} from '../../_helpers/docker';
-
-export { dockerOrSkip, isContainerRunning };
+import { dockerOrSkip } from '../../_helpers/docker';
 
 /**
  * Returns true iff:
@@ -81,28 +68,3 @@ export function dockerComposeDown(
   });
 }
 
-/**
- * Wrap an async body in a try/finally that guarantees
- * `docker compose down` runs against `projectName`. If the body throws,
- * the original error is re-thrown after teardown.
- *
- * Useful in tests that bring up a stack mid-test and need to clean up
- * before the next assertion runs (vs. relying on `afterAll`, which only
- * fires at the end of the whole suite).
- */
-export async function withDockerStack<T>(
-  projectName: string,
-  body: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await body();
-  } finally {
-    try {
-      dockerComposeDown(projectName);
-    } catch {
-      // Teardown is best-effort. If `docker compose down` itself fails
-      // (rare; usually because the project never came up), we'd rather
-      // surface the body's original error than this one.
-    }
-  }
-}

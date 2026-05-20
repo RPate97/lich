@@ -70,11 +70,14 @@ export function discoverWorkspacePackages(): Record<string, string> {
  * declared. The template's `package.json` only lists `@levelzero/plugin-*`
  * (treating `core` as a transitive of every plugin), which means after a
  * real install `node_modules/.bin/levelzero` is missing — there's no
- * top-level package contributing the bin. Adding the direct dep here
- * matches what LEV-167 will likely do at publish time so the test harness
- * exercises the canonical user invocation (`bun x levelzero <args>` /
- * `bun run levelzero <args>`). A followup ticket should add this to the
- * scaffolder so users hit the same path.
+ * top-level package contributing the bin. This is the LEV-205 template
+ * bug; the harness patches it here so the rest of the dogfood suite can
+ * exercise the canonical user invocation (`bun x levelzero <args>` /
+ * `bun run levelzero <args>`), and the dogfood suite contains an
+ * `it.fails('LEV-205 regression: ...', ...)` test that asserts the bug
+ * against a snapshot of the scaffolded `package.json` taken BEFORE this
+ * function runs. When LEV-205 lands, drop this auto-patch and drop the
+ * `.fails` on the regression test in the same change.
  */
 export function applyWorkspaceOverrides(projectDir: string): Record<string, string> {
   const pkgPath = join(projectDir, 'package.json');
@@ -154,34 +157,27 @@ export async function installDeps(projectDir: string): Promise<InstallResult> {
     );
   }
 
-  // Post-install sanity: assert the workspace's per-app `node_modules` got
-  // populated with the binaries / packages the test suite will reach for.
-  // We don't check the root `node_modules/@levelzero/*` because bun's
-  // `file:` install may hoist or not — the per-app deps are what actually
-  // matter for `apps/web` running `next` and `apps/api` running prisma.
+  // Post-install sanity: assert the binaries / packages the test suite
+  // reaches for actually landed. Empirically, bun's `file:` install in this
+  // scaffold hoists EVERYTHING to the root `node_modules` — `apps/*/
+  // node_modules/` directories are not created at all (verified by a real
+  // install probe; see LEV-198 review notes). Pin the assertions to the
+  // hoisted root path so a future change in bun's strategy (per-app
+  // duplication, nohoist, etc.) fails loudly rather than silently passing.
   const nextBin = join(projectDir, 'node_modules', '.bin', 'next');
-  const webNextBin = join(projectDir, 'apps', 'web', 'node_modules', '.bin', 'next');
-  if (!existsSync(nextBin) && !existsSync(webNextBin)) {
+  if (!existsSync(nextBin)) {
     throw new Error(
-      `bun install completed but neither ${nextBin} nor ${webNextBin} exists`,
+      `bun install completed but ${nextBin} does not exist (expected ` +
+        `next to be hoisted to the root node_modules)`,
     );
   }
-  // `@prisma/client` is a transitive of `@levelzero/plugin-prisma`. It
-  // should land in the root `node_modules` after `file:` hoists.
+  // `@prisma/client` is a transitive of `@levelzero/plugin-prisma` and
+  // lands at the root after bun hoists.
   const prismaClient = join(projectDir, 'node_modules', '@prisma', 'client');
-  // Tolerate either hoisted root or per-app placement.
-  const apiPrismaClient = join(
-    projectDir,
-    'apps',
-    'api',
-    'node_modules',
-    '@prisma',
-    'client',
-  );
-  if (!existsSync(prismaClient) && !existsSync(apiPrismaClient)) {
+  if (!existsSync(prismaClient)) {
     throw new Error(
-      `bun install completed but @prisma/client is missing from both ` +
-        `${prismaClient} and ${apiPrismaClient}`,
+      `bun install completed but ${prismaClient} does not exist (expected ` +
+        `@prisma/client to be hoisted to the root node_modules)`,
     );
   }
 
