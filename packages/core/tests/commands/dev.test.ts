@@ -225,6 +225,10 @@ describe('levelzero dev (unit, mocked compose)', () => {
       getServices: () => [],
       getPluginOwnedServices: () => [pluginOwned],
       composeRunnerFactory: factory,
+      // LEV-194: detached path probes the allocated port; the `sh -c echo`
+      // command exits immediately so no listener appears. Short budget so the
+      // probe times out fast and the test doesn't hang on the default 10s.
+      readinessTimeoutMs: 100,
     });
 
     const result = (await cmd.run({
@@ -241,6 +245,11 @@ describe('levelzero dev (unit, mocked compose)', () => {
     expect(result.env.PLUGIN_URL).toBe(
       `http://localhost:${result.ports['plugin-port']}`,
     );
+    // LEV-194 — the detached runner reports pids + readiness instead of the
+    // foreground runner's exit codes.
+    expect(result.detached).toBe(true);
+    expect(result.owned.pids['plugin-owned']).toBeGreaterThan(0);
+    expect(result.owned.readiness['plugin-owned']).toBe('timeout');
   });
 });
 
@@ -329,6 +338,10 @@ describe('levelzero dev — portless integration', () => {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,
+      // LEV-194: services are quick-exit `sh -c echo` commands with port
+      // names; no listener appears so the detached probe would otherwise
+      // burn the default 10s budget.
+      readinessTimeoutMs: 100,
     });
     const result = (await cmd.run({
       cwd: projectDir,
@@ -363,6 +376,10 @@ describe('levelzero dev — portless integration', () => {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,
+      // LEV-194: services are quick-exit `sh -c echo` commands with port
+      // names; no listener appears so the detached probe would otherwise
+      // burn the default 10s budget.
+      readinessTimeoutMs: 100,
     });
     const result = (await cmd.run({
       cwd: projectDir,
@@ -391,6 +408,10 @@ describe('levelzero dev — portless integration', () => {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,
+      // LEV-194: services are quick-exit `sh -c echo` commands with port
+      // names; no listener appears so the detached probe would otherwise
+      // burn the default 10s budget.
+      readinessTimeoutMs: 100,
     });
     const result = (await cmd.run({
       cwd: projectDir,
