@@ -1,7 +1,7 @@
 import { spawn as defaultSpawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
 import { CLIError } from '../errors';
+import { Registry } from '../registry';
 import { findWorktree } from '../worktree';
 import type { Command } from './types';
 
@@ -16,11 +16,18 @@ export interface ComposeResult {
 }
 
 export interface MakeComposeCommandOptions {
+  /**
+   * Provider for the runtime {@link Registry} this command should consult to
+   * find the compose file path for the active stack. Required: post-LEV-208
+   * the passthrough no longer reconstructs the path from the worktree key
+   * (the old hardcoded `.levelzero/docker-compose.yml` was wrong once `dev`
+   * started writing per-worktree subdirs), it reads `entry.composeFile`
+   * verbatim from the registry entry `dev` wrote.
+   */
+  getRegistry: () => Registry;
   /** Override `spawn` for tests; defaults to `node:child_process.spawn`. */
   spawn?: typeof defaultSpawn;
 }
-
-const COMPOSE_FILE_SUBPATH = join('.levelzero', 'docker-compose.yml');
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -33,9 +40,15 @@ async function fileExists(p: string): Promise<boolean> {
 
 /**
  * `levelzero compose <subcommand> [args...]` — thin wrapper around
- * `docker compose -p levelzero-<key> -f <worktree>/.levelzero/docker-compose.yml`
- * that lets operators reach for familiar compose tooling without having to
- * remember the per-worktree project name or compose file path.
+ * `docker compose -p levelzero-<key> -f <composeFile> <subcommand>` that lets
+ * operators reach for familiar compose tooling without having to remember the
+ * per-worktree project name or compose file path.
+ *
+ * LEV-208 — the compose file path is read from the runtime registry entry
+ * (`entry.composeFile`) that `dev` writes. The registry stores the absolute
+ * path verbatim, so passthrough subcommands always shell into the same file
+ * `dev`/`stop` use — no path reconstruction, no drift when the on-disk layout
+ * changes again.
  *
  * All trailing positional args are forwarded transparently. Long-form flags
  * (`--foo bar`) are NOT forwarded — the CLI's top-level parser intercepts
@@ -45,14 +58,19 @@ async function fileExists(p: string): Promise<boolean> {
  *
  * Errors:
  *   - NO_PROJECT outside a worktree
- *   - NO_PROJECT when the generated compose file is missing (run `dev` first)
+ *   - NO_PROJECT when no registry entry exists for this worktree
+ *     (the stack isn't running — run `dev` first)
+ *   - NO_PROJECT when the registry entry exists but its `composeFile` points
+ *     at a missing file (the file was deleted out from under us; `dev` again
+ *     re-creates it)
  *   - CONFIG_INVALID when no subcommand is given
  *   - INTERNAL when `docker` itself can't be spawned (e.g. not on PATH)
  *
  * Exit code is forwarded transparently so scripts can react.
  */
-export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Command {
+export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
   const spawn = opts.spawn ?? defaultSpawn;
+  const getRegistry = opts.getRegistry;
 
   return {
     name: 'compose',
@@ -75,12 +93,26 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Comman
         );
       }
 
-      const composeFile = join(wt.path, COMPOSE_FILE_SUBPATH);
+      // LEV-208 — pull the compose file path from the registry entry rather
+      // than reconstructing it. If the entry is missing the stack isn't
+      // running; if `composeFile` is empty the entry is a legacy one written
+      // before the field existed (also effectively "stack not running" from
+      // the passthrough's perspective — re-run `dev` to refresh).
+      const entry = await getRegistry().get(wt.key);
+      if (!entry || !entry.composeFile) {
+        throw new CLIError(
+          'NO_PROJECT',
+          `no running stack for ${wt.key}`,
+          'run `levelzero dev` to bring the stack up — that generates the compose file this command shells into',
+        );
+      }
+
+      const composeFile = entry.composeFile;
       if (!(await fileExists(composeFile))) {
         throw new CLIError(
           'NO_PROJECT',
           `no compose file at ${composeFile}`,
-          'run `levelzero dev` to bring the stack up — that generates the compose file this command shells into',
+          'run `levelzero dev` to regenerate the compose file — it was removed since the stack came up',
         );
       }
 
@@ -128,9 +160,3 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions = {}): Comman
     },
   };
 }
-
-/**
- * Default `composeCommand` instance. Exported alongside the factory so
- * imports that don't need DI get a working `Command` for free.
- */
-export const composeCommand: Command = makeComposeCommand();
