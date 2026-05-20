@@ -41,8 +41,7 @@ export function dockerAvailable(): boolean {
 
 /**
  * Best-effort `docker compose down` for a project. Idempotent — safe to
- * call even when no project exists. Used by the e2e suite's `afterAll`
- * and (transitively) by `withDockerStack`.
+ * call even when no project exists. Used by the e2e suite's `afterAll`.
  *
  * Why `--timeout 5`: the default compose timeout is 10s per container,
  * and a hung container can stretch teardown well past the test's

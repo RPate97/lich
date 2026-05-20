@@ -105,15 +105,18 @@ Build on `packages/core/tests/e2e/_helpers/*`:
 * `install.ts` — writes `file:` overrides, runs `bun install`.
 * `cli.ts` — `runCli(projectDir, args)` for subprocess invocation; also a
   `runCliJson` convenience that parses JSON.
-* `docker.ts` — `dockerAvailable()` + `withDockerStack()` for guaranteed
-  teardown.
-* `playwright.ts` — `withBrowser(url, fn)` lazy-loads playwright and
-  launches headless chromium.
+* `docker.ts` — `dockerAvailable()` probe + `dockerComposeDown()` teardown
+  helper used by `afterAll`.
+* `playwright.ts` — `playwrightAndChromiumAvailable()` sync probe +
+  `withBrowser(url, fn)` lazy-loads playwright and launches headless
+  chromium.
 
-Gate docker-requiring tests with `describe.skipIf(!DOCKER)`. Gate
-browser-requiring tests with playwright's runtime probe inside the test
-body (the harness re-checks). Always wrap teardown in try/catch — a single
-broken assertion shouldn't prevent the rest of the cleanup.
+Gate docker-requiring tests with `describe.skipIf(!DOCKER)`. Gate browser-
+requiring tests with `describe.skipIf(!DOCKER || !PLAYWRIGHT_OK)` where
+`PLAYWRIGHT_OK = playwrightAndChromiumAvailable()` (a sync probe that
+checks both the package and the chromium binary). Always wrap teardown in
+try/catch — a single broken assertion shouldn't prevent the rest of the
+cleanup.
 
 ## Marking known-broken bugs
 

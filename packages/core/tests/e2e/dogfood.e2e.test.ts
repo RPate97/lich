@@ -51,18 +51,20 @@ import {
   dockerComposeDown,
 } from './_helpers/docker';
 import {
-  ensurePlaywrightProbed,
+  playwrightAndChromiumAvailable,
   withBrowser,
 } from './_helpers/playwright';
 
 /**
- * Evaluated at file-parse time for `describe.skipIf`. The docker probe is
- * synchronous (it shells out to `docker network create` and tears it back
- * down). The playwright probe is async and runs in `beforeAll`; phase 4
- * re-checks its cached result inside the test body so a late-arriving
- * playwright stays useful rather than being masked as "skipped".
+ * Both probes evaluated at file-parse time for `describe.skipIf`. The
+ * docker probe shells out to `docker network create` then tears it back
+ * down (catches address-pool exhaustion that `docker info` alone misses).
+ * The playwright/chromium probe walks the playwright registry directory
+ * to check the chromium browser binary is present. Both are synchronous
+ * so vitest can evaluate them when wiring up the describe tree.
  */
 const DOCKER = dockerAvailable();
+const PLAYWRIGHT_OK = playwrightAndChromiumAvailable();
 
 const PROJECT_NAME = 'demo';
 
@@ -101,12 +103,6 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     // Real `bun install` with `file:` overrides pointing at the local
     // workspace. Throws (with bun's stderr) if install fails.
     await installDeps(projectDir);
-
-    // Probe playwright after install — `@levelzero/core`'s devDependencies
-    // include playwright, but the chromium binary may not be downloaded on
-    // this host. The helper caches the result; phase 4 reads it by calling
-    // `ensurePlaywrightProbed()` again (which hits the cache).
-    await ensurePlaywrightProbed();
   }, 240_000);
 
   afterAll(async () => {
@@ -430,12 +426,28 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
         const devOut = JSON.parse(dev.stdout) as {
           owned?: { pids: Record<string, number>; pidPaths: Record<string, string> };
         };
+        // The dev runner reports pids + pidPaths for each owned service.
+        // We expect at least api + web to be present — if this map is
+        // empty, the rest of the test would be a vacuous pass (the
+        // for-loop body never executes). Fail loudly instead.
+        const pids = devOut.owned?.pids ?? {};
+        const pidPaths = devOut.owned?.pidPaths ?? {};
+        expect(
+          Object.keys(pids).length,
+          'expected at least one owned service pid (api + web) in dev output',
+        ).toBeGreaterThan(0);
+        expect(
+          Object.keys(pidPaths).length,
+          'expected pidPaths to mirror pids — runner contract (see runner.ts DetachedRunnerHandle)',
+        ).toBeGreaterThan(0);
+
         const stop = runCli(projectDir, ['stop', '--json'], { timeoutMs: 60_000 });
         expect(stop.exitCode, stop.stderr).toBe(0);
+
         // For each owned service, the process should be gone (kill -0 fails
         // with ESRCH). Idempotent: we don't care HOW it died, just that
         // it's not running anymore.
-        for (const [name, pid] of Object.entries(devOut.owned?.pids ?? {})) {
+        for (const [name, pid] of Object.entries(pids)) {
           let alive = true;
           try {
             process.kill(pid, 0);
@@ -444,20 +456,32 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           }
           expect(alive, `owned service ${name} (pid ${pid}) still alive after stop`).toBe(false);
         }
+
+        // After `stop`, every pid file on disk should be removed —
+        // `removePidFile` in runner.ts is what keeps the state dir tidy so
+        // a subsequent `dev` doesn't see stale pid files from a previous
+        // run. Stale pid files were the LEV-201 user-visible symptom.
+        for (const [name, pidPath] of Object.entries(pidPaths)) {
+          expect(
+            existsSync(pidPath),
+            `pid file for ${name} still exists at ${pidPath} after stop`,
+          ).toBe(false);
+        }
       },
     );
   });
 
   // -------------------------------------------------------------------------
-  // Phase 4 — browser drive (docker + playwright-gated)
+  // Phase 4 — browser drive (docker + playwright + chromium-gated)
   //
-  // The describe.skipIf only gates on docker (sync probe). The playwright
-  // gate is enforced inside the test body via `ensurePlaywrightProbed()`,
-  // which hits the cache populated in `beforeAll`. This avoids masking a
-  // real failure as "skipped" when playwright lands late, and lets the
-  // test emit a soft-skip diagnostic when playwright is genuinely absent.
+  // The describe.skipIf gates on BOTH probes synchronously: docker available
+  // AND the playwright package + chromium browser binary both present. If
+  // any prereq is missing, the whole phase skips cleanly with no test body
+  // executed — so the `it.fails` inversion below correctly applies only to
+  // the LEV-200 regression aspect (page can't render until that bug is
+  // fixed), not to "playwright/chromium not installed".
   // -------------------------------------------------------------------------
-  describe.skipIf(!DOCKER)('phase 4: browser drive', () => {
+  describe.skipIf(!DOCKER || !PLAYWRIGHT_OK)('phase 4: browser drive', () => {
     // LEV-195 / LEV-200 — the landing page renders the projectName + an api
     // health badge. It can only succeed if `next dev` actually binds to its
     // allocated port (today blocked by LEV-200 — next inherits the same
@@ -467,15 +491,6 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       'LEV-195/200 regression: renders the landing page with title and health badge',
       { timeout: 90_000 },
       async () => {
-        const ok = await ensurePlaywrightProbed();
-        if (!ok) {
-          // Skip-by-soft-pass: we mark this case as not run by short-circuiting
-          // — vitest's per-test skip() needs the suite-level `test.skip` API
-          // which `it` doesn't expose mid-call. Emitting a clear message in
-          // a passing assertion conveys "skipped" without flipping CI red.
-          expect.soft(true, 'playwright unavailable — skipping browser drive').toBe(true);
-          return;
-        }
         // Make sure the stack is up — phase 3 may or may not have stopped it.
         const dev = runCli(projectDir, ['dev', '--json'], { timeoutMs: 120_000 });
         expect(dev.exitCode, dev.stderr).toBe(0);
