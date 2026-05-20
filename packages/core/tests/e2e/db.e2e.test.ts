@@ -63,10 +63,9 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
   // -------------------------------------------------------------------------
   // db migrate
   // -------------------------------------------------------------------------
-  // LEV-204 — `prisma migrate` resolution fails in a fresh scaffold today.
-  // The .fails marker means this test PASSES on master (the bug is present);
-  // when LEV-204 lands, the maintainer drops .fails.
-  it.fails(
+  // LEV-204 — forward-regression guard: prisma.config.ts resolves cleanly
+  // now that prisma is a direct devDep of the template root.
+  it(
     'LEV-204 regression: db migrate --json exits 0',
     { timeout: 120_000 },
     () => {
@@ -82,7 +81,7 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
   // -------------------------------------------------------------------------
   // db seed — depends on a successful migrate
   // -------------------------------------------------------------------------
-  it.fails(
+  it(
     'LEV-204 regression: db seed --json exits 0 after migrate',
     { timeout: 120_000 },
     () => {
@@ -159,10 +158,10 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
   // -------------------------------------------------------------------------
   // db migration new <name>
   //
-  // Same LEV-204 chain — shells out to `prisma migrate dev --create-only`,
-  // which fails before producing a file in the current scaffold.
+  // Forward-regression guard: same prisma chain as `db migrate`; works now
+  // that LEV-204 is fixed.
   // -------------------------------------------------------------------------
-  it.fails(
+  it(
     'LEV-204 regression: db migration new --json scaffolds a migration directory',
     { timeout: 90_000 },
     () => {
@@ -205,11 +204,10 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
   // -------------------------------------------------------------------------
   // db reset (--skip-seed)
   //
-  // `db reset` is drop + migrate + seed. The migrate step here invokes the
-  // same broken prisma chain LEV-204 covers. `--skip-seed` doesn't help —
-  // the migrate step is still required.
+  // `db reset` is drop + migrate + seed. Forward-regression guard now that
+  // LEV-204 fixed the prisma config chain.
   // -------------------------------------------------------------------------
-  it.fails(
+  it(
     'LEV-204 regression: db reset --skip-seed --json exits 0',
     { timeout: 120_000 },
     () => {

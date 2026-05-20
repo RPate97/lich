@@ -259,14 +259,13 @@ describe('LEV-198-extended env / adapter / check', () => {
       expect(out.results.length).toBe(out.summary.total);
     });
 
-    // `check --json` passing on a fresh v0 scaffold is the goal — today
-    // the route-coverage rule fails because the scaffold ships a route
-    // (`GET /api/health`) and no `tests/integration/` directory. Marked
-    // `it.fails` so it passes today (asserting the bug is present); when
-    // the scaffold ships matching integration tests (or the rule soft-passes
-    // on an empty test tree), drop `.fails`.
-    it.fails(
-      'LEV-206 regression: check --json passes clean on a fresh v0 scaffold',
+    // Forward-regression guard: `check --json` should pass clean on a fresh
+    // v0 scaffold. The route-coverage rule soft-passes on a scaffold that
+    // doesn't yet declare integration tests, so the suite reports ok=true /
+    // fail=0. If a future rule starts hard-failing here, treat it as either
+    // a real rule violation in the template OR a rule-discovery regression.
+    it(
+      'check --json passes clean on a fresh v0 scaffold',
       () => {
         const res = runCli(handle.projectDir, ['check', '--json']);
         const out = JSON.parse(res.stdout) as {
