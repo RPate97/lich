@@ -29,11 +29,54 @@ describe('@levelzero/template-v0-stack', () => {
       // LEV-121: Prisma 7 moved the datasource URL out of `schema.prisma`
       // and into a sibling `prisma.config.ts`. Both files must ship.
       'prisma.config.ts',
+      // LEV-195: the v0 template ships a basic landing page so the very
+      // first request to the web URL after `levelzero dev` renders a real
+      // page instead of a 404.
+      'apps/web/src/app/page.tsx',
+      'apps/web/src/app/layout.tsx',
     ];
     for (const rel of expected) {
       const p = join(templateRoot, rel);
       expect(existsSync(p), `expected ${rel} to exist under templateRoot`).toBe(true);
     }
+  });
+
+  it('ships a landing page that checks api health and points at next steps (LEV-195)', () => {
+    // Without this page, the first thing a user sees after `levelzero dev` is
+    // Next.js's default 404 on a black background — looks broken. The landing
+    // page must (a) be a server component that fetches the api's `/api/health`
+    // route, (b) reference the editable file path so users know where to go,
+    // and (c) name the CLI so they can discover commands. All three are easy
+    // to drop in a future refactor; assert them as content fingerprints.
+    const page = readFileSync(
+      join(templateRoot, 'apps/web/src/app/page.tsx'),
+      'utf8',
+    );
+    expect(/export default async function/.test(page), 'landing page must be an async server component').toBe(true);
+    expect(page.includes('/api/health'), 'landing page must hit the api `/api/health` route').toBe(true);
+    expect(
+      page.includes('process.env.API_URL'),
+      'landing page must read the `API_URL` env var the hono plugin injects',
+    ).toBe(true);
+    expect(
+      page.includes('apps/web/src/app/page.tsx'),
+      'landing page must name itself so users know which file to edit',
+    ).toBe(true);
+    expect(
+      page.includes('levelzero --help'),
+      'landing page must point users at `levelzero --help` for command discovery',
+    ).toBe(true);
+
+    // The api app must actually expose `/api/health` so the page's health
+    // check has something to hit. Guarding here keeps the two files in sync.
+    const apiIndex = readFileSync(
+      join(templateRoot, 'apps/api/src/index.ts'),
+      'utf8',
+    );
+    expect(
+      /['"]\/api\/health['"]/.test(apiIndex),
+      'apps/api/src/index.ts must register a `/api/health` route the landing page can probe',
+    ).toBe(true);
   });
 
   it('levelzero.config.ts imports and declares every v0 plugin', () => {
