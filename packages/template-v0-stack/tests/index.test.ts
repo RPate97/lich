@@ -132,13 +132,51 @@ describe('@levelzero/template-v0-stack', () => {
     for (const [envVar, sourceKey] of [
       ['DATABASE_URL', 'postgres.url'],
       ['API_URL', 'hono.url'],
+      // LEV-200 — the api/web templates need the host-allocated ports so they
+      // bind to the right port instead of falling back to 3000/3001. The
+      // mapping goes through `hono.port` / `next.port` (new EnvSources added
+      // alongside the existing `.url` ones).
+      ['API_PORT', 'hono.port'],
       ['WEB_URL', 'next.url'],
+      ['WEB_PORT', 'next.port'],
     ]) {
       expect(
         config.includes(`${envVar}: '${sourceKey}'`),
         `expected ${envVar} → ${sourceKey} mapping inside envInjection`,
       ).toBe(true);
     }
+  });
+
+  it('api + web bind to the levelzero-allocated ports via env (LEV-200)', () => {
+    // The api template must read `API_PORT` from env and pass it to bun's
+    // `port` export on the default export object so the runtime binds there.
+    // Default must NOT be 3000 — that's next dev's port; keep them disjoint
+    // outside the harness.
+    const apiIndex = readFileSync(
+      join(templateRoot, 'apps/api/src/index.ts'),
+      'utf8',
+    );
+    expect(
+      apiIndex.includes('API_PORT'),
+      'apps/api/src/index.ts must read API_PORT from process.env so levelzero dev can bind it',
+    ).toBe(true);
+    expect(
+      /port\s*:/.test(apiIndex) || /port\s*,/.test(apiIndex),
+      'apps/api/src/index.ts must export a `port` field on its default export so bun listens there',
+    ).toBe(true);
+
+    // The web template must pass WEB_PORT to `next dev --port`. We check the
+    // package.json script substitutes the env var — bun runs the script with
+    // shell semantics so `${WEB_PORT:-3000}` resolves the same way `sh -c`
+    // would.
+    const webPkg = JSON.parse(
+      readFileSync(join(templateRoot, 'apps/web/package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const devScript = webPkg.scripts?.dev ?? '';
+    expect(
+      devScript.includes('--port') && devScript.includes('WEB_PORT'),
+      `expected web's dev script to pass --port "$WEB_PORT" to next dev; got: ${devScript}`,
+    ).toBe(true);
   });
 
   it('package.json declares every v0 plugin as a dependency', () => {

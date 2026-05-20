@@ -57,7 +57,7 @@ export interface HonoOptions {
 export default function hono(opts: HonoOptions = {}): Plugin<
   'hono',
   {
-    named: 'url';
+    named: 'url' | 'port';
     bulk: never;
   }
 > {
@@ -78,6 +78,16 @@ export default function hono(opts: HonoOptions = {}): Plugin<
         host: ({ ports }) => `http://localhost:${ports['api-http'] ?? ''}`,
         container: () => `http://api:3000`,
         protocol: 'http',
+      });
+
+      // LEV-200 — publish the allocated host port as a separate EnvSource so
+      // the api template can bind to it (consumed as `API_PORT` via the
+      // template's `envInjection: { API_PORT: 'hono.port' }`). Container
+      // context always reports `3000` because a future containerized api
+      // service would listen on the standard internal port.
+      api.addEnvSource('port', {
+        host: ({ ports }) => String(ports['api-http'] ?? ''),
+        container: () => '3000',
       });
     },
   };

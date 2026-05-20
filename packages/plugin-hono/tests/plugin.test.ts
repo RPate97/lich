@@ -117,7 +117,7 @@ describe('@levelzero/plugin-hono default export', () => {
     const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
     await plugin.register(api, ctx);
 
-    expect(Object.keys(envSources)).toEqual(['url']);
+    expect(Object.keys(envSources).sort()).toEqual(['port', 'url']);
     expect(envSources.url!.protocol).toBe('http');
 
     expect(await envSources.url!.host(makeEnvCtx({ 'api-http': 3001 }, 'host'))).toBe(
@@ -126,6 +126,24 @@ describe('@levelzero/plugin-hono default export', () => {
     expect(
       await envSources.url!.container(makeEnvCtx({ 'api-http': 3001 }, 'container')),
     ).toBe('http://api:3000');
+  });
+
+  // LEV-200 — the api template needs the allocated host port (not just the
+  // URL) so it can pass it to bun's `port` export on the Hono app. Container
+  // context is unconditional `'3000'` because a future containerized api
+  // would listen on the standard internal port.
+  it('register() publishes a `port` EnvSource (LEV-200)', async () => {
+    const { api, envSources } = makeRecordingApi();
+    const ctx: PluginContext = { projectRoot: '/tmp/example', config: {} };
+    await plugin.register(api, ctx);
+
+    expect(envSources.port).toBeDefined();
+    expect(
+      await envSources.port!.host(makeEnvCtx({ 'api-http': 54000 }, 'host')),
+    ).toBe('54000');
+    expect(
+      await envSources.port!.container(makeEnvCtx({ 'api-http': 54000 }, 'container')),
+    ).toBe('3000');
   });
 });
 

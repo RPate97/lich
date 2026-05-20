@@ -305,12 +305,12 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       },
     );
 
-    // LEV-200 regression — depends on the api binding to the allocated
-    // port (the bug is that it ignores it and uses 3000 instead). Today
-    // this fetch fails because the api never starts (it crashes with
-    // EADDRINUSE on 3000 when 3000 is already in use, or it serves on the
-    // wrong port). When LEV-200 lands, drop `.fails`.
-    it.fails(
+    // LEV-200 regression — the api binds to the allocated port via the
+    // `API_PORT` env var the hono plugin's `port` EnvSource publishes. Before
+    // the fix, the api template hardcoded port 3000 and ignored the
+    // allocation, which made this fetch fail (EADDRINUSE when 3000 was
+    // taken, or wrong-port when it wasn't). Forward-regression guard.
+    it(
       'LEV-200 regression: GET /api/health returns 200 on the allocated api port',
       { timeout: 30_000 },
       async () => {
@@ -477,17 +477,16 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // The describe.skipIf gates on BOTH probes synchronously: docker available
   // AND the playwright package + chromium browser binary both present. If
   // any prereq is missing, the whole phase skips cleanly with no test body
-  // executed — so the `it.fails` inversion below correctly applies only to
-  // the LEV-200 regression aspect (page can't render until that bug is
-  // fixed), not to "playwright/chromium not installed".
+  // executed — so the assertion below correctly fails only when the landing
+  // page itself regresses, not when playwright/chromium are missing.
   // -------------------------------------------------------------------------
   describe.skipIf(!DOCKER || !PLAYWRIGHT_OK)('phase 4: browser drive', () => {
     // LEV-195 / LEV-200 — the landing page renders the projectName + an api
-    // health badge. It can only succeed if `next dev` actually binds to its
-    // allocated port (today blocked by LEV-200 — next inherits the same
-    // owned-port-ignore bug as the api). Marked `.fails` so the suite is
-    // green today; drop `.fails` when LEV-200 lands.
-    it.fails(
+    // health badge. Requires (a) `next dev` to bind to its allocated port
+    // (LEV-200 — web template's `dev` script now passes `--port "$WEB_PORT"`)
+    // and (b) the api to be reachable at `API_URL` for the server-side
+    // health check.
+    it(
       'LEV-195/200 regression: renders the landing page with title and health badge',
       { timeout: 90_000 },
       async () => {
