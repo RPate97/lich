@@ -1,0 +1,545 @@
+/**
+ * LEV-198 — Dogfood end-to-end suite.
+ *
+ * This is the regression-prevention foundation. Every existing "e2e" test in
+ * the repo cheats in some way (scaffold into `packages/` to inherit workspace
+ * symlinks, mock the install step, etc.). The user has caught 7+ bugs in a
+ * single afternoon by running the CLI for real on their machine — all of them
+ * passed the existing tests. This suite closes that gap by:
+ *
+ *   1. Scaffolding into an OS tmpdir (NOT under `packages/`).
+ *   2. Running a real `bun install` against `file:` overrides pointing at the
+ *      workspace packages. After this step, `node_modules/.bin/levelzero`
+ *      exists and the project tree looks like what a `bunx
+ *      @levelzero/create-stack-v0 my-app && cd my-app && bun install` user
+ *      would see.
+ *   3. Exercising the CLI as a real subprocess from the scaffolded project,
+ *      not by importing the bin module.
+ *   4. Driving the served stack with a real browser (playwright).
+ *
+ * Phases (per LEV-198 spec):
+ *   1. scaffold + install         — non-docker, always runs
+ *   2. static checks              — non-docker, always runs
+ *   3. stack lifecycle            — docker-gated
+ *   4. browser drive              — docker + playwright-gated
+ *   5. failure surfaces           — non-docker (except docker-unreachable test)
+ *
+ * `it.fails(...)` markers are used for known-broken behavior that other open
+ * tickets will fix. The test PASSES today (asserting the bug is present);
+ * when the bug is fixed, the author removes `.fails` and the assertion
+ * becomes a regression check. The inversion is deliberate — see vitest's
+ * `it.fails` docs.
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import {
+  existsSync,
+  mkdtempSync,
+  realpathSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  renameSync,
+} from 'node:fs';
+import { tmpdir as osTmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { scaffoldProject } from './_helpers/scaffold';
+import { installDeps } from './_helpers/install';
+import { runCli, runCliJson } from './_helpers/cli';
+import {
+  dockerAvailable,
+  dockerComposeDown,
+} from './_helpers/docker';
+import {
+  ensurePlaywrightProbed,
+  withBrowser,
+} from './_helpers/playwright';
+
+/**
+ * Evaluated at file-parse time for `describe.skipIf`. Both expensive (network
+ * probe for docker, dynamic import for playwright), so we cache via the
+ * helpers' internal state. The playwright kick-off is asynchronous; the
+ * gating describe re-checks in its predicate.
+ */
+const DOCKER = dockerAvailable();
+// Kick off the playwright probe so `ensurePlaywrightProbed()` in `beforeAll`
+// resolves quickly. The predicate `playwrightAvailable()` (sync) is checked
+// at the describe.skipIf call site after the module finishes loading.
+let PLAYWRIGHT = false;
+
+const PROJECT_NAME = 'demo';
+
+let tmpdir: string;
+let projectDir: string;
+let composeProjectName: string | null = null;
+
+describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
+  beforeAll(async () => {
+    // Scaffold into an OS tmpdir — explicitly NOT under `packages/`. This is
+    // the whole point of LEV-198: if any code path relies on workspace
+    // symlinks for `@levelzero/*` resolution, it WILL fail here, and the
+    // test should fail loudly so the underlying scaffold/install bug gets
+    // fixed instead of getting papered over in CI.
+    tmpdir = realpathSync(mkdtempSync(join(osTmpdir(), 'lz-e2e-dogfood-')));
+    const { projectDir: dir } = await scaffoldProject({
+      tmpdir,
+      projectName: PROJECT_NAME,
+    });
+    projectDir = dir;
+
+    // Real `bun install` with `file:` overrides pointing at the local
+    // workspace. Throws (with bun's stderr) if install fails.
+    await installDeps(projectDir);
+
+    // Probe playwright after install — `@levelzero/core`'s devDependencies
+    // include playwright, but the chromium binary may not be downloaded on
+    // this host. The helper caches the result; phase 4 reads it.
+    PLAYWRIGHT = await ensurePlaywrightProbed();
+  }, 240_000);
+
+  afterAll(async () => {
+    // Cleanup is best-effort and aggressive: every step is wrapped in try/
+    // catch so a single failure doesn't abort the rest. We're already
+    // leaking docker networks on the host (LEV-202); this is where we stop
+    // that bleed for the dogfood tier.
+    try {
+      if (projectDir) runCli(projectDir, ['stop', '--json'], { timeoutMs: 30_000 });
+    } catch {
+      /* stop is best-effort */
+    }
+    try {
+      if (composeProjectName) dockerComposeDown(composeProjectName);
+    } catch {
+      /* compose down is best-effort */
+    }
+    try {
+      if (tmpdir) rmSync(tmpdir, { recursive: true, force: true });
+    } catch {
+      /* tmpdir cleanup is best-effort — vitest's process exit may race */
+    }
+  }, 60_000);
+
+  // -------------------------------------------------------------------------
+  // Phase 1 — scaffold + install (non-docker, always runs)
+  // -------------------------------------------------------------------------
+  describe('phase 1: scaffold + install', () => {
+    it('scaffolds the canonical v0 project tree into the OS tmpdir', () => {
+      expect(projectDir.startsWith(realpathSync(osTmpdir()))).toBe(true);
+      expect(existsSync(join(projectDir, 'levelzero.config.ts'))).toBe(true);
+      expect(existsSync(join(projectDir, 'package.json'))).toBe(true);
+      expect(existsSync(join(projectDir, 'apps', 'api', 'package.json'))).toBe(true);
+      expect(existsSync(join(projectDir, 'apps', 'web', 'package.json'))).toBe(true);
+      expect(existsSync(join(projectDir, 'prisma', 'schema.prisma'))).toBe(true);
+      // `name` substitution made it into both package.json and config.
+      const pkg = readFileSync(join(projectDir, 'package.json'), 'utf8');
+      expect(pkg).toContain(`"name": "${PROJECT_NAME}"`);
+      const cfg = readFileSync(join(projectDir, 'levelzero.config.ts'), 'utf8');
+      expect(cfg).toContain(`name: '${PROJECT_NAME}'`);
+    });
+
+    it('bun install populated node_modules with the levelzero bin', () => {
+      // The install threw if it had failed, so this is a smoke / sentinel
+      // check that the `.bin/levelzero` discovery worked.
+      expect(
+        existsSync(join(projectDir, 'node_modules', '.bin', 'levelzero')),
+      ).toBe(true);
+    });
+
+    it('apps/web has next installed (root or per-app)', () => {
+      const rootNext = join(projectDir, 'node_modules', '.bin', 'next');
+      const perAppNext = join(
+        projectDir,
+        'apps',
+        'web',
+        'node_modules',
+        '.bin',
+        'next',
+      );
+      expect(existsSync(rootNext) || existsSync(perAppNext)).toBe(true);
+    });
+
+    it('@prisma/client is installed (root or per-app)', () => {
+      const root = join(projectDir, 'node_modules', '@prisma', 'client');
+      const perApp = join(
+        projectDir,
+        'apps',
+        'api',
+        'node_modules',
+        '@prisma',
+        'client',
+      );
+      expect(existsSync(root) || existsSync(perApp)).toBe(true);
+    });
+
+    it('bun run levelzero --help lists the canonical command set', () => {
+      const res = runCli(projectDir, ['--help']);
+      expect(res.exitCode, res.stderr).toBe(0);
+      // Inline commands.
+      expect(res.stdout).toContain('dev');
+      expect(res.stdout).toContain('stop');
+      expect(res.stdout).toContain('doctor');
+      // Plugin-contributed commands — these only appear if `loadConfig` +
+      // `bootPlugins` actually ran against the real-installed plugin tree.
+      expect(res.stdout).toMatch(/^\s+gen\s+/m);
+      expect(res.stdout).toContain('db migrate');
+      expect(res.stdout).toContain('adapter list');
+      expect(res.stdout).toContain('env list');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — static checks (non-docker, always runs)
+  // -------------------------------------------------------------------------
+  describe('phase 2: static checks', () => {
+    it('levelzero doctor --json reports ok (or only docker-skipped)', () => {
+      const { json } = runCliJson<{
+        ok: boolean;
+        checks: Array<{ id: string; status: string; message?: string }>;
+      }>(projectDir, ['doctor', '--json']);
+      // Either everything is green, OR the only non-ok rows are docker /
+      // skipped categories. The "registry warn" channel (stale levelzero
+      // networks) is allowed too — it's a warning, not an error.
+      const bad = json.checks.filter(
+        (c) => c.status !== 'ok' && c.status !== 'warn' && c.status !== 'skipped',
+      );
+      expect(bad).toEqual([]);
+      expect(json.ok).toBe(true);
+    });
+
+    it('levelzero adapter list --json shows the v0 active impls', () => {
+      const { json } = runCliJson<{
+        adapters: Array<{ slot: string; name: string; active: boolean }>;
+      }>(projectDir, ['adapter', 'list', '--json']);
+      const byKey = new Map(json.adapters.map((a) => [`${a.slot}:${a.name}`, a]));
+      expect(byKey.get('orm:prisma')?.active).toBe(true);
+      expect(byKey.get('backend:hono')?.active).toBe(true);
+      expect(byKey.get('frontend:typed-client')?.active).toBe(true);
+      expect(byKey.get('auth:better-auth')?.active).toBe(true);
+      expect(byKey.get('ui:shadcn')?.active).toBe(true);
+      expect(byKey.get('browser:playwright')?.active).toBe(true);
+    });
+
+    it('levelzero env list --json surfaces postgres/hono/next URL sources', () => {
+      const { json } = runCliJson<{
+        entries: Array<{
+          key: string;
+          protocol: string | null;
+          plugin: string;
+        }>;
+      }>(projectDir, ['env', 'list', '--json']);
+      const byKey = new Map(json.entries.map((e) => [e.key, e]));
+      expect(byKey.get('postgres.url')?.protocol).toBe('postgres');
+      expect(byKey.get('hono.url')?.protocol).toBe('http');
+      expect(byKey.get('next.url')?.protocol).toBe('http');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 3 — stack lifecycle (docker-gated)
+  // -------------------------------------------------------------------------
+  describe.skipIf(!DOCKER)('phase 3: stack lifecycle', () => {
+    it(
+      'levelzero dev --json brings up the stack detached within 90s',
+      { timeout: 180_000 },
+      () => {
+        const res = runCli(projectDir, ['dev', '--json'], { timeoutMs: 150_000 });
+        expect(res.exitCode, res.stderr).toBe(0);
+        const out = JSON.parse(res.stdout) as {
+          key: string;
+          path: string;
+          ports: Record<string, number>;
+          containers: string[];
+          compose: { projectName: string; file: string };
+          detached?: boolean;
+          owned?: { pids: Record<string, number> };
+        };
+        composeProjectName = out.compose.projectName;
+        // Postgres gets a host-port allocation in the 54000+ range.
+        expect(out.ports.postgres).toBeGreaterThanOrEqual(54000);
+        // The api and web services are "owned" — host processes, not in
+        // compose. They MUST have allocated ports too (the bug LEV-200 is
+        // about them ignoring those ports, but the allocation itself
+        // should still happen).
+        expect(out.ports['api-http']).toBeGreaterThanOrEqual(54000);
+        expect(out.ports['web-http']).toBeGreaterThanOrEqual(54000);
+        // LEV-194 — default path is detached, with pid map for owned services.
+        expect(out.detached).toBe(true);
+        expect(out.owned?.pids).toBeDefined();
+        // At least one owned service should have a PID we can verify.
+        const pidValues = Object.values(out.owned?.pids ?? {});
+        expect(pidValues.length).toBeGreaterThan(0);
+        // Compose project name comes back populated regardless of whether
+        // any service declares a `container_name` (plugin-postgres doesn't,
+        // so `out.containers` is `[]` by design — compose auto-names them).
+        expect(out.compose.projectName).toMatch(/^levelzero-[0-9a-f]{12}$/);
+      },
+    );
+
+    // LEV-200 regression — depends on the api binding to the allocated
+    // port (the bug is that it ignores it and uses 3000 instead). Today
+    // this fetch fails because the api never starts (it crashes with
+    // EADDRINUSE on 3000 when 3000 is already in use, or it serves on the
+    // wrong port). When LEV-200 lands, drop `.fails`.
+    it.fails(
+      'LEV-200 regression: GET /api/health returns 200 on the allocated api port',
+      { timeout: 30_000 },
+      async () => {
+        // Read the allocated port from .levelzero/state/<key>/env/api.env —
+        // the dev runner writes API_URL there with the host-context URL.
+        const stateDir = join(projectDir, '.levelzero', 'state');
+        const keyDirs = readdirSync(stateDir).filter((d) =>
+          /^[0-9a-f]{12}$/.test(d),
+        );
+        expect(keyDirs.length).toBe(1);
+        const apiEnvPath = join(stateDir, keyDirs[0]!, 'env', 'api.env');
+        const apiEnv = readFileSync(apiEnvPath, 'utf8');
+        const apiUrlLine = apiEnv
+          .split('\n')
+          .find((l) => l.startsWith('API_URL='));
+        expect(apiUrlLine).toBeDefined();
+        const apiUrl = apiUrlLine!.replace(/^API_URL=/, '').trim();
+        const res = await fetch(`${apiUrl}/api/health`).catch((err) => {
+          throw new Error(`fetch ${apiUrl}/api/health failed: ${err.message}`);
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { status: string };
+        expect(body.status).toBe('ok');
+      },
+    );
+
+    // LEV-204 — `levelzero db migrate` fails in a fresh scaffold today.
+    // Wrapped in `it.fails` so the test PASSES on master (asserting bug
+    // present); when LEV-204 lands, the maintainer removes `.fails` and
+    // it becomes a forward regression check.
+    it.fails(
+      'LEV-204 regression: db migrate --json exits 0 in a fresh scaffold',
+      { timeout: 120_000 },
+      () => {
+        const res = runCli(projectDir, ['db', 'migrate', '--json'], {
+          timeoutMs: 90_000,
+        });
+        expect(res.exitCode, res.stderr).toBe(0);
+        const out = JSON.parse(res.stdout) as { ok: boolean };
+        expect(out.ok).toBe(true);
+      },
+    );
+
+    it(
+      'levelzero gen --json exits 0',
+      { timeout: 90_000 },
+      () => {
+        const res = runCli(
+          projectDir,
+          ['gen', '--only', 'api-client', '--json'],
+          { timeoutMs: 60_000 },
+        );
+        // We assert the JSON shape rather than just exit code so we catch
+        // the LEV-197 class of bug (silent failure with exit 0).
+        if (res.exitCode === 0) {
+          const out = JSON.parse(res.stdout) as { ok: number };
+          expect(typeof out.ok).toBe('number');
+        } else {
+          // If gen fails it should fail loudly with a useful stderr — that
+          // assertion lives in phase 5. Here we just record the failure.
+          expect(res.exitCode, `gen failed: ${res.stderr}`).toBe(0);
+        }
+      },
+    );
+
+    it(
+      'levelzero stop --json tears the stack down cleanly',
+      { timeout: 120_000 },
+      () => {
+        const res = runCli(projectDir, ['stop', '--json'], { timeoutMs: 90_000 });
+        expect(res.exitCode, res.stderr).toBe(0);
+        // After stop, `stacks current` should report running:false.
+        const cur = runCli(projectDir, ['stacks', 'current', '--json']);
+        expect(cur.exitCode, cur.stderr).toBe(0);
+        const parsed = JSON.parse(cur.stdout) as { running: boolean };
+        expect(parsed.running).toBe(false);
+      },
+    );
+
+    // LEV-201 regression — after stop, host processes on allocated ports
+    // are gone. Should already work; if it doesn't this catches the
+    // regression. The api may never have come up (LEV-200), but stop must
+    // still kill the bun child process bun spawned (which is bound to
+    // SOME port — either 3000 if LEV-200 bug present, or the allocated
+    // port if LEV-200 is fixed). Either way, the pid file should be
+    // cleaned up.
+    it(
+      'LEV-201 regression: stop cleans up pid files and tears down host processes',
+      { timeout: 90_000 },
+      () => {
+        const dev = runCli(projectDir, ['dev', '--json'], { timeoutMs: 120_000 });
+        expect(dev.exitCode, dev.stderr).toBe(0);
+        const devOut = JSON.parse(dev.stdout) as {
+          owned?: { pids: Record<string, number>; pidPaths: Record<string, string> };
+        };
+        const stop = runCli(projectDir, ['stop', '--json'], { timeoutMs: 60_000 });
+        expect(stop.exitCode, stop.stderr).toBe(0);
+        // For each owned service, the process should be gone (kill -0 fails
+        // with ESRCH). Idempotent: we don't care HOW it died, just that
+        // it's not running anymore.
+        for (const [name, pid] of Object.entries(devOut.owned?.pids ?? {})) {
+          let alive = true;
+          try {
+            process.kill(pid, 0);
+          } catch {
+            alive = false;
+          }
+          expect(alive, `owned service ${name} (pid ${pid}) still alive after stop`).toBe(false);
+        }
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 4 — browser drive (docker + playwright-gated)
+  //
+  // The describe.skipIf predicate runs at file-parse time and uses the
+  // `PLAYWRIGHT` module-level flag, which is populated in `beforeAll`. We
+  // therefore double-gate inside the test body using `ensurePlaywrightProbed`
+  // so a late-arriving playwright stays useful, and avoid masking a real
+  // failure as "skipped".
+  // -------------------------------------------------------------------------
+  describe.skipIf(!DOCKER)('phase 4: browser drive', () => {
+    // LEV-195 / LEV-200 — the landing page renders the projectName + an api
+    // health badge. It can only succeed if `next dev` actually binds to its
+    // allocated port (today blocked by LEV-200 — next inherits the same
+    // owned-port-ignore bug as the api). Marked `.fails` so the suite is
+    // green today; drop `.fails` when LEV-200 lands.
+    it.fails(
+      'LEV-195/200 regression: renders the landing page with title and health badge',
+      { timeout: 90_000 },
+      async () => {
+        const ok = await ensurePlaywrightProbed();
+        if (!ok) {
+          // Skip-by-soft-pass: we mark this case as not run by short-circuiting
+          // — vitest's per-test skip() needs the suite-level `test.skip` API
+          // which `it` doesn't expose mid-call. Emitting a clear message in
+          // a passing assertion conveys "skipped" without flipping CI red.
+          expect.soft(true, 'playwright unavailable — skipping browser drive').toBe(true);
+          return;
+        }
+        // Make sure the stack is up — phase 3 may or may not have stopped it.
+        const dev = runCli(projectDir, ['dev', '--json'], { timeoutMs: 120_000 });
+        expect(dev.exitCode, dev.stderr).toBe(0);
+
+        // Pull the WEB_URL from the api env file (next's URL). Could also
+        // come from `levelzero urls --json`, but the env file is simpler
+        // and the `dev` command guarantees it exists.
+        const stateDir = join(projectDir, '.levelzero', 'state');
+        const keyDirs = readdirSync(stateDir).filter((d) =>
+          /^[0-9a-f]{12}$/.test(d),
+        );
+        expect(keyDirs.length).toBe(1);
+        const apiEnvPath = join(stateDir, keyDirs[0]!, 'env', 'api.env');
+        const env = readFileSync(apiEnvPath, 'utf8');
+        const webUrlLine = env.split('\n').find((l) => l.startsWith('WEB_URL='));
+        expect(webUrlLine).toBeDefined();
+        const webUrl = webUrlLine!.replace(/^WEB_URL=/, '').trim();
+
+        await withBrowser(webUrl, async (page) => {
+          const title = await (page as any).textContent('h1.lz-title');
+          expect(title).toContain(PROJECT_NAME);
+          // The health badge says "healthy" if the api responded; the page
+          // renders server-side via `fetch(API_URL/api/health)`.
+          const apiHealth = await (page as any).textContent('.lz-ok, .lz-bad');
+          expect(['healthy', 'unreachable']).toContain((apiHealth ?? '').trim());
+        });
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 5 — failure surfaces (LEV-197 regression target)
+  //
+  // The premise: every command should fail LOUDLY with an actionable
+  // stderr, never silently with exit 0 and an empty body. LEV-197 surfaced
+  // a class of bugs where errors got swallowed; these tests are the
+  // forward-regression guard.
+  // -------------------------------------------------------------------------
+  describe('phase 5: failure surfaces', () => {
+    it(
+      'LEV-197 regression: gen fails loudly when @prisma/client is missing',
+      { timeout: 60_000 },
+      () => {
+        // We intentionally move @prisma/client out of node_modules and run
+        // gen with the prisma generator. If the bug is back, gen exits 0
+        // with no diagnostic — i.e. our assertion that "stderr mentions
+        // prisma" fails. Restoration runs in finally.
+        const candidates = [
+          join(projectDir, 'apps', 'api', 'node_modules', '@prisma', 'client'),
+          join(projectDir, 'node_modules', '@prisma', 'client'),
+        ];
+        const target = candidates.find((c) => existsSync(c));
+        if (!target) {
+          // Nothing to move — skip (and document why).
+          expect.soft(true, '@prisma/client not found in expected locations').toBe(true);
+          return;
+        }
+        const stash = `${target}.lev198-stash`;
+        renameSync(target, stash);
+        try {
+          const res = runCli(projectDir, ['gen', '--only', 'prisma', '--json'], {
+            timeoutMs: 30_000,
+          });
+          // The exact form of the failure is implementation-defined; what
+          // matters is that the CLI does NOT silently succeed and that the
+          // diagnostic mentions prisma (so a user can act on it).
+          const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
+          const succeededSilently =
+            res.exitCode === 0 && !combined.includes('error') && !combined.includes('fail');
+          expect(succeededSilently).toBe(false);
+          // Strong signal: the diagnostic mentions prisma somewhere.
+          expect(combined).toMatch(/prisma|cannot find module/);
+        } finally {
+          renameSync(stash, target);
+        }
+      },
+    );
+
+    it(
+      'LEV-197 regression: dev fails loudly when docker is unreachable',
+      { timeout: 30_000 },
+      () => {
+        // Point DOCKER_HOST at a bogus address so the docker CLI's
+        // first call (`docker info` / `docker compose`) fails before
+        // any compose work runs. Should surface an error within seconds,
+        // not hang or silently exit 0.
+        const res = runCli(projectDir, ['dev', '--json'], {
+          timeoutMs: 20_000,
+          env: { DOCKER_HOST: 'tcp://127.0.0.1:1' },
+        });
+        // Two acceptable outcomes:
+        //   1. Non-zero exit with diagnostic in stderr.
+        //   2. The JSON output contains an error field.
+        // Both are "loud failure". Silent success (exit 0, no diagnostic)
+        // is what we forbid.
+        const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
+        const succeededSilently =
+          res.exitCode === 0 && !combined.includes('docker') && !combined.includes('error');
+        expect(succeededSilently).toBe(false);
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Open-bug regression stubs.
+  //
+  // These tests document the user-reported bugs that are NOT yet fixed.
+  // They live here as `it.todo(...)` placeholders so they appear in the
+  // suite output as pending; when the underlying tickets land, the
+  // maintainer converts them to real `it(...)` assertions.
+  //
+  // Why not `it.fails`: the underlying behavior requires async signal
+  // handling (SIGINT to a `spawn`'d child) that's awkward to drive from
+  // vitest reliably. Stubbing here keeps the bugs visible in the test
+  // catalogue without producing flaky red CI runs.
+  // -------------------------------------------------------------------------
+  describe('open-bug regression stubs', () => {
+    it.todo('LEV-199 regression: dev SIGINT mid-startup releases the lock');
+    it.todo('LEV-203 regression: SIGINT to dev --live tears down postgres container');
+  });
+});

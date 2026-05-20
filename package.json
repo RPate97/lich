@@ -16,6 +16,7 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:e2e": "bun run --cwd packages/core test:e2e",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"
