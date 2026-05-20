@@ -78,6 +78,90 @@ describe('levelzero adapter list', () => {
     expect(result.adapters).toEqual([]);
   });
 
+  // LEV-207 — `<slot>` positional filters results; unknown slot errors loudly.
+  describe('positional <slot> filter (LEV-207)', () => {
+    function multiSlotRegistry(): AdapterRegistry {
+      const registry = new AdapterRegistry();
+      registry.register({ slot: 'orm', name: 'prisma', impl: {} });
+      registry.register({ slot: 'orm', name: 'drizzle', impl: {} });
+      registry.register({ slot: 'backend', name: 'hono', impl: {} });
+      registry.register({ slot: 'ui', name: 'shadcn', impl: {} });
+      registry.setActive('orm', 'prisma');
+      return registry;
+    }
+
+    it('filters to a single slot when the positional is supplied', async () => {
+      const cmd = makeAdapterListCommand({ getRegistry: multiSlotRegistry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: ['orm'],
+        flags: {},
+      })) as { adapters: ListEntry[] };
+
+      expect(result.adapters).toHaveLength(2);
+      for (const a of result.adapters) {
+        expect(a.slot).toBe('orm');
+      }
+      const names = result.adapters.map((a) => a.name).sort();
+      expect(names).toEqual(['drizzle', 'prisma']);
+    });
+
+    it('returns every entry when no positional is supplied', async () => {
+      const cmd = makeAdapterListCommand({ getRegistry: multiSlotRegistry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      const result = (await cmd.run(ctx(tmp))) as { adapters: ListEntry[] };
+      expect(result.adapters).toHaveLength(4);
+    });
+
+    it('errors loudly on an unknown slot rather than returning empty', async () => {
+      const cmd = makeAdapterListCommand({ getRegistry: multiSlotRegistry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      await expect(
+        cmd.run({ cwd: tmp, format: 'json', args: ['orn'], flags: {} }),
+      ).rejects.toThrow(/unknown slot: orn/i);
+    });
+
+    it('error message lists every known slot so the user sees the right spelling', async () => {
+      const cmd = makeAdapterListCommand({ getRegistry: multiSlotRegistry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      await expect(
+        cmd.run({ cwd: tmp, format: 'json', args: ['nope'], flags: {} }),
+      ).rejects.toThrow(/orm/);
+    });
+
+    it('errors on extra positionals (typo guard)', async () => {
+      const cmd = makeAdapterListCommand({ getRegistry: multiSlotRegistry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      await expect(
+        cmd.run({
+          cwd: tmp,
+          format: 'json',
+          args: ['orm', 'extra'],
+          flags: {},
+        }),
+      ).rejects.toThrow(/unexpected/i);
+    });
+
+    it('allows a valid slot with no impls registered (returns empty)', async () => {
+      // `ui` is a known slot but this registry has no `ui` impls — filtering
+      // by `ui` should succeed with an empty list, NOT error like a typo'd
+      // slot. The distinction is the whole point of `knownSlots()` validation.
+      const registry = new AdapterRegistry();
+      registry.register({ slot: 'orm', name: 'prisma', impl: {} });
+      const cmd = makeAdapterListCommand({ getRegistry: () => registry });
+      const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-list-')));
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: ['ui'],
+        flags: {},
+      })) as { adapters: ListEntry[] };
+      expect(result.adapters).toEqual([]);
+    });
+  });
+
   // LEV-168 — pretty is now the default and renders a 3-column table.
   describe('pretty rendering (LEV-168)', () => {
     it('renders a "no adapters registered" message when the registry is empty', () => {

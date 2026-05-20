@@ -87,6 +87,19 @@ export class AdapterRegistry {
     return Array.from(bucket.values());
   }
 
+  /**
+   * Return the static set of slot identifiers the registry recognizes.
+   * This is the source-of-truth list of valid `AdapterSlot` values — distinct
+   * from what's actually registered. Callers use this to distinguish a
+   * "typo'd slot" from a "valid slot with no impls registered yet".
+   *
+   * LEV-207: `adapter list <slot>` uses this to error loudly on an unknown
+   * slot (`orn` vs `orm`) rather than silently returning an empty filter.
+   */
+  knownSlots(): readonly AdapterSlot[] {
+    return KNOWN_SLOT_LIST;
+  }
+
   get(slot: AdapterSlot, name: string): unknown {
     const bucket = this.entries.get(slot);
     const entry = bucket?.get(name);
@@ -229,7 +242,7 @@ function detectSlot(adapter: Record<string, unknown>): AdapterSlot {
   );
 }
 
-const KNOWN_SLOTS: ReadonlySet<string> = new Set<AdapterSlot>([
+const KNOWN_SLOT_LIST: readonly AdapterSlot[] = [
   'orm',
   'auth',
   'ui',
@@ -238,7 +251,9 @@ const KNOWN_SLOTS: ReadonlySet<string> = new Set<AdapterSlot>([
   'frontend',
   'test-runner',
   'portless',
-]);
+];
+
+const KNOWN_SLOTS: ReadonlySet<string> = new Set<AdapterSlot>(KNOWN_SLOT_LIST);
 
 function isAdapterSlot(value: string): value is AdapterSlot {
   return KNOWN_SLOTS.has(value);

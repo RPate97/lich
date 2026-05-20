@@ -1,3 +1,4 @@
+import { CLIError } from '../../errors';
 import { AdapterRegistry, getBuiltinAdapters } from '../../adapters/registry';
 import type { AdapterSlot } from '../../adapters/registry';
 import type { Command } from '../types';
@@ -34,11 +35,39 @@ export function makeAdapterListCommand(opts?: AdapterListOptions): Command {
     describe: 'List every registered adapter with its slot and active state',
     async run(ctx) {
       const registry = getRegistry();
-      const adapters: AdapterListEntry[] = registry.list().map((entry) => ({
-        slot: entry.slot,
-        name: entry.name,
-        active: isActive(registry, entry.slot, entry.name),
-      }));
+
+      // LEV-207: optional `<slot>` positional filters the result to one slot.
+      // Validate against the registry's static `knownSlots()` list so a typo
+      // (`orn` vs `orm`) errors loudly instead of returning an empty array —
+      // an empty array is indistinguishable from "this slot has no impls
+      // loaded yet" and would silently hide the user's mistake.
+      const [slotArg, ...rest] = ctx.args;
+      if (rest.length > 0) {
+        throw new CLIError(
+          'INTERNAL',
+          `unexpected extra arguments: ${rest.join(' ')}`,
+          'usage: levelzero adapter list [<slot>]',
+        );
+      }
+      if (slotArg !== undefined) {
+        const validSlots = registry.knownSlots();
+        if (!(validSlots as readonly string[]).includes(slotArg)) {
+          throw new CLIError(
+            'INTERNAL',
+            `unknown slot: ${slotArg}. known slots: ${validSlots.join(', ')}`,
+            'usage: levelzero adapter list [<slot>]',
+          );
+        }
+      }
+
+      const adapters: AdapterListEntry[] = registry
+        .list()
+        .filter((entry) => slotArg === undefined || entry.slot === slotArg)
+        .map((entry) => ({
+          slot: entry.slot,
+          name: entry.name,
+          active: isActive(registry, entry.slot, entry.name),
+        }));
       if (ctx.format === 'json') return { adapters };
       return renderAdapterListPretty(adapters);
     },
