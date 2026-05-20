@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { access, mkdir, readdir, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { LEVELZERO_PREFIX } from '../compose/naming';
 import { loadConfig } from '../config';
 import {
@@ -9,6 +9,7 @@ import {
   isNodeVersionAtLeast,
 } from '../node-version';
 import type { Registry } from '../registry';
+import { isPidAlive } from '../registry-lock';
 import { findWorktree } from '../worktree';
 import type { Command } from './types';
 
@@ -175,6 +176,72 @@ async function checkLevelzeroNetworks(): Promise<Check> {
   return { id: 'levelzero-networks', status: 'ok', message: `${count} network(s)` };
 }
 
+/**
+ * Scan a directory for `.lock` files whose recorded PID is no longer
+ * alive. The registry-lock writes its own PID into the lock file at
+ * acquire time (LEV-199) — anything older (zero-byte legacy locks) or
+ * with a dead PID is reportable as stale.
+ *
+ * Returns a `warn` if any stale locks are found, `ok` otherwise. Always
+ * `ok` if the directory doesn't exist (no locks ever taken on this
+ * host).
+ */
+async function checkStaleLocks(dir: string): Promise<Check> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { id: 'stale-locks', status: 'ok', message: '0 lock files' };
+    }
+    return {
+      id: 'stale-locks',
+      status: 'skipped',
+      message: `cannot read ${dir}: ${(err as Error).message}`,
+    };
+  }
+
+  const lockFiles = entries.filter((f) => f.endsWith('.lock'));
+  if (lockFiles.length === 0) {
+    return { id: 'stale-locks', status: 'ok', message: '0 lock files' };
+  }
+
+  const stale: Array<{ path: string; pid?: number }> = [];
+  for (const f of lockFiles) {
+    const p = join(dir, f);
+    let pid: number | undefined;
+    try {
+      const raw = (await readFile(p, 'utf8')).trim();
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) pid = n;
+    } catch {
+      /* unreadable lock file — treat as stale */
+    }
+    // No PID recorded (legacy or empty) → stale by definition. A PID
+    // that doesn't probe alive → also stale.
+    if (pid === undefined || !isPidAlive(pid)) {
+      stale.push({ path: p, pid });
+    }
+  }
+
+  if (stale.length === 0) {
+    return {
+      id: 'stale-locks',
+      status: 'ok',
+      message: `${lockFiles.length} lock file(s), all held by live processes`,
+    };
+  }
+
+  const summary = stale
+    .map((s) => (s.pid !== undefined ? `${s.path} (pid ${s.pid})` : `${s.path} (no pid)`))
+    .join(', ');
+  return {
+    id: 'stale-locks',
+    status: 'warn',
+    message: `${stale.length} stale lock file(s): ${summary}. They will be reclaimed on next acquire, or remove manually.`,
+  };
+}
+
 export function makeDoctorCommand(getRegistry: () => Registry): Command {
   return {
     name: 'doctor',
@@ -212,6 +279,13 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
           message: `cannot access registry dir ${dirname(regPath)}: ${(err as Error).message}`,
         });
       }
+
+      // LEV-199 — stale lock detection. After a SIGKILL or crash where
+      // the signal-handler cleanup never ran, the registry dir may
+      // contain `.lock` files holding dead PIDs. Surface them as a
+      // warning so the user can `rm` them (or let the next acquire
+      // reclaim them on the fly).
+      checks.push(await checkStaleLocks(dirname(regPath)));
 
       // Docker Compose availability
       checks.push(await checkDockerCompose());

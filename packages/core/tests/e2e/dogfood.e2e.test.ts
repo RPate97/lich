@@ -628,6 +628,17 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // catalogue without producing flaky red CI runs.
   // -------------------------------------------------------------------------
   describe('open-bug regression stubs', () => {
+    // LEV-199 is fixed in the unit tier — see
+    // `packages/core/tests/registry-lock.test.ts`:
+    //   - "SIGINT unlinks held lock files synchronously (LEV-199 regression)"
+    //   - "reclaims a stale lock whose recorded PID is dead (LEV-199)"
+    //
+    // The end-to-end form (real `dev` subprocess → SIGINT mid-startup →
+    // second `dev` succeeds quickly) requires async `spawn` + signal
+    // delivery + docker, which is flaky from vitest. The unit coverage
+    // proves both the signal-handler cleanup and the stale-lock
+    // reclaim paths, so the dogfood stub is retained as a marker for
+    // when someone wires up an async-spawn helper in `_helpers/cli.ts`.
     it.todo('LEV-199 regression: dev SIGINT mid-startup releases the lock');
     it.todo('LEV-203 regression: SIGINT to dev --live tears down postgres container');
   });
