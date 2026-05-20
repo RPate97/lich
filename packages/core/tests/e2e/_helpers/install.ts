@@ -66,18 +66,10 @@ export function discoverWorkspacePackages(): Record<string, string> {
  * to the local workspace via `file:` overrides. Returns the new overrides
  * object so the caller can assert on it if useful.
  *
- * Also adds `@levelzero/core` as a direct devDependency if it isn't already
- * declared. The template's `package.json` only lists `@levelzero/plugin-*`
- * (treating `core` as a transitive of every plugin), which means after a
- * real install `node_modules/.bin/levelzero` is missing — there's no
- * top-level package contributing the bin. This is the LEV-205 template
- * bug; the harness patches it here so the rest of the dogfood suite can
- * exercise the canonical user invocation (`bun x levelzero <args>` /
- * `bun run levelzero <args>`), and the dogfood suite contains an
- * `it.fails('LEV-205 regression: ...', ...)` test that asserts the bug
- * against a snapshot of the scaffolded `package.json` taken BEFORE this
- * function runs. When LEV-205 lands, drop this auto-patch and drop the
- * `.fails` on the regression test in the same change.
+ * The template's `package.json` declares `@levelzero/core` as a direct
+ * devDependency (LEV-205), which is what makes `node_modules/.bin/levelzero`
+ * land at the demo root after `bun install`. The overrides set below steer
+ * resolution to the local file: path without changing the dep graph.
  */
 export function applyWorkspaceOverrides(projectDir: string): Record<string, string> {
   const pkgPath = join(projectDir, 'package.json');
@@ -92,16 +84,6 @@ export function applyWorkspaceOverrides(projectDir: string): Record<string, stri
     overrides[name] = `file:${dir}`;
   }
   pkg.overrides = overrides;
-
-  // Ensure `@levelzero/core` is a direct dep so the `levelzero` bin lands
-  // in `node_modules/.bin/`. Without this, `bun run levelzero` can't find
-  // the script even though every plugin transitively depends on core. See
-  // the JSDoc above for the followup tracking.
-  pkg.devDependencies = pkg.devDependencies ?? {};
-  if (!pkg.dependencies?.['@levelzero/core'] && !pkg.devDependencies['@levelzero/core']) {
-    pkg.devDependencies['@levelzero/core'] = '*';
-    // Overrides still steer the resolution to the local file: path.
-  }
 
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
   return overrides;
