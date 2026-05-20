@@ -29,6 +29,7 @@
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
+    "@levelzero/core": "^0.1.0",
     "prisma": "^7.0.0",
     "turbo": "^2.0.0",
     "typescript": "^5.4.0"

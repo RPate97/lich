@@ -73,10 +73,9 @@ let projectDir: string;
 let composeProjectName: string | null = null;
 /**
  * Snapshot of the scaffolded `package.json` captured BEFORE `installDeps`
- * patches in workspace overrides (and currently a `@levelzero/core` dep —
- * see LEV-205). Phase 1's template-bug regression test reads this so it
- * sees what the user actually gets out of `create-stack-v0`, not the
- * harness-modified file.
+ * patches in workspace overrides. Phase 1's template regression tests read
+ * this so they see what the user actually gets out of `create-stack-v0`,
+ * not the harness-modified file.
  */
 let scaffoldedRootPkgJson: string | null = null;
 
@@ -95,9 +94,9 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     projectDir = dir;
 
     // Snapshot the scaffolded `package.json` BEFORE `installDeps` patches
-    // it (see LEV-205 — the harness currently injects `@levelzero/core`
-    // because the template doesn't declare it). Phase 1's template-bug
-    // regression test asserts on this snapshot.
+    // it. Phase 1's template regression tests assert on this snapshot so
+    // they see what `create-stack-v0` actually emits, not the harness's
+    // override-patched file.
     scaffoldedRootPkgJson = readFileSync(join(projectDir, 'package.json'), 'utf8');
 
     // Real `bun install` with `file:` overrides pointing at the local
@@ -153,21 +152,16 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       ).toBe(true);
     });
 
-    // LEV-205 — `create-stack-v0`'s template `package.json` lists every
-    // `@levelzero/plugin-*` but does NOT declare `@levelzero/core` as a
-    // direct dep. Bun has no reason to materialize the `levelzero` bin
-    // under `node_modules/.bin/` from a transitive, so the documented
-    // first-time-user flow (`bunx @levelzero/create-stack-v0 my-app &&
-    // cd my-app && bun install && bun run levelzero --help`) breaks with
-    // "Script not found 'levelzero'". The e2e harness patches `@levelzero/
-    // core: "*"` in before running `bun install` (see install.ts
-    // applyWorkspaceOverrides) — that's a workaround, not a fix, so we
-    // assert the underlying template bug here against the SNAPSHOT taken
-    // BEFORE the harness patch.
-    //
-    // `it.fails` today (the bug is present); when LEV-205 lands the
-    // implementer drops `.fails` AND removes the harness patch.
-    it.fails(
+    // LEV-205 regression — the template `package.json` MUST declare
+    // `@levelzero/core` as a direct dep so `bun install` materializes the
+    // `levelzero` bin under `node_modules/.bin/`. Without it, the
+    // documented first-time-user flow (`bunx @levelzero/create-stack-v0
+    // my-app && cd my-app && bun install && bun run levelzero --help`)
+    // fails with "Script not found 'levelzero'" because no top-level
+    // package contributes the bin. Asserted against the SNAPSHOT taken
+    // BEFORE the harness patches in workspace overrides, so this catches
+    // a regression in the template itself, not the harness.
+    it(
       'LEV-205 regression: template package.json declares @levelzero/core as a direct dep',
       () => {
         expect(scaffoldedRootPkgJson).not.toBeNull();

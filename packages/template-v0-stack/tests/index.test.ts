@@ -234,6 +234,30 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
+  it('package.json declares @levelzero/core as a direct devDependency (LEV-205)', () => {
+    // LEV-205: the template lists `@levelzero/plugin-*` but used to omit
+    // `@levelzero/core`. Plugins all depend on core transitively, but bun
+    // won't materialize a top-level `node_modules/.bin/levelzero` from a
+    // transitive — so `bun run levelzero --help` would die with "Script not
+    // found 'levelzero'" in a fresh scaffold. The fix is to declare core
+    // directly here so its `bin` entry lands at the demo root. Forward
+    // regression guard: if a future refactor drops this line, the
+    // documented first-run flow breaks again.
+    const pkg = JSON.parse(
+      readFileSync(join(templateRoot, 'package.json'), 'utf8'),
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const declared =
+      pkg.dependencies?.['@levelzero/core'] ??
+      pkg.devDependencies?.['@levelzero/core'];
+    expect(
+      declared,
+      'expected `@levelzero/core` to be declared at the template root so `node_modules/.bin/levelzero` resolves after `bun install`',
+    ).toBeTruthy();
+  });
+
   it('package.json declares prisma as a devDependency (LEV-204)', () => {
     // LEV-204: `prisma.config.ts` at the project root imports from
     // `'prisma/config'` (Prisma 7's subpath export). Bun's module resolver
