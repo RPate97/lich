@@ -3,16 +3,55 @@ import { readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { Client } from 'pg';
-import type {
-  ORMAdapter,
-  ORMContext,
-  MigrationResult,
-  MigrationFile,
-  SchemaDescription,
-  TableDescription,
-  ColumnDescription,
-  TableRow,
+import {
+  CLIError,
+  type ORMAdapter,
+  type ORMContext,
+  type MigrationResult,
+  type MigrationFile,
+  type SchemaDescription,
+  type TableDescription,
+  type ColumnDescription,
+  type TableRow,
 } from '@levelzero/core';
+
+/**
+ * Error thrown when a prisma CLI invocation exits non-zero.
+ *
+ * LEV-197 — instead of synthesizing a single-line `Error('... failed:
+ * <stderr>')` (which loses the structured exit code, command line, and
+ * separate stdout/stderr buffers behind a flat string), the adapter throws
+ * a {@link CLIError} carrying both the structured payload (consumed by the
+ * pretty renderer's `details:` block) and a human-readable summary. Higher
+ * layers (the generator, the `db.*` commands) catch this and forward
+ * either the message or the whole thing via `CLIError.cause`.
+ */
+function makeChildFailureError(opts: {
+  subcommand: string;
+  command: string;
+  args: string[];
+  stderr: string;
+  stdout: string;
+  exitCode: number;
+}): CLIError {
+  // Prefer stderr for the inline message; fall back to stdout for prisma
+  // subcommands that route their human-readable errors to stdout (rare,
+  // but happens with `prisma db seed`'s spawned process). Truncate to
+  // ~4 KiB so a multi-megabyte error log can't blow the message line.
+  const blob = (opts.stderr.trim() || opts.stdout.trim()).slice(0, 4096);
+  return new CLIError(
+    'INTERNAL',
+    `prisma ${opts.subcommand} failed (exit ${opts.exitCode})${blob ? `: ${blob}` : ''}`,
+    {
+      details: {
+        command: `${opts.command} ${opts.args.join(' ')}`,
+        exitCode: opts.exitCode,
+        stderr: opts.stderr,
+        stdout: opts.stdout,
+      },
+    },
+  );
+}
 
 /**
  * Resolve the local prisma CLI entry point. We resolve via require so the same
@@ -230,39 +269,55 @@ export const prismaAdapter: ORMAdapter = {
   name: 'prisma',
 
   async applyMigrations(ctx: ORMContext): Promise<MigrationResult> {
+    const args = ['migrate', 'deploy', '--schema', schemaPath(ctx.projectRoot)];
     const r = await runChild(
       process.execPath,
-      [prismaBinPath(), 'migrate', 'deploy', '--schema', schemaPath(ctx.projectRoot)],
+      [prismaBinPath(), ...args],
       { cwd: ctx.projectRoot, databaseUrl: ctx.databaseUrl, timeoutMs: 120_000 },
     );
     const output = r.stdout + r.stderr;
     if (r.exitCode !== 0) {
-      throw new Error(`prisma migrate deploy failed (exit ${r.exitCode}): ${output.trim()}`);
+      // LEV-197 — structured CLIError preserves the separate stderr/stdout
+      // streams and exit code for the renderer's `details:` block instead
+      // of flattening them into the message string.
+      throw makeChildFailureError({
+        subcommand: 'migrate deploy',
+        command: 'prisma',
+        args,
+        stderr: r.stderr,
+        stdout: r.stdout,
+        exitCode: r.exitCode,
+      });
     }
     const { applied, names } = parseApplied(r.stdout);
     return { applied, names, output };
   },
 
   async newMigration(ctx: ORMContext, name: string): Promise<MigrationFile> {
-    const r = await runChild(
-      process.execPath,
-      [
-        prismaBinPath(),
-        'migrate',
-        'dev',
-        '--create-only',
-        '--skip-generate',
-        '--name',
-        name,
-        '--schema',
-        schemaPath(ctx.projectRoot),
-      ],
-      { cwd: ctx.projectRoot, databaseUrl: ctx.databaseUrl, timeoutMs: 120_000 },
-    );
+    const args = [
+      'migrate',
+      'dev',
+      '--create-only',
+      '--skip-generate',
+      '--name',
+      name,
+      '--schema',
+      schemaPath(ctx.projectRoot),
+    ];
+    const r = await runChild(process.execPath, [prismaBinPath(), ...args], {
+      cwd: ctx.projectRoot,
+      databaseUrl: ctx.databaseUrl,
+      timeoutMs: 120_000,
+    });
     if (r.exitCode !== 0) {
-      throw new Error(
-        `prisma migrate dev --create-only failed (exit ${r.exitCode}): ${(r.stderr || r.stdout).trim()}`,
-      );
+      throw makeChildFailureError({
+        subcommand: 'migrate dev --create-only',
+        command: 'prisma',
+        args,
+        stderr: r.stderr,
+        stdout: r.stdout,
+        exitCode: r.exitCode,
+      });
     }
     const dir = await findNewestMigrationDir(ctx.projectRoot, name);
     return { path: dir, name };
@@ -353,15 +408,21 @@ export const prismaAdapter: ORMAdapter = {
   },
 
   async generateClient(ctx: ORMContext): Promise<void> {
+    const args = ['generate', '--schema', schemaPath(ctx.projectRoot)];
     const r = await runChild(
       process.execPath,
-      [prismaBinPath(), 'generate', '--schema', schemaPath(ctx.projectRoot)],
+      [prismaBinPath(), ...args],
       { cwd: ctx.projectRoot, databaseUrl: ctx.databaseUrl, timeoutMs: 120_000 },
     );
     if (r.exitCode !== 0) {
-      throw new Error(
-        `prisma generate failed (exit ${r.exitCode}): ${(r.stderr || r.stdout).trim()}`,
-      );
+      throw makeChildFailureError({
+        subcommand: 'generate',
+        command: 'prisma',
+        args,
+        stderr: r.stderr,
+        stdout: r.stdout,
+        exitCode: r.exitCode,
+      });
     }
   },
 

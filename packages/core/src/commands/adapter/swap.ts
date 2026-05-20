@@ -122,6 +122,7 @@ async function readExisting(path: string): Promise<Record<string, string>> {
       `failed to read existing ${ADAPTER_FILE_SUBPATH}`,
       {
         hint: 'fix or delete the file and re-run `levelzero adapter swap`',
+        cause: err,
         details: { path, error: (err as Error).message },
       },
     );

@@ -145,7 +145,7 @@ export function makeGenCommand(opts?: GenCommandOptions): Command {
         flags: ctx.flags,
       };
 
-      const results: GenRunEntry[] = [];
+      const results: InternalGenRunEntry[] = [];
       let ok = 0;
       let skipped = 0;
       let failed = 0;
@@ -160,21 +160,64 @@ export function makeGenCommand(opts?: GenCommandOptions): Command {
       if (failed > 0) {
         // Surface failures via a structured CLIError so the CLI driver returns
         // a non-zero exit code while still serializing the per-generator
-        // breakdown. Embedding the result rows in `details` keeps the JSON
-        // shape introspectable for tooling that wraps `gen`.
-        const failedIds = results.filter((r) => r.status === 'fail').map((r) => r.id);
-        const summary = renderRun({ results, ok, skipped, failed });
+        // breakdown. Embedding the result rows in `details.generators` (which
+        // the pretty renderer special-cases — see `renderArrayPretty` in
+        // `output.ts`) means the failing generator's `message` is included
+        // inline in `error: ...` output without the caller having to read
+        // `--json` and re-stringify. The first failed generator's thrown
+        // error (if any) flows through as `cause` so users see the original
+        // stderr / Error chain.
+        const failedResults = results.filter((r) => r.status === 'fail');
+        const failedIds = failedResults.map((r) => r.id);
+        const firstFailureCause = failedResults
+          .map((r) => (r as { _thrown?: unknown })._thrown)
+          .find((c): c is unknown => c !== undefined);
+        // Drop the private `_thrown` field from serialized rows so external
+        // consumers see the documented `GenRunEntry` shape only.
+        const publicResults: GenRunEntry[] = results.map((r) => ({
+          id: r.id,
+          status: r.status,
+          message: r.message,
+          filesWritten: r.filesWritten,
+        }));
         throw new CLIError(
           'INTERNAL',
           `gen: ${failed} generator(s) failed: ${failedIds.join(', ')}`,
           {
-            hint: 'see the per-generator messages above for the underlying error',
-            details: { results, ok, skipped, failed, pretty: summary },
+            // The first failed generator's actual stderr / message lives in
+            // `details.generators[].message`. Pretty rendering surfaces it
+            // automatically; no separate "see messages above" pointer needed.
+            // For a single failure we also tack a one-line "from <id>:
+            // <first-line-of-message>" onto `hint` so the headline reason
+            // is visible without scrolling.
+            hint:
+              failedResults.length === 1 && failedResults[0]?.message
+                ? `from ${failedResults[0].id}: ${firstLine(failedResults[0].message)}`
+                : undefined,
+            cause: firstFailureCause,
+            details: {
+              generators: publicResults,
+              ok,
+              skipped,
+              failed,
+            },
           },
         );
       }
 
-      const runResult: GenRunResult = { results, ok, skipped, failed };
+      // Strip internal-only fields (`_thrown`) on the public return shape.
+      const publicResultsOk: GenRunEntry[] = results.map((r) => ({
+        id: r.id,
+        status: r.status,
+        message: r.message,
+        filesWritten: r.filesWritten,
+      }));
+      const runResult: GenRunResult = {
+        results: publicResultsOk,
+        ok,
+        skipped,
+        failed,
+      };
       if (ctx.format === 'json') return runResult;
       return renderRun(runResult);
     },
@@ -211,11 +254,23 @@ function selectByOnly(all: Generator[], raw: string): Generator[] {
 }
 
 /**
+ * Internal augmented entry — adds a non-enumerable `_thrown` field carrying
+ * the original Error instance (when a generator throws) so the summary
+ * CLIError can flow it through as `cause` for the renderer to walk. The
+ * field is stripped before the entry lands in JSON output (see the
+ * `publicResults` projection above).
+ */
+interface InternalGenRunEntry extends GenRunEntry {
+  _thrown?: unknown;
+}
+
+/**
  * Invoke one generator and normalize the outcome into a {@link GenRunEntry}.
  * Catches throws and converts them to `status: 'fail'` so a single broken
- * generator doesn't short-circuit siblings.
+ * generator doesn't short-circuit siblings. Captured throws are preserved
+ * on `_thrown` so the summary error can carry them as `cause`.
  */
-async function runOne(gen: Generator, ctx: GeneratorContext): Promise<GenRunEntry> {
+async function runOne(gen: Generator, ctx: GeneratorContext): Promise<InternalGenRunEntry> {
   try {
     const r = await gen.generate(ctx);
     return {
@@ -231,8 +286,20 @@ async function runOne(gen: Generator, ctx: GeneratorContext): Promise<GenRunEntr
       status: 'fail',
       message: msg,
       filesWritten: null,
+      _thrown: err,
     };
   }
+}
+
+/**
+ * Pull the first line of a (possibly multi-line) message so the CLIError
+ * `hint:` stays scannable. Multi-line bodies still appear in full under
+ * `details.generators[].message` for users that need the surrounding
+ * context.
+ */
+function firstLine(s: string): string {
+  const i = s.indexOf('\n');
+  return (i < 0 ? s : s.slice(0, i)).trim();
 }
 
 function flagString(value: string | boolean | undefined): string | undefined {

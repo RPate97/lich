@@ -105,7 +105,12 @@ export async function runCli(
     if (isCLIErrorLike(err)) {
       return { exitCode: 1, stdout: '', stderr: formatError(err, format) };
     }
-    const wrapped = new CLIError('INTERNAL', err instanceof Error ? err.message : String(err));
+    // LEV-197 — non-CLIError throws still flow their original Error through
+    // as `cause` so the renderer walks to the real message/stack. Without
+    // this, anything thrown from a command (e.g. `adapter.inspectSchema`)
+    // would lose its name/stack at the dispatch boundary.
+    const message = err instanceof Error ? err.message : String(err);
+    const wrapped = new CLIError('INTERNAL', message, { cause: err });
     return { exitCode: 1, stdout: '', stderr: formatError(wrapped, format) };
   }
 }

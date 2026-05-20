@@ -132,10 +132,20 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
         for (const n of result.names) lines.push(`  ${n}`);
         return lines.join('\n') + '\n';
       } catch (err) {
+        // LEV-197 — forward the underlying error verbatim as `cause` so the
+        // renderer walks the chain to the actual stderr blob. If the adapter
+        // already threw a CLIError (with structured `stderr`/`exitCode`/etc.
+        // in `details`), surface those fields too; otherwise fall back to a
+        // single `output:` blob for non-CLIError throws.
+        const adapterDetails =
+          err instanceof CLIError && err.details && typeof err.details === 'object'
+            ? (err.details as Record<string, unknown>)
+            : undefined;
         const message = err instanceof Error ? err.message : String(err);
         throw new CLIError('INTERNAL', 'db migrate failed', {
-          hint: 'see details.output for the adapter’s stdout/stderr',
-          details: { output: message },
+          hint: 'see details for the adapter’s stdout/stderr',
+          cause: err,
+          details: adapterDetails ?? { output: message },
         });
       }
     },
