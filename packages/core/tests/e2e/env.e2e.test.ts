@@ -154,27 +154,23 @@ describe('LEV-198-extended env / adapter / check', () => {
       expect(byKey.get('browser:playwright')?.active).toBe(true);
     });
 
-    // LEV-207 — the `<slot>` positional is silently dropped today; the
-    // command returns every (slot, name) pair regardless. Marked `it.fails`
-    // so the suite stays green while the bug is present; drop `.fails` when
-    // LEV-207 ships either the filter OR a hard error on extras.
-    it.fails(
-      'LEV-207 regression: adapter list <slot> --json filters to that slot',
-      () => {
-        const res = runCli(
-          handle.projectDir,
-          ['adapter', 'list', 'orm', '--json'],
-        );
-        expect(res.exitCode, res.stderr).toBe(0);
-        const out = JSON.parse(res.stdout) as {
-          adapters: Array<{ slot: string }>;
-        };
-        expect(out.adapters.length).toBeGreaterThan(0);
-        for (const a of out.adapters) {
-          expect(a.slot).toBe('orm');
-        }
-      },
-    );
+    // LEV-207 — the `<slot>` positional now filters the result to that slot,
+    // and errors loudly on a typo. Before the fix the positional was silently
+    // dropped and every (slot, name) pair was returned regardless.
+    it('LEV-207 regression: adapter list <slot> --json filters to that slot', () => {
+      const res = runCli(
+        handle.projectDir,
+        ['adapter', 'list', 'orm', '--json'],
+      );
+      expect(res.exitCode, res.stderr).toBe(0);
+      const out = JSON.parse(res.stdout) as {
+        adapters: Array<{ slot: string }>;
+      };
+      expect(out.adapters.length).toBeGreaterThan(0);
+      for (const a of out.adapters) {
+        expect(a.slot).toBe('orm');
+      }
+    });
   });
 
   describe('adapter swap', () => {
