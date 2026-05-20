@@ -54,10 +54,33 @@ export interface ScaffoldResult {
   projectDir: string;
 }
 
+/** Resolves to `<repo>/packages/template-v0-stack/files` — pinned to THIS worktree. */
+const WORKTREE_TEMPLATE_DIR = resolve(
+  HELPER_DIR,
+  '..',
+  '..',
+  '..',
+  '..',
+  'template-v0-stack',
+  'files',
+);
+
 /**
- * Drive `@levelzero/create-stack-v0 <projectName>` with `tmpdir` as cwd.
+ * Materialize this worktree's v0 template into `<tmpdir>/<projectName>`.
  *
- * Throws with the captured stderr if the binary exits non-zero — the smoke
+ * We bypass `create-stack-v0`'s bin entirely and invoke this worktree's
+ * `copyTemplate` directly with the worktree-pinned `WORKTREE_TEMPLATE_DIR`.
+ * Why not the bin: `create-stack-v0/src/bin.ts` resolves
+ * `@levelzero/template-v0-stack` via node_modules at the top of the file,
+ * and in a git-worktree setup that symlink chains up to the MAIN repo —
+ * a different tree that can ship envInjection keys (e.g. `hono.port`,
+ * `next.port` from LEV-200) the plugins in THIS worktree don't contribute.
+ * The mismatch surfaces as a load-time `EnvSourceMissingError` from
+ * `bootPlugins`, failing every CLI invocation downstream — including
+ * `levelzero --help`. Pinning the template AND the `copyTemplate`
+ * implementation to absolute paths in our worktree closes that gap.
+ *
+ * Throws with the captured stderr if the spawn exits non-zero — the smoke
  * test setup needs an obvious failure mode (vitest swallows console errors
  * thrown deep in `beforeAll` otherwise).
  */
@@ -65,13 +88,34 @@ export async function scaffoldProject(
   opts: ScaffoldOptions,
 ): Promise<ScaffoldResult> {
   const { tmpdir, projectName } = opts;
-  const r = spawnSync('bun', [CREATE_BIN, projectName], {
+  // We resolve THIS worktree's `copyTemplate` source explicitly (not via
+  // `@levelzero/core` from node_modules — the workspace symlink would
+  // surface a different worktree's implementation). The stub script
+  // imports `copyTemplate` by absolute file path so bun's resolver can't
+  // route around it.
+  const copyTemplateSrc = resolve(
+    HELPER_DIR,
+    '..',
+    '..',
+    '..',
+    'src',
+    'scaffolder.ts',
+  );
+  const stubBody = `
+import { copyTemplate } from ${JSON.stringify(copyTemplateSrc)};
+await copyTemplate({
+  from: ${JSON.stringify(WORKTREE_TEMPLATE_DIR)},
+  to: ${JSON.stringify(join(tmpdir, projectName))},
+  vars: { projectName: ${JSON.stringify(projectName)} },
+});
+`;
+  const r = spawnSync('bun', ['-e', stubBody], {
     cwd: tmpdir,
     encoding: 'utf8',
   });
   if (r.status !== 0) {
     throw new Error(
-      `create-stack-v0 failed (status ${r.status}):\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`,
+      `worktree-pinned copyTemplate failed (status ${r.status}):\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`,
     );
   }
   // realpathSync resolves macOS /var → /private/var so downstream
