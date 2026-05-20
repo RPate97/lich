@@ -640,6 +640,21 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     // reclaim paths, so the dogfood stub is retained as a marker for
     // when someone wires up an async-spawn helper in `_helpers/cli.ts`.
     it.todo('LEV-199 regression: dev SIGINT mid-startup releases the lock');
+    // LEV-203 is fixed in the unit tier — see
+    // `packages/core/tests/commands/dev.live-teardown.test.ts`:
+    //   - "teardownLiveStack (LEV-203 unit) > calls compose down with
+    //     removeOrphans=true, volumes=false (preserves user data)"
+    //   - "dev --live wiring (LEV-203) > natural exit from --live calls
+    //     teardownLiveStack via the finally block"
+    //   - "dev --live wiring (LEV-203) > cleanup registered during --live
+    //     is callable while the stack is up (signal-path coverage)"
+    //
+    // The end-to-end form (spawn real `dev --live` subprocess → deliver
+    // SIGINT → assert postgres container gone within 10s) requires the
+    // same async-spawn + signal-delivery helper that LEV-199's stub
+    // points at. Same fallback applied: unit tests prove the wiring and
+    // the helper invocation; the e2e stub stays as a marker for when
+    // someone wires up `_helpers/cli.ts`'s async-spawn path.
     it.todo('LEV-203 regression: SIGINT to dev --live tears down postgres container');
   });
 });
