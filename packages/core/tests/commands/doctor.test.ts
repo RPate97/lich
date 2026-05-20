@@ -292,4 +292,63 @@ describe('levelzero doctor', () => {
       expect(out).toMatch(/doctor: ok/);
     });
   });
+
+  describe('stale-locks check (LEV-199)', () => {
+    it('reports ok when the registry dir holds no lock files', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const sl = result.checks.find((c: any) => c.id === 'stale-locks');
+      expect(sl).toBeDefined();
+      expect(sl.status).toBe('ok');
+      expect(result.ok).toBe(true);
+    });
+
+    it('reports ok when every lock file is held by a live PID', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      // Our own PID is definitionally alive.
+      writeFileSync(join(tmp, 'registry.json.lock'), String(process.pid));
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const sl = result.checks.find((c: any) => c.id === 'stale-locks');
+      expect(sl.status).toBe('ok');
+      expect(sl.message).toMatch(/1 lock file/);
+    });
+
+    it('warns when a lock file references a dead PID', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      writeFileSync(join(tmp, 'registry.json.lock'), '99999999');
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const sl = result.checks.find((c: any) => c.id === 'stale-locks');
+      expect(sl.status).toBe('warn');
+      expect(sl.message).toMatch(/stale.*pid 99999999/);
+      // Warnings must not flip overall ok.
+      expect(result.ok).toBe(true);
+    });
+
+    it('warns when a lock file has no PID recorded (legacy zero-byte)', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      writeFileSync(join(tmp, 'registry.json.lock'), '');
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const sl = result.checks.find((c: any) => c.id === 'stale-locks');
+      expect(sl.status).toBe('warn');
+      expect(sl.message).toMatch(/no pid/);
+    });
+
+    it('renders a [WARN] marker in pretty output for stale locks', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      writeFileSync(join(tmp, 'registry.json.lock'), '99999999');
+      const cmd = makeDoctorCommand(() => reg);
+      const out = (await cmd.run({ cwd: tmp, format: 'pretty', args: [], flags: {} })) as string;
+      expect(out).toContain('[WARN] stale-locks');
+      expect(out).toMatch(/doctor: ok/);
+    });
+  });
 });
