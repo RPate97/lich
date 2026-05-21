@@ -29,6 +29,7 @@ import { join } from 'node:path';
 
 import {
   setupScaffoldedProject,
+  sweepStaleTmpdirs,
   teardownScaffoldedProject,
   type E2EProjectHandle,
 } from './_helpers/setup';
@@ -41,6 +42,7 @@ let handle: E2EProjectHandle;
 
 describe('LEV-198-extended lifecycle: per-command coverage', () => {
   beforeAll(async () => {
+    sweepStaleTmpdirs('lz-e2e-lifecycle-');
     handle = await setupScaffoldedProject({ tmpdirPrefix: 'lz-e2e-lifecycle-' });
   }, 240_000);
 

@@ -96,6 +96,19 @@ export interface InstallResult {
 }
 
 /**
+ * Keep only the trailing `maxLines` of `s`, with a single header line noting
+ * how many were dropped. Used for `bun install` failure reporting where the
+ * relevant signal is in stderr and stdout is mostly "downloading X" noise.
+ */
+function truncateStdoutTail(s: string, maxLines: number): string {
+  const lines = s.split('\n');
+  if (lines.length <= maxLines) return s;
+  const dropped = lines.length - maxLines;
+  const tail = lines.slice(-maxLines).join('\n');
+  return `[truncated, ${dropped} more lines]\n${tail}`;
+}
+
+/**
  * Run `bun install` in the scaffolded project. Patches workspace overrides
  * first, then asserts the install succeeded and that the expected workspace
  * binaries / packages actually landed under `apps/*\/node_modules`.
@@ -132,9 +145,13 @@ export async function installDeps(projectDir: string): Promise<InstallResult> {
   };
 
   if (result.exitCode !== 0) {
+    // On a cold bun cache, stdout is hundreds of "downloading <pkg>" lines —
+    // worthless for diagnosing the failure, which lives in stderr. Truncate
+    // stdout to the trailing 50 lines (with a marker for how many we dropped)
+    // and keep stderr verbatim so the actual error is still legible.
     throw new Error(
       `bun install failed in ${projectDir} (exit ${result.exitCode}):\n` +
-        `stdout:\n${result.stdout}\n` +
+        `stdout:\n${truncateStdoutTail(result.stdout, 50)}\n` +
         `stderr:\n${result.stderr}`,
     );
   }

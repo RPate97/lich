@@ -76,13 +76,9 @@ dominates.
 bun run test:e2e
 ```
 
-Or, from `packages/core/`:
-
-```
-bun run test:e2e
-```
-
-Wired through `vitest.e2e.config.ts` (longer timeouts, narrower include).
+Works from the repo root or from `packages/core/` (same script, same
+config). Wired through `vitest.e2e.config.ts` (longer timeouts, narrower
+include).
 
 ## When in doubt
 

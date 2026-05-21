@@ -14,7 +14,7 @@
  * handles the common case (no compose project to tear down) so most callers
  * just do `afterAll(cleanup)` and move on.
  */
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir as osTmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,6 +22,7 @@ import { scaffoldProject } from './scaffold';
 import { installDeps } from './install';
 import { runCli } from './cli';
 import { dockerComposeDown } from './docker';
+import { addCleanup } from '../../../src/signal-handlers';
 
 export interface E2EProjectHandle {
   /** OS tmpdir holding the scaffolded project (and nothing else). */
@@ -80,7 +81,77 @@ export async function setupScaffoldedProject(
       this.composeProjectName = name;
     },
   };
+  // Register a SIGINT/SIGTERM-driven cleanup so Ctrl-C during a test run
+  // tears down the same things `afterAll` would (stop → compose down →
+  // rmtmp). Routes through LEV-199's signal-handlers registry so the
+  // existing registry-lock cleanup fires alongside ours. See M13 in LEV-206.
+  //
+  // `addCleanup` returns an unregister fn; we call it from
+  // `teardownScaffoldedProject` to avoid leaking handles between test files
+  // in vitest's singleFork pool.
+  const unregister = addCleanup(async (signal) => {
+    // The signal-handler timebox is 2s total across every registered
+    // cleanup, so we deliberately skip the host-spawn `stop` here — it can
+    // take several seconds. Just kill the compose stack and rm the tmpdir;
+    // those are the things that actually leak into the next run.
+    void signal;
+    try {
+      if (handle.composeProjectName) {
+        dockerComposeDown(handle.composeProjectName);
+      }
+    } catch {
+      /* best-effort */
+    }
+    try {
+      if (handle.tmpdir) {
+        rmSync(handle.tmpdir, { recursive: true, force: true });
+      }
+    } catch {
+      /* best-effort */
+    }
+  });
+  // Surface the unregister fn on the handle so teardown can detach the
+  // signal callback cleanly. Cast to attach a non-enumerable field.
+  (handle as E2EProjectHandle & { __signalUnregister: () => void }).__signalUnregister = unregister;
   return handle;
+}
+
+/**
+ * Sweep stale e2e tmpdirs older than 24h.
+ *
+ * vitest's `afterAll` can race with process exit (especially when a test
+ * file is interrupted), occasionally leaving an `lz-e2e-*` directory on
+ * disk. Without periodic cleanup these accumulate into hundreds of
+ * megabytes of node_modules. The sweep runs at the top of each suite's
+ * `beforeAll`, costing milliseconds when the tmpdir is clean and seconds
+ * when it's not — both well under the 240s `beforeAll` budget.
+ *
+ * The 24h cutoff is conservative: directories younger than that may belong
+ * to a concurrent test run on the same host. Anything older is unambiguously
+ * abandoned.
+ *
+ * See M12 in LEV-206.
+ */
+export function sweepStaleTmpdirs(prefix: string, maxAgeMs = 24 * 60 * 60 * 1000): void {
+  const TMPDIR = osTmpdir();
+  let entries: string[];
+  try {
+    entries = readdirSync(TMPDIR);
+  } catch {
+    return; // tmpdir unreadable — accept the leak rather than throwing.
+  }
+  for (const name of entries) {
+    if (!name.startsWith(prefix)) continue;
+    const full = join(TMPDIR, name);
+    try {
+      const age = Date.now() - statSync(full).mtimeMs;
+      if (age > maxAgeMs) {
+        rmSync(full, { recursive: true, force: true });
+      }
+    } catch {
+      /* tolerate — racing concurrent runs, perm errors, etc. */
+    }
+  }
 }
 
 /**
@@ -97,6 +168,19 @@ export async function setupScaffoldedProject(
 export async function teardownScaffoldedProject(
   handle: E2EProjectHandle,
 ): Promise<void> {
+  // Detach the SIGINT cleanup we registered in setupScaffoldedProject — once
+  // afterAll runs there's nothing left to clean up signal-side, and leaving
+  // a stale closure pointing at a torn-down handle wastes work on Ctrl-C
+  // mid-suite-transition.
+  const unregister = (handle as E2EProjectHandle & { __signalUnregister?: () => void })
+    .__signalUnregister;
+  if (typeof unregister === 'function') {
+    try {
+      unregister();
+    } catch {
+      /* unregister is a pure array filter — but be defensive */
+    }
+  }
   try {
     if (handle.projectDir) {
       runCli(handle.projectDir, ['stop', '--json'], { timeoutMs: 30_000 });
