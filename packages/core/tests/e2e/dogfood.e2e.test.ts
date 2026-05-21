@@ -652,46 +652,29 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Open-bug regression stubs.
+  // Cross-suite coverage map.
   //
-  // These tests document the user-reported bugs that are NOT yet fixed.
-  // They live here as `it.todo(...)` placeholders so they appear in the
-  // suite output as pending; when the underlying tickets land, the
-  // maintainer converts them to real `it(...)` assertions.
+  // The LEV-199 / LEV-203 SIGINT regressions used to live here as
+  // `it.todo` markers. LEV-209 wired up the async-spawn helper
+  // (`spawnCli` in `_helpers/cli.ts`) and moved both regressions to their
+  // own file — see `signals.e2e.test.ts`:
   //
-  // Why not `it.fails`: the underlying behavior requires async signal
-  // handling (SIGINT to a `spawn`'d child) that's awkward to drive from
-  // vitest reliably. Stubbing here keeps the bugs visible in the test
-  // catalogue without producing flaky red CI runs.
+  //   - `LEV-199 regression: stale lock with dead PID is reclaimed (no docker)`
+  //   - `LEV-199 regression: SIGINT during dev releases the registry lock`
+  //   - `LEV-203 regression: SIGINT during dev --live tears down compose containers`
+  //
+  // No-op `describe` here so future devs grepping `dogfood.e2e.test.ts`
+  // for LEV-199 / LEV-203 still find the pointer. Don't add new tests
+  // into this block — signal-handling regressions belong in
+  // `signals.e2e.test.ts`.
   // -------------------------------------------------------------------------
-  describe('open-bug regression stubs', () => {
-    // LEV-199 is fixed in the unit tier — see
-    // `packages/core/tests/registry-lock.test.ts`:
-    //   - "SIGINT unlinks held lock files synchronously (LEV-199 regression)"
-    //   - "reclaims a stale lock whose recorded PID is dead (LEV-199)"
-    //
-    // The end-to-end form (real `dev` subprocess → SIGINT mid-startup →
-    // second `dev` succeeds quickly) requires async `spawn` + signal
-    // delivery + docker, which is flaky from vitest. The unit coverage
-    // proves both the signal-handler cleanup and the stale-lock
-    // reclaim paths, so the dogfood stub is retained as a marker for
-    // when someone wires up an async-spawn helper in `_helpers/cli.ts`.
-    it.todo('LEV-199 regression: dev SIGINT mid-startup releases the lock');
-    // LEV-203 is fixed in the unit tier — see
-    // `packages/core/tests/commands/dev.live-teardown.test.ts`:
-    //   - "teardownLiveStack (LEV-203 unit) > calls compose down with
-    //     removeOrphans=true, volumes=false (preserves user data)"
-    //   - "dev --live wiring (LEV-203) > natural exit from --live calls
-    //     teardownLiveStack via the finally block"
-    //   - "dev --live wiring (LEV-203) > cleanup registered during --live
-    //     is callable while the stack is up (signal-path coverage)"
-    //
-    // The end-to-end form (spawn real `dev --live` subprocess → deliver
-    // SIGINT → assert postgres container gone within 10s) requires the
-    // same async-spawn + signal-delivery helper that LEV-199's stub
-    // points at. Same fallback applied: unit tests prove the wiring and
-    // the helper invocation; the e2e stub stays as a marker for when
-    // someone wires up `_helpers/cli.ts`'s async-spawn path.
-    it.todo('LEV-203 regression: SIGINT to dev --live tears down postgres container');
+  describe('signal regressions (moved out — see signals.e2e.test.ts)', () => {
+    it('LEV-199 + LEV-203 SIGINT regressions live in signals.e2e.test.ts', () => {
+      // Sentinel: the signals file MUST exist next to this one — if it's
+      // ever deleted or renamed, this assertion catches that before the
+      // regression silently vanishes.
+      const sentinelPath = join(__dirname, 'signals.e2e.test.ts');
+      expect(existsSync(sentinelPath)).toBe(true);
+    });
   });
 });

@@ -12,8 +12,16 @@
  * loading, argv parsing, plugin discovery via `loadConfig`, process-exit
  * semantics — all of which only run when there's a real subprocess
  * boundary.
+ *
+ * Two helpers live here:
+ *   - `runCli` / `runCliJson` (blocking; `spawnSync`) — the canonical
+ *     "fire and read the result" path used by every happy-path e2e test.
+ *   - `spawnCli` (async; `child_process.spawn`) — for tests that need to
+ *     drive a running CLI process (send signals, wait for output, etc.).
+ *     LEV-209 added this for the real-SIGINT regression tests; everything
+ *     else should stay on the blocking path because it's simpler.
  */
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -140,4 +148,227 @@ export function runCliJson<T = unknown>(
     );
   }
   return { result, json };
+}
+
+// ---------------------------------------------------------------------------
+// Async spawn (LEV-209)
+// ---------------------------------------------------------------------------
+
+export interface SpawnCliOptions {
+  /** Additional env vars merged on top of `process.env`. */
+  env?: Record<string, string>;
+}
+
+export interface ExitResult {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+export interface SpawnedCli {
+  /** The underlying `ChildProcess`. Exposed so tests can inspect `.pid`. */
+  proc: ChildProcess;
+  /**
+   * Live-mutating arrays of utf8 chunks captured from the child. Tests can
+   * either join them at the end (`.join('')`) or hand them to a polling
+   * matcher. We expose chunks rather than the joined string so we never
+   * have to debounce — every emitted chunk is appended in order.
+   */
+  stdoutChunks: string[];
+  stderrChunks: string[];
+  /**
+   * Send a signal to the child. Defaults to SIGINT (the case LEV-199 /
+   * LEV-203 actually care about). No-op if the child is already gone.
+   */
+  kill(signal?: NodeJS.Signals): void;
+  /**
+   * Resolve once the child has exited, OR reject if it doesn't exit
+   * within `timeoutMs` (default 30s). The returned `{ exitCode, signal }`
+   * pair mirrors the `'exit'` event's args — `signal` is set when the
+   * child was killed by a signal (e.g. SIGINT), `exitCode` otherwise.
+   */
+  waitForExit(timeoutMs?: number): Promise<ExitResult>;
+  /**
+   * Resolve once the child's stdout has emitted a chunk matching `pattern`.
+   * Returns the matched substring (whatever `RegExp#exec` produced as
+   * `match[0]`). Useful for waiting until `dev` finishes booting before
+   * sending SIGINT — without it the test races the spawn and may signal
+   * before the lock is even acquired.
+   *
+   * Times out after `timeoutMs` (default 30s) with a thrown error whose
+   * message includes the buffered stdout/stderr so the failure is
+   * diagnosable.
+   */
+  waitForStdout(pattern: RegExp, timeoutMs?: number): Promise<string>;
+  /** Same as `waitForStdout` but matches against stderr. */
+  waitForStderr(pattern: RegExp, timeoutMs?: number): Promise<string>;
+}
+
+/**
+ * Spawn `levelzero <args>` from within `projectDir` as a backgrounded child
+ * process. Same binary-resolution rules as `runCli` (prefer the local
+ * `.bin/levelzero` symlink, fall back to `bun run levelzero`).
+ *
+ * The returned handle has the live `stdoutChunks` / `stderrChunks` arrays,
+ * plus `waitForStdout`/`waitForStderr` matchers and a `kill` helper that
+ * defaults to SIGINT. See `SpawnedCli` for the full surface.
+ *
+ * The child runs detached only insofar as we don't `child.unref()` —
+ * vitest's process owns it, and `kill()` is the only path to terminate it.
+ * If a test forgets to `kill()` and `waitForExit()`, the worker may hang
+ * waiting for the child to drain; the SIGINT-and-wait pattern below is the
+ * idiom every caller should follow.
+ */
+export function spawnCli(
+  projectDir: string,
+  args: string[],
+  opts: SpawnCliOptions = {},
+): SpawnedCli {
+  const env = { ...process.env, ...opts.env };
+  const localBin = join(projectDir, 'node_modules', '.bin', 'levelzero');
+  let command: string;
+  let spawnArgs: string[];
+  if (existsSync(localBin)) {
+    command = localBin;
+    spawnArgs = args;
+  } else {
+    command = 'bun';
+    spawnArgs = ['run', 'levelzero', ...args];
+  }
+
+  const proc = spawn(command, spawnArgs, {
+    cwd: projectDir,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+
+  proc.stdout?.setEncoding('utf8');
+  proc.stderr?.setEncoding('utf8');
+  proc.stdout?.on('data', (chunk: string) => {
+    stdoutChunks.push(chunk);
+  });
+  proc.stderr?.on('data', (chunk: string) => {
+    stderrChunks.push(chunk);
+  });
+
+  // Cache the exit info as soon as it lands so `waitForExit` can resolve
+  // synchronously even if the caller awaits long after the child died.
+  let exitInfo: ExitResult | null = null;
+  proc.once('exit', (code, signal) => {
+    exitInfo = { exitCode: code, signal };
+  });
+
+  const waitForExit = (timeoutMs = 30_000): Promise<ExitResult> => {
+    if (exitInfo) return Promise.resolve(exitInfo);
+    return new Promise<ExitResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        proc.removeListener('exit', onExit);
+        reject(
+          new Error(
+            `spawnCli: child did not exit within ${timeoutMs}ms (pid ${proc.pid ?? '?'})`,
+          ),
+        );
+      }, timeoutMs);
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        clearTimeout(timer);
+        resolve({ exitCode: code, signal });
+      };
+      proc.once('exit', onExit);
+    });
+  };
+
+  const waitForMatch = (
+    chunks: string[],
+    stream: 'stdout' | 'stderr',
+    pattern: RegExp,
+    timeoutMs: number,
+  ): Promise<string> => {
+    // Fast path — already buffered before the caller asked.
+    const initial = chunks.join('');
+    const m0 = pattern.exec(initial);
+    if (m0) return Promise.resolve(m0[0]);
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        stripListener();
+        const buf = chunks.join('').slice(-2000);
+        reject(
+          new Error(
+            `spawnCli.waitFor${stream === 'stdout' ? 'Stdout' : 'Stderr'}: ` +
+              `pattern ${pattern} did not match within ${timeoutMs}ms\n` +
+              `last ${stream}:\n${buf}\n` +
+              `last stderr:\n${stderrChunks.join('').slice(-2000)}`,
+          ),
+        );
+      }, timeoutMs);
+
+      const stripListener = () => {
+        const src = stream === 'stdout' ? proc.stdout : proc.stderr;
+        src?.removeListener('data', onData);
+        proc.removeListener('exit', onExit);
+      };
+
+      const onData = () => {
+        // Re-join each tick; chunks are typically small. If the child were
+        // pathologically chatty (megabytes/sec) we'd want a smarter buffer,
+        // but for CLI output the simple form is fine.
+        const m = pattern.exec(chunks.join(''));
+        if (m) {
+          clearTimeout(timer);
+          stripListener();
+          resolve(m[0]);
+        }
+      };
+
+      const onExit = () => {
+        // Child died before the pattern matched. Drain whatever's buffered
+        // one last time, then reject if still no match — there's nothing
+        // more coming.
+        const m = pattern.exec(chunks.join(''));
+        if (m) {
+          clearTimeout(timer);
+          stripListener();
+          resolve(m[0]);
+        } else {
+          clearTimeout(timer);
+          stripListener();
+          reject(
+            new Error(
+              `spawnCli.waitFor${stream === 'stdout' ? 'Stdout' : 'Stderr'}: ` +
+                `child exited before pattern ${pattern} matched\n` +
+                `${stream}:\n${chunks.join('').slice(-2000)}\n` +
+                `stderr:\n${stderrChunks.join('').slice(-2000)}`,
+            ),
+          );
+        }
+      };
+
+      const src = stream === 'stdout' ? proc.stdout : proc.stderr;
+      src?.on('data', onData);
+      proc.once('exit', onExit);
+    });
+  };
+
+  return {
+    proc,
+    stdoutChunks,
+    stderrChunks,
+    kill(signal: NodeJS.Signals = 'SIGINT') {
+      if (exitInfo) return;
+      try {
+        proc.kill(signal);
+      } catch {
+        /* already dead */
+      }
+    },
+    waitForExit,
+    waitForStdout(pattern, timeoutMs = 30_000) {
+      return waitForMatch(stdoutChunks, 'stdout', pattern, timeoutMs);
+    },
+    waitForStderr(pattern, timeoutMs = 30_000) {
+      return waitForMatch(stderrChunks, 'stderr', pattern, timeoutMs);
+    },
+  };
 }
