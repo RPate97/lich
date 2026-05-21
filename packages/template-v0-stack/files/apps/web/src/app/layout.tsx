@@ -97,6 +97,54 @@ const LANDING_CSS = `
   .lz-muted { color: var(--lz-muted); font-size: 0.875rem; }
   .lz-ok { color: var(--lz-ok); font-weight: 600; }
   .lz-bad { color: var(--lz-bad); font-weight: 600; }
+
+  /* LEV-196 — extra utilities for the sign-in / sign-up / dashboard pages.
+     Same inline-CSS approach as above so the template stays runnable without
+     "bunx shadcn add". Replace these once you've installed your preferred
+     component library. */
+  .lz-form { display: flex; flex-direction: column; gap: 0.75rem; }
+  .lz-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .lz-label { font-size: 0.875rem; font-weight: 600; color: var(--lz-muted); }
+  .lz-input {
+    background: var(--lz-bg);
+    color: var(--lz-fg);
+    border: 1px solid var(--lz-card-border);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font: inherit;
+  }
+  .lz-input:focus { outline: 2px solid var(--lz-link); outline-offset: -1px; }
+  .lz-button {
+    background: var(--lz-link);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .lz-button:hover { filter: brightness(1.1); }
+  .lz-button[disabled] { opacity: 0.6; cursor: not-allowed; }
+  .lz-button-secondary {
+    background: transparent;
+    color: var(--lz-fg);
+    border: 1px solid var(--lz-card-border);
+  }
+  .lz-button-danger { background: var(--lz-bad); }
+  .lz-error { color: var(--lz-bad); font-size: 0.875rem; margin: 0; }
+  .lz-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--lz-card-border);
+  }
+  .lz-row:last-child { border-bottom: none; }
+  .lz-row-text { flex: 1; }
+  .lz-row-text.lz-done { text-decoration: line-through; color: var(--lz-muted); }
+  .lz-stack { display: flex; flex-direction: column; gap: 1rem; }
+  .lz-inline { display: flex; gap: 0.5rem; align-items: center; }
 `;
 
 export default function RootLayout({ children }: { children: ReactNode }) {

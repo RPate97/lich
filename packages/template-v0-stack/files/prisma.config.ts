@@ -18,6 +18,10 @@ export default defineConfig({
   schema: './prisma/schema.prisma',
   migrations: {
     path: './prisma/migrations',
+    // LEV-196 — Prisma 7 moved seed configuration into `prisma.config.ts`'s
+    // `migrations.seed` (deprecating the `prisma.seed` field in package.json).
+    // The seed script is bun-runnable TypeScript at `prisma/seed.ts`.
+    seed: 'bun run prisma/seed.ts',
   },
   datasource: {
     url: process.env['DATABASE_URL'] ?? '',

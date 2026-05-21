@@ -58,6 +58,20 @@ export default async function HomePage() {
         </p>
       </section>
 
+      <section className="lz-card" aria-labelledby="lz-auth">
+        <h2 id="lz-auth" className="lz-card-title">
+          Try it
+        </h2>
+        <p className="lz-card-row">
+          <a href="/sign-in" className="lz-button" style={{ textDecoration: 'none' }}>
+            Sign in
+          </a>
+          <span className="lz-muted">
+            new here? <a href="/sign-up">create an account</a>
+          </span>
+        </p>
+      </section>
+
       <section className="lz-card" aria-labelledby="lz-next">
         <h2 id="lz-next" className="lz-card-title">
           Next steps
