@@ -35,6 +35,7 @@ import {
   teardownLiveStack,
   type LiveTeardownState,
 } from '../../src/commands/dev';
+import { composeProjectName } from '../../src/compose/naming';
 import type { ComposeRunner } from '../../src/compose/runner';
 import type { OwnedService, Service } from '../../src/services/types';
 import {
@@ -273,7 +274,7 @@ describe('dev --live wiring (LEV-203)', () => {
     // if a previous run brought some up). Same project name + compose file.
     expect(constructed.length).toBeGreaterThanOrEqual(2);
     for (const c of constructed) {
-      expect(c.projectName).toBe(`levelzero-${result.key}`);
+      expect(c.projectName).toBe(composeProjectName(result.key));
     }
 
     // No `up` call (no docker services in this test) but exactly one `down`
@@ -282,7 +283,7 @@ describe('dev --live wiring (LEV-203)', () => {
     const downs = calls.filter((c) => c.op === 'down');
     expect(downs).toHaveLength(1);
     expect(downs[0]!.args[0]).toEqual({ volumes: false, removeOrphans: true });
-    expect(downs[0]!.projectName).toBe(`levelzero-${result.key}`);
+    expect(downs[0]!.projectName).toBe(composeProjectName(result.key));
 
     // Registry entry was removed by the teardown.
     expect(await registry.get(result.key)).toBeUndefined();

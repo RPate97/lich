@@ -295,7 +295,12 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
         // Compose project name comes back populated regardless of whether
         // any service declares a `container_name` (plugin-postgres doesn't,
         // so `out.containers` is `[]` by design — compose auto-names them).
-        expect(out.compose.projectName).toMatch(/^levelzero-[0-9a-f]{12}$/);
+        //
+        // LEV-202 — vitest's globalSetup stamps `TEST_RUN_ID` so the project
+        // name carries a `test-<id>-` infix between the LEVELZERO_PREFIX and
+        // the worktree key. The pattern allows either shape so this same
+        // assertion holds for production code paths AND under-test runs.
+        expect(out.compose.projectName).toMatch(/^levelzero-(test-[a-z0-9-]+-)?[0-9a-f]{12}$/);
       },
     );
 

@@ -21,6 +21,11 @@ export default defineConfigShared({
   test: {
     include: ['tests/e2e/**/*.e2e.test.ts'],
     setupFiles: ['./tests/setup.ts'],
+    // LEV-202 — stamp TEST_RUN_ID + sweep stale `levelzero-*` networks
+    // from prior crashed runs. Same machinery as `vitest.config.ts`; the
+    // e2e suite needs it just as badly since it spins up real compose
+    // stacks per test file.
+    globalSetup: ['./vitest.globalSetup.ts'],
     // Default per-test timeout — phases 1, 2, 5 finish in seconds; phase 3
     // (dev → migrate → stop) needs the headroom.
     testTimeout: 240_000,

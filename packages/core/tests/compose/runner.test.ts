@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, dockerStackTeardown } from '../_helpers/docker';
 import { makeComposeRunner } from '../../src/compose/runner';
 
 const status = dockerOrSkip();
@@ -38,6 +38,10 @@ function forceCleanup(file: string) {
   spawnSync('docker', ['compose', '-p', PROJECT, '-f', file, 'down', '-v', '--remove-orphans'], {
     stdio: 'ignore',
   });
+  // LEV-202 — belt-and-suspenders: sweep any networks compose may have left
+  // behind on partial-up failures so the host's address pool doesn't
+  // accumulate orphans across runs.
+  dockerStackTeardown(PROJECT);
 }
 
 describeIfDocker('makeComposeRunner (real docker)', () => {

@@ -9,12 +9,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { dockerOrSkip, isContainerRunning } from '../_helpers/docker';
+import { dockerOrSkip, isContainerRunning, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeStopCommand } from '../../src/commands/stop';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/compose/naming';
+import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
@@ -91,9 +91,16 @@ beforeEach(async () => {
 function cleanup(key: string) {
   spawnSync('docker', ['rm', '-f', containerName(key, 'postgres')], { stdio: 'ignore' });
   spawnSync('docker', ['volume', 'rm', '-f', volumeName(key, 'postgres')], { stdio: 'ignore' });
-  // Compose default network — `down` should clean it, but the unit tests use
-  // a mock runner that doesn't actually run compose. Best-effort.
-  spawnSync('docker', ['network', 'rm', `levelzero-${key}_default`], { stdio: 'ignore' });
+  // LEV-202 — prefer `compose down --remove-orphans` so ANY network the
+  // project created is freed in one call. Falls through to a name-based rm
+  // for the legacy `<project>_default` naming.
+  const projectName = composeProjectName(key);
+  spawnSync(
+    'docker',
+    ['compose', '-p', projectName, 'down', '--volumes', '--remove-orphans', '--timeout', '5'],
+    { stdio: 'ignore' },
+  );
+  spawnSync('docker', ['network', 'rm', `${projectName}_default`], { stdio: 'ignore' });
 }
 
 afterEach(() => {
@@ -249,7 +256,7 @@ describe('levelzero stop (unit, mocked compose)', () => {
 
     // Runner was constructed with the same project name as dev used.
     expect(constructed).toHaveLength(1);
-    expect(constructed[0]!.projectName).toBe(`levelzero-${devResult.key}`);
+    expect(constructed[0]!.projectName).toBe(composeProjectName(devResult.key));
 
     const downs = calls.filter((c) => c.op === 'down');
     expect(downs).toHaveLength(1);
@@ -261,32 +268,37 @@ describe('levelzero stop (unit, mocked compose)', () => {
 
 describeIfDocker('levelzero stop (integration with real docker compose)', () => {
   it('after dev, stop removes containers, clears registry entry, leaves volume intact', async () => {
-    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
-    const devResult = (await dev.run({
-      cwd: projectDir,
-      format: 'json',
-      args: [],
-      flags: {},
-    })) as any;
+    // LEV-202 — withDockerStack ensures the compose stack is torn down even
+    // if the assertions throw mid-test, before `afterEach`'s cleanup runs.
+    const wtKey = computeWorktreeKey(projectDir);
+    await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
+      const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const devResult = (await dev.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
 
-    const stop = makeStopCommand(() => registry, { getServices: onlyPostgres });
-    const result = (await stop.run({
-      cwd: projectDir,
-      format: 'json',
-      args: [],
-      flags: {},
-    })) as any;
-    expect(result.stopped).toBe(true);
-    expect(result.key).toBe(devResult.key);
-    expect(result.containers).toEqual(devResult.containers);
+      const stop = makeStopCommand(() => registry, { getServices: onlyPostgres });
+      const result = (await stop.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
+      expect(result.stopped).toBe(true);
+      expect(result.key).toBe(devResult.key);
+      expect(result.containers).toEqual(devResult.containers);
 
-    expect(isContainerRunning(devResult.containers[0])).toBe(false);
-    expect(await registry.get(devResult.key)).toBeUndefined();
-    const r = spawnSync(
-      'docker',
-      ['volume', 'inspect', volumeName(devResult.key, 'postgres')],
-      { stdio: 'pipe' },
-    );
-    expect(r.status).toBe(0);
+      expect(isContainerRunning(devResult.containers[0])).toBe(false);
+      expect(await registry.get(devResult.key)).toBeUndefined();
+      const r = spawnSync(
+        'docker',
+        ['volume', 'inspect', volumeName(devResult.key, 'postgres')],
+        { stdio: 'pipe' },
+      );
+      expect(r.status).toBe(0);
+    });
   }, 180_000);
 });

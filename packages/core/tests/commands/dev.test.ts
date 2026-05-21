@@ -3,11 +3,11 @@ import { mkdtempSync, writeFileSync, realpathSync, existsSync, readFileSync } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/compose/naming';
+import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { OwnedService, Service } from '../../src/services/types';
 import type { PortlessAdapter } from '@levelzero/plugin-portless';
@@ -77,7 +77,17 @@ function cleanup(key: string) {
   spawnSync('docker', ['volume', 'rm', '-f', volumeName(key, 'postgres')], { stdio: 'ignore' });
   // Compose creates a default network `<project>_default` for every up call;
   // remove it so repeated test runs don't exhaust docker's address pools.
-  spawnSync('docker', ['network', 'rm', `levelzero-${key}_default`], { stdio: 'ignore' });
+  // LEV-202: prefer `compose down --remove-orphans` over per-name removal so
+  // ANY network the project created (default or otherwise) is freed in one
+  // call. Falls through to the legacy name-based rm so existing assertions
+  // that don't go through compose still get cleaned up.
+  const projectName = composeProjectName(key);
+  spawnSync(
+    'docker',
+    ['compose', '-p', projectName, 'down', '--volumes', '--remove-orphans', '--timeout', '5'],
+    { stdio: 'ignore' },
+  );
+  spawnSync('docker', ['network', 'rm', `${projectName}_default`], { stdio: 'ignore' });
 }
 
 afterEach(() => {
@@ -119,12 +129,12 @@ describe('levelzero dev (unit, mocked compose)', () => {
     );
     expect(existsSync(expectedPath)).toBe(true);
     const yaml = readFileSync(expectedPath, 'utf8');
-    expect(yaml).toContain(`name: levelzero-${result.key}`);
-    expect(yaml).toContain(`container_name: levelzero-${result.key}-postgres`);
+    expect(yaml).toContain(`name: ${composeProjectName(result.key)}`);
+    expect(yaml).toContain(`container_name: ${containerName(result.key, 'postgres')}`);
 
     // Runner constructed with project name + compose file.
     expect(constructed).toHaveLength(1);
-    expect(constructed[0]!.projectName).toBe(`levelzero-${result.key}`);
+    expect(constructed[0]!.projectName).toBe(composeProjectName(result.key));
     expect(constructed[0]!.composeFile).toBe(expectedPath);
 
     // Exactly one `up` call with detach + waitForHealthy.
@@ -133,9 +143,9 @@ describe('levelzero dev (unit, mocked compose)', () => {
     expect(ups[0]!.args[0]).toEqual({ detach: true, waitForHealthy: true });
 
     // Result shape preserved + compose summary added.
-    expect(result.containers).toContain(`levelzero-${result.key}-postgres`);
+    expect(result.containers).toContain(containerName(result.key, 'postgres'));
     expect(result.compose).toEqual({
-      projectName: `levelzero-${result.key}`,
+      projectName: composeProjectName(result.key),
       file: expectedPath,
     });
     expect(result.ports.postgres).toBeGreaterThan(0);
@@ -162,7 +172,7 @@ describe('levelzero dev (unit, mocked compose)', () => {
     const entry = await registry.get(result.key);
     expect(entry).toBeDefined();
     expect(entry!.ports.postgres).toBe(result.ports.postgres);
-    expect(entry!.containers).toEqual([`levelzero-${result.key}-postgres`]);
+    expect(entry!.containers).toEqual([containerName(result.key, 'postgres')]);
   });
 
   it('second run reuses ports and calls up again (idempotent)', async () => {
@@ -255,28 +265,36 @@ describe('levelzero dev (unit, mocked compose)', () => {
 
 describeIfDocker('levelzero dev (integration with real docker compose)', () => {
   it('first run brings up postgres via docker compose and persists registry', async () => {
-    const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
-    const result = (await cmd.run({
-      cwd: projectDir,
-      format: 'json',
-      args: [],
-      flags: {},
-    })) as any;
+    // LEV-202 — wrap the body in `withDockerStack` so the compose stack is
+    // torn down in a `finally` even if the assertions throw, before
+    // `afterEach`'s `cleanup()` runs. Double-cleanup is safe (compose down
+    // is idempotent) but the wrapper survives certain failure modes that
+    // bypass per-test hooks (timeouts, unhandled rejections).
+    const wtKey = computeWorktreeKey(projectDir);
+    await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
+      const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const result = (await cmd.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
 
-    expect(result.key).toMatch(/^[0-9a-f]{12}$/);
-    expect(result.path).toBe(projectDir);
-    expect(result.ports.postgres).toBeGreaterThanOrEqual(54000);
-    expect(result.ports.postgres).toBeLessThanOrEqual(54999);
-    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
-    // envContributions hook — the postgres plugin's `addEnvSource('url')` is
-    // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
-    // into `result.env`.
-    expect(result.env.DATABASE_URL).toBeUndefined();
-    expect(result.containers).toContain(containerName(result.key, 'postgres'));
+      expect(result.key).toMatch(/^[0-9a-f]{12}$/);
+      expect(result.path).toBe(projectDir);
+      expect(result.ports.postgres).toBeGreaterThanOrEqual(54000);
+      expect(result.ports.postgres).toBeLessThanOrEqual(54999);
+      // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+      // envContributions hook — the postgres plugin's `addEnvSource('url')` is
+      // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
+      // into `result.env`.
+      expect(result.env.DATABASE_URL).toBeUndefined();
+      expect(result.containers).toContain(containerName(result.key, 'postgres'));
 
-    const entry = await registry.get(result.key);
-    expect(entry).toBeDefined();
-    expect(entry!.ports.postgres).toBe(result.ports.postgres);
+      const entry = await registry.get(result.key);
+      expect(entry).toBeDefined();
+      expect(entry!.ports.postgres).toBe(result.ports.postgres);
+    });
   }, 180_000);
 });
 

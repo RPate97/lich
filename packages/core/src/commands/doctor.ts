@@ -31,6 +31,20 @@ interface Check {
  */
 const NETWORK_WARN_THRESHOLD = 20;
 
+/**
+ * LEV-202 — warn when the daemon's `default-address-pools` configuration
+ * only provides a small number of subnets. The default Docker install
+ * ships pools that yield ~30 /16 subnets, which a single agent fleet can
+ * exhaust in under an hour. We compute the total subnet capacity across
+ * every pool entry (each `{ base, size }` contributes `2^(size - basePrefix)`
+ * subnets); anything below this threshold trips the warning.
+ *
+ * 64 is the conservative cutoff: a typical agent run brings up 1-3
+ * networks; 64 leaves room for ~20 concurrent runs before exhaustion
+ * becomes a practical concern.
+ */
+const ADDRESS_POOL_WARN_THRESHOLD = 64;
+
 interface SpawnResult {
   stdout: string;
   stderr: string;
@@ -177,6 +191,133 @@ async function checkLevelzeroNetworks(): Promise<Check> {
 }
 
 /**
+ * LEV-202 — probe `docker info --format '{{json .DefaultAddressPools}}'`
+ * and warn when the daemon's address-pool capacity is below
+ * `ADDRESS_POOL_WARN_THRESHOLD`. Pure warning channel: never flips overall
+ * `ok` to false. Skips cleanly when docker isn't on PATH (handled by the
+ * upstream docker-compose check), when `docker info` exits non-zero, or
+ * when the JSON parse fails (rare — older docker versions may not emit
+ * the `DefaultAddressPools` field in the format we expect).
+ *
+ * Capacity formula: each pool entry has a `Base` CIDR (e.g. `172.17.0.0/16`)
+ * and a `Size` (the prefix of each carved-out subnet, e.g. `24`). The
+ * number of subnets per pool is `2^(Size - basePrefix)`. We sum across
+ * every pool entry to get the total.
+ */
+async function checkDockerAddressPools(): Promise<Check> {
+  let r: SpawnResult;
+  try {
+    r = await runDocker(['info', '--format', '{{json .DefaultAddressPools}}']);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      id: 'docker-address-pools',
+      status: 'skipped',
+      message:
+        code === 'ENOENT'
+          ? 'docker is not installed or not on PATH'
+          : `cannot run docker: ${(err as Error).message}`,
+    };
+  }
+
+  if (r.exitCode !== 0) {
+    return {
+      id: 'docker-address-pools',
+      status: 'skipped',
+      message: `docker info failed: ${(r.stderr || r.stdout).trim() || `exit ${r.exitCode}`}`,
+    };
+  }
+
+  // `docker info --format '{{json .DefaultAddressPools}}'` emits either
+  // `null` (no pools configured — the daemon falls back to its compiled
+  // defaults, ~30 subnets) or a JSON array like:
+  //   [{"Base":"172.17.0.0/16","Size":16},{"Base":"192.168.0.0/16","Size":20}]
+  // Note the capitalized field names — Go's encoder produces those.
+  const trimmed = r.stdout.trim();
+  if (trimmed === 'null') {
+    return {
+      id: 'docker-address-pools',
+      status: 'warn',
+      message:
+        'docker has no custom default-address-pools configured; the built-in ~30-subnet default exhausts quickly under parallel agent loads. ' +
+        recommendation(),
+    };
+  }
+  if (!trimmed) {
+    // Empty stdout — older docker versions may not surface the field at
+    // all. Skip rather than warn so we don't pester users on platforms
+    // where we can't make a confident assessment.
+    return {
+      id: 'docker-address-pools',
+      status: 'skipped',
+      message: 'docker info produced no DefaultAddressPools data',
+    };
+  }
+
+  let pools: Array<{ Base?: unknown; Size?: unknown }>;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) {
+      return {
+        id: 'docker-address-pools',
+        status: 'skipped',
+        message: `docker info DefaultAddressPools was not an array: ${trimmed.slice(0, 200)}`,
+      };
+    }
+    pools = parsed;
+  } catch (err) {
+    return {
+      id: 'docker-address-pools',
+      status: 'skipped',
+      message: `failed to parse docker info DefaultAddressPools: ${(err as Error).message}`,
+    };
+  }
+
+  let totalSubnets = 0;
+  for (const pool of pools) {
+    const base = typeof pool.Base === 'string' ? pool.Base : undefined;
+    const size = typeof pool.Size === 'number' ? pool.Size : undefined;
+    if (!base || size === undefined) continue;
+    const slash = base.lastIndexOf('/');
+    if (slash < 0) continue;
+    const basePrefix = Number(base.slice(slash + 1));
+    if (!Number.isFinite(basePrefix) || basePrefix < 0 || basePrefix > 32) continue;
+    if (size < basePrefix || size > 32) continue;
+    // Each pool contributes 2^(size - basePrefix) subnets.
+    totalSubnets += Math.pow(2, size - basePrefix);
+  }
+
+  if (totalSubnets < ADDRESS_POOL_WARN_THRESHOLD) {
+    return {
+      id: 'docker-address-pools',
+      status: 'warn',
+      message:
+        `docker default-address-pools only provide ${totalSubnets} subnets ` +
+        `(<${ADDRESS_POOL_WARN_THRESHOLD}); parallel agent runs may exhaust the pool. ` +
+        recommendation(),
+    };
+  }
+
+  return {
+    id: 'docker-address-pools',
+    status: 'ok',
+    message: `${totalSubnets} subnets available across ${pools.length} pool(s)`,
+  };
+}
+
+/**
+ * The actionable fix text we surface in the warn message. Lives in one
+ * place so test snapshots and operator-facing copy stay in sync.
+ */
+function recommendation(): string {
+  return (
+    'Edit `/etc/docker/daemon.json` and add:\n' +
+    '  { "default-address-pools": [{ "base": "172.20.0.0/14", "size": 24 }] }\n' +
+    'Then restart Docker. This yields 1024 subnets — a comfortable budget for parallel agent runs.'
+  );
+}
+
+/**
  * Scan a directory for `.lock` files whose recorded PID is no longer
  * alive. The registry-lock writes its own PID into the lock file at
  * acquire time (LEV-199) — anything older (zero-byte legacy locks) or
@@ -295,6 +436,12 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       // a developer pre-empt the "all predefined address pools have been
       // fully subnetted" failure mode that hit Plan 14/15 era agent fleets.
       checks.push(await checkLevelzeroNetworks());
+
+      // LEV-202 — warn when docker's default-address-pools are sized for
+      // the ~30-subnet default; that's where agent fleets hit pool
+      // exhaustion before the stale-network sweep can keep up. Same warn
+      // channel as `levelzero-networks` — never blocks `doctor: ok`.
+      checks.push(await checkDockerAddressPools());
 
       // Worktree presence
       const wt = await findWorktree(ctx.cwd);

@@ -12,5 +12,10 @@ export default defineConfigShared({
     // random/ID helpers rely on the Web Crypto global. Polyfill it before any
     // module that touches it loads.
     setupFiles: ['./tests/setup.ts'],
+    // LEV-202 — stamp TEST_RUN_ID + sweep stale `levelzero-*` networks
+    // from prior crashed runs. Runs once per `vitest` invocation in the
+    // main process; child workers inherit the env mutation. Best-effort —
+    // never blocks test startup on prune failures.
+    globalSetup: ['./vitest.globalSetup.ts'],
   },
 });

@@ -3,12 +3,12 @@ import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeResetCommand } from '../../src/commands/reset';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/compose/naming';
+import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
@@ -85,9 +85,16 @@ beforeEach(async () => {
 function cleanup(key: string) {
   spawnSync('docker', ['rm', '-f', containerName(key, 'postgres')], { stdio: 'ignore' });
   spawnSync('docker', ['volume', 'rm', '-f', volumeName(key, 'postgres')], { stdio: 'ignore' });
-  // Compose default network — best-effort removal so repeated runs don't
-  // exhaust docker's address pools.
-  spawnSync('docker', ['network', 'rm', `levelzero-${key}_default`], { stdio: 'ignore' });
+  // LEV-202 — prefer `compose down --remove-orphans` so ANY network the
+  // project created is freed in one call. Falls through to a name-based rm
+  // for the legacy `<project>_default` naming.
+  const projectName = composeProjectName(key);
+  spawnSync(
+    'docker',
+    ['compose', '-p', projectName, 'down', '--volumes', '--remove-orphans', '--timeout', '5'],
+    { stdio: 'ignore' },
+  );
+  spawnSync('docker', ['network', 'rm', `${projectName}_default`], { stdio: 'ignore' });
 }
 
 afterEach(() => {
@@ -158,7 +165,7 @@ describe('levelzero reset (unit, mocked compose)', () => {
     })) as any;
 
     // Same project name across reset's down and dev's subsequent up.
-    expect(constructed.every((c) => c.projectName === `levelzero-${devResult.key}`)).toBe(
+    expect(constructed.every((c) => c.projectName === composeProjectName(devResult.key))).toBe(
       true,
     );
     const ops = calls.map((c) => c.op);
@@ -169,50 +176,57 @@ describe('levelzero reset (unit, mocked compose)', () => {
 
 describeIfDocker('levelzero reset (integration with real docker compose)', () => {
   it('after dev, reset wipes the volume and brings up an empty DB', async () => {
-    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
-    const devResult = (await dev.run({
-      cwd: projectDir,
-      format: 'json',
-      args: [],
-      flags: {},
-    })) as any;
-    const cname = devResult.containers[0];
+    // LEV-202 — withDockerStack ensures the compose stack is torn down even
+    // if the assertions throw mid-test, before `afterEach`'s cleanup runs.
+    // The wrapper survives certain failure modes that bypass per-test hooks
+    // (timeouts, unhandled rejections).
+    const wtKey = computeWorktreeKey(projectDir);
+    await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
+      const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const devResult = (await dev.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
+      const cname = devResult.containers[0];
 
-    const insert = spawnSync(
-      'docker',
-      [
-        'exec', cname, 'psql', '-U', 'levelzero', '-d', 'levelzero',
-        '-c', 'create table marker(x int); insert into marker values (1);',
-      ],
-      { encoding: 'utf8', timeout: 10_000 },
-    );
-    expect(insert.status).toBe(0);
+      const insert = spawnSync(
+        'docker',
+        [
+          'exec', cname, 'psql', '-U', 'levelzero', '-d', 'levelzero',
+          '-c', 'create table marker(x int); insert into marker values (1);',
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      );
+      expect(insert.status).toBe(0);
 
-    const reset = makeResetCommand(() => registry, { getServices: onlyPostgres });
-    const result = (await reset.run({
-      cwd: projectDir,
-      format: 'json',
-      args: [],
-      flags: {},
-    })) as any;
+      const reset = makeResetCommand(() => registry, { getServices: onlyPostgres });
+      const result = (await reset.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
 
-    expect(result.key).toBe(devResult.key);
-    expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);
-    // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
-    // envContributions hook — the postgres plugin's `addEnvSource('url')` is
-    // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
-    // into `result.env`.
-    expect(result.env.DATABASE_URL).toBeUndefined();
+      expect(result.key).toBe(devResult.key);
+      expect(result.ports.postgres).toBeGreaterThanOrEqual(54020);
+      // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
+      // envContributions hook — the postgres plugin's `addEnvSource('url')` is
+      // the new source of truth. Plan 16 Tier 2 plumbs resolved values back
+      // into `result.env`.
+      expect(result.env.DATABASE_URL).toBeUndefined();
 
-    const select = spawnSync(
-      'docker',
-      [
-        'exec', result.containers[0], 'psql', '-U', 'levelzero', '-d', 'levelzero',
-        '-c', 'select 1 from marker;',
-      ],
-      { encoding: 'utf8', timeout: 10_000 },
-    );
-    expect(select.status).not.toBe(0);
-    expect(select.stderr).toMatch(/relation .*marker.* does not exist/i);
+      const select = spawnSync(
+        'docker',
+        [
+          'exec', result.containers[0], 'psql', '-U', 'levelzero', '-d', 'levelzero',
+          '-c', 'select 1 from marker;',
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      );
+      expect(select.status).not.toBe(0);
+      expect(select.stderr).toMatch(/relation .*marker.* does not exist/i);
+    });
   }, 300_000);
 });

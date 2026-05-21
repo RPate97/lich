@@ -3,9 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip } from './_helpers/docker';
+import { dockerOrSkip, dockerStackTeardown } from './_helpers/docker';
 import { computeWorktreeKey } from '../src/worktree';
-import { containerName, volumeName } from '../src/compose/naming';
+import { containerName, composeProjectName, volumeName } from '../src/compose/naming';
 
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
@@ -49,6 +49,9 @@ afterEach(() => {
     const k = computeWorktreeKey(projectDir);
     spawnSync('docker', ['rm', '-f', containerName(k, 'postgres')], { stdio: 'ignore' });
     spawnSync('docker', ['volume', 'rm', '-f', volumeName(k, 'postgres')], { stdio: 'ignore' });
+    // LEV-202 — sweep the project's networks via `compose down --remove-orphans`
+    // so the host's address pool doesn't accumulate orphans across test runs.
+    dockerStackTeardown(composeProjectName(k));
   }
 });
 

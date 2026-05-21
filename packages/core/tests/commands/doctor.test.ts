@@ -293,6 +293,136 @@ describe('levelzero doctor', () => {
     });
   });
 
+  /**
+   * LEV-202 — `docker-address-pools` check. Probes `docker info --format
+   * '{{json .DefaultAddressPools}}'` to estimate how many subnets the
+   * daemon can hand out. Warns (but never fails) when the total falls
+   * below the 64-subnet floor that gives a comfortable budget for
+   * parallel agent runs.
+   */
+  describe('docker-address-pools check (LEV-202)', () => {
+    it('reports ok when the configured pools provide >=64 subnets', async () => {
+      // compose ok, network ls ok, address pools = 256 subnets (one /16 → /24)
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      setNextSpawn({
+        exitCode: 0,
+        stdout: JSON.stringify([{ Base: '172.20.0.0/16', Size: 24 }]),
+      });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc).toBeDefined();
+      expect(pc.status).toBe('ok');
+      expect(pc.message).toMatch(/256 subnets/);
+      expect(result.ok).toBe(true);
+
+      // Third spawn must be the docker info invocation.
+      expect(spawnCalls[2]).toMatchObject({
+        cmd: 'docker',
+        args: ['info', '--format', '{{json .DefaultAddressPools}}'],
+      });
+    });
+
+    it('warns when configured pools provide fewer than 64 subnets', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      // One /16 pool subnetted at /20 → 16 subnets. Below the floor.
+      setNextSpawn({
+        exitCode: 0,
+        stdout: JSON.stringify([{ Base: '172.20.0.0/16', Size: 20 }]),
+      });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('warn');
+      expect(pc.message).toMatch(/16 subnets/);
+      expect(pc.message).toMatch(/daemon\.json/);
+      expect(pc.message).toMatch(/default-address-pools/);
+      // Warning must not flip overall ok.
+      expect(result.ok).toBe(true);
+    });
+
+    it('warns when the daemon has no pools configured (compiled-default fallback)', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      // Docker emits `null` when default-address-pools is unset.
+      setNextSpawn({ exitCode: 0, stdout: 'null\n' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('warn');
+      expect(pc.message).toMatch(/no custom default-address-pools/);
+      expect(pc.message).toMatch(/daemon\.json/);
+      expect(result.ok).toBe(true);
+    });
+
+    it('skips cleanly when docker is not on PATH', async () => {
+      setNextSpawn({ errorCode: 'ENOENT' });
+      setNextSpawn({ errorCode: 'ENOENT' });
+      setNextSpawn({ errorCode: 'ENOENT' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('skipped');
+      expect(result.ok).toBe(true);
+    });
+
+    it('skips when `docker info` itself fails (daemon down)', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      setNextSpawn({ exitCode: 1, stderr: 'Cannot connect to the Docker daemon\n' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('skipped');
+      expect(pc.message).toMatch(/docker info failed/);
+    });
+
+    it('skips when docker info emits unparseable JSON', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      setNextSpawn({ exitCode: 0, stdout: 'not json at all' });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('skipped');
+    });
+
+    it('aggregates capacity across multiple pool entries', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      // Two pools: a /16 carved at /24 = 256 subnets, a /16 carved at /20 = 16
+      // → 272 total, well over the threshold.
+      setNextSpawn({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          { Base: '172.20.0.0/16', Size: 24 },
+          { Base: '10.20.0.0/16', Size: 20 },
+        ]),
+      });
+      const cmd = makeDoctorCommand(() => reg);
+      const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
+      const pc = result.checks.find((c: any) => c.id === 'docker-address-pools');
+      expect(pc.status).toBe('ok');
+      expect(pc.message).toMatch(/272 subnets/);
+      expect(pc.message).toMatch(/2 pool/);
+    });
+
+    it('renders a [WARN] marker in pretty output when warning', async () => {
+      setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });
+      setNextSpawn({ exitCode: 0, stdout: '' });
+      setNextSpawn({ exitCode: 0, stdout: 'null\n' });
+      const cmd = makeDoctorCommand(() => reg);
+      const out = (await cmd.run({ cwd: tmp, format: 'pretty', args: [], flags: {} })) as string;
+      expect(out).toContain('[WARN] docker-address-pools');
+      expect(out).toMatch(/doctor: ok/);
+    });
+  });
+
   describe('stale-locks check (LEV-199)', () => {
     it('reports ok when the registry dir holds no lock files', async () => {
       setNextSpawn({ exitCode: 0, stdout: JSON.stringify({ version: 'v2.30.3' }) });

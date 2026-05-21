@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
-import { dockerOrSkip } from '../_helpers/docker';
+import { dockerOrSkip, dockerStackTeardown } from '../_helpers/docker';
 import { makePrismaFixture } from '../_helpers/prisma-fixture';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/compose/naming';
+import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { prismaAdapter } from '@levelzero/plugin-prisma';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
@@ -96,6 +96,9 @@ describeIfDocker('withRollback (integration)', () => {
       const k = computeWorktreeKey(projectDir);
       spawnSync('docker', ['rm', '-f', containerName(k, 'postgres')], { stdio: 'ignore' });
       spawnSync('docker', ['volume', 'rm', '-f', volumeName(k, 'postgres')], { stdio: 'ignore' });
+      // LEV-202 — sweep the project's networks so the host's address pool
+      // doesn't accumulate orphans across test runs.
+      dockerStackTeardown(composeProjectName(k));
     }
   });
 
