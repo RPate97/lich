@@ -33,6 +33,24 @@ export interface CliOptions {
 }
 
 /**
+ * Distinct error class so callers (and vitest) can spot a CLI timeout
+ * immediately rather than tracking down a stale "invalid JSON" parse error
+ * from empty stdout. `runCliJson` throws this when the underlying
+ * `runCli` result had `timedOut: true`.
+ */
+export class CliTimeoutError extends Error {
+  readonly result: CliResult;
+  constructor(args: string[], timeoutMs: number, result: CliResult) {
+    super(
+      `levelzero ${args.join(' ')} timed out after ${timeoutMs}ms\n` +
+        `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
+    );
+    this.name = 'CliTimeoutError';
+    this.result = result;
+  }
+}
+
+/**
  * Run `bun run levelzero <args>` from within `projectDir`.
  *
  * Why `bun run levelzero` and not the .bin shim directly: bun's `run`
@@ -49,9 +67,12 @@ export function runCli(
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const env = { ...process.env, ...opts.env };
 
-  // Prefer the local bin if present (post-install path). Fall back to bun
-  // running the workspace bin file directly — useful in odd cases where
-  // the install missed the .bin shim but the package is still on disk.
+  // Prefer the local bin if present (post-install path). The fallback
+  // `bun run levelzero …` branch is defensive scaffolding: every e2e code
+  // path goes through `installDeps()` first, which materializes
+  // `node_modules/.bin/levelzero` (and asserts on it). If the .bin shim is
+  // somehow missing here, we'd rather fall back gracefully than crash on a
+  // not-found exec — but in practice this branch is unreachable today.
   const localBin = join(projectDir, 'node_modules', '.bin', 'levelzero');
   let command: string;
   let spawnArgs: string[];
@@ -92,6 +113,15 @@ export function runCliJson<T = unknown>(
   opts: CliOptions = {},
 ): { result: CliResult; json: T } {
   const result = runCli(projectDir, args, opts);
+  // Surface timeouts as a distinct error class so callers see the actual
+  // failure mode loudly. Without this branch, a timed-out spawn returns
+  // empty stdout, which then trips the JSON.parse path below — and the
+  // resulting "invalid JSON" stack trace points at parsing, not at the
+  // missing CLI. CliTimeoutError points the developer straight at the
+  // spawn timeout (see I6 in LEV-206).
+  if (result.timedOut) {
+    throw new CliTimeoutError(args, opts.timeoutMs ?? 60_000, result);
+  }
   if (result.exitCode !== 0) {
     throw new Error(
       `levelzero ${args.join(' ')} exited ${result.exitCode}\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
@@ -101,8 +131,12 @@ export function runCliJson<T = unknown>(
   try {
     json = JSON.parse(result.stdout) as T;
   } catch (err) {
+    // Pass the original SyntaxError through as `cause` so vitest's diff
+    // renderer can show the underlying parse error position alongside our
+    // wrapping message (M11 in LEV-206).
     throw new Error(
       `levelzero ${args.join(' ')} did not emit valid JSON: ${(err as Error).message}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: err as Error },
     );
   }
   return { result, json };

@@ -54,6 +54,8 @@ import {
   playwrightAndChromiumAvailable,
   withBrowser,
 } from './_helpers/playwright';
+import { sweepStaleTmpdirs } from './_helpers/setup';
+import { addCleanup } from '../../src/signal-handlers';
 
 /**
  * Both probes evaluated at file-parse time for `describe.skipIf`. The
@@ -71,6 +73,7 @@ const PROJECT_NAME = 'demo';
 let tmpdir: string;
 let projectDir: string;
 let composeProjectName: string | null = null;
+let unregisterSignalCleanup: (() => void) | null = null;
 /**
  * Snapshot of the scaffolded `package.json` captured BEFORE `installDeps`
  * patches in workspace overrides. Phase 1's template regression tests read
@@ -81,12 +84,33 @@ let scaffoldedRootPkgJson: string | null = null;
 
 describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   beforeAll(async () => {
+    // Sweep stale dogfood tmpdirs from prior aborted/raced runs before we
+    // claim a fresh one. M12 in LEV-206 — bounds tmpdir accumulation when
+    // vitest's afterAll races with process exit.
+    sweepStaleTmpdirs('lz-e2e-dogfood-');
     // Scaffold into an OS tmpdir — explicitly NOT under `packages/`. This is
     // the whole point of LEV-198: if any code path relies on workspace
     // symlinks for `@levelzero/*` resolution, it WILL fail here, and the
     // test should fail loudly so the underlying scaffold/install bug gets
     // fixed instead of getting papered over in CI.
     tmpdir = realpathSync(mkdtempSync(join(osTmpdir(), 'lz-e2e-dogfood-')));
+    // Wire SIGINT cleanup through LEV-199's signal-handlers registry so
+    // Ctrl-C during a test run tears down the compose stack and tmpdir the
+    // same way `afterAll` would. M13 in LEV-206. The 2s timebox in
+    // signal-handlers means we deliberately skip the host `stop` spawn
+    // (which can take several seconds) — just kill compose + rm tmpdir.
+    unregisterSignalCleanup = addCleanup(() => {
+      try {
+        if (composeProjectName) dockerComposeDown(composeProjectName);
+      } catch {
+        /* best-effort */
+      }
+      try {
+        if (tmpdir) rmSync(tmpdir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    });
     const { projectDir: dir } = await scaffoldProject({
       tmpdir,
       projectName: PROJECT_NAME,
@@ -109,6 +133,14 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     // catch so a single failure doesn't abort the rest. We're already
     // leaking docker networks on the host (LEV-202); this is where we stop
     // that bleed for the dogfood tier.
+    if (unregisterSignalCleanup) {
+      try {
+        unregisterSignalCleanup();
+      } catch {
+        /* unregister is a pure array filter — defensive */
+      }
+      unregisterSignalCleanup = null;
+    }
     try {
       if (projectDir) runCli(projectDir, ['stop', '--json'], { timeoutMs: 30_000 });
     } catch {

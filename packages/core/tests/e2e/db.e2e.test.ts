@@ -23,6 +23,7 @@ import { join } from 'node:path';
 
 import {
   setupScaffoldedProject,
+  sweepStaleTmpdirs,
   teardownScaffoldedProject,
   type E2EProjectHandle,
 } from './_helpers/setup';
@@ -35,6 +36,7 @@ let handle: E2EProjectHandle;
 
 describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
   beforeAll(async () => {
+    sweepStaleTmpdirs('lz-e2e-db-');
     handle = await setupScaffoldedProject({ tmpdirPrefix: 'lz-e2e-db-' });
     // Bring the stack up once for the whole file. Each `db.*` test reads
     // from the live postgres; teardown happens in `afterAll`.

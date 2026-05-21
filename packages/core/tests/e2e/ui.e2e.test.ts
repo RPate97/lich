@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 import {
   setupScaffoldedProject,
+  sweepStaleTmpdirs,
   teardownScaffoldedProject,
   type E2EProjectHandle,
 } from './_helpers/setup';
@@ -19,6 +20,7 @@ let handle: E2EProjectHandle;
 
 describe('LEV-198-extended ui: shadcn command coverage', () => {
   beforeAll(async () => {
+    sweepStaleTmpdirs('lz-e2e-ui-');
     handle = await setupScaffoldedProject({ tmpdirPrefix: 'lz-e2e-ui-' });
   }, 240_000);
 

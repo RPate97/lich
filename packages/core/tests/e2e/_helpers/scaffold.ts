@@ -52,7 +52,25 @@ export interface ScaffoldOptions {
 
 export interface ScaffoldResult {
   projectDir: string;
+  /**
+   * Combined stdout from the scaffold step. LEV-198-extended routes around
+   * `create-stack-v0`'s bin and calls `copyTemplate` directly via a small
+   * `bun -e` stub, so this is whatever `copyTemplate` emits (currently
+   * nothing — it doesn't print). Returned so callers can still assert on
+   * "the scaffolder emitted X" if/when output is added.
+   */
+  stdout: string;
 }
+
+/**
+ * Names that survive this regex are safe to join into a tmpdir path without
+ * worrying about traversal (`../etc`) or shell-meaningful characters. We
+ * deliberately disallow leading `.` so callers can't scaffold into a hidden
+ * directory by accident either. Mirrors the `create-stack-v0` name validator
+ * conceptually but is purposefully duplicated here so the harness has its
+ * own first line of defense.
+ */
+const SAFE_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]*$/i;
 
 /** Resolves to `<repo>/packages/template-v0-stack/files` — pinned to THIS worktree. */
 const WORKTREE_TEMPLATE_DIR = resolve(
@@ -88,6 +106,16 @@ export async function scaffoldProject(
   opts: ScaffoldOptions,
 ): Promise<ScaffoldResult> {
   const { tmpdir, projectName } = opts;
+  // First-line defense against a test passing `'../etc'` or shell-meaningful
+  // characters. The tmpdir join would otherwise escape `tmpdir`, and the
+  // subsequent rm-rf in teardown could nuke things outside the harness's
+  // jurisdiction. See M16 in LEV-206.
+  if (!SAFE_PROJECT_NAME.test(projectName)) {
+    throw new Error(
+      `scaffoldProject: invalid projectName ${JSON.stringify(projectName)} ` +
+        `(must match ${SAFE_PROJECT_NAME})`,
+    );
+  }
   // We resolve THIS worktree's `copyTemplate` source explicitly (not via
   // `@levelzero/core` from node_modules — the workspace symlink would
   // surface a different worktree's implementation). The stub script
@@ -121,5 +149,5 @@ await copyTemplate({
   // realpathSync resolves macOS /var → /private/var so downstream
   // path-equality assertions don't trip on symlink expansion.
   const projectDir = realpathSync(join(tmpdir, projectName));
-  return { projectDir };
+  return { projectDir, stdout: r.stdout ?? '' };
 }

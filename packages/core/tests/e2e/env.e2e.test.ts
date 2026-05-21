@@ -21,6 +21,7 @@ import { join } from 'node:path';
 
 import {
   setupScaffoldedProject,
+  sweepStaleTmpdirs,
   teardownScaffoldedProject,
   type E2EProjectHandle,
 } from './_helpers/setup';
@@ -30,6 +31,7 @@ let handle: E2EProjectHandle;
 
 describe('LEV-198-extended env / adapter / check', () => {
   beforeAll(async () => {
+    sweepStaleTmpdirs('lz-e2e-env-');
     handle = await setupScaffoldedProject({ tmpdirPrefix: 'lz-e2e-env-' });
   }, 240_000);
 

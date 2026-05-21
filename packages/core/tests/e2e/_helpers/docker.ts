@@ -35,7 +35,24 @@ export function dockerAvailable(): boolean {
     encoding: 'utf8',
   });
   if (create.status !== 0) return false;
-  spawnSync('docker', ['network', 'rm', name], { stdio: 'ignore' });
+  // Probe-network teardown wrapped in try/finally so a transient daemon
+  // hiccup on the first `rm` doesn't permanently leak the network. We retry
+  // once with `--force` in the finally block — that flag bypasses the
+  // "active endpoints" check docker imposes for in-use networks, which is
+  // the most common reason an immediate rm fails on a fresh create.
+  // See M10 in LEV-206.
+  try {
+    const rm = spawnSync('docker', ['network', 'rm', name], { stdio: 'ignore' });
+    if (rm.status !== 0) {
+      spawnSync('docker', ['network', 'rm', '--force', name], { stdio: 'ignore' });
+    }
+  } finally {
+    // Best-effort second pass with --force. Idempotent: if the rm above
+    // succeeded, this is a no-op (docker returns non-zero for a missing
+    // network, which we ignore). If both attempts failed, we accept the
+    // leak — the next operator-driven `docker network prune` cleans it up.
+    spawnSync('docker', ['network', 'rm', '--force', name], { stdio: 'ignore' });
+  }
   return true;
 }
 
