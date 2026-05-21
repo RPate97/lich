@@ -29,6 +29,7 @@ import {
 import { writeEnvFile } from '../env/writer';
 import type { PortlessAdapter } from '../adapters/portless/types';
 import { basename, join } from 'node:path';
+import { createProgressReporter, type ProgressReporter } from '../ui/progress';
 
 export interface DevOptions {
   /** Service provider; defaults to getBuiltinServices. Tests can inject custom lists. */
@@ -312,6 +313,13 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
     describe:
       'Bring up every service for the current worktree (idempotent). Detached by default; pass --live to stream logs to the foreground.',
     async run(ctx) {
+      // LEV-217 — fall back to a silent reporter when the caller didn't wire
+      // one in (tests construct `CommandContext` directly without one). The
+      // production `runCli` path always provides a real reporter sized to
+      // the current TTY/CI/`--json` mode; the silent fallback keeps the
+      // call sites unconditional without bloating every test fixture.
+      const reporter: ProgressReporter =
+        ctx.reporter ?? createProgressReporter({ mode: 'silent' });
       const stackCtx = await resolveStackContext(ctx.cwd);
       // Built-in services first; plugin-contributed `OwnedService` entries
       // (post-LEV-154) append onto the same list so the runner treats them
@@ -334,6 +342,12 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
       // Resolve ports + emit compose file + bring up containers. All of this
       // happens under the registry lock so concurrent `dev` invocations on
       // the same worktree can't race on port allocation or compose state.
+      //
+      // LEV-217 — the inner phases are wrapped with `reporter.group(...)` so
+      // users see a spinner per slow step instead of 15-60s of silence
+      // followed by a single summary blob. The `docker compose up` phase is
+      // the one that actually motivated the ticket; the rest are cheap (~10
+      // -50ms) but still narrate progress in plain mode.
       const { entry, bundle } = await reg.withLock(async () => {
         const all = await reg.list();
         const reserved = reservedPortsFromOtherStacks(stackCtx.worktreeKey, all);
@@ -382,34 +396,43 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
         const bulkCache = getResolvedBulkSources?.();
         const composeServiceNames = collectComposeServiceNames(docker, pluginCompose);
         const composeServiceEnv: Record<string, Record<string, string>> = {};
-        if (envRegistry) {
-          for (const name of composeServiceNames) {
-            composeServiceEnv[name] = await resolveEnvForService({
-              serviceName: name,
-              context: 'container',
-              registry: envRegistry,
-              injection: envInjection,
-              ports,
-              projectRoot: stackCtx.worktreePath,
-              worktreeKey: stackCtx.worktreeKey,
-              bulkCache,
-            });
-            // LEV-183 — drop a dotenv snapshot of the container-resolved env to
-            // `.levelzero/state/<wt>/env/<service>.env` so users can `cat` it
-            // to see exactly what each compose service received. Overwrites on
-            // every dev run.
-            await writeEnvFile(
-              join(
-                stackCtx.worktreePath,
-                '.levelzero',
-                'state',
-                stackCtx.worktreeKey,
-                'env',
-                `${name}.env`,
-              ),
-              composeServiceEnv[name]!,
-            );
-          }
+        if (envRegistry && composeServiceNames.length > 0) {
+          // LEV-217 — bulk env sources (Infisical, dotenv-loader) can take a
+          // beat on cold caches; narrate it as a phase so the silence after
+          // "Booting plugins" doesn't look like a hang. Resolution itself
+          // is in-process, so plain mode shows a clean transition.
+          await reporter.group(
+            `Resolving env for ${composeServiceNames.length} compose service(s)`,
+            async () => {
+              for (const name of composeServiceNames) {
+                composeServiceEnv[name] = await resolveEnvForService({
+                  serviceName: name,
+                  context: 'container',
+                  registry: envRegistry,
+                  injection: envInjection,
+                  ports,
+                  projectRoot: stackCtx.worktreePath,
+                  worktreeKey: stackCtx.worktreeKey,
+                  bulkCache,
+                });
+                // LEV-183 — drop a dotenv snapshot of the container-resolved env to
+                // `.levelzero/state/<wt>/env/<service>.env` so users can `cat` it
+                // to see exactly what each compose service received. Overwrites on
+                // every dev run.
+                await writeEnvFile(
+                  join(
+                    stackCtx.worktreePath,
+                    '.levelzero',
+                    'state',
+                    stackCtx.worktreeKey,
+                    'env',
+                    `${name}.env`,
+                  ),
+                  composeServiceEnv[name]!,
+                );
+              }
+            },
+          );
         }
 
         const bundle = buildComposeBundle(
@@ -423,7 +446,17 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
 
         const runner = composeRunnerFactory(bundle.projectName, bundle.composeFilePath);
         if (Object.keys(bundle.services).length > 0) {
-          await runner.up({ detach: true, waitForHealthy: true });
+          // The slow phase (LEV-217). Cold `docker pull` + healthcheck wait
+          // can run 15-60s; users without progress narration assume the CLI
+          // is hung. The label lists service names so it's obvious which
+          // containers are being brought up.
+          const serviceList = Object.keys(bundle.services).join(', ');
+          await reporter.group(
+            `Bringing up containers (${serviceList})`,
+            async () => {
+              await runner.up({ detach: true, waitForHealthy: true });
+            },
+          );
         }
 
         const newEntry: StackEntry = {
@@ -593,14 +626,25 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
         });
 
         try {
-          const runner = await runOwnedServices(
-            owned,
-            stackCtx,
-            entry.ports,
-            dockerEnv,
-            { logDir },
-            ownedServiceEnv,
+          // LEV-217 — spawn step narrated as a phase, then we shut the
+          // reporter down BEFORE awaiting `runner.done` so the spinner's
+          // ANSI updates don't tangle with `concurrently`'s prefixed
+          // foreground output. The summary at the end still prints
+          // through the normal stdout path.
+          const ownedNamesLive = owned.map((s) => s.name).join(', ');
+          const runner = await reporter.group(
+            `Starting owned service(s) (${ownedNamesLive})`,
+            async () =>
+              runOwnedServices(
+                owned,
+                stackCtx,
+                entry.ports,
+                dockerEnv,
+                { logDir },
+                ownedServiceEnv,
+              ),
           );
+          reporter.shutdown();
           const { exitCodes } = await runner.done;
 
           const fullResult = {
@@ -648,17 +692,26 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
         stackCtx.worktreeKey,
         'pids',
       );
-      const detached = await runOwnedServicesDetached(
-        owned,
-        stackCtx,
-        entry.ports,
-        dockerEnv,
-        {
-          logDir: detachedLogDir,
-          pidDir,
-          ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
-        },
-        ownedServiceEnv,
+      // LEV-217 — the detached spawn includes per-service HTTP readiness
+      // probes which can each take up to `readinessTimeoutMs` (default 10s).
+      // Surface this as a phase so the user knows we're waiting on services
+      // to bind their ports.
+      const ownedNames = owned.map((s) => s.name).join(', ');
+      const detached = await reporter.group(
+        `Starting owned service(s) (${ownedNames})`,
+        async () =>
+          runOwnedServicesDetached(
+            owned,
+            stackCtx,
+            entry.ports,
+            dockerEnv,
+            {
+              logDir: detachedLogDir,
+              pidDir,
+              ...(readinessTimeoutMs !== undefined ? { readinessTimeoutMs } : {}),
+            },
+            ownedServiceEnv,
+          ),
       );
 
       const fullResult = {
