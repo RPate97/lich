@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { dockerServiceToCompose } from '../../src/compose/from-docker';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { DockerService, StackContext } from '../../src/services/types';
@@ -8,6 +8,19 @@ const ctx: StackContext = {
   worktreePath: '/tmp/lz-fake',
   branch: 'main',
 };
+
+// LEV-202 — vitest's globalSetup stamps TEST_RUN_ID for the whole process.
+// These assertions exercise the production naming path verbatim, so we strip
+// the env var around each case and restore it on teardown.
+let PREV_TEST_RUN_ID: string | undefined;
+beforeEach(() => {
+  PREV_TEST_RUN_ID = process.env.TEST_RUN_ID;
+  delete process.env.TEST_RUN_ID;
+});
+afterEach(() => {
+  if (PREV_TEST_RUN_ID === undefined) delete process.env.TEST_RUN_ID;
+  else process.env.TEST_RUN_ID = PREV_TEST_RUN_ID;
+});
 
 describe('dockerServiceToCompose', () => {
   it('converts the postgres builtin into a compose-v2 service def', () => {

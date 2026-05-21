@@ -3,12 +3,12 @@ import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { dockerOrSkip, isContainerRunning } from '../_helpers/docker';
+import { dockerOrSkip, dockerStackTeardown, isContainerRunning } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { makeStacksStopAllCommand } from '../../src/commands/stacks/stop-all';
 import { computeWorktreeKey } from '../../src/worktree';
-import { containerName, volumeName } from '../../src/compose/naming';
+import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { CLIError } from '../../src/errors';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { Service } from '../../src/services/types';
@@ -55,6 +55,9 @@ afterEach(() => {
     const k = computeWorktreeKey(d);
     spawnSync('docker', ['rm', '-f', containerName(k, 'postgres')], { stdio: 'ignore' });
     spawnSync('docker', ['volume', 'rm', '-f', volumeName(k, 'postgres')], { stdio: 'ignore' });
+    // LEV-202 — sweep the project's networks (default + custom) so the
+    // host's address pool doesn't accumulate orphans across test runs.
+    dockerStackTeardown(composeProjectName(k));
   }
 });
 

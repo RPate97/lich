@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip } from './_helpers/docker';
 import { computeWorktreeKey } from '../src/worktree';
-import { containerName, volumeName } from '../src/compose/naming';
+import { composeProjectName, containerName, volumeName } from '../src/compose/naming';
 
 const BIN = join(__dirname, '..', 'src', 'bin.ts');
 const CREATE_BIN = join(
@@ -141,9 +141,19 @@ afterAll(() => {
       ['volume', 'rm', '-f', volumeName(worktreeKey, 'postgres')],
       { stdio: 'ignore' },
     );
+    // LEV-202 — prefer `compose down --remove-orphans` so ANY network the
+    // project created is freed in one call (default + user-declared). Falls
+    // through to a name-based rm for the legacy `<project>_default` naming
+    // in case compose isn't aware of the network.
+    const projectName = composeProjectName(worktreeKey);
     spawnSync(
       'docker',
-      ['network', 'rm', `levelzero-${worktreeKey}_default`],
+      ['compose', '-p', projectName, 'down', '--volumes', '--remove-orphans', '--timeout', '5'],
+      { stdio: 'ignore' },
+    );
+    spawnSync(
+      'docker',
+      ['network', 'rm', `${projectName}_default`],
       { stdio: 'ignore' },
     );
   }

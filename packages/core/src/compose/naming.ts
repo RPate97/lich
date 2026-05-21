@@ -11,8 +11,33 @@
  *
  * Previously lived at `src/docker/naming.ts` — moved here as part of LEV-134
  * when the legacy docker runner was deleted.
+ *
+ * LEV-202 — when the `TEST_RUN_ID` env var is set (vitest globalSetup
+ * stamps this once per process), every name carries an additional
+ * `test-${TEST_RUN_ID}-` infix so test stacks are isolated from real
+ * user stacks AND from sibling agents running tests in parallel. The
+ * resulting names still start with `LEVELZERO_PREFIX`, so global
+ * sweep tools (`stacks prune --all`, `doctor`'s warn check) catch them.
+ * Production code paths (TEST_RUN_ID unset) emit the historical names
+ * unchanged.
  */
 export const LEVELZERO_PREFIX = 'levelzero-';
+
+/**
+ * Infix used when `TEST_RUN_ID` is set. Embedded between `LEVELZERO_PREFIX`
+ * and the worktree key. The leading `test-` lets tools (and humans) spot
+ * a test-owned resource at a glance vs. a real user stack.
+ */
+export const TEST_RUN_PREFIX = 'test-';
+
+/**
+ * Validation for the TEST_RUN_ID env var. Must be safe for use in compose
+ * project names, network names, container names, and volume names — same
+ * shell-safe character class as the service name validator, plus a length
+ * cap to keep total names under docker's 64-char identifier limit (after
+ * accounting for `levelzero-test-<id>-<key>-<service>-data`).
+ */
+const TEST_RUN_ID_RE = /^[a-z0-9-]{1,20}$/;
 
 const KEY_RE = /^[0-9a-f]{12}$/;
 const SERVICE_RE = /^[a-z0-9-]+$/;
@@ -33,23 +58,54 @@ function assertService(service: string): void {
   }
 }
 
+/**
+ * Read the active TEST_RUN_ID at call time (not module load). Tests
+ * occasionally tweak `process.env.TEST_RUN_ID` between cases to assert
+ * the prefix flow; reading per-call keeps that lever working without
+ * resetting modules.
+ *
+ * Returns `null` when unset (production), `string` when set and valid,
+ * throws when set but malformed (programmer error — the harness should
+ * have validated it before stamping).
+ */
+function activeTestRunPrefix(): string {
+  const raw = process.env.TEST_RUN_ID;
+  if (!raw) return '';
+  if (!TEST_RUN_ID_RE.test(raw)) {
+    throw new Error(
+      `TEST_RUN_ID must match [a-z0-9-]{1,20}; got ${JSON.stringify(raw)}`,
+    );
+  }
+  return `${TEST_RUN_PREFIX}${raw}-`;
+}
+
 export function containerName(key: string, service: string): string {
   assertKey(key);
   assertService(service);
-  return `${LEVELZERO_PREFIX}${key}-${service}`;
+  return `${LEVELZERO_PREFIX}${activeTestRunPrefix()}${key}-${service}`;
 }
 
 export function networkName(key: string): string {
   assertKey(key);
-  return `${LEVELZERO_PREFIX}${key}`;
+  return `${LEVELZERO_PREFIX}${activeTestRunPrefix()}${key}`;
 }
 
 export function volumeName(key: string, service: string): string {
   assertKey(key);
   assertService(service);
-  return `${LEVELZERO_PREFIX}${key}-${service}-data`;
+  return `${LEVELZERO_PREFIX}${activeTestRunPrefix()}${key}-${service}-data`;
 }
 
 export function composeProjectName(key: string): string {
   return networkName(key);
+}
+
+/**
+ * Returns the active naming prefix (`levelzero-` or `levelzero-test-<id>-`).
+ * Used by sweepers/cleanup helpers that want to scope `docker ps --filter
+ * name=<prefix>` queries to the current test run instead of the global
+ * `levelzero-` namespace (which would catch sibling agents' stacks).
+ */
+export function activeNamingPrefix(): string {
+  return `${LEVELZERO_PREFIX}${activeTestRunPrefix()}`;
 }

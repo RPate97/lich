@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,23 @@ import { parse as parseYaml } from 'yaml';
 import { buildComposeBundle, writeComposeFile } from '../../src/compose/stack';
 import { pgService } from '@levelzero/plugin-postgres';
 import type { StackContext } from '../../src/services/types';
+
+// LEV-202 — vitest's globalSetup stamps TEST_RUN_ID for the whole
+// process, which the naming helpers fold into every project/network/
+// container/volume name. This file's assertions exercise the production
+// naming path (no TEST_RUN_ID infix), so we strip the env var around
+// each case and restore it on teardown. Sibling files that DO want the
+// prefix flow (e.g. integration tests that need parallel-agent isolation)
+// leave it set.
+let PREV_TEST_RUN_ID: string | undefined;
+beforeEach(() => {
+  PREV_TEST_RUN_ID = process.env.TEST_RUN_ID;
+  delete process.env.TEST_RUN_ID;
+});
+afterEach(() => {
+  if (PREV_TEST_RUN_ID === undefined) delete process.env.TEST_RUN_ID;
+  else process.env.TEST_RUN_ID = PREV_TEST_RUN_ID;
+});
 
 describe('buildComposeBundle', () => {
   const ctx: StackContext = {
