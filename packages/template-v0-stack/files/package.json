@@ -14,7 +14,8 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@levelzero/plugin-better-auth": "^0.1.0",

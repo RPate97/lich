@@ -21,6 +21,26 @@ model User {
 
   sessions Session[]
   accounts Account[]
+  todos    Todo[]
+}
+
+// ---------------------------------------------------------------------------
+// Application domain models — added by LEV-196 so a freshly-scaffolded project
+// has a tangible CRUD example wired through the typed-client + Better Auth
+// stack. The `Todo` model is intentionally small so it can be replaced /
+// extended without dragging a complicated schema around. Keep the `userId`
+// relation: it's what the api's session middleware enforces ownership on.
+// ---------------------------------------------------------------------------
+
+model Todo {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  done      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // ---------------------------------------------------------------------------

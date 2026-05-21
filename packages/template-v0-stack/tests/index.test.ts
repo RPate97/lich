@@ -293,4 +293,146 @@ describe('@levelzero/template-v0-stack', () => {
     expect(existsSync(join(templateRoot, '.levelzero/skills/workflow/onboard.md'))).toBe(true);
     expect(existsSync(join(templateRoot, '.levelzero/skills/reference/prisma.md'))).toBe(true);
   });
+
+  it('ships the LEV-196 auth + todo CRUD scaffolding', () => {
+    // LEV-196 turns the v0 template into a tangibly-working app: sign-up,
+    // sign-in, dashboard, todo CRUD, sign-out. The structural fingerprints
+    // below catch accidental drops/renames of the load-bearing files. Each
+    // assertion is a content fingerprint — we don't try to parse the file,
+    // just look for a load-bearing identifier or import string.
+
+    // ── prisma: Todo domain model lives alongside the Better Auth tables.
+    const schema = readFileSync(join(templateRoot, 'prisma/schema.prisma'), 'utf8');
+    expect(
+      /\bmodel\s+Todo\s*\{/.test(schema),
+      'expected `model Todo { ... }` in prisma/schema.prisma',
+    ).toBe(true);
+    expect(
+      /todos\s+Todo\[\]/.test(schema),
+      'expected User.todos relation in prisma/schema.prisma',
+    ).toBe(true);
+
+    // ── api: Better Auth instance and Hono mount, plus the todo CRUD routes.
+    expect(existsSync(join(templateRoot, 'apps/api/src/auth.ts'))).toBe(true);
+    const authTs = readFileSync(join(templateRoot, 'apps/api/src/auth.ts'), 'utf8');
+    expect(
+      authTs.includes('betterAuth(') && authTs.includes('prismaAdapter'),
+      'apps/api/src/auth.ts must construct a betterAuth() with the prisma adapter',
+    ).toBe(true);
+
+    const apiIndex = readFileSync(join(templateRoot, 'apps/api/src/index.ts'), 'utf8');
+    expect(
+      apiIndex.includes(`from './auth'`),
+      'apps/api/src/index.ts must import the shared auth instance',
+    ).toBe(true);
+    expect(
+      /['"]\/api\/auth\/\*['"]/.test(apiIndex),
+      'apps/api/src/index.ts must mount Better Auth under /api/auth/*',
+    ).toBe(true);
+    expect(
+      /['"]\/api\/todos['"]/.test(apiIndex),
+      'apps/api/src/index.ts must declare a /api/todos route',
+    ).toBe(true);
+    expect(
+      /['"]\/api\/todos\/:id['"]/.test(apiIndex),
+      'apps/api/src/index.ts must declare a /api/todos/:id route',
+    ).toBe(true);
+    expect(
+      apiIndex.includes('getSession'),
+      'apps/api/src/index.ts must guard todo routes with a session check',
+    ).toBe(true);
+    // The default export must expose `routes` so `levelzero gen --only
+    // api-client`'s hono extractor can walk the route table even after we
+    // moved to a Bun-shaped `{ fetch, port }` export.
+    expect(
+      /routes\s*:/.test(apiIndex),
+      'apps/api/src/index.ts default export must include `routes` so the typed-client generator can extract them',
+    ).toBe(true);
+
+    // ── api deps include better-auth + @prisma/client.
+    const apiPkg = JSON.parse(
+      readFileSync(join(templateRoot, 'apps/api/package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+    expect(apiPkg.dependencies?.['better-auth']).toBeTruthy();
+    expect(apiPkg.dependencies?.['@prisma/client']).toBeTruthy();
+    expect(apiPkg.dependencies?.['hono']).toBeTruthy();
+
+    // ── web: pages for sign-in / sign-up / dashboard, plus the form
+    //    components and lib files. The accessible-name fingerprints
+    //    ("Add", "Sign out", "[name=todo-text]", etc.) are what the e2e
+    //    spec drives, so we lock them in here too.
+    expect(existsSync(join(templateRoot, 'apps/web/src/app/sign-in/page.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/app/sign-up/page.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/app/dashboard/page.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/components/sign-in-form.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/components/sign-up-form.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/components/todo-list.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/components/sign-out-button.tsx'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/lib/auth-client.ts'))).toBe(true);
+    expect(existsSync(join(templateRoot, 'apps/web/src/lib/api.ts'))).toBe(true);
+
+    const todoList = readFileSync(
+      join(templateRoot, 'apps/web/src/components/todo-list.tsx'),
+      'utf8',
+    );
+    expect(
+      todoList.includes('name="todo-text"'),
+      '<TodoList> input must use name="todo-text" so the e2e spec can fill it',
+    ).toBe(true);
+    expect(
+      /Add\b/.test(todoList) && /Delete\b/.test(todoList),
+      '<TodoList> must render "Add" and "Delete" buttons so the e2e spec can click them',
+    ).toBe(true);
+
+    const signInForm = readFileSync(
+      join(templateRoot, 'apps/web/src/components/sign-in-form.tsx'),
+      'utf8',
+    );
+    expect(
+      signInForm.includes('name="email"') && signInForm.includes('name="password"'),
+      '<SignInForm> must use [name=email] + [name=password] so the e2e spec can fill them',
+    ).toBe(true);
+    expect(
+      signInForm.includes(`authClient.signIn.email`),
+      '<SignInForm> must call authClient.signIn.email',
+    ).toBe(true);
+
+    const signUpForm = readFileSync(
+      join(templateRoot, 'apps/web/src/components/sign-up-form.tsx'),
+      'utf8',
+    );
+    expect(
+      signUpForm.includes(`authClient.signUp.email`),
+      '<SignUpForm> must call authClient.signUp.email',
+    ).toBe(true);
+
+    // ── web depends on better-auth.
+    const webPkg = JSON.parse(
+      readFileSync(join(templateRoot, 'apps/web/package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+    expect(webPkg.dependencies?.['better-auth']).toBeTruthy();
+
+    // ── seed has the demo user + 3 demo todos.
+    const seed = readFileSync(join(templateRoot, 'prisma/seed.ts'), 'utf8');
+    expect(
+      seed.includes('demo@example.com'),
+      'prisma/seed.ts must create the demo@example.com user',
+    ).toBe(true);
+    expect(
+      seed.includes(`auth.api.signUpEmail`),
+      'prisma/seed.ts must use Better Auth signUpEmail so the password is hashed correctly',
+    ).toBe(true);
+
+    // ── e2e spec lives in the template too.
+    expect(existsSync(join(templateRoot, 'e2e/auth-flow.spec.ts'))).toBe(true);
+    const e2e = readFileSync(join(templateRoot, 'e2e/auth-flow.spec.ts'), 'utf8');
+    expect(
+      e2e.includes('@playwright/test'),
+      'e2e/auth-flow.spec.ts must import from @playwright/test',
+    ).toBe(true);
+    expect(
+      e2e.includes('full auth + todo flow'),
+      'e2e/auth-flow.spec.ts must keep the canonical test name',
+    ).toBe(true);
+  });
 });
