@@ -1,6 +1,11 @@
 import { CLIError } from './errors';
 import { formatError, formatOutput, type OutputFormat } from './output';
 import type { CommandRegistry } from './commands/registry';
+import {
+  createProgressReporter,
+  detectProgressMode,
+  type ProgressReporter,
+} from './ui/progress';
 
 export interface RunCliResult {
   exitCode: number;
@@ -93,12 +98,22 @@ export async function runCli(
     return { exitCode: 1, stdout: '', stderr: formatError(err, format) };
   }
 
+  // LEV-217 — per-invocation progress reporter. Mode is silent under `--json`
+  // (machine consumers must see a clean stderr), plain when stderr isn't a
+  // TTY or we're in CI/NO_COLOR, and TTY (spinner) for interactive humans.
+  // Always shut down in `finally` so a thrown command can't leave the cursor
+  // hidden or the spinner's interval timer running.
+  const reporter: ProgressReporter = createProgressReporter({
+    mode: detectProgressMode({ format }),
+  });
+
   try {
     const result = await resolved.command.run({
       cwd: opts.cwd,
       format,
       args: resolved.rest,
       flags,
+      reporter,
     });
     return { exitCode: 0, stdout: formatOutput(result, format), stderr: '' };
   } catch (err: unknown) {
@@ -112,5 +127,7 @@ export async function runCli(
     const message = err instanceof Error ? err.message : String(err);
     const wrapped = new CLIError('INTERNAL', message, { cause: err });
     return { exitCode: 1, stdout: '', stderr: formatError(wrapped, format) };
+  } finally {
+    reporter.shutdown();
   }
 }
