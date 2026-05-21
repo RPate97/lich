@@ -11,10 +11,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "test": "turbo run test",
-    "lint": "turbo run lint",
+    "dev": "levelzero dev",
+    "build": "bun run --filter '*' build",
+    "test": "bun run --filter '*' test",
+    "lint": "bun run --filter '*' lint",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -32,7 +32,6 @@
   "devDependencies": {
     "@levelzero/core": "^0.1.0",
     "prisma": "^7.0.0",
-    "turbo": "^2.0.0",
     "typescript": "^5.4.0"
   }
 }

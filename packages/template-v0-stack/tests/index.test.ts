@@ -22,7 +22,6 @@ describe('@levelzero/template-v0-stack', () => {
       'levelzero.config.ts',
       'CLAUDE.md',
       'tsconfig.json',
-      'turbo.json',
       'apps/web/package.json',
       'apps/api/package.json',
       'prisma/schema.prisma',
@@ -434,5 +433,40 @@ describe('@levelzero/template-v0-stack', () => {
       e2e.includes('full auth + todo flow'),
       'e2e/auth-flow.spec.ts must keep the canonical test name',
     ).toBe(true);
+  });
+
+  it('root dev script invokes the levelzero CLI, not turbo (LEV-216)', () => {
+    // LEV-216: scaffolding inside a turbo-managed monorepo (or even
+    // standalone) blew up at first `bun run dev` because the template's root
+    // dev script was `turbo run dev` and a `turbo.json` shipped at the root.
+    // Turbo then walked the ancestor tree, found the parent workspace, and
+    // refused the sub-workspace config with "No 'extends' key found." More
+    // fundamentally: `turbo run dev` skips compose + port allocation + env
+    // injection — the whole point of `levelzero dev`. The first command users
+    // run after install MUST bring the full stack up via the CLI.
+    const pkg = JSON.parse(
+      readFileSync(join(templateRoot, 'package.json'), 'utf8'),
+    ) as {
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(
+      pkg.scripts?.dev,
+      'root dev script must be `levelzero dev` so the first run brings up compose + api + web with port allocation',
+    ).toBe('levelzero dev');
+    // Turbo MUST be gone — the template no longer orchestrates anything via
+    // turbo, and leaving a stale dep would silently re-add a `turbo.json`
+    // expectation on `bun install` if a user added back a `turbo run *`
+    // script without thinking about it.
+    expect(
+      pkg.devDependencies?.['turbo'],
+      'turbo must not be a devDependency in the scaffolded template — see LEV-216',
+    ).toBeUndefined();
+    // turbo.json at the template root made turbo treat the scaffold as a
+    // sub-workspace when nested inside another monorepo. Don't ship it.
+    expect(
+      existsSync(join(templateRoot, 'turbo.json')),
+      'turbo.json must not ship in the v0 template — see LEV-216',
+    ).toBe(false);
   });
 });
