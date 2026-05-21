@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,5 +98,39 @@ describe('@levelzero/create-stack-v0 bin', () => {
     const r = runBin(['1bad'], tmp);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('Invalid project name');
+  });
+
+  // LEV-216: the canonical post-scaffold command is `bun run levelzero dev`
+  // (not the bare `bun run dev`, which can fall through to a broken template
+  // script). This is a forward-regression guard against re-introducing it.
+  it('recommends `bun run levelzero dev` (not bare `bun run dev`) in next steps', () => {
+    const r = runBin(['lev216-app'], tmp);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('bun run levelzero dev');
+    // Defensive: the bare command must not appear as its own next-step line.
+    expect(r.stdout).not.toMatch(/^ {2}bun run dev$/m);
+  });
+
+  // LEV-216 (defense in depth): scaffolding inside a monorepo workspace prints
+  // an informational warning so users aren't blindsided by resolve issues.
+  it('warns when scaffolding inside a monorepo workspace ancestor', () => {
+    // Create a fake monorepo root that contains our scaffold target.
+    const monorepoRoot = join(tmp, 'monorepo');
+    mkdirSync(monorepoRoot, { recursive: true });
+    writeFileSync(
+      join(monorepoRoot, 'package.json'),
+      JSON.stringify({ name: 'fake-monorepo', workspaces: ['packages/*'] }),
+    );
+    const r = runBin(['nested-app'], monorepoRoot);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Heads up: this directory is inside a monorepo workspace');
+    expect(r.stdout).toContain(monorepoRoot);
+  });
+
+  // The warning is informational only — outside a monorepo it must not fire.
+  it('does NOT print the monorepo warning when scaffolding outside any monorepo', () => {
+    const r = runBin(['clean-app'], tmp);
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toContain('Heads up: this directory is inside a monorepo workspace');
   });
 });
