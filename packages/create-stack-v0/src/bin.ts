@@ -14,7 +14,8 @@
  *     side-effect free; the printed next-steps tell users to run it).
  *   - Interactive prompts. `<name>` is positional and required.
  */
-import { basename, isAbsolute, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { templateRoot } from '@levelzero/template-v0-stack';
 import { scaffoldStackV0 } from './index';
 
@@ -32,13 +33,54 @@ function printHelp(): void {
   );
 }
 
+/**
+ * Walk up from `startDir` (exclusive) looking for any `package.json` that
+ * declares a `workspaces` field. Returns the directory of the nearest such
+ * package, or `null` if none found before hitting the filesystem root.
+ *
+ * Used to warn users (LEV-216) that scaffolding inside an existing monorepo
+ * workspace can cause confusing dependency resolution issues — the scaffolded
+ * project is typically expected to be standalone.
+ */
+function findMonorepoAncestor(startDir: string): string | null {
+  let current = startDir;
+  while (true) {
+    const pkgPath = join(current, 'package.json');
+    try {
+      const raw = readFileSync(pkgPath, 'utf8');
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        'workspaces' in parsed &&
+        (parsed as { workspaces: unknown }).workspaces !== undefined
+      ) {
+        return current;
+      }
+    } catch {
+      // No package.json here, or it's unreadable/unparseable — keep walking.
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function printMonorepoWarning(ancestorDir: string): void {
+  process.stdout.write(
+    `\n⚠ Heads up: this directory is inside a monorepo workspace at ${ancestorDir}.\n` +
+      `  Consider adding the new project to ${ancestorDir}'s workspaces array,\n` +
+      `  or scaffold to a directory outside any monorepo.\n`,
+  );
+}
+
 function printNextSteps(name: string, destDir: string): void {
   process.stdout.write(
     `\nScaffolded ${name} at ${destDir}\n\n` +
       `Next steps:\n` +
       `  cd ${name}\n` +
       `  bun install\n` +
-      `  bun run dev\n`,
+      `  bun run levelzero dev\n`,
   );
 }
 
@@ -68,6 +110,16 @@ async function main(argv: string[]): Promise<number> {
 
   const destDir = isAbsolute(arg) ? arg : join(process.cwd(), arg);
   await scaffoldStackV0({ to: destDir, projectName, templateDir: templateRoot });
+
+  // Defense in depth (LEV-216): warn if the scaffold lands inside another
+  // monorepo, which historically caused confusing install/resolve issues.
+  // Walk from the *parent* of destDir so we don't match our own freshly
+  // scaffolded root.
+  const ancestor = findMonorepoAncestor(dirname(destDir));
+  if (ancestor !== null) {
+    printMonorepoWarning(ancestor);
+  }
+
   printNextSteps(projectName, destDir);
   return 0;
 }
