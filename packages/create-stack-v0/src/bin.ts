@@ -24,12 +24,19 @@ const NAME_RE = /^[a-z][a-z0-9-]*$/i;
 
 function printHelp(): void {
   process.stdout.write(
-    `Usage: npx @levelzero/create-stack-v0 <project-name>\n\n` +
+    `Usage: npx @levelzero/create-stack-v0 <project-name> [--template-from <dir>]\n\n` +
       `Scaffolds a new levelzero v0 stack (postgres + prisma + hono + next + better-auth\n` +
       `+ shadcn + playwright + vitest) into ./<project-name>/.\n\n` +
       `Examples:\n` +
       `  npx @levelzero/create-stack-v0 my-app\n` +
-      `  npx @levelzero/create-stack-v0 /absolute/path/my-app\n`,
+      `  npx @levelzero/create-stack-v0 /absolute/path/my-app\n\n` +
+      `Flags:\n` +
+      `  --template-from <dir>  Override the bundled template root with an absolute\n` +
+      `                         path. Intended for tests that need to pin the\n` +
+      `                         template to a specific on-disk state (e.g.\n` +
+      `                         worktree-local) rather than the node_modules-\n` +
+      `                         resolved \`@levelzero/template-v0-stack\`. Production\n` +
+      `                         users should not need this flag.\n`,
   );
 }
 
@@ -84,6 +91,44 @@ function printNextSteps(name: string, destDir: string): void {
   );
 }
 
+/**
+ * Parse `--template-from <dir>` (LEV-210) out of the raw argv tail and return
+ * the override value plus the remaining positional args. Absent flag → null.
+ *
+ * Why a flag and not env: tests spawn the bin and a flag is self-documenting
+ * in failure output; env would be invisible. Production users never need
+ * this; the bundled template via `@levelzero/template-v0-stack` is correct.
+ */
+function extractTemplateFrom(args: string[]): {
+  templateFrom: string | null;
+  rest: string[];
+  error: string | null;
+} {
+  const rest: string[] = [];
+  let templateFrom: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--template-from') {
+      const next = args[i + 1];
+      if (next === undefined) {
+        return { templateFrom: null, rest: [], error: '--template-from requires a directory argument' };
+      }
+      if (!isAbsolute(next)) {
+        return {
+          templateFrom: null,
+          rest: [],
+          error: `--template-from requires an absolute path, got: ${next}`,
+        };
+      }
+      templateFrom = next;
+      i++; // skip the value
+    } else {
+      rest.push(a);
+    }
+  }
+  return { templateFrom, rest, error: null };
+}
+
 async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2);
 
@@ -96,7 +141,17 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const arg = args[0]!;
+  const parsed = extractTemplateFrom(args);
+  if (parsed.error !== null) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  if (parsed.rest.length === 0) {
+    printHelp();
+    return 1;
+  }
+
+  const arg = parsed.rest[0]!;
   // For an absolute path, validate the trailing directory name (which becomes
   // the project's `name` field). For a bare name, validate the whole thing.
   const projectName = isAbsolute(arg) ? basename(arg) : arg;
@@ -109,7 +164,12 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const destDir = isAbsolute(arg) ? arg : join(process.cwd(), arg);
-  await scaffoldStackV0({ to: destDir, projectName, templateDir: templateRoot });
+  // LEV-210: `--template-from` lets tests pin the template root to an absolute
+  // worktree path, bypassing the node_modules-resolved `@levelzero/template-v0-stack`
+  // (which in a multi-worktree dev setup can route to a sibling worktree's
+  // template). Absent the flag, behavior is unchanged: use the bundled root.
+  const effectiveTemplateRoot = parsed.templateFrom ?? templateRoot;
+  await scaffoldStackV0({ to: destDir, projectName, templateDir: effectiveTemplateRoot });
 
   // Defense in depth (LEV-216): warn if the scaffold lands inside another
   // monorepo, which historically caused confusing install/resolve issues.
