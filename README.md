@@ -72,7 +72,7 @@ api    http://localhost:54010
 web    http://localhost:54011
 ```
 
-`lich logs api` in either directory shows *that* worktree's api logs.
+`lich logs api` in either directory pulls *that* worktree's api logs.
 `lich stop` in either directory tears down only *that* worktree's stack.
 The CLI tracks which stack belongs to which worktree so you don't have to.
 
@@ -149,39 +149,11 @@ Now `lich hello you` prints a message and `lich env list` shows
 [docs/EXTENSION.md](docs/EXTENSION.md) and
 [docs/plugin-author-guide.md](docs/plugin-author-guide.md).
 
-## Status
-
-Pre-release. No published npm packages yet. We're shipping into our own
-use and the API will keep shifting until the first tagged release.
-
-What works today:
-
-- v0 stack runs end-to-end — scaffold, sign up, todo CRUD, sign out, all of it
-- Parallel worktree isolation (the differentiator above is real and tested)
-- 100+ e2e tests covering scaffold → install → dev → migrate → seed → gen → stop
-- Plugin extension via the API shown above
-
-In flight: new first-party plugins (Temporal, Supabase, Drizzle,
-LocalStack, Cloudflare tunnels), a `lich:instrument` skill for
-onboarding existing repos, npm publishing, build pipeline. Track in the
-[issues tab](https://github.com/<your-org>/lich/issues).
-
-Don't use lich in production yet. Use it for local dev and tell us
-what breaks.
-
 ## Documentation
 
 - [docs/EXTENSION.md](docs/EXTENSION.md) — plugin authoring overview
 - [docs/plugin-author-guide.md](docs/plugin-author-guide.md) — deeper plugin guide
-- [docs/testing.md](docs/testing.md) — the three testing tiers (unit / integration / dogfood)
-- [docs/releases.md](docs/releases.md) — release workflow
-
-## Contributing
-
-Pre-publish phase, so the contribution model is "open an issue, propose
-the change, we'll discuss." Once we tag the first release we'll write up
-a proper CONTRIBUTING.md.
 
 ## License
 
-TBD.
+Apache 2.0.
