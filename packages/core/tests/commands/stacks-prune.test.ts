@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,10 +35,24 @@ function setNextSpawn(result: FakeSpawnResult): void {
   spawnQueue.push(result);
 }
 
-vi.mock('node:child_process', () => {
+vi.mock('node:child_process', async () => {
+  const actual = await vi.importActual<typeof import('node:child_process')>(
+    'node:child_process',
+  );
   return {
-    spawn: (cmd: string, args: string[]) => {
-      spawnCalls.push({ cmd, args });
+    ...actual,
+    spawn: (cmd: string, args: string[] | Record<string, unknown>, opts?: unknown) => {
+      // Only intercept calls intended for the docker shell-out. Any other
+      // spawn (e.g. the LEV-201 tests spawning a long-lived helper to assert
+      // real signal delivery) falls through to the actual implementation so
+      // the test gets a real OS pid.
+      if (cmd !== 'docker') {
+        return (actual.spawn as unknown as (
+          ...a: unknown[]
+        ) => unknown)(cmd, args as never, opts as never);
+      }
+      const argList = args as string[];
+      spawnCalls.push({ cmd, args: argList });
       const next = spawnQueue.shift() ?? { exitCode: 0 };
 
       const proc = new EventEmitter() as EventEmitter & {
@@ -62,6 +82,7 @@ vi.mock('node:child_process', () => {
 
 import { Registry } from '../../src/registry';
 import { makeStacksPruneCommand } from '../../src/commands/stacks/prune';
+import { spawn as testSpawn } from 'node:child_process';
 
 let tmp: string;
 let reg: Registry;
@@ -236,6 +257,308 @@ describe('levelzero stacks prune', () => {
       expect(out).toContain('levelzero-abc123-postgres');
       expect(out).toContain('removed 1 stale network(s)');
       expect(out).toContain('levelzero-abc123');
+    });
+  });
+
+  describe('--all reaps orphan owned-service pid files (LEV-201)', () => {
+    /**
+     * Stage a pid file under `<worktree>/.levelzero/state/<key>/pids/<service>.pid`.
+     * Mirrors what `runOwnedServicesDetached` writes after spawn so the prune
+     * code is exercised against the exact on-disk shape `dev` produces.
+     */
+    function writePid(
+      worktreePath: string,
+      worktreeKey: string,
+      service: string,
+      pid: number | string,
+    ): string {
+      const dir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${service}.pid`);
+      writeFileSync(path, `${pid}\n`, 'utf8');
+      return path;
+    }
+
+    // Pre-seed the docker mock with "nothing to sweep" responses so the
+    // --all path falls straight through the container/network sweep and we
+    // can focus on pid-file behavior.
+    function stubDockerEmpty(): void {
+      setNextSpawn({ exitCode: 0 }); // docker info
+      setNextSpawn({ exitCode: 0, stdout: '' }); // ps -a
+      setNextSpawn({ exitCode: 0, stdout: '' }); // network ls
+    }
+
+    it('removes pid files for dead pids and leaves alive processes alone without --force', async () => {
+      const live = join(tmp, 'live');
+      mkdirSync(live);
+      await reg.upsert('live', {
+        path: live,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+
+      // Alive: the test runner itself.
+      const alivePath = writePid(live, 'live', 'api', process.pid);
+      // Dead: a pid that hasn't been allocated. Vitest spawns workers, so use
+      // a pid that's vanishingly unlikely to exist on any UNIX (32-bit max).
+      const deadPath = writePid(live, 'live', 'web', 2147483646);
+      // Invalid: empty file.
+      const invalidPath = writePid(live, 'live', 'worker', '');
+
+      stubDockerEmpty();
+
+      const cmd = makeStacksPruneCommand(() => reg);
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: [],
+        flags: { all: true },
+      })) as any;
+
+      const byService = new Map<string, any>(
+        result.reapedProcesses.map((r: any) => [r.service, r]),
+      );
+      expect(byService.get('web')?.result).toBe('stale');
+      expect(byService.get('worker')?.result).toBe('invalid');
+      expect(byService.get('api')?.result).toBe('skipped');
+
+      // Dead/invalid pid files removed; alive pid file preserved.
+      expect(existsSync(deadPath)).toBe(false);
+      expect(existsSync(invalidPath)).toBe(false);
+      expect(existsSync(alivePath)).toBe(true);
+    });
+
+    it('kills alive processes when --force is set and the worktree still exists', async () => {
+      const live = join(tmp, 'live');
+      mkdirSync(live);
+      await reg.upsert('live', {
+        path: live,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+
+      // Spawn a real child that we can probe + kill. The mock falls through
+      // to the actual spawn for any non-docker command, so this hits the
+      // real OS and gives us a real pid for `process.kill` to land on.
+      const child = testSpawn(
+        process.execPath,
+        ['-e', 'setInterval(()=>{}, 1000)'],
+        { stdio: 'ignore' },
+      );
+      try {
+        // Wait for the child to actually have a pid.
+        await new Promise<void>((resolve, reject) => {
+          if (typeof child.pid === 'number') return resolve();
+          child.once('spawn', () => resolve());
+          child.once('error', reject);
+        });
+        const childPid = child.pid!;
+        const pidFile = writePid(live, 'live', 'api', childPid);
+
+        stubDockerEmpty();
+
+        const cmd = makeStacksPruneCommand(() => reg);
+        const result = (await cmd.run({
+          cwd: tmp,
+          format: 'json',
+          args: [],
+          flags: { all: true, force: true },
+        })) as any;
+
+        const api = result.reapedProcesses.find((r: any) => r.service === 'api');
+        expect(api).toBeDefined();
+        expect(['terminated', 'killed']).toContain(api.result);
+        expect(api.pid).toBe(childPid);
+        expect(existsSync(pidFile)).toBe(false);
+
+        // Confirm the child is actually dead.
+        await new Promise<void>((resolve) => {
+          if (child.exitCode !== null) return resolve();
+          child.once('exit', () => resolve());
+          // Backstop: if for some reason we missed exit, resolve after 1s.
+          setTimeout(() => resolve(), 1000);
+        });
+        let stillAlive = true;
+        try {
+          process.kill(childPid, 0);
+        } catch {
+          stillAlive = false;
+        }
+        expect(stillAlive).toBe(false);
+      } finally {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }
+    });
+
+    it('reaps pid files in ghost worktrees that no longer exist', async () => {
+      // Ghost: a worktree whose directory we'll delete BEFORE running prune,
+      // simulating `git worktree remove` having yanked the path. The registry
+      // entry's `path` won't pathExists; the standard prune logic should drop
+      // the entry. Because the pid dir lives inside the worktree, it's also
+      // gone — so the reap loop has nothing to read for this key. The test
+      // asserts that the prune path doesn't crash on this case and that the
+      // entry is in `pruned`.
+      const ghost = join(tmp, 'ghost');
+      mkdirSync(ghost);
+      // Stage a pid file inside the ghost worktree first…
+      writePid(ghost, 'ghost', 'api', 2147483646);
+      await reg.upsert('ghost', {
+        path: ghost,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+      // …then nuke the worktree directory to simulate a stale registry entry.
+      const { rmSync } = await import('node:fs');
+      rmSync(ghost, { recursive: true, force: true });
+
+      stubDockerEmpty();
+
+      const cmd = makeStacksPruneCommand(() => reg);
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: [],
+        flags: { all: true },
+      })) as any;
+
+      expect(result.pruned).toEqual(['ghost']);
+      // The pid dir was inside the worktree we just deleted, so no entries
+      // are produced for it. The reap path must NOT throw.
+      const ghostEntries = result.reapedProcesses.filter(
+        (r: any) => r.worktreeKey === 'ghost',
+      );
+      expect(ghostEntries).toEqual([]);
+    });
+
+    it('does not signal foreign pids (EPERM) and leaves their pid files in place', async () => {
+      // PID 1 (init/launchd) exists on every UNIX but isn't ours — sending a
+      // signal returns EPERM. The reap path must classify this as `foreign`,
+      // not `alive`, and refuse to either kill it or delete the marker.
+      const live = join(tmp, 'live');
+      mkdirSync(live);
+      await reg.upsert('live', {
+        path: live,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+      const pidFile = writePid(live, 'live', 'api', 1);
+
+      stubDockerEmpty();
+
+      const cmd = makeStacksPruneCommand(() => reg);
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: [],
+        flags: { all: true, force: true },
+      })) as any;
+
+      const api = result.reapedProcesses.find((r: any) => r.service === 'api');
+      // Either 'foreign' (EPERM — pid 1 not ours) or, when the test runs as
+      // root, 'terminated'/'killed'. Vitest CI never runs as root so the
+      // common path is 'foreign'.
+      if (process.getuid && process.getuid() === 0) {
+        // Test environment is root — pid 1 IS reachable. We don't actually
+        // want to kill init in that case. Skip the assertion safely.
+        expect(api).toBeDefined();
+      } else {
+        expect(api?.result).toBe('foreign');
+        // Pid file preserved because we can't prove it's safe to delete.
+        expect(existsSync(pidFile)).toBe(true);
+      }
+    });
+
+    it('includes reapedProcesses in JSON output even when no pids exist', async () => {
+      stubDockerEmpty();
+      const cmd = makeStacksPruneCommand(() => reg);
+      const result = (await cmd.run({
+        cwd: tmp,
+        format: 'json',
+        args: [],
+        flags: { all: true },
+      })) as any;
+      expect(result.reapedProcesses).toEqual([]);
+    });
+
+    it('renders reaped pid files in pretty output', async () => {
+      const live = join(tmp, 'live');
+      mkdirSync(live);
+      await reg.upsert('live', {
+        path: live,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+      writePid(live, 'live', 'web', 2147483646); // dead
+
+      stubDockerEmpty();
+
+      const cmd = makeStacksPruneCommand(() => reg);
+      const out = (await cmd.run({
+        cwd: tmp,
+        format: 'pretty',
+        args: [],
+        flags: { all: true },
+      })) as string;
+      expect(out).toContain('reaped 1 orphan owned-service pid file(s)');
+      expect(out).toContain('live/web');
+      expect(out).toContain('stale');
+    });
+
+    it('mentions --force in the pretty output when alive processes are skipped', async () => {
+      const live = join(tmp, 'live');
+      mkdirSync(live);
+      await reg.upsert('live', {
+        path: live,
+        branch: '',
+        ports: {},
+        urls: {},
+        containers: [],
+        network: '',
+        logDir: '',
+        createdAt: '',
+      });
+      writePid(live, 'live', 'api', process.pid);
+
+      stubDockerEmpty();
+
+      const cmd = makeStacksPruneCommand(() => reg);
+      const out = (await cmd.run({
+        cwd: tmp,
+        format: 'pretty',
+        args: [],
+        flags: { all: true },
+      })) as string;
+      expect(out).toContain('--force');
+      expect(out).toContain('live/api');
     });
   });
 });
