@@ -348,12 +348,24 @@ describe('@levelzero/template-v0-stack', () => {
       'apps/api/src/index.ts default export must include `routes` so the typed-client generator can extract them',
     ).toBe(true);
 
-    // ── api deps include better-auth + @prisma/client.
+    // ── api deps include better-auth + @prisma/client + @prisma/adapter-pg.
+    // LEV-218: apps/api/src/prisma.ts imports both `@prisma/client` AND
+    // `@prisma/adapter-pg` (PrismaPg). If either is missing from the api's
+    // package.json the scaffolded api crashes on startup with "@prisma/client
+    // did not initialize yet". Both must be declared as explicit dependencies
+    // so `bun install` materialises them in the api's node_modules.
     const apiPkg = JSON.parse(
       readFileSync(join(templateRoot, 'apps/api/package.json'), 'utf8'),
     ) as { dependencies?: Record<string, string> };
     expect(apiPkg.dependencies?.['better-auth']).toBeTruthy();
-    expect(apiPkg.dependencies?.['@prisma/client']).toBeTruthy();
+    expect(
+      apiPkg.dependencies?.['@prisma/client'],
+      'apps/api/package.json must declare @prisma/client (imported by src/prisma.ts) — LEV-218',
+    ).toBeTruthy();
+    expect(
+      apiPkg.dependencies?.['@prisma/adapter-pg'],
+      'apps/api/package.json must declare @prisma/adapter-pg (PrismaPg imported by src/prisma.ts) — LEV-218',
+    ).toBeTruthy();
     expect(apiPkg.dependencies?.['hono']).toBeTruthy();
 
     // ── web: pages for sign-in / sign-up / dashboard, plus the form
@@ -524,5 +536,41 @@ describe('@levelzero/template-v0-stack', () => {
       existsSync(join(templateRoot, 'turbo.json')),
       'turbo.json must not ship in the v0 template — see LEV-216',
     ).toBe(false);
+  });
+
+  it('apps/api/package.json declares @prisma/client and @prisma/adapter-pg as dependencies (LEV-218)', () => {
+    // LEV-218: apps/api/src/prisma.ts imports BOTH `@prisma/client`
+    // (PrismaClient) AND `@prisma/adapter-pg` (PrismaPg). Without explicit
+    // entries in `dependencies`, bun may not hoist the packages into the api
+    // workspace's node_modules, causing the runtime error:
+    //   "@prisma/client did not initialize yet. Please run "prisma generate"..."
+    // Versions must match the template root's `prisma` devDependency pin (^7.x)
+    // so a single `prisma generate` at the root produces a client the api can
+    // resolve.
+    const apiPkg = JSON.parse(
+      readFileSync(join(templateRoot, 'apps/api/package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+    const deps = apiPkg.dependencies ?? {};
+
+    expect(
+      deps['@prisma/client'],
+      'apps/api/package.json must declare @prisma/client in dependencies (imported by src/prisma.ts)',
+    ).toBeTruthy();
+    expect(
+      deps['@prisma/adapter-pg'],
+      'apps/api/package.json must declare @prisma/adapter-pg in dependencies (PrismaPg imported by src/prisma.ts)',
+    ).toBeTruthy();
+
+    // Both packages must be pinned to Prisma 7.x — the same major as the root
+    // devDependency `"prisma": "^7.0.0"` — so a single `prisma generate` at
+    // the scaffold root produces a client binary the api imports.
+    expect(deps['@prisma/client']).toMatch(
+      /^[\^~]?7\./,
+      '@prisma/client version must be ^7.x to match the template root prisma devDependency',
+    );
+    expect(deps['@prisma/adapter-pg']).toMatch(
+      /^[\^~]?7\./,
+      '@prisma/adapter-pg version must be ^7.x to match the template root prisma devDependency',
+    );
   });
 });
