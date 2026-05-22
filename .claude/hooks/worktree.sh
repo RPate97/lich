@@ -101,6 +101,20 @@ case "$EVENT" in
         echo "worktree hook: 'bun install' fallback also failed; worktree may be broken" >&2
     fi
 
+    # LEV-220: Re-anchor @levelzero/* workspace symlinks in the shared node_modules.
+    # When bun install runs inside a worktree (the fallback path above, or any agent
+    # that runs `bun install` manually), Bun resolves the "packages/*" workspace glob
+    # relative to the worktree's directory and writes @levelzero/* symlinks that point
+    # at that worktree's packages/.  Since the worktree's node_modules is actually a
+    # symlink to the main repo's node_modules, those stale symlinks persist after the
+    # worktree is removed.  We fix this every time a worktree is created so that the
+    # shared node_modules always reflects the main repo's packages/.
+    if [[ -f "$PROJECT_DIR/scripts/sync-workspace-symlinks.sh" ]]; then
+      echo "worktree hook: re-anchoring @levelzero/* workspace symlinks in shared node_modules" >&2
+      (cd "$PROJECT_DIR" && bash scripts/sync-workspace-symlinks.sh >&2) || \
+        echo "worktree hook: sync-workspace-symlinks failed (non-fatal)" >&2
+    fi
+
     echo "$WT_DIR"
     ;;
 
