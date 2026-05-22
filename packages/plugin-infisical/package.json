@@ -3,14 +3,28 @@
   "version": "0.1.0",
   "description": "Levelzero plugin contributing a bulk EnvSource that fetches secrets from Infisical (machine-identity / service-token auth) and re-publishes them under the `infisical` namespace. Pairs with `@levelzero/plugin-dotenv`, which loads the credentials at boot.",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

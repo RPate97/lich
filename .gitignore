@@ -5,6 +5,9 @@ node_modules/
 *.tmp
 packages/*/node_modules
 packages/*/dist
+# turbo's local task cache — created once the tsup `build` task runs (LEV-214).
+.turbo/
+packages/*/.turbo/
 # Plan 14 / LEV-166 smoke test scaffolds projects under packages/ so bun's
 # resolver can reach the workspace symlinks. The afterAll hook cleans up,
 # but if the run is interrupted (Ctrl-C, OOM kill, etc.) a stray directory

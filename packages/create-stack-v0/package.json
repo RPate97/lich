@@ -2,20 +2,31 @@
   "name": "@levelzero/create-stack-v0",
   "version": "0.1.0",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
   "bin": {
-    "create-stack-v0": "./src/bin.ts"
+    "create-stack-v0": "./dist/bin.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
