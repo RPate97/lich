@@ -45,7 +45,6 @@
  * whole point of LEV-213.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import {
   setupScaffoldedProject,
   sweepStaleTmpdirs,
@@ -84,67 +83,22 @@ describe.skipIf(!DOCKER)('LEV-213 api ↔ db roundtrip', () => {
     handle.setComposeProjectName(dev.json.compose.projectName);
     apiUrl = `http://localhost:${dev.json.ports['api-http']}`;
 
-    // Push the schema directly to postgres via `prisma db push`. Why not
-    // `levelzero db migrate`? Two reasons:
-    //
-    //   1. The template ships with NO `prisma/migrations` directory
-    //      (LEV-215 territory), so `db migrate` (which runs `prisma migrate
-    //      deploy`) is a no-op against the empty migrations folder — the
-    //      auth/Todo tables never get created and sign-up fails with
-    //      `relation "User" does not exist`.
-    //   2. `db migration new` (which would scaffold an initial migration
-    //      from the schema diff) is currently broken on Prisma 7 — it
-    //      passes the now-unsupported `--skip-generate` flag to
-    //      `prisma migrate dev --create-only`, which exits non-zero with
-    //      "unknown or unexpected option". See `plugin-prisma/src/adapter.
-    //      ts:301`. This is a real bug surfaced by LEV-213 work but it
-    //      lives outside this ticket's scope.
-    //
-    // `prisma db push` sidesteps both: it diffs schema → live DB and
-    // applies the changes in place, no migration files needed. This is
-    // the right shape for the test — we want to prove the env-injection
-    // chain works end-to-end, NOT exercise the migrations subsystem
-    // (which has dedicated coverage in db.e2e.test.ts).
-    const { json: apiEnv } = runCliJson<{
-      env: Record<string, string>;
-    }>(handle.projectDir, [
-      'env',
-      'resolve',
-      'api',
-      '--context',
-      'host',
-      '--json',
-    ]);
-    const databaseUrl = apiEnv.env['DATABASE_URL'];
-    if (!databaseUrl) {
-      throw new Error('env resolve api did not produce DATABASE_URL');
-    }
-    // Note: Prisma 7 dropped the `--skip-generate` flag for `db push`
-    // (it's silently always-on now, per the Prisma 7 CLI help). We
-    // explicitly use `--accept-data-loss` because the schema diff
-    // against an empty database technically counts as "data loss" to
-    // prisma's safety checks — a no-op on a fresh stack but defensive
-    // against rerun-into-existing-data scenarios.
-    const push = spawnSync(
-      'bunx',
-      [
-        'prisma',
-        'db',
-        'push',
-        '--accept-data-loss',
-        '--schema',
-        'prisma/schema.prisma',
-      ],
-      {
-        cwd: handle.projectDir,
-        encoding: 'utf8',
-        env: { ...process.env, DATABASE_URL: databaseUrl },
-        timeout: 120_000,
-      },
-    );
-    if (push.status !== 0) {
+    // Apply migrations via the canonical CLI flow. Post-LEV-215 the
+    // template ships an initial migration at `prisma/migrations/0_init/`,
+    // so `levelzero db migrate` materializes the auth + Todo tables
+    // against the live postgres on the first run. Pre-LEV-215 this test
+    // shelled out to `prisma db push --accept-data-loss` because the
+    // template had no migration files; LEV-215 fixed that gap, so this
+    // test now exercises the exact path users hit (`db migrate`) — which
+    // doubles as a forward-regression guard that the shipped initial
+    // migration is correct AND that the plugin-prisma chain reaches
+    // through cleanly.
+    const migrate = runCli(handle.projectDir, ['db', 'migrate', '--json'], {
+      timeoutMs: 120_000,
+    });
+    if (migrate.exitCode !== 0) {
       throw new Error(
-        `prisma db push failed (exit ${push.status}):\nstdout:\n${push.stdout}\nstderr:\n${push.stderr}`,
+        `levelzero db migrate failed (exit ${migrate.exitCode}):\nstdout:\n${migrate.stdout}\nstderr:\n${migrate.stderr}`,
       );
     }
 

@@ -435,6 +435,62 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
+  it('ships an initial prisma migration with auth + Todo tables (LEV-215)', () => {
+    // LEV-215: pre-fix the template shipped NO `prisma/migrations/`
+    // directory, so `levelzero db migrate` in a freshly-scaffolded project
+    // was a no-op — `prisma migrate deploy` finds no migrations to apply
+    // and the auth + Todo tables never get created. `db seed` then trips
+    // on `relation "User" does not exist`. The fix is to generate an
+    // initial migration via a real postgres + `prisma migrate dev
+    // --create-only` and commit the resulting SQL into the template
+    // tree at `prisma/migrations/0_init/migration.sql`. The
+    // `migration_lock.toml` sibling declares the provider so prisma
+    // refuses to apply the migration set against a non-postgres driver
+    // (a sane safety check we want preserved).
+    const migrationsDir = join(templateRoot, 'prisma/migrations');
+    expect(
+      existsSync(migrationsDir),
+      'template must ship prisma/migrations/ so db migrate creates tables in a fresh scaffold',
+    ).toBe(true);
+    const lock = join(migrationsDir, 'migration_lock.toml');
+    expect(
+      existsSync(lock),
+      'prisma/migrations/migration_lock.toml must ship so prisma knows the driver',
+    ).toBe(true);
+    expect(readFileSync(lock, 'utf8')).toMatch(/provider\s*=\s*"postgresql"/);
+
+    const initSqlPath = join(migrationsDir, '0_init/migration.sql');
+    expect(
+      existsSync(initSqlPath),
+      'prisma/migrations/0_init/migration.sql must ship so `db migrate` materializes the schema',
+    ).toBe(true);
+    const initSql = readFileSync(initSqlPath, 'utf8');
+
+    // The SQL must CREATE TABLE for every model the LEV-196 template
+    // depends on at runtime. Anything missing here means a fresh scaffold
+    // will hit a `relation does not exist` error from `db seed` (or from
+    // the Better Auth sign-up handler that the dashboard hits on first
+    // visit). We assert the table names literally; prisma quotes
+    // identifiers with double quotes so we match `CREATE TABLE "<Name>"`.
+    const requiredTables = ['User', 'Session', 'Account', 'Verification', 'Todo'];
+    for (const t of requiredTables) {
+      expect(
+        new RegExp(`CREATE TABLE\\s+"${t}"`).test(initSql),
+        `expected CREATE TABLE "${t}" in 0_init/migration.sql`,
+      ).toBe(true);
+    }
+    // The Todo → User FK is what enforces the per-user ownership model
+    // that `apps/api/src/index.ts`'s todo routes rely on. A regression
+    // that drops the FK would silently weaken auth without breaking
+    // anything obvious until production.
+    expect(
+      /ALTER TABLE\s+"Todo"\s+ADD CONSTRAINT[^;]*FOREIGN KEY[^;]*REFERENCES\s+"User"/i.test(
+        initSql,
+      ),
+      'Todo.userId → User FK constraint must be present in 0_init/migration.sql',
+    ).toBe(true);
+  });
+
   it('root dev script invokes the levelzero CLI, not turbo (LEV-216)', () => {
     // LEV-216: scaffolding inside a turbo-managed monorepo (or even
     // standalone) blew up at first `bun run dev` because the template's root

@@ -294,11 +294,16 @@ export const prismaAdapter: ORMAdapter = {
   },
 
   async newMigration(ctx: ORMContext, name: string): Promise<MigrationFile> {
+    // LEV-215: Prisma 7 rejects `--skip-generate` with "unknown or unexpected
+    // option" — the flag was dropped because prisma now always regenerates the
+    // client as part of `migrate dev`. The cost is an extra regen step we
+    // didn't want (we already expose `generateClient` separately for callers
+    // that need explicit control); the alternative is silencing the regen with
+    // env-var gymnastics, which is more work for a marginal speedup.
     const args = [
       'migrate',
       'dev',
       '--create-only',
-      '--skip-generate',
       '--name',
       name,
       '--schema',
@@ -433,21 +438,30 @@ export const prismaAdapter: ORMAdapter = {
    * this client to `@better-auth/prisma-adapter` so auth writes land in
    * the project's actual database instead of a separate sqlite file).
    *
-   * `@prisma/client` is imported lazily: it isn't pinned as a runtime
-   * dependency of this package (the consumer's own `prisma generate` is
-   * what produces the client in their `node_modules`), and we don't want
-   * `getClient` to crash the rest of the adapter when prisma isn't
-   * installed. The lazy require + try/catch surfaces an actionable
-   * "install @prisma/client" hint instead.
+   * LEV-215: Prisma 7 removed the `datasourceUrl` option in favor of the
+   * driver-adapter pattern. For postgres the connection string flows
+   * through `new PrismaPg({ connectionString })` from
+   * `@prisma/adapter-pg`, which the `PrismaClient` consumes via
+   * `{ adapter }`. This matches what the LEV-196 template's
+   * `apps/api/src/prisma.ts` does for its long-lived client.
+   *
+   * `@prisma/client` and `@prisma/adapter-pg` are imported lazily: the
+   * generated client lives in the *consumer's* `node_modules` (wherever
+   * they ran `prisma generate`), and we don't want `getClient` to crash
+   * the rest of the adapter when prisma isn't installed. The lazy
+   * require + try/catch surfaces actionable install hints instead.
    */
   async getClient(ctx: ORMContext): Promise<unknown> {
-    let PrismaClient: new (opts: { datasourceUrl: string }) => unknown;
+    type PrismaClientCtor = new (opts: { adapter: unknown }) => unknown;
+    type PrismaPgCtor = new (opts: { connectionString: string }) => unknown;
+
+    let PrismaClient: PrismaClientCtor;
     try {
       // Use createRequire so we resolve against the consumer's node_modules
       // tree, not ours — the generated client lives wherever the user ran
       // `prisma generate`. The lazy import keeps this off the cold path.
       const mod = localRequire('@prisma/client') as {
-        PrismaClient: new (opts: { datasourceUrl: string }) => unknown;
+        PrismaClient: PrismaClientCtor;
       };
       PrismaClient = mod.PrismaClient;
     } catch (err) {
@@ -458,6 +472,24 @@ export const prismaAdapter: ORMAdapter = {
         { cause: err },
       );
     }
-    return new PrismaClient({ datasourceUrl: normalizeDatabaseUrlForPg(ctx.databaseUrl) });
+
+    let PrismaPg: PrismaPgCtor;
+    try {
+      const mod = localRequire('@prisma/adapter-pg') as {
+        PrismaPg: PrismaPgCtor;
+      };
+      PrismaPg = mod.PrismaPg;
+    } catch (err) {
+      throw new Error(
+        `prismaAdapter.getClient: failed to load @prisma/adapter-pg. ` +
+          `Prisma 7 requires the driver-adapter pattern — install ` +
+          `\`@prisma/adapter-pg\` as a dependency in your project. ` +
+          `(${(err as Error).message})`,
+        { cause: err },
+      );
+    }
+
+    const connectionString = normalizeDatabaseUrlForPg(ctx.databaseUrl);
+    return new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
   },
 };
