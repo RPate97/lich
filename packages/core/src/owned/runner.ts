@@ -1,6 +1,6 @@
 import concurrently, { type ConcurrentlyCommandInput } from 'concurrently';
 import { spawn } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { ServiceLogWriter } from './log-writer';
@@ -36,18 +36,45 @@ export interface DetachedRunnerOptions {
 }
 
 /**
- * Result of the detached owned-service spawn path (LEV-194).
+ * Per-service outcome of the detached owned-service spawn path (LEV-194 /
+ * LEV-219).
+ *
+ *   - `'ready'`:   HTTP probe succeeded within the timeout.
+ *   - `'failed'`:  the process exited with a NON-ZERO code before the
+ *     readiness deadline. The demo is broken — `dev` surfaces the log tail
+ *     and exits non-zero (LEV-219).
+ *   - `'timeout'`: the process is still running but never passed its HTTP
+ *     probe before `readinessTimeoutMs` elapsed. The service may still be
+ *     coming up — we just stopped waiting. Also covers the odd case of a
+ *     port-claiming service that exited 0 without ever binding.
+ *   - `'skipped'`: service exposes no port we can probe (no `portNames`) and
+ *     did not exit non-zero — assumed up.
+ */
+export type DetachedServiceStatus = 'ready' | 'failed' | 'timeout' | 'skipped';
+
+/**
+ * Result of the detached owned-service spawn path (LEV-194 / LEV-219).
  *
  * `pids` maps `service.name` to the pid the OS assigned. The CLI prints these
  * in its summary so users can `kill <pid>` directly if `levelzero stop`
  * is unavailable.
  *
- * `readiness` reports the outcome of the optional HTTP probe per service:
- *   - `'ready'`: probe succeeded within the timeout.
- *   - `'timeout'`: probe was attempted but never returned 2xx/3xx/4xx within
- *     `readinessTimeoutMs`. The service may still be coming up — we just
- *     stopped waiting.
- *   - `'skipped'`: service exposes no port we can probe (no `portNames`).
+ * `statuses` reports the resolved per-service outcome (see
+ * {@link DetachedServiceStatus}). `readiness` is a back-compat alias that
+ * holds the same values — pre-LEV-219 callers referred to this field, and the
+ * `'failed'` value is simply a new member of the union it already exposed-ish.
+ *
+ * `exitCodes` carries the exit code of any service that exited non-zero
+ * before the deadline (i.e. every `'failed'` service). Services that were
+ * still running when the runner returned have no entry here.
+ *
+ * `exitedAfterMs` carries the wall-clock ms between spawn and exit for any
+ * `'failed'` service — `dev` renders it as `(exit code 1 after 2.3s)`.
+ *
+ * `lastLogTail` carries the last ~20 lines of each non-healthy service's
+ * combined stdout/stderr log file — captured best-effort so `dev` can show
+ * the user WHY a service is `failed` / `timeout` without them having to run
+ * `levelzero logs`. Empty string when nothing could be read.
  *
  * `logPaths` and `pidPaths` are absolute paths to the files the runner wrote.
  * Exposed so `dev` can surface them in the summary and so `stop` / tests can
@@ -55,9 +82,37 @@ export interface DetachedRunnerOptions {
  */
 export interface DetachedRunnerHandle {
   pids: Record<string, number>;
-  readiness: Record<string, 'ready' | 'timeout' | 'skipped'>;
+  statuses: Record<string, DetachedServiceStatus>;
+  /** Back-compat alias for {@link statuses} (pre-LEV-219 field name). */
+  readiness: Record<string, DetachedServiceStatus>;
+  exitCodes: Record<string, number>;
+  exitedAfterMs: Record<string, number>;
+  lastLogTail: Record<string, string>;
   logPaths: Record<string, string>;
   pidPaths: Record<string, string>;
+}
+
+/** How many trailing log lines to surface for a failed/timed-out service. */
+const LOG_TAIL_LINES = 20;
+
+/**
+ * Read the last {@link LOG_TAIL_LINES} non-empty lines of a service's
+ * combined stdout/stderr log file. Best-effort: a missing/unreadable file
+ * yields `''` rather than throwing, so a still-timing-out service can never
+ * block `dev` from returning. Strips the `--- levelzero dev <ts> ---` run
+ * markers so the tail shows process output, not our own bookkeeping.
+ */
+async function readLogTail(logPath: string): Promise<string> {
+  try {
+    const raw = await readFile(logPath, 'utf8');
+    const lines = raw
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+      .filter((l) => !/^--- levelzero dev .+ ---$/.test(l.trim()));
+    return lines.slice(-LOG_TAIL_LINES).join('\n');
+  } catch {
+    return '';
+  }
 }
 
 export function topologicalSort(services: OwnedService[]): OwnedService[] {
@@ -237,38 +292,45 @@ export async function runOwnedServices(
  * Caller bounds the total wall-clock budget; this just keeps retrying with a
  * small backoff until either a response arrives or the budget expires.
  */
-async function probeHttpReady(
-  port: number,
-  timeoutMs: number,
-): Promise<'ready' | 'timeout'> {
-  const start = Date.now();
-  const tryOnce = (): Promise<boolean> =>
-    new Promise<boolean>((resolve) => {
-      const ac = new AbortController();
-      const t = setTimeout(() => ac.abort(), 1000);
-      // `node:http`-style fetch keeps the dependency surface to the standard
-      // global. Any HTTP response (including 4xx/5xx) confirms the listener
-      // is up, which is the whole "service is ready" signal we need.
-      fetch(`http://localhost:${port}/`, { signal: ac.signal })
-        .then(() => {
-          clearTimeout(t);
-          resolve(true);
-        })
-        .catch(() => {
-          clearTimeout(t);
-          resolve(false);
-        });
-    });
-
-  while (Date.now() - start < timeoutMs) {
-    if (await tryOnce()) return 'ready';
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return 'timeout';
+/**
+ * Single-shot HTTP probe. Resolves `true` if `http://localhost:<port>/`
+ * returns any HTTP response within 1s, `false` otherwise. The detached
+ * runner calls this in its readiness loop so it can interleave probe
+ * attempts with checks on the child's exit state.
+ */
+function probeHttpReadyOnce(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 1000);
+    // `node:http`-style fetch keeps the dependency surface to the standard
+    // global. Any HTTP response (including 4xx/5xx) confirms the listener
+    // is up, which is the whole "service is ready" signal we need.
+    fetch(`http://localhost:${port}/`, { signal: ac.signal })
+      .then(() => {
+        clearTimeout(t);
+        resolve(true);
+      })
+      .catch(() => {
+        clearTimeout(t);
+        resolve(false);
+      });
+  });
 }
 
 /**
- * Detached owned-service runner (LEV-194 default).
+ * Per-service exit observation captured while the readiness window is open.
+ * `code` is the exit code (null if the process was killed by a signal);
+ * `at` is when the exit fired. Populated by the `child.on('exit')` listener
+ * the runner attaches before probing.
+ */
+interface ExitObservation {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  at: number;
+}
+
+/**
+ * Detached owned-service runner (LEV-194 default; LEV-219 failure surfacing).
  *
  * Spawns each service via `child_process.spawn` with `detached: true` +
  * `child.unref()` so the children survive this CLI process exiting. stdout
@@ -280,14 +342,18 @@ async function probeHttpReady(
  * reads these later to signal the processes — there's no in-memory handle
  * across the CLI exit boundary so the filesystem is the source of truth.
  *
- * After spawning, if a service exposes a host port we briefly probe it over
- * HTTP so the summary printed by `dev` reflects "ready" rather than "we
- * fired and forgot." Services without a port skip the probe.
+ * After spawning, each service is monitored until either (a) the process
+ * exits, (b) its HTTP probe succeeds, or (c) the readiness deadline elapses.
+ * A service that exits NON-ZERO before the deadline is `'failed'` — the demo
+ * is broken, so the runner reads the tail of its log file so `dev` can show
+ * the user WHY (LEV-219). A service still running at the deadline that never
+ * passed its probe is `'timeout'`; its log tail is also captured so `dev`
+ * can surface whatever output exists so far. Reading the tail is best-effort
+ * and never blocks the runner from returning.
  *
- * Returns synchronously after spawning + readiness probes complete; the
- * caller can `await` this and then exit cleanly. No `done` promise is
- * exposed because the parent will not see exit codes — `levelzero stop`
- * inspects pid liveness instead.
+ * Returns once every service has resolved a status. No `done` promise is
+ * exposed because the parent will not wait on long-running children —
+ * `levelzero stop` inspects pid liveness instead.
  */
 export async function runOwnedServicesDetached(
   services: OwnedService[],
@@ -298,7 +364,16 @@ export async function runOwnedServicesDetached(
   serviceEnv: Record<string, Record<string, string>> = {},
 ): Promise<DetachedRunnerHandle> {
   if (services.length === 0) {
-    return { pids: {}, readiness: {}, logPaths: {}, pidPaths: {} };
+    return {
+      pids: {},
+      statuses: {},
+      readiness: {},
+      exitCodes: {},
+      exitedAfterMs: {},
+      lastLogTail: {},
+      logPaths: {},
+      pidPaths: {},
+    };
   }
 
   await mkdir(opts.logDir, { recursive: true });
@@ -306,9 +381,18 @@ export async function runOwnedServicesDetached(
 
   const ordered = topologicalSort(services);
   const pids: Record<string, number> = {};
-  const readiness: Record<string, 'ready' | 'timeout' | 'skipped'> = {};
+  const statuses: Record<string, DetachedServiceStatus> = {};
+  const exitCodes: Record<string, number> = {};
+  const exitedAfterMs: Record<string, number> = {};
+  const lastLogTail: Record<string, string> = {};
   const logPaths: Record<string, string> = {};
   const pidPaths: Record<string, string> = {};
+  // Per-service exit observation, filled asynchronously by the `'exit'`
+  // listener. `undefined` means the process is still running.
+  const exits: Record<string, ExitObservation | undefined> = {};
+  // Wall-clock spawn time per service, so a `'failed'` exit can be reported
+  // as `(exit code N after Xs)`.
+  const spawnedAt: Record<string, number> = {};
 
   for (const s of ordered) {
     const logPath = join(opts.logDir, `${s.name}.log`);
@@ -359,6 +443,24 @@ export async function runOwnedServicesDetached(
       /* already closed */
     }
 
+    // LEV-219 — record the child's exit so the readiness loop below can tell
+    // a crash (`'failed'`, non-zero exit) apart from a still-coming-up
+    // service (`'timeout'`). The listener is attached BEFORE `unref()` and
+    // stays valid for the lifetime of this process; we never `await` the
+    // child, so this can't keep the event loop alive on its own.
+    spawnedAt[s.name] = Date.now();
+    exits[s.name] = undefined;
+    child.on('exit', (code, signal) => {
+      exits[s.name] = { code, signal, at: Date.now() };
+    });
+    // A spawn that fails before fork emits `'error'` rather than `'exit'`;
+    // treat it as a non-zero exit so the service still surfaces as failed.
+    child.on('error', () => {
+      if (exits[s.name] === undefined) {
+        exits[s.name] = { code: 1, signal: null, at: Date.now() };
+      }
+    });
+
     if (typeof child.pid === 'number') {
       pids[s.name] = child.pid;
       await writeFile(pidPath, `${child.pid}\n`, 'utf8');
@@ -376,22 +478,98 @@ export async function runOwnedServicesDetached(
     child.unref();
   }
 
-  // Readiness probe — run after every service has been spawned so a slow
-  // probe on one doesn't delay the spawn of the next.
+  // Readiness window — run after every service has been spawned so a slow
+  // probe on one doesn't delay the spawn of the next. Per service we race
+  // the HTTP probe (when there's a port) against the child's exit; the
+  // deadline bounds the wall-clock budget either way.
   const timeoutMs = opts.readinessTimeoutMs ?? 10_000;
+  // Crash-detection window for PORTLESS services. A portless service has no
+  // probe, so historically it was `'skipped'` immediately. We now give it a
+  // brief beat to surface a fast startup crash — but capped well below the
+  // full readiness budget so a healthy portless service never makes `dev`
+  // hang (LEV-219: "reading the tail must not block `dev` from returning").
+  const portlessCrashWindowMs = Math.min(timeoutMs, 500);
+
+  // Resolve one service's status. Captures the failed/timeout log tail
+  // best-effort — `readLogTail` swallows read errors so a missing log file
+  // can never block `dev` from returning.
+  const resolveFailed = async (name: string, exit: ExitObservation) => {
+    statuses[name] = 'failed';
+    exitCodes[name] = exit.code ?? 1;
+    exitedAfterMs[name] = Math.max(0, exit.at - (spawnedAt[name] ?? exit.at));
+    lastLogTail[name] = await readLogTail(logPaths[name]!);
+  };
+
   await Promise.all(
     ordered.map(async (s) => {
+      const start = Date.now();
       const firstPort = s.portNames[0];
       const port = firstPort !== undefined ? ports[firstPort] : undefined;
+
       if (port === undefined) {
-        readiness[s.name] = 'skipped';
+        // No port to probe. Poll briefly for a startup crash; otherwise the
+        // service is assumed up (`'skipped'`).
+        while (
+          Date.now() - start < portlessCrashWindowMs &&
+          exits[s.name] === undefined
+        ) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        const exit = exits[s.name];
+        if (exit && exit.code !== null && exit.code !== 0) {
+          await resolveFailed(s.name, exit);
+        } else {
+          statuses[s.name] = 'skipped';
+        }
         return;
       }
-      readiness[s.name] = await probeHttpReady(port, timeoutMs);
+
+      // Service has a port — probe it, but bail early the instant the child
+      // exits non-zero (no point probing a port nothing will ever bind).
+      while (Date.now() - start < timeoutMs) {
+        const exit = exits[s.name];
+        if (exit !== undefined) {
+          if (exit.code !== null && exit.code !== 0) {
+            await resolveFailed(s.name, exit);
+            return;
+          }
+          // Exited 0 (or via signal) without ever binding — odd, but not a
+          // crash. Treat as `'timeout'`: it can't pass the probe now.
+          statuses[s.name] = 'timeout';
+          lastLogTail[s.name] = await readLogTail(logPaths[s.name]!);
+          return;
+        }
+        if ((await probeHttpReadyOnce(port)) === true) {
+          statuses[s.name] = 'ready';
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      // Deadline elapsed. If the child crashed exactly at the boundary, the
+      // exit observation still wins; otherwise it's a genuine timeout.
+      const exit = exits[s.name];
+      if (exit && exit.code !== null && exit.code !== 0) {
+        await resolveFailed(s.name, exit);
+        return;
+      }
+      statuses[s.name] = 'timeout';
+      // Capture whatever output exists so far — best-effort, never blocks.
+      lastLogTail[s.name] = await readLogTail(logPaths[s.name]!);
     }),
   );
 
-  return { pids, readiness, logPaths, pidPaths };
+  return {
+    pids,
+    statuses,
+    // Back-compat alias — same object so callers reading either field agree.
+    readiness: statuses,
+    exitCodes,
+    exitedAfterMs,
+    lastLogTail,
+    logPaths,
+    pidPaths,
+  };
 }
 
 /**
