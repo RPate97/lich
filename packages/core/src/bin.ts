@@ -23,6 +23,7 @@ import { makeStopCommand } from './commands/stop';
 import { makeResetCommand } from './commands/reset';
 import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
 import { makeLogsCommand } from './commands/logs';
+import { makeDashboardCommand } from './commands/dashboard';
 import { impactCommand } from './commands/impact';
 import { coverageCommand } from './commands/coverage';
 import { makeCheckCommand } from './commands/check';
@@ -89,6 +90,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeStacksPruneCommand(getReg));
   reg.register(makeStacksStopAllCommand(getReg));
   reg.register(makeLogsCommand(getReg));
+  reg.register(makeDashboardCommand(() => registryPath));
   reg.register(impactCommand);
   reg.register(coverageCommand);
   reg.register(makeCheckCommand());

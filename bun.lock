@@ -18,6 +18,7 @@
         "levelzero": "./dist/bin.js",
       },
       "dependencies": {
+        "@levelzero/dashboard": "workspace:*",
         "@prisma/client": "^5.18.0",
         "concurrently": "^9.0.0",
         "pg": "^8.12.0",
@@ -95,9 +96,6 @@
         "typescript": "^5.4.0",
         "vite": "^5.4.0",
         "vitest": "^1.6.0",
-      },
-      "peerDependencies": {
-        "@levelzero/core": "workspace:*",
       },
     },
     "packages/plugin-better-auth": {
