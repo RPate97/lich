@@ -78,14 +78,17 @@ async function main(): Promise<void> {
 }
 
 /**
- * "Table does not exist" is Prisma's P2021. This typically means the user
- * ran `levelzero db seed` before applying any migrations (a common state
- * for a freshly-scaffolded project with no `prisma/migrations` directory
- * yet). The seed is meant to be friendly — surface a helpful hint and
- * exit 0 so the levelzero dogfood path can move on to the next command.
- * Real "I tried to migrate and the seed still doesn't work" failures
- * surface as P1001 or similar codes and fall through to the hard error
- * branch below.
+ * "Table does not exist" is Prisma's P2021. Post-LEV-215 the template ships
+ * an initial migration (`prisma/migrations/0_init/`), so the schema is
+ * normally present by the time `db seed` runs. This defensive branch only
+ * triggers when someone ran the seed against a brand-new database WITHOUT
+ * applying migrations first (e.g. they deleted the `_prisma_migrations`
+ * bookkeeping table by hand, or pointed `DATABASE_URL` at an unfamiliar
+ * empty DB). The seed is meant to be friendly — surface a helpful hint
+ * and exit 0 so the levelzero dogfood path can move on to the next
+ * command. Real "I tried to migrate and the seed still doesn't work"
+ * failures surface as P1001 or similar codes and fall through to the
+ * hard error branch below.
  */
 function isMissingTableError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
@@ -100,9 +103,7 @@ main()
   .catch((err) => {
     if (isMissingTableError(err)) {
       console.log(
-        'seed: skipping — the database schema is empty. Run `levelzero db migrate` ' +
-          'after adding migration files (see https://www.prisma.io/docs/orm/prisma-migrate ' +
-          'for the prisma migrate dev workflow).',
+        'seed: demo user creation skipped — schema not yet applied (run levelzero db migrate).',
       );
       return;
     }

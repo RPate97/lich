@@ -80,6 +80,37 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
     },
   );
 
+  // LEV-215 forward-regression: db migrate must actually materialize the
+  // template's auth + Todo tables in a fresh scaffold, not exit 0 with no
+  // tables created. Pre-LEV-215 the template shipped no migration files so
+  // `prisma migrate deploy` was a no-op; the "exit 0" check above passed
+  // while the database stayed empty. This assertion catches that class of
+  // silent regression by reading the live schema with `db inspect`.
+  it(
+    'LEV-215 regression: db migrate materializes the LEV-196 auth + Todo tables',
+    { timeout: 60_000 },
+    () => {
+      const res = runCli(
+        handle.projectDir,
+        ['db', 'inspect', '--schema', '--json'],
+        { timeoutMs: 45_000 },
+      );
+      expect(res.exitCode, res.stderr).toBe(0);
+      const out = JSON.parse(res.stdout) as {
+        tables: Record<string, unknown>;
+      };
+      // Every LEV-196 domain model + Better Auth table must be present —
+      // if any of these are missing, the demo's first-run sign-up/sign-in
+      // and todo CRUD will hit `relation does not exist` at runtime.
+      for (const t of ['User', 'Session', 'Account', 'Verification', 'Todo']) {
+        expect(
+          out.tables[t],
+          `expected ${t} table to exist after db migrate (LEV-215 ships initial migration)`,
+        ).toBeDefined();
+      }
+    },
+  );
+
   // -------------------------------------------------------------------------
   // db seed — depends on a successful migrate
   // -------------------------------------------------------------------------
@@ -93,6 +124,35 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
       expect(res.exitCode, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout) as { ok: boolean };
       expect(out.ok).toBe(true);
+    },
+  );
+
+  // LEV-215 forward-regression: confirm the seed actually inserted the
+  // demo user row, not the defensive "schema not yet applied" skip-path
+  // branch. The defensive catch in `prisma/seed.ts` returns success
+  // without writing anything when the schema is missing — pre-LEV-215
+  // that path always fired because migrate was a no-op. Now that the
+  // initial migration ships, this assertion proves the happy path
+  // executes end-to-end and a demo user row really lands in postgres.
+  it(
+    'LEV-215 regression: db seed inserts the demo user row (not the defensive skip path)',
+    { timeout: 30_000 },
+    () => {
+      const res = runCli(
+        handle.projectDir,
+        ['db', 'inspect', '--rows', 'User', '--json'],
+        { timeoutMs: 20_000 },
+      );
+      expect(res.exitCode, res.stderr).toBe(0);
+      const rows = JSON.parse(res.stdout) as Array<{
+        email?: string;
+      }>;
+      expect(Array.isArray(rows)).toBe(true);
+      const demo = rows.find((r) => r.email === 'demo@example.com');
+      expect(
+        demo,
+        'expected demo@example.com user row to exist after db seed — seed may have hit the defensive P2021 skip path',
+      ).toBeDefined();
     },
   );
 
