@@ -23,6 +23,8 @@ export interface StackView {
   /** True when `path` no longer exists on disk. */
   worktreeMissing: boolean;
   services: ServiceView[];
+  /** Allocated ports for the stack, keyed by port name. */
+  ports: Record<string, number>;
   urls: Record<string, string>;
 }
 

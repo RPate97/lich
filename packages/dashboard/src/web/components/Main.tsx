@@ -1,4 +1,4 @@
-import { fmtRelative, summarizeHealth } from '../lib/format';
+import { fmtRelative, summarizeHealth, formatPortRange } from '../lib/format';
 import { Logs } from './Logs';
 import type { StackView } from '../../types';
 
@@ -17,8 +17,7 @@ function MetaItem({ label, value, mono = true }: { label: string; value: string;
 
 function MainHeader({ stack }: { stack: StackView }) {
   const ageMs = Date.now() - new Date(stack.createdAt).getTime();
-  const ports = Object.values((stack as StackView & { ports?: Record<string, number> }).ports ?? {});
-  const portRange = ports.length ? `${Math.min(...ports)}-${Math.max(...ports)}` : '—';
+  const portRange = formatPortRange(stack.ports);
   return (
     <header className="main-hd">
       <div className="main-hd-l">

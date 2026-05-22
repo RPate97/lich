@@ -46,6 +46,7 @@ export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
         status: 'down',
         worktreeMissing: true,
         services: [],
+        ports: entry.ports,
         urls: entry.urls,
       });
       continue;
@@ -76,6 +77,7 @@ export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
       status: deriveStatus(services),
       worktreeMissing: false,
       services,
+      ports: entry.ports,
       urls: entry.urls,
     });
   }

@@ -1,7 +1,7 @@
 // Sidebar.tsx — Stack list, brand, footer.
 // Ported from sample-dashboard/sidebar.jsx.
 
-import { serviceColor, summarizeHealth, fmtRelative } from '../lib/format';
+import { summarizeHealth, fmtRelative, formatPortRange } from '../lib/format';
 import type { StackView } from '../../types';
 
 // ---------------------------------------------------------------------------
@@ -66,20 +66,7 @@ function HealthPill({ stack }: { stack: StackView }) {
 // ---------------------------------------------------------------------------
 
 function StackCard({ stack, selected, isNew, justArrived, onSelect }: StackCardProps) {
-  // Derive portRange from the stack's urls (e.g. "http://localhost:3000" → 3000).
-  const ports = Object.values(stack.urls)
-    .map((u) => {
-      try {
-        return parseInt(new URL(u).port, 10);
-      } catch {
-        return NaN;
-      }
-    })
-    .filter((p) => !isNaN(p));
-  const portRange = ports.length
-    ? `${Math.min(...ports)}-${Math.max(...ports)}`
-    : '—';
-
+  const portRange = formatPortRange(stack.ports);
   const ageMs = Date.now() - new Date(stack.createdAt).getTime();
 
   return (

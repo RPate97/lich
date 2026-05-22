@@ -51,3 +51,15 @@ export function serviceColor(name: string): string {
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return PALETTE[h % PALETTE.length]!;
 }
+
+/**
+ * Compact port-range string for a stack's allocated ports. Returns the single
+ * port when there is one, `min-max` for several, and `—` when there are none.
+ */
+export function formatPortRange(ports: Record<string, number>): string {
+  const nums = Object.values(ports);
+  if (nums.length === 0) return '—';
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  return min === max ? String(min) : `${min}-${max}`;
+}
