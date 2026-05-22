@@ -2,27 +2,81 @@
   "name": "@levelzero/core",
   "version": "0.1.0",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./errors": "./src/errors.ts",
-    "./registry": "./src/registry.ts",
-    "./worktree": "./src/worktree.ts",
-    "./services/context": "./src/services/context.ts",
-    "./services/types": "./src/services/types.ts",
-    "./commands/dev": "./src/commands/dev.ts",
-    "./compose/naming": "./src/compose/naming.ts",
-    "./adapters/registry": "./src/adapters/registry.ts",
-    "./adapters/portless/types": "./src/adapters/portless/types.ts",
-    "./env/registry": "./src/env/registry.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js",
+      "require": "./dist/errors.cjs"
+    },
+    "./registry": {
+      "types": "./dist/registry.d.ts",
+      "import": "./dist/registry.js",
+      "require": "./dist/registry.cjs"
+    },
+    "./worktree": {
+      "types": "./dist/worktree.d.ts",
+      "import": "./dist/worktree.js",
+      "require": "./dist/worktree.cjs"
+    },
+    "./services/context": {
+      "types": "./dist/services/context.d.ts",
+      "import": "./dist/services/context.js",
+      "require": "./dist/services/context.cjs"
+    },
+    "./services/types": {
+      "types": "./dist/services/types.d.ts",
+      "import": "./dist/services/types.js",
+      "require": "./dist/services/types.cjs"
+    },
+    "./commands/dev": {
+      "types": "./dist/commands/dev.d.ts",
+      "import": "./dist/commands/dev.js",
+      "require": "./dist/commands/dev.cjs"
+    },
+    "./compose/naming": {
+      "types": "./dist/compose/naming.d.ts",
+      "import": "./dist/compose/naming.js",
+      "require": "./dist/compose/naming.cjs"
+    },
+    "./adapters/registry": {
+      "types": "./dist/adapters/registry.d.ts",
+      "import": "./dist/adapters/registry.js",
+      "require": "./dist/adapters/registry.cjs"
+    },
+    "./adapters/portless/types": {
+      "types": "./dist/adapters/portless/types.d.ts",
+      "import": "./dist/adapters/portless/types.js",
+      "require": "./dist/adapters/portless/types.cjs"
+    },
+    "./env/registry": {
+      "types": "./dist/env/registry.d.ts",
+      "import": "./dist/env/registry.js",
+      "require": "./dist/env/registry.cjs"
+    }
   },
   "bin": {
-    "levelzero": "./src/bin.ts"
+    "levelzero": "./dist/bin.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit"
