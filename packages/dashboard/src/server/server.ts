@@ -58,7 +58,10 @@ async function handleLogStream(
         try {
           controller.enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
-          /* controller closed — client gone */
+          // Controller closed — client disconnected without a clean cancel().
+          // Stop the tailer so the 300ms setInterval doesn't keep running
+          // indefinitely for a client that is already gone.
+          void tailer?.stop();
         }
       });
       await tailer.start();

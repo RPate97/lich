@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
+import { addCleanup } from '../signal-handlers';
 import type { Command } from './types';
 
 /** Open `url` in the default browser, best-effort — never throws. */
@@ -62,17 +63,21 @@ export function makeDashboardCommand(getRegistryPath: () => string): Command {
       process.stderr.write(`dashboard running at ${handle.url}\n`);
       openBrowser(handle.url);
 
-      // Block until interrupted. The signal handler stops the server so the
-      // port is released and any open SSE tailers are torn down.
-      await new Promise<void>((resolve) => {
-        const shutdown = () => {
-          void handle.stop().then(resolve);
-        };
-        process.once('SIGINT', shutdown);
-        process.once('SIGTERM', shutdown);
-      });
+      // Route shutdown through the shared signal-handler registry so teardown
+      // ordering is consistent with the rest of the CLI (addCleanup fans out
+      // SIGINT/SIGTERM to all registered callbacks, then exits with the
+      // conventional code). The process exits via the registry — the promise
+      // below never resolves under a signal, which is intentional.
+      addCleanup(() => handle.stop());
 
+      // Block in the foreground until the process is told to stop. Under a
+      // signal the registry's exit call terminates the process; under no-signal
+      // scenarios (tests) the promise simply stays pending.
+      await new Promise<void>(() => {/* never resolves — process.exit() via registry */});
+
+      /* istanbul ignore next — unreachable in production; process exits above */
       if (ctx.format === 'json') return { url: handle.url, stopped: true };
+      /* istanbul ignore next */
       return `dashboard stopped\n`;
     },
   };
