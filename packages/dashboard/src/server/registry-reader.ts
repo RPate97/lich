@@ -1,5 +1,22 @@
 import { readFile } from 'node:fs/promises';
-import type { StackEntry } from '@levelzero/core/registry';
+
+/**
+ * One stack's registry entry — mirrors the shape `@levelzero/core` writes to
+ * `~/.levelzero/registry.json`. Defined locally (rather than imported from
+ * `@levelzero/core/registry`) so the dashboard package carries no build-order
+ * dependency on core: the dashboard only ever *reads* this JSON file.
+ */
+export interface StackEntry {
+  path: string;
+  branch: string;
+  ports: Record<string, number>;
+  urls: Record<string, string>;
+  containers: string[];
+  network: string;
+  logDir: string;
+  createdAt: string;
+  composeFile?: string;
+}
 
 export interface RegistryData {
   stacks: Record<string, StackEntry>;
