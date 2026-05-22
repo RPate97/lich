@@ -3,6 +3,9 @@ import { usePolledStacks } from './hooks/usePolledStacks';
 import { SummaryCards } from './components/SummaryCards';
 import { StackTable } from './components/StackTable';
 import { StackDrawer } from './components/StackDrawer';
+import { AppSidebar } from './components/app-sidebar';
+import { SiteHeader } from './components/site-header';
+import { SidebarInset, SidebarProvider } from './components/ui/sidebar';
 import type { StackView } from '../types';
 
 export function App() {
@@ -10,20 +13,16 @@ export function App() {
   const [selected, setSelected] = useState<StackView | undefined>(undefined);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">lich dashboard</h1>
-        <span className="text-muted-foreground text-sm">
-          {error
-            ? `poll error: ${error}`
-            : lastUpdated
-              ? `updated ${Math.round((Date.now() - lastUpdated) / 1000)}s ago`
-              : 'loading…'}
-        </span>
-      </header>
-      <SummaryCards stacks={stacks} />
-      <StackTable stacks={stacks} onSelect={setSelected} />
-      <StackDrawer stack={selected} onClose={() => setSelected(undefined)} />
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <SiteHeader lastUpdated={lastUpdated} error={error} />
+        <main className="space-y-6 p-6">
+          <SummaryCards stacks={stacks} />
+          <StackTable stacks={stacks} onSelect={setSelected} />
+          <StackDrawer stack={selected} onClose={() => setSelected(undefined)} />
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
