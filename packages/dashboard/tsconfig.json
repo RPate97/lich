@@ -3,7 +3,11 @@
   "compilerOptions": {
     "types": ["bun-types", "node"],
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/web/*"]
+    }
   },
   "include": ["src", "tests"]
 }
