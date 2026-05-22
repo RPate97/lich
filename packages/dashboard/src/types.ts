@@ -38,3 +38,12 @@ export interface LogEvent {
   level?: 'info' | 'error';
   stream?: 'stdout' | 'stderr';
 }
+
+/** A log line as the Logs UI holds it — a LogEvent plus a render key + service. */
+export interface LogLine {
+  id: string;
+  service: string;
+  line: string;
+  ts?: string;
+  level: 'info' | 'error' | 'debug' | 'warn';
+}
