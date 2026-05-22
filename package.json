@@ -20,6 +20,9 @@
     "test:e2e": "bun run --cwd packages/core test:e2e",
     "changeset": "changeset",
     "version-packages": "changeset version && bun install --lockfile-only",
-    "release": "bun run build && changeset publish"
+    "release": "bun run build && changeset publish",
+    "sync-workspace-symlinks": "bash scripts/sync-workspace-symlinks.sh",
+    "check-workspace-symlinks": "bash scripts/sync-workspace-symlinks.sh --check",
+    "install-git-hooks": "bash scripts/install-git-hooks.sh"
   }
 }

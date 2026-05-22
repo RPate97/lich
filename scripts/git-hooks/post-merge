@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# post-merge git hook — re-anchor @levelzero/* workspace symlinks after a merge.
+#
+# BACKGROUND (LEV-220): When agents run bun install inside a worktree whose
+# node_modules is a symlink to the main repo's node_modules, the @levelzero/*
+# workspace symlinks get rewritten to point at the agent worktree's packages/.
+# After a merge, those symlinks are stale. This hook fixes them automatically.
+#
+# Install via: bun run install-git-hooks
+# Or manually: cp scripts/git-hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if [[ -f "$REPO_ROOT/scripts/sync-workspace-symlinks.sh" ]]; then
+  if ! (cd "$REPO_ROOT" && bash scripts/sync-workspace-symlinks.sh --check >/dev/null 2>&1); then
+    echo "[post-merge] Stale @levelzero/* symlinks detected, re-anchoring..."
+    (cd "$REPO_ROOT" && bash scripts/sync-workspace-symlinks.sh)
+    echo "[post-merge] Done."
+  fi
+fi
