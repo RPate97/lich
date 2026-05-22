@@ -12,8 +12,12 @@ export function fmtRelative(ms: number): string {
   return `${d}d ${h % 24}h`;
 }
 
-/** Epoch-ms → HH:MM:SS clock. Ported from data.jsx. */
-export function fmtClock(ts: number): string {
+/**
+ * → HH:MM:SS clock. Accepts an epoch-ms number or an ISO-8601 string —
+ * `.jsonl` log records carry `ts` as an ISO string, raw `.log` lines carry
+ * none. `new Date()` parses both forms natively.
+ */
+export function fmtClock(ts: number | string): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;

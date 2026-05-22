@@ -1,7 +1,7 @@
-/* Lich Dashboard — shadcn dark base + Lich brand tokens */
+/* Lich Dashboard — dark base + Lich brand tokens */
 
 :root {
-  /* shadcn dark base (zinc-ish) */
+  /* dark base (zinc-ish) */
   --background: #09090b;
   --foreground: #fafafa;
   --card: #0c0c0e;

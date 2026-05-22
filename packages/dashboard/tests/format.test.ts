@@ -17,6 +17,11 @@ describe('fmtClock', () => {
     const ts = new Date('2026-05-22T09:08:07').getTime();
     expect(fmtClock(ts)).toBe('09:08:07');
   });
+
+  it('formats an ISO-8601 string as HH:MM:SS', () => {
+    // .jsonl log records carry `ts` as an ISO string — must not go through Number().
+    expect(fmtClock('2026-05-22T09:08:07')).toBe('09:08:07');
+  });
 });
 
 describe('summarizeHealth', () => {
