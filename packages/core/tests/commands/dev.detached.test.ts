@@ -23,6 +23,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
+import { CLIError } from '../../src/errors';
+import { runCli } from '../../src/cli';
+import { CommandRegistry } from '../../src/commands/registry';
 import type { ComposeRunner } from '../../src/compose/runner';
 import type { OwnedService, Service } from '../../src/services/types';
 
@@ -207,6 +210,165 @@ describe('levelzero dev (default detached, LEV-194)', () => {
     // under the 2s the child runs for.
     expect(elapsed).toBeLessThan(1500);
   });
+
+  // ---------------------------------------------------------------------------
+  // LEV-219 — owned-service failure surfacing
+  // ---------------------------------------------------------------------------
+  it('a crashing owned service makes dev throw a CLIError (non-zero exit)', async () => {
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: ['crasher'],
+      cwd: projectDir,
+      command: 'sh -c "echo prisma-did-not-initialize 1>&2; exit 1"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [crasher],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 3000,
+    });
+
+    let thrown: unknown;
+    try {
+      await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
+    } catch (err) {
+      thrown = err;
+    }
+    // dev MUST throw so `runCli` reports a non-zero exit code — callers and
+    // the dogfood e2e tier rely on it to detect partial failure.
+    expect(thrown).toBeInstanceOf(CLIError);
+    const err = thrown as CLIError;
+    expect(err.message).toContain('crasher');
+    // The structured payload rides along on `details.owned` for `--json`.
+    const owned = (err.details as any)?.owned;
+    expect(owned.statuses.crasher).toBe('failed');
+    expect(owned.exitCodes.crasher).toBe(1);
+    expect(owned.lastStderr.crasher).toContain('prisma-did-not-initialize');
+  }, 10_000);
+
+  it('a healthy + crashing mix still throws but reports both statuses', async () => {
+    const ok: OwnedService = {
+      name: 'ok',
+      kind: 'owned',
+      portNames: [], // no probe -> skipped
+      cwd: projectDir,
+      command: 'sh -c "sleep 2"',
+      envContributions: () => ({}),
+    };
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "echo crash-detail 1>&2; exit 7"',
+      envContributions: () => ({}),
+    };
+
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [ok, crasher],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 3000,
+    });
+
+    let thrown: unknown;
+    try {
+      await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(CLIError);
+    const owned = ((thrown as CLIError).details as any)?.owned;
+    expect(owned.statuses.ok).toBe('skipped');
+    expect(owned.statuses.crasher).toBe('failed');
+    expect(owned.exitCodes.crasher).toBe(7);
+
+    // The pretty rendering of the failure includes the stderr tail block.
+    const cmdPretty = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [ok, crasher],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 3000,
+    });
+    let prettyThrown: unknown;
+    try {
+      await cmdPretty.run({
+        cwd: projectDir,
+        format: 'pretty',
+        args: [],
+        flags: {},
+      });
+    } catch (err) {
+      prettyThrown = err;
+    }
+    const summary = ((prettyThrown as CLIError).details as any)?.summary as string;
+    expect(summary).toContain('crasher  pid=');
+    expect(summary).toContain('failed');
+    expect(summary).toContain('last stderr:');
+    expect(summary).toContain('crash-detail');
+  }, 12_000);
+
+  it('through the runCli dispatcher, a crashing owned service yields exit code 1', async () => {
+    // End-to-end of the LEV-219 wiring: `runCli` only reports a non-zero
+    // exit code when the command throws — confirm the dev command's
+    // CLIError actually propagates as exitCode 1 with the crash output on
+    // stderr (both pretty and --json paths).
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "echo fatal-startup-error 1>&2; exit 1"',
+      envContributions: () => ({}),
+    };
+    const devCmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [crasher],
+      composeRunnerFactory: makeMockComposeFactory().factory,
+      readinessTimeoutMs: 3000,
+    });
+    const cmdReg = new CommandRegistry();
+    cmdReg.register(devCmd);
+
+    const pretty = await runCli(['dev'], cmdReg, { cwd: projectDir });
+    expect(pretty.exitCode).toBe(1);
+    expect(pretty.stderr).toContain('crasher');
+    expect(pretty.stderr).toContain('fatal-startup-error');
+
+    const json = await runCli(['dev', '--json'], cmdReg, { cwd: projectDir });
+    expect(json.exitCode).toBe(1);
+    const parsed = JSON.parse(json.stderr) as {
+      code: string;
+      details?: { owned?: { statuses: Record<string, string> } };
+    };
+    expect(parsed.details?.owned?.statuses.crasher).toBe('failed');
+  }, 12_000);
+
+  it('a clean detached run does not throw', async () => {
+    const echoer: OwnedService = {
+      name: 'echoer',
+      kind: 'owned',
+      portNames: [],
+      cwd: projectDir,
+      command: 'sh -c "sleep 1"',
+      envContributions: () => ({}),
+    };
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: (): Service[] => [echoer],
+      composeRunnerFactory: factory,
+      readinessTimeoutMs: 100,
+    });
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+    expect(result.detached).toBe(true);
+    expect(result.owned.statuses.echoer).toBe('skipped');
+  }, 10_000);
 
   it('--live flag re-engages the foreground runner (no pid file, JSONL log)', async () => {
     const echoer: OwnedService = {

@@ -30,6 +30,7 @@ import { writeEnvFile } from '../env/writer';
 import type { PortlessAdapter } from '../adapters/portless/types';
 import { basename, join } from 'node:path';
 import { createProgressReporter, type ProgressReporter } from '../ui/progress';
+import { CLIError } from '../errors';
 
 export interface DevOptions {
   /** Service provider; defaults to getBuiltinServices. Tests can inject custom lists. */
@@ -714,16 +715,52 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           ),
       );
 
+      // LEV-219 — surface owned-service crash output. The JSON shape mirrors
+      // the pretty rendering: each owned service carries a `status`
+      // (`'failed' | 'ready' | 'timeout' | 'skipped'`) and `lastStderr`
+      // (the per-service log tail the detached runner captured best-effort).
+      const ownedFailed = Object.keys(detached.statuses).filter(
+        (name) => detached.statuses[name] === 'failed',
+      );
       const fullResult = {
         ...baseResult,
         detached: true as const,
         owned: {
           pids: detached.pids,
+          // `statuses` is the LEV-219 canonical field; `readiness` is kept
+          // as a back-compat alias holding the same values.
+          statuses: detached.statuses,
           readiness: detached.readiness,
+          exitCodes: detached.exitCodes,
+          exitedAfterMs: detached.exitedAfterMs,
+          lastStderr: detached.lastLogTail,
           logPaths: detached.logPaths,
           pidPaths: detached.pidPaths,
         },
       };
+
+      // LEV-219 — `dev` must exit non-zero when an owned service crashed so
+      // callers (and the dogfood e2e tier) can detect partial failure.
+      // `runCli` only returns a non-zero exit code when the command throws,
+      // so we render the full summary (including the per-service `failed`
+      // block + stderr tail — see `renderDevPretty`) and throw it as a
+      // `CLIError`. The structured `owned` payload rides along in `details`
+      // so `--json` consumers still get the machine-readable shape.
+      if (ownedFailed.length > 0) {
+        const names = ownedFailed.join(', ');
+        throw new CLIError(
+          'INTERNAL',
+          `owned service(s) failed to start: ${names}`,
+          {
+            hint: `inspect full logs with: levelzero logs ${ownedFailed[0]!}`,
+            details:
+              ctx.format === 'json'
+                ? { failed: ownedFailed, owned: fullResult.owned }
+                : { summary: renderDevPretty(baseResult, null, detached) },
+          },
+        );
+      }
+
       if (ctx.format === 'json') return fullResult;
       return renderDevPretty(baseResult, null, detached);
     },
@@ -771,8 +808,28 @@ function renderDevPretty(
   if (ownedDetached) {
     lines.push('owned (detached):');
     for (const [name, pid] of Object.entries(ownedDetached.pids)) {
-      const status = ownedDetached.readiness[name] ?? 'skipped';
-      lines.push(`  ${name}  pid=${pid}  ${status}`);
+      const status = ownedDetached.statuses[name] ?? 'skipped';
+      if (status === 'failed') {
+        // LEV-219 — a crashed owned service: annotate the exit code +
+        // wall-clock and dump the captured stderr/stdout tail so the user
+        // sees WHY without having to run `levelzero logs`.
+        const code = ownedDetached.exitCodes[name];
+        const afterMs = ownedDetached.exitedAfterMs[name];
+        const detail =
+          code !== undefined
+            ? afterMs !== undefined
+              ? ` (exit code ${code} after ${(afterMs / 1000).toFixed(1)}s)`
+              : ` (exit code ${code})`
+            : '';
+        lines.push(`  ${name}  pid=${pid}  failed${detail}`);
+        const tail = ownedDetached.lastLogTail[name] ?? '';
+        if (tail.length > 0) {
+          lines.push('    last stderr:');
+          for (const tl of tail.split('\n')) lines.push(`      ${tl}`);
+        }
+      } else {
+        lines.push(`  ${name}  pid=${pid}  ${status}`);
+      }
     }
     lines.push('  logs:  levelzero logs <service> --follow');
     lines.push('  stop:  levelzero stop');

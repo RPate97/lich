@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, realpathSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runOwnedServices } from '../../src/owned/runner';
+import {
+  runOwnedServices,
+  runOwnedServicesDetached,
+} from '../../src/owned/runner';
 import type { OwnedService, StackContext } from '../../src/services/types';
 
 let tmp: string;
@@ -107,5 +110,133 @@ describe('runOwnedServices', () => {
     const { exitCodes } = await handle.done;
     expect(Date.now() - start).toBeLessThan(5_000);
     expect(exitCodes['sleeper']).not.toBe(0);
+  }, 10_000);
+});
+
+describe('runOwnedServicesDetached — failure surfacing (LEV-219)', () => {
+  let pidDir: string;
+
+  beforeEach(() => {
+    pidDir = join(tmp, 'pids');
+  });
+
+  it('reports status=failed and a non-zero exit code when a service crashes on startup', async () => {
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: ['crasher'],
+      cwd: tmp,
+      command: 'sh -c "echo boom-on-stderr 1>&2; exit 1"',
+      envContributions: () => ({}),
+    };
+    const handle = await runOwnedServicesDetached(
+      [crasher],
+      ctx,
+      { crasher: 54900 },
+      {},
+      { logDir, pidDir, readinessTimeoutMs: 3000 },
+    );
+
+    expect(handle.statuses['crasher']).toBe('failed');
+    expect(handle.exitCodes['crasher']).toBe(1);
+    // Back-compat alias still reflects the same status.
+    expect(handle.readiness['crasher']).toBe('failed');
+  }, 10_000);
+
+  it('captures the last lines of the crashed service log as lastLogTail', async () => {
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: [],
+      cwd: tmp,
+      command: 'sh -c "echo first-line; echo crash-reason-here 1>&2; exit 2"',
+      envContributions: () => ({}),
+    };
+    const handle = await runOwnedServicesDetached(
+      [crasher],
+      ctx,
+      {},
+      {},
+      { logDir, pidDir, readinessTimeoutMs: 3000 },
+    );
+
+    expect(handle.statuses['crasher']).toBe('failed');
+    expect(handle.exitCodes['crasher']).toBe(2);
+    expect(handle.lastLogTail['crasher']).toContain('crash-reason-here');
+  }, 10_000);
+
+  it('distinguishes timeout (still running, no probe) from failed (exited non-zero)', async () => {
+    // Still-running service that never binds its port -> timeout.
+    const stuck: OwnedService = {
+      name: 'stuck',
+      kind: 'owned',
+      portNames: ['stuck'],
+      cwd: tmp,
+      command: 'sh -c "sleep 30"',
+      envContributions: () => ({}),
+    };
+    // Crashes immediately -> failed.
+    const crasher: OwnedService = {
+      name: 'crasher',
+      kind: 'owned',
+      portNames: ['crasher'],
+      cwd: tmp,
+      command: 'sh -c "exit 3"',
+      envContributions: () => ({}),
+    };
+    const handle = await runOwnedServicesDetached(
+      [stuck, crasher],
+      ctx,
+      { stuck: 54910, crasher: 54911 },
+      {},
+      { logDir, pidDir, readinessTimeoutMs: 300 },
+    );
+
+    expect(handle.statuses['stuck']).toBe('timeout');
+    expect(handle.statuses['crasher']).toBe('failed');
+    expect(handle.exitCodes['crasher']).toBe(3);
+    expect(handle.exitCodes['stuck']).toBeUndefined();
+
+    // Clean up the still-running sleeper.
+    const pid = handle.pids['stuck'];
+    if (typeof pid === 'number' && Number.isFinite(pid)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }, 10_000);
+
+  it('does not block on the readiness deadline when a service is still timing out', async () => {
+    const stuck: OwnedService = {
+      name: 'stuck',
+      kind: 'owned',
+      portNames: ['stuck'],
+      cwd: tmp,
+      command: 'sh -c "sleep 30"',
+      envContributions: () => ({}),
+    };
+    const start = Date.now();
+    const handle = await runOwnedServicesDetached(
+      [stuck],
+      ctx,
+      { stuck: 54920 },
+      {},
+      { logDir, pidDir, readinessTimeoutMs: 200 },
+    );
+    const elapsed = Date.now() - start;
+    // Spawn + a single 200ms probe budget — well under a second.
+    expect(elapsed).toBeLessThan(1500);
+    expect(handle.statuses['stuck']).toBe('timeout');
+
+    const pid = handle.pids['stuck'];
+    if (typeof pid === 'number' && Number.isFinite(pid)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
   }, 10_000);
 });
