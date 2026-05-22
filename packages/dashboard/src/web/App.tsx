@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePolledStacks } from './hooks/usePolledStacks';
 import { SummaryCards } from './components/SummaryCards';
 import { StackTable } from './components/StackTable';
+import { StackDrawer } from './components/StackDrawer';
 import type { StackView } from '../types';
 
 export function App() {
@@ -22,8 +23,7 @@ export function App() {
       </header>
       <SummaryCards stacks={stacks} />
       <StackTable stacks={stacks} onSelect={setSelected} />
-      {/* StackDrawer is wired in Task 10 */}
-      {selected ? <pre className="text-xs">{selected.key}</pre> : null}
+      <StackDrawer stack={selected} onClose={() => setSelected(undefined)} />
     </div>
   );
 }
