@@ -85,7 +85,9 @@
         "lich": "./dist/lich",
       },
       "dependencies": {
+        "ajv": "^8.20.0",
         "mri": "^1.2.0",
+        "yaml": "^2.9.0",
       },
       "devDependencies": {
         "@types/bun": "^1.1.0",

@@ -3,6 +3,8 @@
 # This file is what lich must handle by end of v1.
 # Until then, lich up against this config is the failing test case.
 
+version: "1"
+
 owned:
   supabase:
     cmd: supabase start
