@@ -348,6 +348,91 @@ Cycles in `extends` chains are caught by `lich validate`.
 
 User-defined groups do NOT silently include the `stack` group. If you want a group that combines stack env with extra creds, use `extends: stack` explicitly. This default-isolation prevents accidents like "I ran a prod command and my local DATABASE_URL leaked in."
 
+##### Composition patterns
+
+There are four patterns worth knowing concretely. Each maps to a common real-world need.
+
+**Pattern A — default (stack only).** Most commands use `env_group: stack` (the default; can be omitted). Stack = everything in the top-level `env`, `env_files`, `env_from`, plus interpolated runtime values like allocated ports. If you put a secrets loader in top-level `env_from`, it's part of stack:
+
+```yaml
+env_from:
+  - cmd: infisical export --env=dev --format=dotenv
+
+commands:
+  test:e2e:
+    cmd: pnpm test:e2e
+    # uses 'stack', which includes the dev infisical creds
+```
+
+**Pattern B — standalone (isolated from stack).** For commands that should NOT pick up local stack env — typically prod-affecting commands — declare a group that does NOT extend stack:
+
+```yaml
+env_groups:
+  infisical-prod:
+    env_from:
+      - cmd: infisical export --env=prod --format=dotenv
+    process_env: false   # also block the user's shell env from leaking in
+
+commands:
+  query:prod:
+    cmd: ./scripts/safe-prod-query.sh
+    env_group: infisical-prod
+```
+
+The `query:prod` command literally cannot see `DATABASE_URL` from the local stack, even when the local stack is running. The combination of "user-defined groups don't extend stack by default" and `process_env: false` gives hermetic isolation.
+
+**Pattern C — stack plus extras.** When you need everything in stack PLUS additional creds (e.g., a third-party API key for an integration test), explicitly `extends: stack`:
+
+```yaml
+env_groups:
+  stack-plus-staging:
+    extends: stack
+    env_from:
+      - cmd: infisical export --env=staging --tag=third-party --format=dotenv
+
+commands:
+  test:integration:
+    cmd: pnpm test:integration
+    env_group: stack-plus-staging
+```
+
+The integration test gets the worktree's local `DATABASE_URL` (from stack) AND a staging API key (from the extends layer). The `extends: stack` is explicit; you're consciously opting into stack env.
+
+**Pattern D — shared base, multiple variants.** When several groups share common config but layer different creds on top, factor the shared bits into a base group:
+
+```yaml
+env_groups:
+  shared-aws-config:
+    env:
+      AWS_REGION: us-east-1
+      AWS_OUTPUT: json
+
+  aws-staging:
+    extends: shared-aws-config
+    env_from:
+      - cmd: aws-vault exec staging --no-session -- env | grep AWS_
+
+  aws-prod:
+    extends: shared-aws-config
+    env_from:
+      - cmd: aws-vault exec prod --no-session -- env | grep AWS_
+    process_env: false   # strict for prod
+```
+
+**Trade-off worth knowing:** if you want the same `env_from` source to participate in BOTH stack and a standalone group (e.g., infisical-dev is in the stack AND you want a clean `infisical-dev-only` group with no stack), you currently have to duplicate the line:
+
+```yaml
+env_from:
+  - cmd: infisical export --env=dev --format=dotenv
+
+env_groups:
+  infisical-dev-clean:
+    env_from:
+      - cmd: infisical export --env=dev --format=dotenv  # duplicated
+```
+
+This is a small redundancy. Most users want a given secret source either in stack OR standalone, not both — but if both are needed, two lines is the price for v1. A factoring mechanism (named env_from items, or shareable "fragments") could be added in v1.x if duplication becomes painful in practice.
+
 #### `commands`
 
 User-defined CLI extensions. Each command becomes invokable as `lich <command-name>`. Each command has:
