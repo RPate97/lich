@@ -21,6 +21,7 @@ import { makeStacksPruneCommand } from './commands/stacks/prune';
 import { makeDevCommand } from './commands/dev';
 import { makeStopCommand } from './commands/stop';
 import { makeResetCommand } from './commands/reset';
+import { makeRestartCommand } from './commands/restart';
 import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
 import { makeLogsCommand } from './commands/logs';
 import { makeDashboardCommand } from './commands/dashboard';
@@ -85,6 +86,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
   reg.register(makeDevCommand(getReg));
   reg.register(makeStopCommand(getReg));
   reg.register(makeResetCommand(getReg));
+  reg.register(makeRestartCommand(getReg));
   reg.register(makeStacksCurrentCommand(getReg));
   reg.register(makeStacksListCommand(getReg));
   reg.register(makeStacksPruneCommand(getReg));
@@ -246,6 +248,7 @@ export async function buildDispatchRegistry(
   cli.register(makeDevCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
   cli.register(makeStopCommand(getReg, sharedOpts));
   cli.register(makeResetCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
+  cli.register(makeRestartCommand(getReg, sharedOpts));
 
   // Merge plugin-contributed adapters into the built-in registry so
   // `adapter list` reflects the full registered surface. Built-ins are
