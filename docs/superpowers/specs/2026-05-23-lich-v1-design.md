@@ -151,6 +151,9 @@ owned:
     depends_on: [postgres]
     ready_when:
       http_get: /health
+      timeout: 30s
+    fail_when:
+      log_match: "EADDRINUSE|Cannot find module|UnhandledPromiseRejection"
     lifecycle:
       after_ready:
         - pnpm warmup-cache
@@ -293,12 +296,17 @@ Lich starts and supervises these directly. Each owned service:
 - `port` (single-port shape): `{ env: ENV_NAME }` — lich allocates a port and sets the env var on the process
 - `ports` (multi-port shape): map of name → `{ env: ENV_NAME }` — for tools like Supabase that manage multiple endpoints under one CLI command
 - `depends_on`: list of other service names (compose or owned); the service waits until all dependencies are `ready` (not just `healthy`)
-- `ready_when`: one of:
+- `ready_when`: condition for when the service is considered ready. Fields:
   - `http_get: <path>` — poll path on the allocated port; ready on 2xx
   - `tcp: <host:port>` — wait for TCP listener
   - `log_match: <regex>` — wait for stdout/stderr to contain a match
   - `cmd: <shell>` — execute periodically; ready when exit 0
-  - Plus optional `capture:` map of `<name>: <regex>` — when ready, run regex on accumulated log buffer and store named captures (or full match if no named groups) for reference via `${owned.<name>.captured.<key>}`
+  - `timeout: <duration>` — max time to wait; default `60s`. Format: `30s`, `2m`, etc. If exceeded, service is marked **failed** and lich aborts the stack startup, reporting the last 20 lines of log.
+  - `capture: { <name>: <regex>, ... }` — optional. When ready, run named regexes against the accumulated log buffer and store matches for reference via `${owned.<name>.captured.<key>}`.
+- `fail_when`: condition for when the service should be marked as **failed** at any point during its lifetime. Field:
+  - `log_match: <regex>` — fail the service immediately if any stdout/stderr line matches. Use to catch failures that don't cause the process to exit (loud error logs, retry loops, framework-specific crash signatures). The user provides framework-specific patterns; lich does not bundle these.
+  - More condition types may be added in v1.x (`cmd`, `http_get` for liveness, etc.). v1 ships just `log_match` to cover the common no-exit failure case.
+- **Automatic process-exit detection** (always on, no config). When an owned process exits unexpectedly (zero or non-zero), lich marks the service failed and surfaces it. If exit happens during `lich up`, the up aborts and the CLI reports exit code + last 20 log lines. If exit happens after ready, the dashboard shows the failure and `lich logs` highlights it.
 - `oneshot: true` — the cmd is expected to exit on its own once setup is complete; lich does not track the process by PID. Used for tools like Supabase whose start command spawns background processes and exits.
 - `stop_cmd`: custom teardown command (default: SIGINT the tracked PID). Required when `oneshot: true`.
 - `lifecycle:` block (same shape as `services.lifecycle`)
@@ -543,6 +551,7 @@ CLI output is treated as a first-class feature, not polish.
 - **Colored status indicators** consistently: green ✓ for success, yellow ⏳ for in-progress, red ✗ for failed, gray ↓ for skipped.
 - **Final summary** with the things the user wants next: stack name, friendly URLs, log command, dashboard URL.
 - **Errors with actionable hints,** not stack traces. Example: "Port allocation failed: tried 54000-54100, all in use. Run `lich stacks` to see what's running, or `lich nuke` to kill everything."
+- **Failure surfacing:** when a service fails during `lich up` (process exit, `ready_when` timeout, or `fail_when` match), `lich up` aborts immediately, prints which service failed, the failure reason (`exit code 1` / `did not become ready within 30s` / `log matched "EADDRINUSE"`), and the last 20 lines of that service's log inline. Exits non-zero. The user sees what's broken without having to grep through log files.
 - **`--quiet` flag** for CI / scripting that emits only the structured final summary.
 - **`--json` flag** for programmatic consumption (used by the meta-harness e2e tests).
 
@@ -571,6 +580,7 @@ Restart honors `depends_on` ordering. Affected services and downstream services 
 - Enforces at most one `default: true` profile
 - Warns (does not fail) on services or owned processes defined but not referenced by any profile — they will never start
 - Verifies referenced files exist (`env_files` paths, `cwd` directories for owned services and commands)
+- Verifies `ready_when.log_match`, `fail_when.log_match`, and `ready_when.capture.*` regexes compile correctly (catch typos before runtime)
 - Reports issues with `file:line:col` context for editor jumping
 - Exits 0 if valid, non-zero on any error
 - `--json` for structured output (used by the `lich:instrument` skill's edit/validate/fix loop)
@@ -624,9 +634,9 @@ Auto-shutdown logic: every N seconds (default 10), the daemon checks `~/.lich/st
 
 Web UI served by the daemon. Routes:
 
-- `/` — list of every stack on the machine. Each entry shows: worktree name, service count, status, uptime, friendly URLs.
-- `/stacks/<id>` — stack detail. Service list with per-service status (starting / healthy / initializing / ready / stopping / failed). Live log tail. Captured values (e.g., tunnel URLs). Stop / restart buttons.
-- `/stacks/<id>/services/<name>` — per-service detail. Logs for just that service, env vars (with secrets masked), recent restarts.
+- `/` — list of every stack on the machine. Each entry shows: worktree name, service count, status (with failed-service count if any), uptime, friendly URLs.
+- `/stacks/<id>` — stack detail. Service list with per-service status (starting / healthy / initializing / ready / stopping / failed). Live log tail. Captured values (e.g., tunnel URLs). Stop / restart buttons. Failed services render in red with the failure reason inline; the stack header shows "N/M services failed" if any have failed.
+- `/stacks/<id>/services/<name>` — per-service detail. Logs for just that service, env vars (with secrets masked), recent restarts. For failed services, the failure reason and the log window around the failure event are highlighted.
 
 Open-in-browser on first daemon start. `--no-browser` flag on `lich up` opts out. Subsequent starts don't reopen the browser.
 
@@ -862,6 +872,8 @@ Explicitly out of scope:
 - **Real-time metrics / CPU+RAM charts on the dashboard** — v2.
 - **Native Windows** — WSL2 only.
 - **Agent attribution / "who started which stack"** — not needed for v1; can be added if user demand surfaces.
+- **Restart policies for failed services** — owned services that exit stay exited until the next `lich up` or `lich restart`. No automatic `restart: always | on-failure` mechanism in v1. Most dev servers handle their own crash recovery (`next dev` rebuilds on compile errors); lich auto-restarting would mask real bugs and cause surprise CPU/RAM spikes. Add in v1.x if real demand surfaces.
+- **Periodic liveness probes** — after a service is ready, lich does not re-poll its `ready_when` to detect runtime degradation. The Kubernetes-style "service was healthy 5 minutes ago, is it still?" pattern is overkill for dev environments. v1.x.
 
 ## 11. Open decisions
 
@@ -886,6 +898,7 @@ These need concrete choices during implementation, but don't change the spec's s
 - `lich exec pnpm prisma studio` runs against the running stack with `DATABASE_URL` correctly set from the worktree's allocated Postgres port
 - `examples/node-postgres` defines at least two profiles (e.g., `dev` and `dev:with-extras`); `lich up dev` and `lich up dev:with-extras` produce the expected resolved service sets, and the dashboard shows the active profile
 - A profile in `examples/node-postgres` demonstrates profile-scoped env (overrides `DATABASE_URL` to point at a fake hosted backend) and profile-scoped lifecycle (defines `after_up` with migrations that run for one profile and not another); end-to-end test verifies both behaviors
+- Failure detection e2e tests: deliberately broken `lich.yaml` variants (port already in use, `cmd` that exits 1 immediately, `ready_when` that never matches, `fail_when` that triggers from log output) all produce clean CLI errors with the last 20 lines of log inline, exit non-zero, and surface correctly in the dashboard
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
 - Friendly URLs work without any setup beyond installing lich
