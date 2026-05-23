@@ -211,6 +211,10 @@ profiles:
     default: true
     services: [postgres]
     owned: [api, web]
+    lifecycle:
+      after_up:
+        - cd apps/api && pnpm prisma migrate dev
+        - cd apps/api && pnpm seed
 
   dev:with-tunnel:
     extends: dev
@@ -220,10 +224,18 @@ profiles:
     extends: dev
     services: [localstack]
 
+  dev:test:dev:
+    # No local postgres, no migrations, no seed. Web points at a hosted backend.
+    owned: [api, web]
+    env:
+      DATABASE_URL: "postgresql://postgres:hosted-pass@db.hosted.example.com:5432/app"
+    env_from:
+      - cmd: infisical export --env=test-dev --format=dotenv
+
 lifecycle:
-  after_up:
-    - cd apps/api && pnpm prisma migrate dev
-    - cd apps/api && pnpm seed
+  # Top-level hooks run for ALL profiles. Use for things every profile needs.
+  before_up:
+    - echo "Starting ${LICH_PROFILE} in worktree ${LICH_WORKTREE}"
 
 commands:
   test:e2e:
@@ -302,8 +314,10 @@ Each profile has:
 
 - `services`: list of compose service names included in this profile
 - `owned`: list of owned service names included in this profile
-- `extends`: optional profile name (or list of names) to inherit from; the child's services/owned are appended to the parent's
+- `extends`: optional profile name (or list of names) to inherit from; the child's services/owned/env/lifecycle are appended/layered on top of the parent's
 - `default`: optional boolean; exactly zero or one profile may set this to `true`. The default profile is what `lich up` (no argument) activates.
+- `env`, `env_files`, `env_from`: profile-scoped env overrides. Same shape as the top-level equivalents. Layered on top of the top-level env per-key (profile values win for keys that appear in both).
+- `lifecycle`: profile-scoped lifecycle hooks (`before_up`, `after_up`, `before_down`). Same shape as top-level `lifecycle`. Top-level hooks run first; profile hooks add on (LIFO for `before_down`: profile first, then top-level).
 
 **Resolution.** When `lich up <profile>` runs, lich resolves the profile by recursively walking `extends` and computing the union of all listed services and owned processes. The resolved set is what starts. Anything not in the resolved set does not start.
 
@@ -327,7 +341,14 @@ Environment variables available to owned services and (filtered) injected into c
   - `${worktree.name}` — the worktree name (derived from directory name)
   - `${worktree.path}` — absolute path to worktree
   - `${worktree.id}` — short stable identifier for the worktree
-- **Precedence** (later wins): `env_files` → `env_from` → `env` literals → host `process.env` overlay
+- **Precedence** (later wins, per-key): host `process.env` → top-level `env_from` → top-level `env_files` → top-level `env` literals → profile `env_from` → profile `env_files` → profile `env` literals → per-service `env_from` → per-service `env_files` → per-service `env` literals
+- **Interpolation is lazy and per-key.** A value's `${...}` references are resolved only if that value ends up winning in the final merged env. So a top-level value like `SUPABASE_URL: "http://localhost:${services.supabase.host_port}"` is fine even if some profile doesn't include the `supabase` service — as long as that profile overrides `SUPABASE_URL` with its own value, the top-level interpolation never evaluates. `lich validate` catches the failure mode (per-profile simulation flags interpolations that reference services not in the profile's resolved set).
+- **Auto-exported lich env vars** that are always available to services, commands, and lifecycle hooks:
+  - `LICH_PROFILE` — the name of the active profile
+  - `LICH_WORKTREE` — the name of the current worktree
+  - `LICH_STACK_ID` — the unique stack identifier
+  
+  Use these in lifecycle scripts to gate behavior (`[ "$LICH_PROFILE" = "dev:test:dev" ] && skip-some-step`) when first-class lifecycle splits don't fit.
 
 #### `env_files`
 
@@ -360,6 +381,14 @@ lifecycle:
 ```
 
 Commands run with `cwd = project_root` (unless explicitly chained via `cd path && cmd`). A non-zero exit aborts the lifecycle phase and reports the failure.
+
+**Composition with profile-scoped lifecycle.** When a profile defines its own `lifecycle` block, hooks compose:
+
+- `before_up`: top-level hooks run first, then the active profile's hooks
+- `after_up`: top-level hooks run first, then the active profile's hooks
+- `before_down`: active profile's hooks run first, then top-level hooks (reverse order — undo specialization before tearing down base)
+
+So truly always-on steps go at top-level; profile-specific steps go in each profile. The user's worked example (migrations + seed only for the `dev` profile, NOT for `dev:test:dev`) is expressed by putting those commands in the `dev` profile's `lifecycle.after_up` instead of the top-level.
 
 #### `env_groups`
 
@@ -856,6 +885,7 @@ These need concrete choices during implementation, but don't change the spec's s
 - `examples/node-postgres` defines at least one user `commands:` entry (e.g., `test:e2e`) and one env group; `lich help` lists it and `lich <command>` invokes it correctly with the right env
 - `lich exec pnpm prisma studio` runs against the running stack with `DATABASE_URL` correctly set from the worktree's allocated Postgres port
 - `examples/node-postgres` defines at least two profiles (e.g., `dev` and `dev:with-extras`); `lich up dev` and `lich up dev:with-extras` produce the expected resolved service sets, and the dashboard shows the active profile
+- A profile in `examples/node-postgres` demonstrates profile-scoped env (overrides `DATABASE_URL` to point at a fake hosted backend) and profile-scoped lifecycle (defines `after_up` with migrations that run for one profile and not another); end-to-end test verifies both behaviors
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
 - Friendly URLs work without any setup beyond installing lich
