@@ -1,36 +1,43 @@
 # lich
 
-The dev environment built for parallel, agent-driven work.
-One command up. One command down. One command for logs. Isolated per
-worktree so five agents on five features don't fight over port 3000.
+An open source and highly extensible development stack driver built for parallelized, agent-driven work.
 
-## Why lich exists
+> `lich up`: Bring your stack up
+> `lich down`: Tear your stack down
+> `lich logs`: Search logs from your stack
+> `lich curl`: Send requests to your stack
+> `lich test`: Run integration and e2e tests against your stack
+> `lich nuke`: Escape hatch to tear down everything
 
-Agents are increasingly the ones writing code, often working in parallel
-across multiple branches. Each agent (or human) needs its own running
-stack to test changes. The old assumption — one developer, one terminal,
-one stack on `localhost:3000` — doesn't survive that workflow.
+## Worktree Scoped
 
-Without something like lich, the failure modes are familiar: two stacks
-fighting for port 3000, `.env` files that drift across worktrees, dead
-containers from a stack you forgot to tear down, bash scripts that work
-on your machine until the day they don't. Multiply that across N parallel
-worktrees and the entropy compounds. And every minute an agent burns
-hunting for log files, parsing `docker compose` output, or fumbling
-through debug commands is wall-clock waste — overhead measured in API
-spend per agent, multiplied by every agent you're running.
+The entire lich CLI is worktree scoped meaning:
 
-Lich takes a different posture. Every worktree gets its own isolated
-stack — own ports, own state, own logs. `lich up` brings it up.
-`lich down` tears it down. `lich logs api` shows the api logs *for this
-worktree*. Switch worktrees and the CLI's context switches with you.
-The stack itself (postgres, redis, the api framework, the ORM) is
-plugin-based and composable.
+- Lich automatically detects where it's run from and creates fresh stacks for each worktree. 
+- Lich dynamically handles port allocation and environment variable mapping to ensure each stack remains properly isolated. 
+- Lich routes all commands intelligently to the correct stack based on the worktree.
 
-Scales to as many parallel stacks as your machine will tolerate. We've
-run ~15 simultaneous worktrees comfortably; around 20 the fans start
-giving you stink-eye; somewhere past that your laptop will just say no.
-That's a hardware problem, not a lich problem.
+Lich is an efficent and reliable driver for your development stack that enables highly parallelized workflows using agents.
+
+## Lich is designed for agents (and humans)
+
+Traditional local development tooling is designed for an individual developer running a single stack on a single machine. Lich is designed for many agents working on behalf of a single human. Lich empowers agents to:
+- Start and stop their own stack, scoped to the worktree they are operating in, without interfering with each other or you.
+- Run tests and validate their work against that stack.
+- Request your review of their work with a real running stack.
+- Easily discover all tools available to them within your project.
+
+## Lich works everywhere your project does
+
+Lich is built on top of the tools you already use which means it can also be run everywhere you need it to run. Lich can run:
+- Your stack on your local machine (of course)
+- Your stack in a Cloud Coding agent environment (Claude Cloude, Cursor cloud, Codex Cloud)
+- Dedicated cloud containers (not recommended for production)
+
+## What lich is not
+- Lich is not a framework, lich drives your framework
+- Lich is not a container, lich controls the containers
+- Lich is not a bundler, linter, testing framework, or other type of development tool. Lich wraps your existing tools and provides a powerful interface for using them to your agents.
 
 ## Quick start
 
