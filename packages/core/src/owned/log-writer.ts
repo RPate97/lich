@@ -27,6 +27,7 @@ export class ServiceLogWriter {
     ['stdout', ''],
     ['stderr', ''],
   ]);
+  private closed = false;
 
   constructor(private readonly opts: ServiceLogWriterOptions) {
     this.path = join(opts.logDir, `${opts.service}.jsonl`);
@@ -40,6 +41,9 @@ export class ServiceLogWriter {
 
   async appendLine(stream: LogStream, level: LogLevel, message: string): Promise<void> {
     await this.readyPromise;
+    // Silently drop writes after close() — this can happen when the detached
+    // runner tears down streams before all buffered data events have fired.
+    if (this.closed) return;
     const line: LogLine = {
       ts: new Date().toISOString(),
       service: this.opts.service,
@@ -83,10 +87,23 @@ export class ServiceLogWriter {
 
   async close(): Promise<void> {
     await this.readyPromise;
+    if (this.closed) return;
+    this.closed = true;
     for (const [stream, buf] of this.buffers.entries()) {
       if (buf.length > 0) {
         const level: LogLevel = stream === 'stderr' ? 'error' : 'info';
-        await this.appendLine(stream, level, buf);
+        // Write partial buffer synchronously before the stream ends. We use the
+        // same internal write path but bypass the `closed` guard we just set.
+        const line: LogLine = {
+          ts: new Date().toISOString(),
+          service: this.opts.service,
+          stream: stream as LogStream,
+          level,
+          message: buf,
+        };
+        await new Promise<void>((resolve, reject) => {
+          this.file!.write(JSON.stringify(line) + '\n', (err) => (err ? reject(err) : resolve()));
+        });
         this.buffers.set(stream, '');
       }
     }

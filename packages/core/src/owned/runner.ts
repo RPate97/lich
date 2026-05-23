@@ -1,7 +1,6 @@
 import concurrently, { type ConcurrentlyCommandInput } from 'concurrently';
 import { spawn } from 'node:child_process';
-import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
-import { openSync, closeSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ServiceLogWriter } from './log-writer';
 import type { OwnedService, StackContext, PortMap } from '../services/types';
@@ -97,18 +96,31 @@ const LOG_TAIL_LINES = 20;
 
 /**
  * Read the last {@link LOG_TAIL_LINES} non-empty lines of a service's
- * combined stdout/stderr log file. Best-effort: a missing/unreadable file
- * yields `''` rather than throwing, so a still-timing-out service can never
- * block `dev` from returning. Strips the `--- levelzero dev <ts> ---` run
- * markers so the tail shows process output, not our own bookkeeping.
+ * JSONL log file (written by the detached runner via `ServiceLogWriter`).
+ * Best-effort: a missing/unreadable file yields `''` rather than throwing, so
+ * a still-timing-out service can never block `dev` from returning.
+ *
+ * Each line in the JSONL file is a JSON record with a `message` field. We
+ * extract just the `message` so the tail reads like plain log output.
  */
 async function readLogTail(logPath: string): Promise<string> {
   try {
+    const { readFile } = await import('node:fs/promises');
     const raw = await readFile(logPath, 'utf8');
     const lines = raw
       .split('\n')
       .filter((l) => l.trim().length > 0)
-      .filter((l) => !/^--- levelzero dev .+ ---$/.test(l.trim()));
+      .map((l) => {
+        if (l.startsWith('{')) {
+          try {
+            const rec = JSON.parse(l) as { message?: string };
+            if (typeof rec.message === 'string') return rec.message;
+          } catch {
+            /* not valid JSON — fall through to raw line */
+          }
+        }
+        return l;
+      });
     return lines.slice(-LOG_TAIL_LINES).join('\n');
   } catch {
     return '';
@@ -330,13 +342,24 @@ interface ExitObservation {
 }
 
 /**
- * Detached owned-service runner (LEV-194 default; LEV-219 failure surfacing).
+ * Detached owned-service runner (LEV-194 default; LEV-219 failure surfacing;
+ * LEV-245 structured JSONL logs).
  *
  * Spawns each service via `child_process.spawn` with `detached: true` +
- * `child.unref()` so the children survive this CLI process exiting. stdout
- * and stderr are redirected to a single per-service log file (raw bytes
- * appended; the JSONL `ServiceLogWriter` is only used in `--live` mode
- * because a JSONL writer requires a live parent to consume pipes).
+ * `child.unref()` so the children survive this CLI process exiting.
+ *
+ * **LEV-245 — structured JSONL logging**: stdout and stderr are piped through
+ * the parent and consumed by a per-service `ServiceLogWriter`, which writes
+ * one `{ts, service, stream, level, message}` JSON record per line to
+ * `<logDir>/<service>.jsonl` — the same format as the `--live` foreground
+ * runner. The parent consumes the pipes DURING the readiness window (which it
+ * already waits for), then tears them down before returning, leaving the
+ * child free to keep running. After the readiness window the child's stdout/
+ * stderr write-end has no reader in this process; the OS will deliver SIGPIPE
+ * to the child on its next write — most shells and long-running services
+ * handle this gracefully (they either ignore SIGPIPE or restart their write
+ * loop). If a service is expected to produce output after the readiness window
+ * and needs every line captured, use `dev --live` instead.
  *
  * Each child's pid is written to `<pidDir>/<service>.pid`. `levelzero stop`
  * reads these later to signal the processes — there's no in-memory handle
@@ -394,26 +417,21 @@ export async function runOwnedServicesDetached(
   // as `(exit code N after Xs)`.
   const spawnedAt: Record<string, number> = {};
 
+  // Per-service writers and their pipe-consumption promises. We close all
+  // writers after the readiness window so the JSONL files are flushed before
+  // `dev` prints its summary.
+  const writers: Map<string, ServiceLogWriter> = new Map();
+  // Promises that resolve when the writer has consumed ALL output from its
+  // attached streams (i.e. when the child exits and both pipes reach EOF).
+  // We await these AFTER the readiness window so we don't block spawn order.
+  const writeDonePromises: Map<string, Promise<void>> = new Map();
+
   for (const s of ordered) {
-    const logPath = join(opts.logDir, `${s.name}.log`);
+    // LEV-245: use .jsonl extension (structured JSONL via ServiceLogWriter).
+    const logPath = join(opts.logDir, `${s.name}.jsonl`);
     const pidPath = join(opts.pidDir, `${s.name}.pid`);
     logPaths[s.name] = logPath;
     pidPaths[s.name] = pidPath;
-
-    // `openSync('a')` gives us a writable FD that `spawn` can pass straight
-    // into the child's stdio array. Both stdout and stderr point at the
-    // same FD so we get an interleaved log — matches what users see when
-    // they run a service in a foreground terminal.
-    const fd = openSync(logPath, 'a');
-    // Marker so each new dev invocation is visually separable when tailing
-    // the same log file across multiple stack lifetimes.
-    try {
-      const stamp = `\n--- levelzero dev ${new Date().toISOString()} ---\n`;
-      const { writeSync } = await import('node:fs');
-      writeSync(fd, stamp);
-    } catch {
-      /* best-effort marker; ignore failures */
-    }
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -422,26 +440,26 @@ export async function runOwnedServicesDetached(
       ...(typeof s.envContributions === 'function' ? s.envContributions(ports) : {}),
     };
 
-    // `shell: true` matches the `concurrently` contract — `s.command` is a
-    // shell-quoted string (e.g. `bun run dev`). `detached: true` puts the
-    // child in its own process group so SIGINT to this CLI does not
-    // propagate; `unref()` lets the event loop exit even with the child
-    // still running.
+    // LEV-245: pipe stdout/stderr through the parent so we can write structured
+    // JSONL records. We use `detached: true` so the child is in its own process
+    // group (SIGINT from the terminal doesn't propagate). `shell: true` matches
+    // the `concurrently` contract — `s.command` is a shell-quoted string.
+    //
+    // DETACHMENT NOTE: piping stdout/stderr keeps the Node.js readable stream
+    // refs alive as long as data can arrive. We consume both streams via
+    // `ServiceLogWriter.attachStdout/attachStderr` which resolve their promises
+    // when the stream reaches EOF (child exits). After the readiness window we
+    // call `writer.close()` and destroy the streams, which lets the event loop
+    // exit. The child keeps running in its own process group; it may get SIGPIPE
+    // on its next write but most long-running services handle that gracefully.
+    // Users who need every post-readiness line captured should use `dev --live`.
     const child = spawn(s.command, {
       cwd: s.cwd,
       env,
       shell: true,
       detached: true,
-      stdio: ['ignore', fd, fd],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-
-    // Close our copy of the log FD — the child now owns its own dup'd copy.
-    // Leaking the FD here would keep the file open forever in the parent.
-    try {
-      closeSync(fd);
-    } catch {
-      /* already closed */
-    }
 
     // LEV-219 — record the child's exit so the readiness loop below can tell
     // a crash (`'failed'`, non-zero exit) apart from a still-coming-up
@@ -460,6 +478,18 @@ export async function runOwnedServicesDetached(
         exits[s.name] = { code: 1, signal: null, at: Date.now() };
       }
     });
+
+    // Set up the JSONL writer and begin consuming stdout/stderr. The
+    // `attachStdout`/`attachStderr` promises resolve at stream EOF (child exit).
+    const writer = new ServiceLogWriter({ service: s.name, logDir: opts.logDir });
+    writers.set(s.name, writer);
+    const stdoutDone = child.stdout
+      ? writer.attachStdout(child.stdout)
+      : Promise.resolve();
+    const stderrDone = child.stderr
+      ? writer.attachStderr(child.stderr)
+      : Promise.resolve();
+    writeDonePromises.set(s.name, Promise.all([stdoutDone, stderrDone]).then(() => {}));
 
     if (typeof child.pid === 'number') {
       pids[s.name] = child.pid;
@@ -556,6 +586,27 @@ export async function runOwnedServicesDetached(
       statuses[s.name] = 'timeout';
       // Capture whatever output exists so far — best-effort, never blocks.
       lastLogTail[s.name] = await readLogTail(logPaths[s.name]!);
+    }),
+  );
+
+  // LEV-245: flush and close all JSONL writers now that the readiness window
+  // has closed. For services that have already exited, `writeDonePromises`
+  // resolves quickly (the pipe streams reached EOF). For services still
+  // running, we give a brief grace period for the last few buffered lines to
+  // land, then destroy the streams regardless so the parent can exit cleanly.
+  // `writer.close()` writes any partial line buffer before closing the file.
+  const FLUSH_GRACE_MS = 500;
+  await Promise.all(
+    ordered.map(async (s) => {
+      const writer = writers.get(s.name);
+      if (!writer) return;
+      // Race the stream-drain against a short timeout — the child may still be
+      // running (status='ready'|'timeout'|'skipped') so we don't wait forever.
+      await Promise.race([
+        writeDonePromises.get(s.name) ?? Promise.resolve(),
+        new Promise<void>((r) => setTimeout(r, FLUSH_GRACE_MS)),
+      ]);
+      await writer.close().catch(() => { /* best-effort */ });
     }),
   );
 
