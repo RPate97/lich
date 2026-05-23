@@ -18,7 +18,11 @@ It's a single binary that wraps `docker compose` + host process supervision + an
 
 1. **`docs/superpowers/specs/2026-05-23-lich-v1-testing-standards.md`** — how we test lich v1. Defines the two-tier requirement (unit + e2e), what every command's e2e tests must verify, anti-patterns to avoid. Non-negotiable; read this first because it shapes every implementation step.
 2. **`docs/superpowers/specs/2026-05-23-lich-v1-design.md`** — the product spec. Source of truth for what lich does. Read the sections relevant to your task; skim the rest.
-3. **The current plan you are executing** — currently `docs/superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md`. Tells you exactly which files to touch and what code to write. Follow the task structure (bite-sized steps; commit at the end of each task).
+3. **The plan that owns your task.** Find it yourself — do not assume. Process:
+   - Look at `ls docs/superpowers/plans/*.md` to see every active plan (ignore `archive-v0/`).
+   - Each plan filename is `YYYY-MM-DD-lich-v1-plan-<N>-<name>.md`. The roadmap section in this file (below) and in any plan's header lists what each plan covers — match your task to one of those scopes.
+   - When uncertain (multiple plans seem to overlap, or your task isn't clearly named anywhere), STOP and ask. Do not guess; doing the wrong plan's work is worse than waiting for clarification.
+   - Once identified, read that plan **fully** — not just the task you've been given. Plans contain shared context (architecture, file structure, conventions) that earlier sections establish for later tasks. Tasks read out of context produce out-of-context code.
 4. **`examples/dogfood-stack/lich.yaml`** (once it exists, after Plan 0 Task 11) — the failing test case target. This is the config lich must handle by end of v1.
 
 If you find yourself wanting to read anything under any `archive-v0/` directory, stop. Those describe a different system. They will mislead you.
