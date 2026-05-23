@@ -39,12 +39,12 @@ describe("smoke", () => {
       "init",
       "validate",
       "up",
+      "down",
       "logs",
       "urls",
       "stacks",
       "nuke",
     ]);
-    // down lands in a follow-up commit once LEV-291's down.ts is on master.
     for (const [name, fn] of Object.entries(COMMANDS)) {
       if (implemented.has(name)) continue;
       const result = await fn({ argv: { _: [] } });

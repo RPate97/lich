@@ -5,6 +5,7 @@ import { runLogs } from "./logs.js";
 import { runUrls } from "./urls.js";
 import { runStacks } from "./stacks.js";
 import { runNuke } from "./nuke.js";
+import { runDown } from "./down.js";
 
 /**
  * The shape every command returns to the router.
@@ -74,8 +75,10 @@ const upHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
-// down wiring lands in a follow-up commit once LEV-291's down.ts is on master.
-const downHandler: CommandHandler = stub("down");
+const downHandler: CommandHandler = async () => {
+  const result = await runDown({});
+  return { ok: result.exitCode === 0, message: "" };
+};
 
 const logsHandler: CommandHandler = async (ctx) => {
   const [service] = ctx.argv._;
