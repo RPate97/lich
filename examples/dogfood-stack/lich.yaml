@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://lich.dev/schema/v1.json
+# Target lich.yaml for the dogfood stack.
+# This file is what lich must handle by end of v1.
+# Until then, lich up against this config is the failing test case.
+
+owned:
+  supabase:
+    cmd: supabase start
+    cwd: .
+    oneshot: true
+    stop_cmd: supabase stop
+    ports:
+      api: { env: SUPABASE_API_PORT }
+      db: { env: SUPABASE_DB_PORT }
+      db_shadow: { env: SUPABASE_DB_SHADOW_PORT }
+      db_pooler: { env: SUPABASE_DB_POOLER_PORT }
+      studio: { env: SUPABASE_STUDIO_PORT }
+      inbucket: { env: SUPABASE_INBUCKET_PORT }
+    ready_when:
+      tcp: "localhost:${owned.supabase.ports.api}"
+      timeout: 90s
+
+  api:
+    cmd: bun run dev
+    cwd: apps/api
+    port: { env: PORT }
+    depends_on: [supabase]
+    ready_when:
+      http_get: /health
+      timeout: 30s
+    fail_when:
+      log_match: "EADDRINUSE|Cannot find module"
+
+  web:
+    cmd: bun run dev
+    cwd: apps/web
+    port: { env: PORT }
+    depends_on: [api]
+    ready_when:
+      log_match: "ready in"
+      timeout: 60s
+
+env:
+  # Supabase wiring (used by the API to talk to Supabase)
+  NEXT_PUBLIC_SUPABASE_URL: "http://localhost:${owned.supabase.ports.api}"
+  # Local anon key — Supabase generates a deterministic one per project_id, so
+  # pasting once from Task 9 step 4 is fine for dev.
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+
+  # API wiring (used by the web app to call the API)
+  API_URL: "http://localhost:${owned.api.port}"
+
+  # Postgres connection (for migrate/seed via psql)
+  DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
+
+profiles:
+  dev:
+    default: true
+    owned: [supabase, api, web]
+    lifecycle:
+      after_up:
+        - supabase migration up
+        - psql "$DATABASE_URL" -f supabase/seed.sql
+
+commands:
+  test:e2e:
+    cmd: echo "no e2e tests in dogfood-stack yet"
+    help: |
+      Placeholder for the dogfood-stack's own e2e tests.
+      Real tests come once the stack is working under lich.
+
+  db:psql:
+    cmd: psql "$DATABASE_URL"
+    help: |
+      Open a psql shell against the local Supabase Postgres.
