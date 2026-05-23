@@ -1,6 +1,6 @@
 # Plan 04 — portless integration for web
 
-**Goal:** Define a `PortlessAdapter` that registers per-worktree URLs like `https://<branch>.myapp.localhost` for the web service. Ship `lich urls` and integrate URL registration into `lich dev`. Gracefully degrade when portless isn't available.
+**Goal:** Define a `PortlessAdapter` that registers per-worktree URLs like `https://<branch>.myapp.localhost` for the web service. Ship `lich urls` and integrate URL registration into `lich up`. Gracefully degrade when portless isn't available.
 
 **Architecture:**
 - `PortlessAdapter` interface: `register({ host, target }) → Promise<void>`, `unregister(host)`, `list() → URLEntry[]`, `available() → boolean`.
@@ -49,6 +49,6 @@ None — shell out to existing `portless` CLI when available; tests stub it.
 
 ## Verification
 
-- With portless installed: `lich dev` registers URLs; `lich urls` lists them; visiting URL hits the right worktree's web service.
-- Without portless: `lich dev` still works, logs warning, `lich urls` falls back to plain http://localhost:port table.
+- With portless installed: `lich up` registers URLs; `lich urls` lists them; visiting URL hits the right worktree's web service.
+- Without portless: `lich up` still works, logs warning, `lich urls` falls back to plain http://localhost:port table.
 - Full suite green; tsc clean.

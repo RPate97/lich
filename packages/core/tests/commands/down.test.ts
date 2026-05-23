@@ -11,8 +11,8 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { dockerOrSkip, isContainerRunning, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
-import { makeStopCommand } from '../../src/commands/stop';
+import { makeUpCommand } from '../../src/commands/up';
+import { makeDownCommand } from '../../src/commands/down';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@lich/plugin-postgres';
@@ -107,11 +107,11 @@ afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describe('lich stop (unit, mocked compose)', () => {
+describe('lich down (unit, mocked compose)', () => {
   it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-stop-outside-')));
     const { factory } = makeMockComposeFactory();
-    const cmd = makeStopCommand(() => registry, { composeRunnerFactory: factory });
+    const cmd = makeDownCommand(() => registry, { composeRunnerFactory: factory });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
     ).rejects.toThrow(/not inside a lich project/i);
@@ -119,7 +119,7 @@ describe('lich stop (unit, mocked compose)', () => {
 
   it('returns stopped:false when no entry exists, without invoking compose runner', async () => {
     const { factory, constructed, calls } = makeMockComposeFactory();
-    const cmd = makeStopCommand(() => registry, { composeRunnerFactory: factory });
+    const cmd = makeDownCommand(() => registry, { composeRunnerFactory: factory });
     const result = (await cmd.run({
       cwd: projectDir,
       format: 'json',
@@ -163,7 +163,7 @@ describe('lich stop (unit, mocked compose)', () => {
     writeFileSync(join(pidDir, 'garbage.pid'), 'not-a-pid\n');
 
     const { factory } = makeMockComposeFactory();
-    const stop = makeStopCommand(() => registry, {
+    const stop = makeDownCommand(() => registry, {
       getServices: () => [],
       composeRunnerFactory: factory,
     });
@@ -210,7 +210,7 @@ describe('lich stop (unit, mocked compose)', () => {
     });
 
     const { factory } = makeMockComposeFactory();
-    const stop = makeStopCommand(() => registry, {
+    const stop = makeDownCommand(() => registry, {
       getServices: () => [],
       composeRunnerFactory: factory,
     });
@@ -227,7 +227,7 @@ describe('lich stop (unit, mocked compose)', () => {
 
   it('after dev, stop calls compose down (volumes:false) and clears the entry', async () => {
     const { factory: devFactory } = makeMockComposeFactory();
-    const dev = makeDevCommand(() => registry, {
+    const dev = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: devFactory,
     });
@@ -239,7 +239,7 @@ describe('lich stop (unit, mocked compose)', () => {
     })) as any;
 
     const { factory, constructed, calls } = makeMockComposeFactory();
-    const stop = makeStopCommand(() => registry, {
+    const stop = makeDownCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -266,13 +266,13 @@ describe('lich stop (unit, mocked compose)', () => {
   });
 });
 
-describeIfDocker('lich stop (integration with real docker compose)', () => {
+describeIfDocker('lich down (integration with real docker compose)', () => {
   it('after dev, stop removes containers, clears registry entry, leaves volume intact', async () => {
     // LEV-202 — withDockerStack ensures the compose stack is torn down even
     // if the assertions throw mid-test, before `afterEach`'s cleanup runs.
     const wtKey = computeWorktreeKey(projectDir);
     await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
-      const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const dev = makeUpCommand(() => registry, { getServices: onlyPostgres });
       const devResult = (await dev.run({
         cwd: projectDir,
         format: 'json',
@@ -280,7 +280,7 @@ describeIfDocker('lich stop (integration with real docker compose)', () => {
         flags: {},
       })) as any;
 
-      const stop = makeStopCommand(() => registry, { getServices: onlyPostgres });
+      const stop = makeDownCommand(() => registry, { getServices: onlyPostgres });
       const result = (await stop.run({
         cwd: projectDir,
         format: 'json',

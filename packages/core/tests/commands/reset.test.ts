@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { makeResetCommand } from '../../src/commands/reset';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
@@ -141,7 +141,7 @@ describe('lich reset (unit, mocked compose)', () => {
 
   it('after dev, reset still tears down with the same project name', async () => {
     const { factory: devFactory } = makeMockComposeFactory();
-    const dev = makeDevCommand(() => registry, {
+    const dev = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: devFactory,
     });
@@ -182,7 +182,7 @@ describeIfDocker('lich reset (integration with real docker compose)', () => {
     // (timeouts, unhandled rejections).
     const wtKey = computeWorktreeKey(projectDir);
     await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
-      const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const dev = makeUpCommand(() => registry, { getServices: onlyPostgres });
       const devResult = (await dev.run({
         cwd: projectDir,
         format: 'json',

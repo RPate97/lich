@@ -79,7 +79,7 @@ describe.skipIf(!DOCKER)('LEV-213 api ↔ db roundtrip', () => {
     const dev = runCliJson<{
       ports: Record<string, number>;
       compose: { projectName: string };
-    }>(handle.projectDir, ['dev', '--json'], { timeoutMs: 180_000 });
+    }>(handle.projectDir, ['up', '--json'], { timeoutMs: 180_000 });
     handle.setComposeProjectName(dev.json.compose.projectName);
     apiUrl = `http://localhost:${dev.json.ports['api-http']}`;
 

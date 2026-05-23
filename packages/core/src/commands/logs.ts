@@ -74,7 +74,7 @@ export function makeLogsCommand(getRegistry: () => Registry): Command {
       const stackCtx = await resolveStackContext(ctx.cwd);
       const entry = await getRegistry().get(stackCtx.worktreeKey);
       if (!entry) {
-        const note = 'no stack running for this worktree (run `lich dev`)';
+        const note = 'no stack running for this worktree (run `lich up`)';
         if (ctx.format === 'json') return { lines: [], note };
         return note + '\n';
       }

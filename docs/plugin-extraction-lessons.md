@@ -73,7 +73,7 @@ Symptoms:
 - `docker network ls | grep lich | wc -l` reports more than ~20 networks.
 - `lich doctor` shows `[WARN] lich-networks — N lich-* networks detected (>20)`.
 
-Cause: every `lich dev` creates a fresh bridge network (`lich-<key>`), which carves a `/24` (or similar) out of Docker's default address pool. The default pool is small — typically ~30 subnets — so a fleet of parallel agent worktrees can exhaust it. When an agent's run crashes without tearing the stack down (e.g. SIGKILL during `dev`), the network is left behind and continues to occupy a subnet.
+Cause: every `lich up` creates a fresh bridge network (`lich-<key>`), which carves a `/24` (or similar) out of Docker's default address pool. The default pool is small — typically ~30 subnets — so a fleet of parallel agent worktrees can exhaust it. When an agent's run crashes without tearing the stack down (e.g. SIGKILL during `lich up`), the network is left behind and continues to occupy a subnet.
 
 Recovery, in increasing order of force:
 

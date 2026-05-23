@@ -12,8 +12,8 @@
  * makes it obvious to anyone changing the dashboard that they also need to
  * update the test.
  *
- * To run: `lich dev` (in another shell) then `bunx playwright test
- * e2e/auth-flow.spec.ts`. The `WEB_URL` env var is set by `lich dev`'s
+ * To run: `lich up` (in another shell) then `bunx playwright test
+ * e2e/auth-flow.spec.ts`. The `WEB_URL` env var is set by `lich up`'s
  * env-file write — source `.lich/state/<key>/env/api.env` or pass
  * `WEB_URL=http://localhost:<port>` explicitly.
  *

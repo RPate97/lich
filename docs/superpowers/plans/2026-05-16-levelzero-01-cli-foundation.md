@@ -1564,7 +1564,7 @@ These are pulled forward into later plans on purpose; do not add them here:
 
 - Docker, Postgres, or any other service runtime (plan 02).
 - The `Service` contract, port allocator, container naming (plan 02).
-- `lich dev` / `lich stop` (plan 02).
+- `lich up` / `lich down` (plan 02).
 - `lich logs` (plan 03).
 - DB/auth/test/codegen/UI/scaffolder commands (plans 05–11).
 - A real scaffold inside `init` (plan 11).

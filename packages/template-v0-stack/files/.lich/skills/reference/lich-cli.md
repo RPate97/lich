@@ -22,10 +22,10 @@ into the worktree first. Run any command with `--help` for flags.
 
 ## Running the stack
 
-- `lich dev` — boot the full stack for this worktree: Postgres in
+- `lich up` — boot the full stack for this worktree: Postgres in
   Docker, then the api, then the web app. Ports are allocated dynamically
   per worktree so multiple branches coexist. Prints the assigned URLs.
-- `lich stop` — tear down this worktree's containers; volumes
+- `lich down` — tear down this worktree's containers; volumes
   persist so the next `dev` has the same data.
 - `lich reset` — like `stop` but also nukes the Docker volumes, then
   brings the stack back up empty. Destructive — confirm before running.

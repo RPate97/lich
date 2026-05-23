@@ -7,7 +7,7 @@
 - `lich test` resolves stack context, derives `DATABASE_URL` + `API_URL` from the registry, injects them into the test runner's env, and chooses the adapter based on `[unit|integration|e2e]` subcommand:
   - `unit` → vitest with `tests/unit/**` pattern, no env injection needed.
   - `integration` → vitest with `tests/integration/**`, env injected; tests use the rollback helper.
-  - `e2e` → playwright test, env injected; needs `lich dev` running.
+  - `e2e` → playwright test, env injected; needs `lich up` running.
 - Transactional rollback helper: `withRollback(prisma, async () => { ... })` wraps the test body in a Prisma transaction that always aborts at the end. Test sees a clean DB on each run; no truncation needed.
 
 **Files:**

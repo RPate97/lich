@@ -31,10 +31,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../../src/registry';
 import {
-  makeDevCommand,
+  makeUpCommand,
   teardownLiveStack,
   type LiveTeardownState,
-} from '../../src/commands/dev';
+} from '../../src/commands/up';
 import { composeProjectName } from '../../src/compose/naming';
 import type { ComposeRunner } from '../../src/compose/runner';
 import type { OwnedService, Service } from '../../src/services/types';
@@ -253,7 +253,7 @@ describe('dev --live wiring (LEV-203)', () => {
 
   it('natural exit from --live calls teardownLiveStack via the finally block', async () => {
     const { factory, calls, constructed } = makeRecordingComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [quickExitOwned(projectDir)],
       composeRunnerFactory: factory,
     });
@@ -312,7 +312,7 @@ describe('dev --live wiring (LEV-203)', () => {
       return undefined as never;
     }) as (code: number) => never);
 
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [quickExitOwned(projectDir)],
       composeRunnerFactory: factory,
     });

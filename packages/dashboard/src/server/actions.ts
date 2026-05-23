@@ -27,7 +27,7 @@ export interface ActionResult {
  */
 export async function runLichAction(
   worktreePath: string,
-  command: 'restart' | 'stop',
+  command: 'restart' | 'down',
 ): Promise<ActionResult> {
   try {
     const { stdout, stderr } = await execFile('bun', ['run', 'lich', command], {

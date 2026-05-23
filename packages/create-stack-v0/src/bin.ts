@@ -87,7 +87,7 @@ function printNextSteps(name: string, destDir: string): void {
       `Next steps:\n` +
       `  cd ${name}\n` +
       `  bun install\n` +
-      `  bun run lich dev\n`,
+      `  bun run lich up\n`,
   );
 }
 

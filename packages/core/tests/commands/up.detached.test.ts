@@ -23,7 +23,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { CLIError } from '../../src/errors';
 import { runCli } from '../../src/cli';
 import { CommandRegistry } from '../../src/commands/registry';
@@ -76,7 +76,7 @@ async function waitFor(
   }
 }
 
-describe('lich dev (default detached, LEV-194)', () => {
+describe('lich up (default detached, LEV-194)', () => {
   it('writes a pid file and structured JSONL log for each owned service (LEV-245)', async () => {
     const echoer: OwnedService = {
       name: 'echoer',
@@ -90,7 +90,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [echoer],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -172,7 +172,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [a, b],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -204,7 +204,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [slow],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -233,7 +233,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [crasher],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 3000,
@@ -276,7 +276,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [ok, crasher],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 3000,
@@ -295,7 +295,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     expect(owned.exitCodes.crasher).toBe(7);
 
     // The pretty rendering of the failure includes the stderr tail block.
-    const cmdPretty = makeDevCommand(() => registry, {
+    const cmdPretty = makeUpCommand(() => registry, {
       getServices: (): Service[] => [ok, crasher],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 3000,
@@ -331,7 +331,7 @@ describe('lich dev (default detached, LEV-194)', () => {
       command: 'sh -c "echo fatal-startup-error 1>&2; exit 1"',
       envContributions: () => ({}),
     };
-    const devCmd = makeDevCommand(() => registry, {
+    const devCmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [crasher],
       composeRunnerFactory: makeMockComposeFactory().factory,
       readinessTimeoutMs: 3000,
@@ -339,12 +339,12 @@ describe('lich dev (default detached, LEV-194)', () => {
     const cmdReg = new CommandRegistry();
     cmdReg.register(devCmd);
 
-    const pretty = await runCli(['dev'], cmdReg, { cwd: projectDir });
+    const pretty = await runCli(['up'], cmdReg, { cwd: projectDir });
     expect(pretty.exitCode).toBe(1);
     expect(pretty.stderr).toContain('crasher');
     expect(pretty.stderr).toContain('fatal-startup-error');
 
-    const json = await runCli(['dev', '--json'], cmdReg, { cwd: projectDir });
+    const json = await runCli(['up', '--json'], cmdReg, { cwd: projectDir });
     expect(json.exitCode).toBe(1);
     const parsed = JSON.parse(json.stderr) as {
       code: string;
@@ -363,7 +363,7 @@ describe('lich dev (default detached, LEV-194)', () => {
       envContributions: () => ({}),
     };
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [echoer],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -389,7 +389,7 @@ describe('lich dev (default detached, LEV-194)', () => {
     };
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [echoer],
       composeRunnerFactory: factory,
     });

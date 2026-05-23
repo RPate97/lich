@@ -220,8 +220,8 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
     expect(res.status, res.stderr).toBe(0);
     const out = res.stdout;
     // Inline commands still present.
-    expect(out).toContain('dev');
-    expect(out).toContain('stop');
+    expect(out).toContain('up');
+    expect(out).toContain('down');
     expect(out).toContain('adapter list');
     expect(out).toContain('env list');
     expect(out).toContain('env resolve');
@@ -363,7 +363,7 @@ describe.skipIf(!dockerUsable)(
       'dev brings up postgres + api + web via docker compose',
       { timeout: 180_000 },
       () => {
-        const res = run(['dev', '--json']);
+        const res = run(['up', '--json']);
         expect(res.status, res.stderr).toBe(0);
         const out = JSON.parse(res.stdout) as {
           key: string;
@@ -485,7 +485,7 @@ describe.skipIf(!dockerUsable)(
       'stop tears down the stack cleanly',
       { timeout: 120_000 },
       () => {
-        const res = run(['stop', '--json']);
+        const res = run(['down', '--json']);
         expect(res.status, res.stderr).toBe(0);
         // The postgres container should be gone after `stop` — compose
         // removes containers but the named volume persists for the next

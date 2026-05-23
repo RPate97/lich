@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip } from './_helpers/docker';
 import { Registry } from '@lich/core/registry';
-import { makeDevCommand } from '@lich/core/commands/dev';
+import { makeUpCommand } from '@lich/core/commands/up';
 import { computeWorktreeKey } from '@lich/core/worktree';
 import { containerName, volumeName } from '@lich/core/compose/naming';
 import { makePrismaFixture } from './_helpers/prisma-fixture';
@@ -43,7 +43,7 @@ beforeEach(async () => {
     logDir: '',
     createdAt: new Date().toISOString(),
   });
-  const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+  const dev = makeUpCommand(() => registry, { getServices: onlyPostgres });
   const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
   // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
   // envContributions hook (the postgres plugin's `addEnvSource('url')` is

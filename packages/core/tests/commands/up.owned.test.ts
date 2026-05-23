@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@lich/plugin-postgres';
@@ -78,7 +78,7 @@ describeIfDocker('dev with owned services (DI)', () => {
         dependsOn: ['postgres'],
       };
       const getServices = (): Service[] => [pgService, echoSvc];
-      const dev = makeDevCommand(() => registry, { getServices });
+      const dev = makeUpCommand(() => registry, { getServices });
 
       // LEV-194 — `--live` runs the concurrently foreground runner so exit
       // codes and JSONL logs are captured (the detached default returns
@@ -109,7 +109,7 @@ describeIfDocker('dev with owned services (DI)', () => {
       // Inject `[pgService]` directly: the default builtins now include api+web
       // OwnedServices (LEV-90) which would try to spawn `bun run dev` in
       // missing `apps/api`/`apps/web` directories in this tmpdir fixture.
-      const dev = makeDevCommand(() => registry, { getServices: (): Service[] => [pgService] });
+      const dev = makeUpCommand(() => registry, { getServices: (): Service[] => [pgService] });
       const start = Date.now();
       const result = (await dev.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;
       const elapsed = Date.now() - start;

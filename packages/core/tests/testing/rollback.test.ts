@@ -7,7 +7,7 @@ import { PrismaClient } from '@prisma/client';
 import { dockerOrSkip, dockerStackTeardown } from '../_helpers/docker';
 import { makePrismaFixture } from '../_helpers/prisma-fixture';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { prismaAdapter } from '@lich/plugin-prisma';
@@ -74,7 +74,7 @@ describeIfDocker('withRollback (integration)', () => {
       logDir: '',
       createdAt: new Date().toISOString(),
     });
-    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+    const dev = makeUpCommand(() => registry, { getServices: onlyPostgres });
     const result = (await dev.run({
       cwd: projectDir,
       format: 'json',

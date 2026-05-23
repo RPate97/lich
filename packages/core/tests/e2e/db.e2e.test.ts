@@ -40,7 +40,7 @@ describe.skipIf(!DOCKER)('LEV-198-extended db.*: per-command coverage', () => {
     handle = await setupScaffoldedProject({ tmpdirPrefix: 'lz-e2e-db-' });
     // Bring the stack up once for the whole file. Each `db.*` test reads
     // from the live postgres; teardown happens in `afterAll`.
-    const res = runCli(handle.projectDir, ['dev', '--json'], {
+    const res = runCli(handle.projectDir, ['up', '--json'], {
       timeoutMs: 180_000,
     });
     if (res.exitCode !== 0) {

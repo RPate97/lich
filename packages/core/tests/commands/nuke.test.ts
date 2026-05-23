@@ -5,11 +5,10 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip, dockerStackTeardown, isContainerRunning } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
-import { makeStacksStopAllCommand } from '../../src/commands/stacks/stop-all';
+import { makeUpCommand } from '../../src/commands/up';
+import { makeNukeCommand } from '../../src/commands/nuke';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
-import { CLIError } from '../../src/errors';
 import { pgService } from '@lich/plugin-postgres';
 import type { Service } from '../../src/services/types';
 
@@ -61,36 +60,29 @@ afterEach(() => {
   }
 });
 
-describe('lich stacks stop --all (unit)', () => {
-  it('errors without --all flag', async () => {
-    const cmd = makeStacksStopAllCommand(() => registry);
-    await expect(
-      cmd.run({ cwd: '/', format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(CLIError);
-  });
-
+describe('lich nuke (unit)', () => {
   it('returns empty results when nothing is running and no orphans exist', async () => {
-    const cmd = makeStacksStopAllCommand(() => registry);
-    const result = (await cmd.run({ cwd: '/', format: 'json', args: [], flags: { all: true } })) as any;
+    const cmd = makeNukeCommand(() => registry);
+    const result = (await cmd.run({ cwd: '/', format: 'json', args: [], flags: {} })) as any;
     expect(Array.isArray(result.stoppedFromRegistry)).toBe(true);
     expect(Array.isArray(result.stoppedOrphans)).toBe(true);
     expect(result.stoppedOrphans).toEqual([]);
   });
 });
 
-describeIfDocker('lich stacks stop --all (integration)', () => {
+describeIfDocker('lich nuke (integration)', () => {
   it('tears down stacks from two different worktrees', async () => {
     const dirA = makeProject();
     const dirB = makeProject();
-    const dev = makeDevCommand(() => registry, { getServices: onlyPostgres });
+    const dev = makeUpCommand(() => registry, { getServices: onlyPostgres });
     const a = (await dev.run({ cwd: dirA, format: 'json', args: [], flags: {} })) as any;
     const b = (await dev.run({ cwd: dirB, format: 'json', args: [], flags: {} })) as any;
 
     expect(isContainerRunning(a.containers[0])).toBe(true);
     expect(isContainerRunning(b.containers[0])).toBe(true);
 
-    const cmd = makeStacksStopAllCommand(() => registry);
-    const result = (await cmd.run({ cwd: '/', format: 'json', args: [], flags: { all: true } })) as any;
+    const cmd = makeNukeCommand(() => registry);
+    const result = (await cmd.run({ cwd: '/', format: 'json', args: [], flags: {} })) as any;
 
     expect(result.stoppedFromRegistry).toContain(a.key);
     expect(result.stoppedFromRegistry).toContain(b.key);

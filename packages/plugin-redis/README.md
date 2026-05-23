@@ -64,7 +64,7 @@ plugins: [redis({ password: 'hunter2' })],
 
 ```sh
 # Start the stack — Redis now joins your compose services.
-lich dev
+lich up
 
 # In another shell, ping it.
 lich redis.ping

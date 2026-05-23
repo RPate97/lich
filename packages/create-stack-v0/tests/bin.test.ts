@@ -100,13 +100,13 @@ describe('@lich/create-stack-v0 bin', () => {
     expect(r.stderr).toContain('Invalid project name');
   });
 
-  // LEV-216: the canonical post-scaffold command is `bun run lich dev`
+  // LEV-216: the canonical post-scaffold command is `bun run lich up`
   // (not the bare `bun run dev`, which can fall through to a broken template
   // script). This is a forward-regression guard against re-introducing it.
-  it('recommends `bun run lich dev` (not bare `bun run dev`) in next steps', () => {
+  it('recommends `bun run lich up` (not bare `bun run dev`) in next steps', () => {
     const r = runBin(['lev216-app'], tmp);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('bun run lich dev');
+    expect(r.stdout).toContain('bun run lich up');
     // Defensive: the bare command must not appear as its own next-step line.
     expect(r.stdout).not.toMatch(/^ {2}bun run dev$/m);
   });

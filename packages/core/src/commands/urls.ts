@@ -85,7 +85,7 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
 }
 
 function renderUrlsPretty(urls: UrlRow[]): string {
-  if (urls.length === 0) return 'no urls registered (run `lich dev` to bring the stack up)\n';
+  if (urls.length === 0) return 'no urls registered (run `lich up` to bring the stack up)\n';
   // Emit `service=target` lines so the output is greppable and survives
   // copy/paste into a shell `eval` without quoting headaches.
   return urls.map((u) => `${u.service}=${u.target}`).join('\n') + '\n';

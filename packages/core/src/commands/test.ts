@@ -180,7 +180,7 @@ async function resolveStackEnv(
     throw new CLIError(
       'NO_PROJECT',
       'no stack running for this worktree',
-      'run `lich dev` first to bring services up',
+      'run `lich up` first to bring services up',
     );
   }
 
@@ -192,7 +192,7 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no postgres service',
-        'ensure postgres is part of the stack and `lich dev` has been run',
+        'ensure postgres is part of the stack and `lich up` has been run',
       );
     }
     result.databaseUrl = `postgres://lich:lich@localhost:${postgresPort}/lich`;
@@ -204,7 +204,7 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no api service',
-        'ensure the api service is part of the stack and `lich dev` has been run',
+        'ensure the api service is part of the stack and `lich up` has been run',
       );
     }
     result.apiUrl = `http://localhost:${apiPort}`;
@@ -216,7 +216,7 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no web service',
-        'ensure the web service is part of the stack and `lich dev` has been run',
+        'ensure the web service is part of the stack and `lich up` has been run',
       );
     }
     result.webUrl = `http://localhost:${webPort}`;

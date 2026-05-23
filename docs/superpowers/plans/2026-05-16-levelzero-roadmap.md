@@ -22,9 +22,9 @@ Builds the `lich` binary, config loading, worktree key detection, the machine-lo
 ### Plan 02 — Service contract + Postgres
 File: `2026-05-16-levelzero-02-services-postgres.md`
 
-Introduces the `Service` interface, the port allocator, the Docker container/network/volume namespacing scheme, and Postgres as the first service implementation. Adds `lich dev` (single-service flavor), `lich stop`, `lich reset`.
+Introduces the `Service` interface, the port allocator, the Docker container/network/volume namespacing scheme, and Postgres as the first service implementation. Adds `lich up` (single-service flavor), `lich down`, `lich reset`.
 
-**Produces:** `lich dev` brings up a worktree-isolated Postgres, port allocated and persisted, container/volume namespaced by worktree key. Two worktrees can run simultaneously.
+**Produces:** `lich up` brings up a worktree-isolated Postgres, port allocated and persisted, container/volume namespaced by worktree key. Two worktrees can run simultaneously.
 
 ---
 
@@ -33,7 +33,7 @@ File: `2026-05-16-levelzero-03-owned-services-logs.md`
 
 Adds the `kind: 'owned'` Service flavor (managed processes), the structured log writer that tees per-service jsonl into `.lich/logs/`, and the `lich logs` query command. Wires up the Hono api and Next web as the first two owned services. Adds Next dev-rewrite for `/api/*` → api port.
 
-**Produces:** `lich dev` brings up Postgres + api + web together; `lich logs` queries across all of them with grep/since/service filters.
+**Produces:** `lich up` brings up Postgres + api + web together; `lich logs` queries across all of them with grep/since/service filters.
 
 ---
 
@@ -105,7 +105,7 @@ File: `2026-05-16-levelzero-11-scaffolder-template.md`
 
 Builds out `lich init` from a minimal config-only scaffold (plan 01) into a full project generator: monorepo layout, Hono api with Better Auth wired, Next web with Tailwind + shadcn, Prisma schema, base seed, base e2e tests, CLAUDE.md, the full skill set. One template combination (the v0 stack).
 
-**Produces:** `lich init my-app` yields a working monorepo with `lich dev` immediately usable.
+**Produces:** `lich init my-app` yields a working monorepo with `lich up` immediately usable.
 
 ---
 

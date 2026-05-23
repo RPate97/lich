@@ -80,7 +80,9 @@ function collectComposeServiceNames(
   return [...seen];
 }
 
-export function makeStopCommand(
+export { makeDownCommand as makeStopCommand };
+
+export function makeDownCommand(
   getRegistry: () => Registry,
   opts?: StopOptions,
 ): Command {
@@ -92,7 +94,7 @@ export function makeStopCommand(
   const getResolvedBulkSources = opts?.getResolvedBulkSources;
 
   return {
-    name: 'stop',
+    name: 'down',
     describe: 'Tear down the current worktree’s stack (volumes persist)',
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);

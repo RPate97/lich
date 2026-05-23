@@ -218,7 +218,7 @@ async function resolveBaseUrl(
     throw new CLIError(
       'NO_PROJECT',
       'no stack running for this worktree',
-      'run `lich dev` first to bring the api service up, or pass --url',
+      'run `lich up` first to bring the api service up, or pass --url',
     );
   }
   const apiUrl = deriveApiUrl(entry);
@@ -226,7 +226,7 @@ async function resolveBaseUrl(
     throw new CLIError(
       'NO_PROJECT',
       'no api service URL could be derived from the current stack',
-      'ensure the api service is part of the stack and `lich dev` has been run, or pass --url',
+      'ensure the api service is part of the stack and `lich up` has been run, or pass --url',
     );
   }
   return apiUrl.replace(/\/$/, '');

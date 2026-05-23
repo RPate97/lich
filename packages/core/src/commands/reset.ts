@@ -9,7 +9,7 @@ import { makeComposeRunner } from '../compose/runner';
 import type { Registry } from '../registry';
 import type { Command } from './types';
 import type { DockerService, Service } from '../services/types';
-import { makeDevCommand, type DevOptions } from './dev';
+import { makeUpCommand as makeDevCommand, type DevOptions } from './up';
 import { resolveEnvForService } from '../env/resolve';
 
 function dockerServicesOnly(list: Service[]): DockerService[] {

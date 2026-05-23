@@ -54,7 +54,7 @@ The full suite always runs in CI as the safety net. The framework's job is to ma
 | Unit + integration tests | Vitest | Universal. |
 | E2E tests | Playwright | v0 only; replaced by a custom agent-first browser driver in v2. |
 | Container orchestration | Docker Compose | Local infra (Postgres, anything else unowned). |
-| Owned-process orchestration | [concurrently](https://github.com/open-cli-tools/concurrently) | Single multiplexed `lich dev` invocation spawns every owned service with per-service log prefixing and restart-on-fail. Adding an owned service = one more concurrently target. |
+| Owned-process orchestration | [concurrently](https://github.com/open-cli-tools/concurrently) | Single multiplexed `lich up` invocation spawns every owned service with per-service log prefixing and restart-on-fail. Adding an owned service = one more concurrently target. |
 | Hot reload (backend) | `bun --hot run` | Native Bun HMR for Hono; no nodemon/tsx-watch. |
 | Hot reload (frontend) | Next.js dev server | Built-in HMR. |
 | Lint + format | [Biome](https://biomejs.dev) | One tool for both, zero-config friendly, fast. Replaces ESLint + Prettier. |
@@ -71,7 +71,7 @@ This is the single most opinionated stack decision and the rationale matters:
 5. **Typed client generation.** Hono's `hc` gives end-to-end types over plain HTTP. Same DX as tRPC/Server Actions, but the server doesn't care who calls it. This is what makes the frontend *actually* swappable.
 6. **Background work has a home.** Queues, jobs, websockets belong in the backend service, not bolted onto Next.
 
-The cost is two processes locally. The CLI hides this — `lich dev` brings up everything with one command.
+The cost is two processes locally. The CLI hides this — `lich up` brings up everything with one command.
 
 ## Monorepo layout
 
@@ -111,8 +111,8 @@ All commands operate against the **auto-detected stack** for the current `cwd` (
 ### Lifecycle
 
 - `lich init` — scaffold a project; prompts (or takes flags) for adapter choices; writes `lich.config.ts`.
-- `lich dev` — bring up Postgres + api + web for *this* worktree's stack; allocate/reuse the stack's port block; tee structured logs to `.lich/logs/`.
-- `lich stop` — clean teardown of this worktree's stack.
+- `lich up` — bring up Postgres + api + web for *this* worktree's stack; allocate/reuse the stack's port block; tee structured logs to `.lich/logs/`.
+- `lich down` — clean teardown of this worktree's stack.
 - `lich reset` — nuke this stack's DB, re-migrate, re-seed. The "known starting point" command.
 - `lich doctor` — diagnose local environment. Used by agents for self-diagnosis.
 
@@ -120,7 +120,7 @@ All commands operate against the **auto-detected stack** for the current `cwd` (
 
 - `lich stacks list` — list every running lich stack across all worktrees on this machine; for each: worktree path, allocated ports, container names, uptime.
 - `lich stacks current` — show the stack the CLI would target from `cwd` (path, ports, container names). Useful for diagnosis; agents rarely need it because commands auto-target.
-- `lich stacks stop --all` — tear down every running lich stack regardless of `cwd`. Escape hatch for "clean slate everywhere."
+- `lich nuke` — tear down every running lich stack regardless of `cwd`. Escape hatch for "clean slate everywhere."
 - `lich stacks stop <key|path>` — tear down a specific stack by worktree key or path.
 - `lich stacks prune` — remove registry entries and orphaned containers for worktrees that no longer exist on disk.
 
@@ -215,7 +215,7 @@ The key is recorded in a machine-local registry at `~/.lich/registry.json` — t
 
 Each stack reserves a contiguous block of ports from a lich-owned range (proposed: `54000–54999`, 10 ports per stack). Allocation rules:
 
-- On first `lich dev` for a worktree, allocate the next free block and persist it.
+- On first `lich up` for a worktree, allocate the next free block and persist it.
 - Subsequent `dev` invocations reuse the same allocation — ports are stable per worktree across restarts.
 - If a previously allocated port is occupied by something outside lich, `doctor` surfaces a clear error rather than silently reassigning.
 - `stacks prune` reclaims allocations from worktrees that no longer exist on disk.
@@ -232,7 +232,7 @@ Every Docker resource is namespaced by the worktree key:
 - Networks: `lich-<key>`.
 - Volumes: `lich-<key>-<service>-data`.
 
-`stacks stop --all` and `stacks prune` work off the `lich-` prefix.
+`nuke` and `stacks prune` work off the `lich-` prefix.
 
 ### Auto-detection
 
@@ -256,7 +256,7 @@ Tests never reference hardcoded ports — they consume the env vars provided by 
 
 ## Process orchestration & hot reload
 
-`lich dev` brings up everything for the current worktree in one command. Two layers of orchestration:
+`lich up` brings up everything for the current worktree in one command. Two layers of orchestration:
 
 1. **Docker-managed services** (Postgres, Redis-if-added, anything else `kind: 'docker'`): brought up via a worktree-namespaced `docker compose up -d`. Containers, networks, and volumes are prefixed by the worktree key (see §"Multi-worktree support").
 2. **Owned services** (api, web, workers, anything `kind: 'owned'`): spawned as one `concurrently` invocation, all in the foreground of the `dev` process. Output is multiplexed with per-service prefix + color and tee'd to `.lich/logs/<service>.jsonl` so `lich logs` can query later.
@@ -285,7 +285,7 @@ Every owned service ships with hot reload in dev. The convention is that the ser
 - **Next.js frontend**: `next dev` (HMR built in).
 - **Project-added services**: declare their own watcher (e.g. `bun --hot`, `tsx watch`, `cargo watch`, `watchfiles`).
 
-The CLI does not enforce a specific watcher; it executes whatever command the service declares. The convention exists so the default experience is: edit a file, see the change without restarting `lich dev`. The scaffolder skill nudges authors toward this when they add a new owned service.
+The CLI does not enforce a specific watcher; it executes whatever command the service declares. The convention exists so the default experience is: edit a file, see the change without restarting `lich up`. The scaffolder skill nudges authors toward this when they add a new owned service.
 
 ### Adding a new owned service
 
@@ -308,7 +308,7 @@ services: [
 ]
 ```
 
-`lich dev` picks it up automatically: it shows up in the concurrently output, its logs tee to `.lich/logs/worker.jsonl`, `lich logs --service worker` queries them, `lich stop` kills it cleanly. No CLI code change required.
+`lich up` picks it up automatically: it shows up in the concurrently output, its logs tee to `.lich/logs/worker.jsonl`, `lich logs --service worker` queries them, `lich down` kills it cleanly. No CLI code change required.
 
 ## Test patterns
 
@@ -409,7 +409,7 @@ interface Service {
 }
 ```
 
-The registry, port allocator, `stacks list`, `stacks stop --all`, `logs`, and `doctor` iterate the service list. **They do not hardcode "postgres + api + web."** The built-in services implement `Service`; project-defined services implement the same interface and slot in seamlessly.
+The registry, port allocator, `stacks list`, `nuke`, `logs`, and `doctor` iterate the service list. **They do not hardcode "postgres + api + web."** The built-in services implement `Service`; project-defined services implement the same interface and slot in seamlessly.
 
 ### Declaring extra services
 

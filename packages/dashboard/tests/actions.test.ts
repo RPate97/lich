@@ -64,10 +64,10 @@ describe('runLichAction', () => {
 
   it('passes the correct cwd and command args', async () => {
     mockSuccess();
-    await runLichAction('/my/stack', 'stop');
+    await runLichAction('/my/stack', 'down');
     expect(mockedExecFile).toHaveBeenCalledWith(
       'bun',
-      ['run', 'lich', 'stop'],
+      ['run', 'lich', 'down'],
       expect.objectContaining({ cwd: '/my/stack', timeout: 30_000 }),
       expect.any(Function),
     );
@@ -75,7 +75,7 @@ describe('runLichAction', () => {
 
   it('returns ok:false with the exit code on non-zero CLI exit', async () => {
     mockFailure(1, '', 'already stopped');
-    const result = await runLichAction('/some/worktree', 'stop');
+    const result = await runLichAction('/some/worktree', 'down');
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe('already stopped');
@@ -114,7 +114,7 @@ describe('runLichAction', () => {
         cb(new Error('unexpected spawn error'));
       },
     );
-    await expect(runLichAction('/some/worktree', 'stop')).resolves.toMatchObject({
+    await expect(runLichAction('/some/worktree', 'down')).resolves.toMatchObject({
       ok: false,
       exitCode: -1,
     });

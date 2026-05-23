@@ -5,7 +5,7 @@
 **Architecture:**
 - ORMAdapter is capability-shaped — methods describe what the adapter does, not which tool. v0 only ships the Prisma implementation.
 - Commands resolve the stack via `resolveStackContext`, derive `DATABASE_URL` from the registry entry, invoke the adapter.
-- Test fixtures use a real Postgres started by plan-02's `lich dev` machinery.
+- Test fixtures use a real Postgres started by plan-02's `lich up` machinery.
 
 **Files (cumulative):**
 ```
@@ -42,5 +42,5 @@ Wave 3 is fully parallel (4 agents). Wave 1 + 2 are sequential single agents.
 
 ## Verification
 
-- `lich dev` brings up postgres; `lich db migrate` runs migrations against it; `db inspect --schema` returns JSON schema; `db inspect --rows <table>` returns JSON rows.
+- `lich up` brings up postgres; `lich db migrate` runs migrations against it; `db inspect --schema` returns JSON schema; `db inspect --rows <table>` returns JSON rows.
 - Full vitest suite green; tsc clean.

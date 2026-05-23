@@ -142,7 +142,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       unregisterSignalCleanup = null;
     }
     try {
-      if (projectDir) runCli(projectDir, ['stop', '--json'], { timeoutMs: 30_000 });
+      if (projectDir) runCli(projectDir, ['down', '--json'], { timeoutMs: 30_000 });
     } catch {
       /* stop is best-effort */
     }
@@ -231,8 +231,8 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       const res = runCli(projectDir, ['--help']);
       expect(res.exitCode, res.stderr).toBe(0);
       // Inline commands.
-      expect(res.stdout).toContain('dev');
-      expect(res.stdout).toContain('stop');
+      expect(res.stdout).toContain('up');
+      expect(res.stdout).toContain('down');
       expect(res.stdout).toContain('doctor');
       // Plugin-contributed commands — these only appear if `loadConfig` +
       // `bootPlugins` actually ran against the real-installed plugin tree.
@@ -295,10 +295,10 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // -------------------------------------------------------------------------
   describe.skipIf(!DOCKER)('phase 3: stack lifecycle', () => {
     it(
-      'lich dev --json brings up the stack detached within 90s',
+      'lich up --json brings up the stack detached within 90s',
       { timeout: 180_000 },
       () => {
-        const res = runCli(projectDir, ['dev', '--json'], { timeoutMs: 150_000 });
+        const res = runCli(projectDir, ['up', '--json'], { timeoutMs: 150_000 });
         expect(res.exitCode, res.stderr).toBe(0);
         const out = JSON.parse(res.stdout) as {
           key: string;
@@ -430,10 +430,10 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     );
 
     it(
-      'lich stop --json tears the stack down cleanly',
+      'lich down --json tears the stack down cleanly',
       { timeout: 120_000 },
       () => {
-        const res = runCli(projectDir, ['stop', '--json'], { timeoutMs: 90_000 });
+        const res = runCli(projectDir, ['down', '--json'], { timeoutMs: 90_000 });
         expect(res.exitCode, res.stderr).toBe(0);
         // After stop, `stacks current` should report running:false.
         const cur = runCli(projectDir, ['stacks', 'current', '--json']);
@@ -454,7 +454,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       'LEV-201 regression: stop cleans up pid files and tears down host processes',
       { timeout: 90_000 },
       () => {
-        const dev = runCli(projectDir, ['dev', '--json'], { timeoutMs: 120_000 });
+        const dev = runCli(projectDir, ['up', '--json'], { timeoutMs: 120_000 });
         expect(dev.exitCode, dev.stderr).toBe(0);
         const devOut = JSON.parse(dev.stdout) as {
           owned?: { pids: Record<string, number>; pidPaths: Record<string, string> };
@@ -474,7 +474,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           'expected pidPaths to mirror pids — runner contract (see runner.ts DetachedRunnerHandle)',
         ).toBeGreaterThan(0);
 
-        const stop = runCli(projectDir, ['stop', '--json'], { timeoutMs: 60_000 });
+        const stop = runCli(projectDir, ['down', '--json'], { timeoutMs: 60_000 });
         expect(stop.exitCode, stop.stderr).toBe(0);
 
         // For each owned service, the process should be gone (kill -0 fails
@@ -524,7 +524,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       { timeout: 90_000 },
       async () => {
         // Make sure the stack is up — phase 3 may or may not have stopped it.
-        const dev = runCli(projectDir, ['dev', '--json'], { timeoutMs: 120_000 });
+        const dev = runCli(projectDir, ['up', '--json'], { timeoutMs: 120_000 });
         expect(dev.exitCode, dev.stderr).toBe(0);
 
         // Pull the WEB_URL from the api env file (next's URL). Could also
@@ -634,7 +634,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
         // within seconds, not hang or silently exit 0. We deliberately
         // do NOT actually stop the host's docker daemon — that would
         // affect concurrent tests on the same host.
-        const res = runCli(projectDir, ['dev', '--json'], {
+        const res = runCli(projectDir, ['up', '--json'], {
           timeoutMs: 20_000,
           env: { DOCKER_HOST: 'tcp://127.0.0.1:1' },
         });
