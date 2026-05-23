@@ -714,7 +714,17 @@ The pattern: **use lich to test lich.**
 
 ### `examples/`
 
-The lich repo contains `examples/node-postgres/`: a small but real app — one Node web service, one Postgres container, a couple of env vars, one lifecycle hook for migrations. A working `lich.yaml`. Real code, real database, real HTTP.
+The lich repo contains `examples/dogfood-stack/`: a real full-stack app that exercises the v1 surface end-to-end. Specifically:
+
+- **Next.js** web frontend (owned service)
+- **Express** API server (owned service)
+- **Supabase** for the database/auth/storage layer (owned service via `supabase start` / `stop` — the multi-port + `oneshot` + `stop_cmd` pattern)
+- **Migrations** via `supabase migration up` (after_up lifecycle hook)
+- **Seed scripts** via a user-defined `seed` script (after_up lifecycle hook or oneshot owned service)
+- **A user-defined command or two** (e.g., `lich test:e2e`) to exercise the `commands:` surface
+- **At least two profiles** (e.g., `dev` with local supabase, `dev:hosted` overriding env to point at a fake hosted backend) to exercise profile-scoped env and lifecycle
+
+This stack is the **failing test case** for lich's implementation. It is built BEFORE lich works — initially just a working full-stack app that you start by hand. The intended `lich.yaml` is committed alongside it. The e2e test suite tries to run `lich up` against this app and asserts the resulting behavior. As lich is implemented in tiers, more of the e2e tests start passing. v1 ships when every test passes against this stack.
 
 Optionally additional small examples (`examples/python-postgres/`, `examples/go-mysql/`) to demonstrate framework-agnosticism. Each is a few hundred lines at most. None are published as packages; they're test fixtures and reference material.
 
@@ -794,8 +804,8 @@ lich/
 │       └── bin/
 │           └── lich-daemon.ts
 ├── examples/
-│   ├── node-postgres/
-│   └── python-postgres/     # optional, demonstrates framework-agnosticism
+│   ├── dogfood-stack/       # next + express + supabase + migrations + seeds; the failing test case
+│   └── python-postgres/     # optional later; demonstrates framework-agnosticism
 ├── tests/
 │   ├── unit/
 │   └── e2e/                 # spawn real binary, drive against examples
@@ -891,13 +901,13 @@ These need concrete choices during implementation, but don't change the spec's s
 
 - One binary, downloadable from GitHub Releases for Mac (arm64+x86) and Linux (arm64+x86)
 - `npm install -g lich` works for the Node crowd
-- README walks a new user from zero to working stack in under 5 minutes (with the `examples/node-postgres/` example)
+- README walks a new user from zero to working stack in under 5 minutes (with the `examples/dogfood-stack/` example)
 - `lich init` produces a valid skeleton that passes `lich validate` and survives `lich up` cleanly (with "no services defined" messaging)
-- `lich:instrument` skill takes the `examples/node-postgres` repo (with its `lich.yaml` deleted) and reproduces a working configuration via agent loop, verified by `lich up` succeeding
-- `examples/node-postgres` defines at least one user `commands:` entry (e.g., `test:e2e`) and one env group; `lich help` lists it and `lich <command>` invokes it correctly with the right env
+- `lich:instrument` skill takes the `examples/dogfood-stack` repo (with its `lich.yaml` deleted) and reproduces a working configuration via agent loop, verified by `lich up` succeeding
+- `examples/dogfood-stack` defines at least one user `commands:` entry (e.g., `test:e2e`) and one env group; `lich help` lists it and `lich <command>` invokes it correctly with the right env
 - `lich exec pnpm prisma studio` runs against the running stack with `DATABASE_URL` correctly set from the worktree's allocated Postgres port
-- `examples/node-postgres` defines at least two profiles (e.g., `dev` and `dev:with-extras`); `lich up dev` and `lich up dev:with-extras` produce the expected resolved service sets, and the dashboard shows the active profile
-- A profile in `examples/node-postgres` demonstrates profile-scoped env (overrides `DATABASE_URL` to point at a fake hosted backend) and profile-scoped lifecycle (defines `after_up` with migrations that run for one profile and not another); end-to-end test verifies both behaviors
+- `examples/dogfood-stack` defines at least two profiles (e.g., `dev` and `dev:with-extras`); `lich up dev` and `lich up dev:with-extras` produce the expected resolved service sets, and the dashboard shows the active profile
+- A profile in `examples/dogfood-stack` demonstrates profile-scoped env (overrides `DATABASE_URL` to point at a fake hosted backend) and profile-scoped lifecycle (defines `after_up` with migrations that run for one profile and not another); end-to-end test verifies both behaviors
 - Failure detection e2e tests: deliberately broken `lich.yaml` variants (port already in use, `cmd` that exits 1 immediately, `ready_when` that never matches, `fail_when` that triggers from log output) all produce clean CLI errors with the last 20 lines of log inline, exit non-zero, and surface correctly in the dashboard
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
