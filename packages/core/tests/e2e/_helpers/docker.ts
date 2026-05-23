@@ -18,7 +18,7 @@ import { dockerOrSkip, dockerStackTeardown } from '../../_helpers/docker';
  *      exhausted).
  *
  * The second probe matters because long-running developer machines
- * routinely accumulate orphaned `levelzero-*` networks until
+ * routinely accumulate orphaned `lich-*` networks until
  * `docker network create` fails with
  * `all predefined address pools have been fully subnetted` — at which
  * point `docker info` still happily reports green.

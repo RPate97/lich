@@ -1,8 +1,8 @@
 /**
  * Database seed for the `{{projectName}}` v0 template (LEV-196).
  *
- * Run via `levelzero db seed` (or `bun run prisma db seed` if you've ejected
- * from levelzero). The seed creates a stable demo user + a small set of todos
+ * Run via `lich db seed` (or `bun run prisma db seed` if you've ejected
+ * from lich). The seed creates a stable demo user + a small set of todos
  * so a freshly-scaffolded project has tangible data the moment you open the
  * dashboard:
  *
@@ -30,9 +30,9 @@ const DEMO_EMAIL = 'demo@example.com';
 const DEMO_PASSWORD = 'demo1234';
 const DEMO_NAME = 'Demo User';
 const DEMO_TODOS = [
-  { text: 'Read the LEVELZERO quickstart', done: true },
+  { text: 'Read the LICH quickstart', done: true },
   { text: 'Open the dashboard and add a todo', done: false },
-  { text: 'Wire `levelzero gen` into the web app', done: false },
+  { text: 'Wire `lich gen` into the web app', done: false },
 ];
 
 async function ensureDemoUser(): Promise<string> {
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   const userId = await ensureDemoUser();
 
   // Skip the todo writes if any already exist for the demo user — keeps the
-  // seed idempotent so `levelzero db seed` doesn't pile up duplicates.
+  // seed idempotent so `lich db seed` doesn't pile up duplicates.
   const existingCount = await prisma.todo.count({ where: { userId } });
   if (existingCount > 0) {
     console.log(`seed: demo user already has ${existingCount} todo(s); skipping`);
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
  * applying migrations first (e.g. they deleted the `_prisma_migrations`
  * bookkeeping table by hand, or pointed `DATABASE_URL` at an unfamiliar
  * empty DB). The seed is meant to be friendly — surface a helpful hint
- * and exit 0 so the levelzero dogfood path can move on to the next
+ * and exit 0 so the lich dogfood path can move on to the next
  * command. Real "I tried to migrate and the seed still doesn't work"
  * failures surface as P1001 or similar codes and fall through to the
  * hard error branch below.
@@ -103,7 +103,7 @@ main()
   .catch((err) => {
     if (isMissingTableError(err)) {
       console.log(
-        'seed: demo user creation skipped — schema not yet applied (run levelzero db migrate).',
+        'seed: demo user creation skipped — schema not yet applied (run lich db migrate).',
       );
       return;
     }

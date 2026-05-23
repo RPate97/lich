@@ -12,9 +12,9 @@
  * makes it obvious to anyone changing the dashboard that they also need to
  * update the test.
  *
- * To run: `levelzero dev` (in another shell) then `bunx playwright test
- * e2e/auth-flow.spec.ts`. The `WEB_URL` env var is set by `levelzero dev`'s
- * env-file write — source `.levelzero/state/<key>/env/api.env` or pass
+ * To run: `lich dev` (in another shell) then `bunx playwright test
+ * e2e/auth-flow.spec.ts`. The `WEB_URL` env var is set by `lich dev`'s
+ * env-file write — source `.lich/state/<key>/env/api.env` or pass
  * `WEB_URL=http://localhost:<port>` explicitly.
  *
  * Note on uniqueness: the test uses a timestamped email

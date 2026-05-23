@@ -12,8 +12,8 @@ export function makeStacksCurrentCommand(getRegistry: () => Registry): Command {
       if (!wt) {
         throw new CLIError(
           'NO_PROJECT',
-          'not inside a levelzero project',
-          'run `levelzero init` or cd into a directory with levelzero.config.ts',
+          'not inside a lich project',
+          'run `lich init` or cd into a directory with lich.config.ts',
         );
       }
       const entry = await getRegistry().get(wt.key);

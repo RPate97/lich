@@ -22,7 +22,7 @@ export const impactCommand: Command = {
       throw new CLIError(
         'CONFIG_INVALID',
         'impact requires a path argument',
-        'usage: levelzero impact <path>',
+        'usage: lich impact <path>',
       );
     }
 

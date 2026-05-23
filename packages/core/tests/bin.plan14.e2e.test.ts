@@ -17,13 +17,13 @@ beforeEach(() => {
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
 
 describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
-  it('falls back to inline registrations when no levelzero.config.ts is present (init works)', () => {
+  it('falls back to inline registrations when no lich.config.ts is present (init works)', () => {
     // No config at all — the worktree lookup returns null, so bootPlugins is
     // never called and we only get the inline registrations. `init` is one of
     // those, so the command should succeed and produce a config file.
@@ -31,14 +31,14 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout) as { created: boolean; configPath: string };
     expect(parsed.created).toBe(true);
-    expect(parsed.configPath).toBe(join(projectDir, 'levelzero.config.ts'));
+    expect(parsed.configPath).toBe(join(projectDir, 'lich.config.ts'));
   });
 
   it('falls back to inline registrations when config has no plugins[] (empty config)', () => {
     // Config present but no `plugins` — bootPlugins must NOT run (or must be a
     // no-op); inline registrations remain the only source. `stacks current`
     // (an inline command) should still resolve and run.
-    writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
     const res = run(['stacks', 'current', '--json']);
     expect(res.status, res.stderr).toBe(0);
     const parsed = JSON.parse(res.stdout) as { path: string; running: boolean };
@@ -72,7 +72,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     // Config declares the plugin by relative path. The loader resolves
     // relative paths against projectRoot.
     writeFileSync(
-      join(projectDir, 'levelzero.config.ts'),
+      join(projectDir, 'lich.config.ts'),
       `export default { plugins: ['./lz-fixture-plugin.mjs'] };`,
     );
 
@@ -83,23 +83,23 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(parsed.greeting).toBe('hello');
   });
 
-  it('loads the real `@levelzero/plugin-portless` package by npm specifier (LEV-146)', () => {
+  it('loads the real `@lich/plugin-portless` package by npm specifier (LEV-146)', () => {
     // End-to-end proof that the plugin loader path works with an *actually
     // extracted* plugin — not just a tmpdir fixture. Declares the real
-    // workspace package in `levelzero.config.ts`, then runs `adapter list`
+    // workspace package in `lich.config.ts`, then runs `adapter list`
     // and asserts the plugin's `register()` populated the `portless` slot
     // with both impls and selected `noop` as the active one.
     //
     // Why the cwd is the project tmpdir but the import still resolves: the
     // bin script under test lives inside the monorepo; the loader's
     // `createRequire` falls back to dynamic import for bare specifiers, and
-    // bun's workspace symlinks under the script's `node_modules/@levelzero/`
+    // bun's workspace symlinks under the script's `node_modules/@lich/`
     // satisfy that import. Catches regressions in (a) the loader's
     // npm-specifier path, (b) the merge of plugin adapters into the
     // built-in registry, and (c) the plugin's own `register()` shape.
     writeFileSync(
-      join(projectDir, 'levelzero.config.ts'),
-      `export default { plugins: ['@levelzero/plugin-portless'] };`,
+      join(projectDir, 'lich.config.ts'),
+      `export default { plugins: ['@lich/plugin-portless'] };`,
     );
 
     const res = run(['adapter', 'list', '--json']);
@@ -114,7 +114,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
     expect(byKey.get('portless:noop')!.active).toBe(true);
     // The portless plugin doesn't touch any other slot, and post-Plan-14
     // every adapter slot (orm, auth, ui, browser, backend, frontend,
-    // test-runner) is contributed by a separate `@levelzero/plugin-*`
+    // test-runner) is contributed by a separate `@lich/plugin-*`
     // package — so loading only the portless plugin leaves every other
     // slot absent from the merged registry.
     expect(byKey.has('orm:prisma')).toBe(false);
@@ -146,7 +146,7 @@ describe('bin: plan-14 bootPlugins wiring end-to-end', () => {
       'utf8',
     );
     writeFileSync(
-      join(projectDir, 'levelzero.config.ts'),
+      join(projectDir, 'lich.config.ts'),
       `export default { plugins: ['./lz-fixture-plugin.mjs'] };`,
     );
 

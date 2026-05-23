@@ -1,4 +1,4 @@
-import type { ComposeServiceDef } from '@levelzero/core';
+import type { ComposeServiceDef } from '@lich/core';
 
 /**
  * Compose service definition for Redis.
@@ -9,7 +9,7 @@ import type { ComposeServiceDef } from '@levelzero/core';
  *    is reproducible across machines without dragging in a full Debian base.
  *  - **Port string uses the `${PORT_redis}` placeholder.** The compose emitter
  *    substitutes a stack-allocated host port at render time, so multiple
- *    Levelzero stacks can run side-by-side without colliding on 6379.
+ *    Lich stacks can run side-by-side without colliding on 6379.
  *    Container side stays fixed at `6379` (the image's listening port).
  *  - **Healthcheck is required for any service another service may wait on.**
  *    Without it, a downstream `depends_on: { condition: service_healthy }`

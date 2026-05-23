@@ -1,7 +1,7 @@
 {
-  "name": "@levelzero/plugin-redis",
+  "name": "@lich/plugin-redis",
   "version": "0.1.0",
-  "description": "Levelzero plugin contributing a Redis compose service, EnvSources (url/host/port/driver/password), a portless cache adapter, and a `redis.ping` command.",
+  "description": "Lich plugin contributing a Redis compose service, EnvSources (url/host/port/driver/password), a portless cache adapter, and a `redis.ping` command.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",

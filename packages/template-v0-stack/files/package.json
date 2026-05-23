@@ -11,26 +11,26 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "levelzero dev",
+    "dev": "lich dev",
     "build": "bun run --filter '*' build",
     "test": "bun run --filter '*' test",
     "lint": "bun run --filter '*' lint",
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@levelzero/plugin-better-auth": "^0.1.0",
-    "@levelzero/plugin-hono": "^0.1.0",
-    "@levelzero/plugin-next": "^0.1.0",
-    "@levelzero/plugin-playwright": "^0.1.0",
-    "@levelzero/plugin-postgres": "^0.1.0",
-    "@levelzero/plugin-prisma": "^0.1.0",
-    "@levelzero/plugin-shadcn": "^0.1.0",
-    "@levelzero/plugin-typed-client": "^0.1.0",
-    "@levelzero/plugin-vitest": "^0.1.0",
+    "@lich/plugin-better-auth": "^0.1.0",
+    "@lich/plugin-hono": "^0.1.0",
+    "@lich/plugin-next": "^0.1.0",
+    "@lich/plugin-playwright": "^0.1.0",
+    "@lich/plugin-postgres": "^0.1.0",
+    "@lich/plugin-prisma": "^0.1.0",
+    "@lich/plugin-shadcn": "^0.1.0",
+    "@lich/plugin-typed-client": "^0.1.0",
+    "@lich/plugin-vitest": "^0.1.0",
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
-    "@levelzero/core": "^0.1.0",
+    "@lich/core": "^0.1.0",
     "prisma": "^7.0.0",
     "typescript": "^5.4.0"
   }

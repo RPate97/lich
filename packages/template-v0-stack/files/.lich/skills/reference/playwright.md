@@ -1,6 +1,6 @@
 ---
 name: playwright
-description: Playwright e2e test reference for the levelzero stack
+description: Playwright e2e test reference for the lich stack
 applies-to: reference
 ---
 
@@ -8,8 +8,8 @@ applies-to: reference
 
 Playwright drives every end-to-end test in the stack. The config lives at
 `apps/web/playwright.config.ts` and tests live under `apps/web/e2e/`. Run
-the suite with `levelzero test e2e`, which first boots the stack
-(`levelzero dev`) and waits for the URLs from `levelzero urls` to respond.
+the suite with `lich test e2e`, which first boots the stack
+(`lich dev`) and waits for the URLs from `lich urls` to respond.
 
 ## Test layout
 
@@ -36,8 +36,8 @@ the suite with `levelzero test e2e`, which first boots the stack
 
 ## Visual regression
 
-- Use `levelzero screenshot <url>` to capture a baseline outside the test
-  suite, then compare with `levelzero visual.diff <a.png> <b.png>` in CI
+- Use `lich screenshot <url>` to capture a baseline outside the test
+  suite, then compare with `lich visual.diff <a.png> <b.png>` in CI
   to surface unintended visual changes.
 
 ## Pitfalls

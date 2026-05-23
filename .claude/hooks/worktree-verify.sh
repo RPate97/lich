@@ -20,7 +20,7 @@
 #   MISSING: node_modules             expected root symlink absent entirely
 #
 # Recovery (run from inside the worktree):
-#   rm -rf node_modules/@levelzero && bun install
+#   rm -rf node_modules/@lich && bun install
 # or, for a full reset:
 #   rm node_modules packages/*/node_modules && bun install
 set -euo pipefail
@@ -29,8 +29,8 @@ WT_DIR="${1:-$(pwd)}"
 WT_DIR=$(cd "$WT_DIR" && pwd)  # absolute
 
 # Project dir is where the symlinks should point. Default matches the
-# WorktreeCreate hook's expectation; override with LEVELZERO_PROJECT_DIR.
-PROJECT_DIR="${LEVELZERO_PROJECT_DIR:-/Users/ryan/Desktop/programming/levelzero}"
+# WorktreeCreate hook's expectation; override with LICH_PROJECT_DIR.
+PROJECT_DIR="${LICH_PROJECT_DIR:-/Users/ryan/Desktop/programming/levelzero}"
 
 fail=0
 report() {

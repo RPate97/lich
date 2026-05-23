@@ -31,10 +31,10 @@ bun-debug.log*
 .env.test.local
 .env.production.local
 
-# Levelzero generated state (per-worktree compose files, allocated ports,
+# Lich generated state (per-worktree compose files, allocated ports,
 # resolved .env.<service> snapshots). Never commit — values include runtime
 # secrets resolved from .env.local / Infisical / etc.
-.levelzero/
+.lich/
 
 # Editors
 .vscode/

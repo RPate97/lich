@@ -93,7 +93,7 @@ beforeEach(() => {
   spawnCalls.length = 0;
 });
 
-describe('levelzero stacks prune', () => {
+describe('lich stacks prune', () => {
   it('removes entries pointing at paths that no longer exist', async () => {
     const live = join(tmp, 'live');
     const dead = join(tmp, 'dead');
@@ -123,20 +123,20 @@ describe('levelzero stacks prune', () => {
   });
 
   describe('--all (LEV-120)', () => {
-    it('reaps every levelzero-* container and network on the host', async () => {
+    it('reaps every lich-* container and network on the host', async () => {
       // docker info → ok
       setNextSpawn({ exitCode: 0 });
-      // docker ps -a --filter name=levelzero- → two containers
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-abc123-postgres\nlevelzero-def456-redis\n' });
-      // docker rm -f levelzero-abc123-postgres → ok
+      // docker ps -a --filter name=lich- → two containers
+      setNextSpawn({ exitCode: 0, stdout: 'lich-abc123-postgres\nlich-def456-redis\n' });
+      // docker rm -f lich-abc123-postgres → ok
       setNextSpawn({ exitCode: 0 });
-      // docker rm -f levelzero-def456-redis → ok
+      // docker rm -f lich-def456-redis → ok
       setNextSpawn({ exitCode: 0 });
       // docker network ls → two networks
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-abc123\nlevelzero-def456\n' });
-      // docker network rm levelzero-abc123 → ok
+      setNextSpawn({ exitCode: 0, stdout: 'lich-abc123\nlich-def456\n' });
+      // docker network rm lich-abc123 → ok
       setNextSpawn({ exitCode: 0 });
-      // docker network rm levelzero-def456 → ok
+      // docker network rm lich-def456 → ok
       setNextSpawn({ exitCode: 0 });
 
       const cmd = makeStacksPruneCommand(() => reg);
@@ -144,10 +144,10 @@ describe('levelzero stacks prune', () => {
 
       expect(result.pruned).toEqual([]);
       expect(result.containersRemoved).toEqual([
-        'levelzero-abc123-postgres',
-        'levelzero-def456-redis',
+        'lich-abc123-postgres',
+        'lich-def456-redis',
       ]);
-      expect(result.networksRemoved).toEqual(['levelzero-abc123', 'levelzero-def456']);
+      expect(result.networksRemoved).toEqual(['lich-abc123', 'lich-def456']);
       expect(result.volumesRemoved).toBeUndefined();
       expect(result.dockerSkipped).toBeUndefined();
 
@@ -155,7 +155,7 @@ describe('levelzero stacks prune', () => {
       expect(spawnCalls[0]).toMatchObject({ cmd: 'docker', args: ['info'] });
       expect(spawnCalls[1]).toMatchObject({
         cmd: 'docker',
-        args: ['ps', '-a', '--filter', 'name=levelzero-', '--format', '{{.Names}}'],
+        args: ['ps', '-a', '--filter', 'name=lich-', '--format', '{{.Names}}'],
       });
     });
 
@@ -167,7 +167,7 @@ describe('levelzero stacks prune', () => {
       // docker network ls → no networks
       setNextSpawn({ exitCode: 0, stdout: '' });
       // docker volume ls → one volume
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-abc123-postgres-data\n' });
+      setNextSpawn({ exitCode: 0, stdout: 'lich-abc123-postgres-data\n' });
       // docker volume rm -f → ok
       setNextSpawn({ exitCode: 0 });
 
@@ -179,7 +179,7 @@ describe('levelzero stacks prune', () => {
         flags: { all: true, volumes: true },
       })) as any;
 
-      expect(result.volumesRemoved).toEqual(['levelzero-abc123-postgres-data']);
+      expect(result.volumesRemoved).toEqual(['lich-abc123-postgres-data']);
       // Confirm the volume sub-command was actually issued.
       const volumeRmCall = spawnCalls.find(
         (c) => c.args[0] === 'volume' && c.args[1] === 'rm',
@@ -232,7 +232,7 @@ describe('levelzero stacks prune', () => {
       // ps -a → no containers
       setNextSpawn({ exitCode: 0, stdout: '' });
       // network ls → two networks
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-aaa111\nlevelzero-bbb222\n' });
+      setNextSpawn({ exitCode: 0, stdout: 'lich-aaa111\nlich-bbb222\n' });
       // first rm fails (e.g. attached container we couldn't reap)
       setNextSpawn({ exitCode: 1, stderr: 'network has active endpoints' });
       // second rm succeeds
@@ -241,28 +241,28 @@ describe('levelzero stacks prune', () => {
       const cmd = makeStacksPruneCommand(() => reg);
       const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: { all: true } })) as any;
       // Only the successful removal lands in the output.
-      expect(result.networksRemoved).toEqual(['levelzero-bbb222']);
+      expect(result.networksRemoved).toEqual(['lich-bbb222']);
     });
 
     it('renders human-readable output with the reaped resources', async () => {
       setNextSpawn({ exitCode: 0 }); // info
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-abc123-postgres\n' });
+      setNextSpawn({ exitCode: 0, stdout: 'lich-abc123-postgres\n' });
       setNextSpawn({ exitCode: 0 }); // rm container
-      setNextSpawn({ exitCode: 0, stdout: 'levelzero-abc123\n' });
+      setNextSpawn({ exitCode: 0, stdout: 'lich-abc123\n' });
       setNextSpawn({ exitCode: 0 }); // network rm
 
       const cmd = makeStacksPruneCommand(() => reg);
       const out = (await cmd.run({ cwd: tmp, format: 'pretty', args: [], flags: { all: true } })) as string;
       expect(out).toContain('removed 1 stale container(s)');
-      expect(out).toContain('levelzero-abc123-postgres');
+      expect(out).toContain('lich-abc123-postgres');
       expect(out).toContain('removed 1 stale network(s)');
-      expect(out).toContain('levelzero-abc123');
+      expect(out).toContain('lich-abc123');
     });
   });
 
   describe('--all reaps orphan owned-service pid files (LEV-201)', () => {
     /**
-     * Stage a pid file under `<worktree>/.levelzero/state/<key>/pids/<service>.pid`.
+     * Stage a pid file under `<worktree>/.lich/state/<key>/pids/<service>.pid`.
      * Mirrors what `runOwnedServicesDetached` writes after spawn so the prune
      * code is exercised against the exact on-disk shape `dev` produces.
      */
@@ -272,7 +272,7 @@ describe('levelzero stacks prune', () => {
       service: string,
       pid: number | string,
     ): string {
-      const dir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+      const dir = join(worktreePath, '.lich', 'state', worktreeKey, 'pids');
       mkdirSync(dir, { recursive: true });
       const path = join(dir, `${service}.pid`);
       writeFileSync(path, `${pid}\n`, 'utf8');

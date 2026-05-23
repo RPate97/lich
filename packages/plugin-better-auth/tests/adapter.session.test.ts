@@ -5,7 +5,7 @@ import {
   InvalidSessionError,
   resetBetterAuthCache,
 } from '../src/adapter';
-import type { AuthContext } from '@levelzero/core';
+import type { AuthContext } from '@lich/core';
 
 const TEST_SECRET = 'test-secret-32-chars-min-length-aaaa';
 

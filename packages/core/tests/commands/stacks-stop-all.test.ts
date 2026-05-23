@@ -10,7 +10,7 @@ import { makeStacksStopAllCommand } from '../../src/commands/stacks/stop-all';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
 import { CLIError } from '../../src/errors';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { Service } from '../../src/services/types';
 
 // Default builtins now include api+web OwnedServices (LEV-90). Inject
@@ -45,7 +45,7 @@ beforeEach(async () => {
 
 function makeProject(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-stopall-proj-')));
-  writeFileSync(join(dir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(dir, 'lich.config.ts'), 'export default {};');
   createdProjectDirs.push(dir);
   return dir;
 }
@@ -61,7 +61,7 @@ afterEach(() => {
   }
 });
 
-describe('levelzero stacks stop --all (unit)', () => {
+describe('lich stacks stop --all (unit)', () => {
   it('errors without --all flag', async () => {
     const cmd = makeStacksStopAllCommand(() => registry);
     await expect(
@@ -78,7 +78,7 @@ describe('levelzero stacks stop --all (unit)', () => {
   });
 });
 
-describeIfDocker('levelzero stacks stop --all (integration)', () => {
+describeIfDocker('lich stacks stop --all (integration)', () => {
   it('tears down stacks from two different worktrees', async () => {
     const dirA = makeProject();
     const dirB = makeProject();

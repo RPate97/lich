@@ -59,7 +59,7 @@ export type Protocol =
  *  - `worktreeKey`     — stable short identifier of the active worktree.
  *                        Plugins that need worktree-scoped state (caches,
  *                        runtime tokens) scope under
- *                        `.levelzero/state/<worktreeKey>/`.
+ *                        `.lich/state/<worktreeKey>/`.
  *  - `consumerContext` — whether the value is being injected into a host
  *                        process (`'host'`) or a container's environment
  *                        block (`'container'`). Named sources use this

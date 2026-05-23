@@ -8,7 +8,7 @@ import {
   type BackendAdapter,
   type RouteManifest,
   type GeneratorContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import { makeApiClientGenerator } from '../src/generator';
 
 function stubBackend(

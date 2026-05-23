@@ -14,21 +14,21 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-home-')));
-  // Declare the extracted plugin via levelzero.config.ts so each plan-04 e2e
+  // Declare the extracted plugin via lich.config.ts so each plan-04 e2e
   // also exercises the plugin loader path with a real package (LEV-146): the
-  // loader must resolve `@levelzero/plugin-portless` from the workspace, run
+  // loader must resolve `@lich/plugin-portless` from the workspace, run
   // its `register()`, and merge its adapters into the dispatch registry — all
   // without disrupting any inline command (`urls` here is inline).
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
-    `export default { plugins: ['@levelzero/plugin-portless'] };`,
+    join(projectDir, 'lich.config.ts'),
+    `export default { plugins: ['@lich/plugin-portless'] };`,
   );
 });
 
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -46,7 +46,7 @@ function run(args: string[]) {
  */
 describe('bin: plan-04 urls end-to-end', () => {
   it('urls returns persisted StackEntry.urls for the current worktree as JSON', async () => {
-    const reg = new Registry(join(homeDir, '.levelzero', 'registry.json'));
+    const reg = new Registry(join(homeDir, '.lich', 'registry.json'));
     await reg.upsert(computeWorktreeKey(projectDir), {
       path: projectDir,
       branch: 'main',
@@ -57,7 +57,7 @@ describe('bin: plan-04 urls end-to-end', () => {
       },
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-17T00:00:00Z',
     });
 
@@ -76,7 +76,7 @@ describe('bin: plan-04 urls end-to-end', () => {
   });
 
   it('urls falls back to http://localhost:<port> rows when StackEntry.urls is empty', async () => {
-    const reg = new Registry(join(homeDir, '.levelzero', 'registry.json'));
+    const reg = new Registry(join(homeDir, '.lich', 'registry.json'));
     await reg.upsert(computeWorktreeKey(projectDir), {
       path: projectDir,
       branch: 'main',
@@ -84,7 +84,7 @@ describe('bin: plan-04 urls end-to-end', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-17T00:00:00Z',
     });
 
@@ -99,7 +99,7 @@ describe('bin: plan-04 urls end-to-end', () => {
   });
 
   it('urls --all returns every stack regardless of cwd', async () => {
-    const reg = new Registry(join(homeDir, '.levelzero', 'registry.json'));
+    const reg = new Registry(join(homeDir, '.lich', 'registry.json'));
     await reg.upsert('k1', {
       path: '/a',
       branch: 'a',
@@ -144,11 +144,11 @@ describe('bin: plan-04 urls end-to-end', () => {
     ]);
   });
 
-  it('urls without --all errors NO_PROJECT when cwd is not a levelzero project', () => {
+  it('urls without --all errors NO_PROJECT when cwd is not a lich project', () => {
     const outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p04-out-')));
     const res = spawnSync('bun', [BIN, 'urls', '--json'], {
       cwd: outsideDir,
-      env: { ...process.env, LEVELZERO_HOME: homeDir },
+      env: { ...process.env, LICH_HOME: homeDir },
       encoding: 'utf8',
     });
     expect(res.status).toBe(1);

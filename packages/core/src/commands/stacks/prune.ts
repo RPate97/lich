@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LEVELZERO_PREFIX } from '../../compose/naming';
+import { LICH_PREFIX } from '../../compose/naming';
 import type { Registry } from '../../registry';
 import type { Command } from '../types';
 
@@ -65,7 +65,7 @@ async function isAliveAfterDelay(pid: number, ms: number): Promise<boolean> {
 }
 
 /**
- * Walk every pid file under `<worktreePath>/.levelzero/state/<worktreeKey>/pids/`
+ * Walk every pid file under `<worktreePath>/.lich/state/<worktreeKey>/pids/`
  * and reap as appropriate.
  *
  * Decision matrix (matches the LEV-201 spec):
@@ -84,7 +84,7 @@ async function reapPidsForEntry(
   worktreeExists: boolean,
   force: boolean,
 ): Promise<ReapedProcess[]> {
-  const pidDir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+  const pidDir = join(worktreePath, '.lich', 'state', worktreeKey, 'pids');
 
   let entries: string[];
   try {
@@ -256,49 +256,49 @@ async function dockerAvailable(): Promise<boolean> {
   }
 }
 
-async function listLevelzeroContainers(): Promise<string[]> {
+async function listLichContainers(): Promise<string[]> {
   try {
     const r = await dockerExec(
-      ['ps', '-a', '--filter', `name=${LEVELZERO_PREFIX}`, '--format', '{{.Names}}'],
+      ['ps', '-a', '--filter', `name=${LICH_PREFIX}`, '--format', '{{.Names}}'],
       10_000,
     );
     if (r.exitCode !== 0) return [];
     return r.stdout
       .split('\n')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+      .filter((s) => s.length > 0 && s.startsWith(LICH_PREFIX));
   } catch {
     return [];
   }
 }
 
-async function listLevelzeroNetworks(): Promise<string[]> {
+async function listLichNetworks(): Promise<string[]> {
   try {
     const r = await dockerExec(
-      ['network', 'ls', '--filter', `name=${LEVELZERO_PREFIX}`, '--format', '{{.Name}}'],
+      ['network', 'ls', '--filter', `name=${LICH_PREFIX}`, '--format', '{{.Name}}'],
       10_000,
     );
     if (r.exitCode !== 0) return [];
     return r.stdout
       .split('\n')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+      .filter((s) => s.length > 0 && s.startsWith(LICH_PREFIX));
   } catch {
     return [];
   }
 }
 
-async function listLevelzeroVolumes(): Promise<string[]> {
+async function listLichVolumes(): Promise<string[]> {
   try {
     const r = await dockerExec(
-      ['volume', 'ls', '--filter', `name=${LEVELZERO_PREFIX}`, '--format', '{{.Name}}'],
+      ['volume', 'ls', '--filter', `name=${LICH_PREFIX}`, '--format', '{{.Name}}'],
       10_000,
     );
     if (r.exitCode !== 0) return [];
     return r.stdout
       .split('\n')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+      .filter((s) => s.length > 0 && s.startsWith(LICH_PREFIX));
   } catch {
     return [];
   }
@@ -355,12 +355,12 @@ interface StackPruneResult {
  * unchanged: drop registry entries whose worktree path no longer exists.
  *
  * With `--all`:
- *   - sweep every `levelzero-*` container on the host (running or stopped)
- *   - sweep every `levelzero-*` network on the host (frees subnets from the
+ *   - sweep every `lich-*` container on the host (running or stopped)
+ *   - sweep every `lich-*` network on the host (frees subnets from the
  *     default address pool — the root cause of "all predefined address pools
  *     have been fully subnetted")
  *
- * With `--all --volumes`, additionally remove every `levelzero-*` named
+ * With `--all --volumes`, additionally remove every `lich-*` named
  * volume. Gated behind a second flag because volumes hold user data (e.g.
  * postgres bind-mount targets) and a single stale agent worktree shouldn't
  * silently wipe a developer's local DB state.
@@ -369,7 +369,7 @@ export function makeStacksPruneCommand(getRegistry: () => Registry): Command {
   return {
     name: 'stacks.prune',
     describe:
-      'Remove registry entries for worktrees that no longer exist; with --all, also reap stale levelzero-* containers, networks, and orphan owned-service processes (use --force to kill alive processes whose worktree still exists)',
+      'Remove registry entries for worktrees that no longer exist; with --all, also reap stale lich-* containers, networks, and orphan owned-service processes (use --force to kill alive processes whose worktree still exists)',
     async run(ctx) {
       const reg = getRegistry();
       const entries = await reg.list();
@@ -414,19 +414,19 @@ export function makeStacksPruneCommand(getRegistry: () => Registry): Command {
         } else {
           // Reap containers first — networks can't be removed while a
           // container is still attached. We collect successes only, so a
-          // network with a non-levelzero container attached is left alone
+          // network with a non-lich container attached is left alone
           // and reported as a remaining (non-removed) entry on the next run.
           containersRemoved = [];
-          for (const cname of await listLevelzeroContainers()) {
+          for (const cname of await listLichContainers()) {
             if (await removeContainer(cname)) containersRemoved.push(cname);
           }
           networksRemoved = [];
-          for (const nname of await listLevelzeroNetworks()) {
+          for (const nname of await listLichNetworks()) {
             if (await removeNetwork(nname)) networksRemoved.push(nname);
           }
           if (includeVolumes) {
             volumesRemoved = [];
-            for (const vname of await listLevelzeroVolumes()) {
+            for (const vname of await listLichVolumes()) {
               if (await removeVolume(vname)) volumesRemoved.push(vname);
             }
           }

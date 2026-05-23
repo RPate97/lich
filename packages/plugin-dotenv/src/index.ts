@@ -1,10 +1,10 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parse } from 'dotenv';
 
 /**
- * Options accepted by the `@levelzero/plugin-dotenv` factory.
+ * Options accepted by the `@lich/plugin-dotenv` factory.
  *
  *  - `files`           — Relative paths read in declared order; **later files
  *                        win** when keys collide. Paths are resolved against
@@ -16,7 +16,7 @@ import { parse } from 'dotenv';
  *                        Default: `['.env.local']`.
  *  - `fromProcessEnv`  — When `true` (default), the host's `process.env` is
  *                        merged on top of the file contents — useful for
- *                        one-off `FOO=bar levelzero dev` overrides without
+ *                        one-off `FOO=bar lich dev` overrides without
  *                        editing any file. Disable to make the resolver
  *                        purely file-driven (deterministic for tests).
  *  - `processEnvKeys`  — Optional allowlist applied to the `process.env`
@@ -37,7 +37,7 @@ export interface DotenvOptions {
 }
 
 /**
- * `@levelzero/plugin-dotenv` (LEV-188).
+ * `@lich/plugin-dotenv` (LEV-188).
  *
  * Loads environment variables from `.env`-style files plus (optionally) the
  * host `process.env`, and publishes them as a single **bulk EnvSource** under
@@ -46,7 +46,7 @@ export interface DotenvOptions {
  * author, so there is no static list of names to register.
  *
  * The plugin is also the **bootstrap layer for secret-loader plugins** —
- * `@levelzero/plugin-infisical` (LEV-189) reads its machine-identity token from
+ * `@lich/plugin-infisical` (LEV-189) reads its machine-identity token from
  * `.env.local` via this plugin, then re-publishes the fetched secrets under
  * the `infisical` namespace.
  *
@@ -64,15 +64,15 @@ export interface DotenvOptions {
  *
  * Bulk resolvers receive `ctx.projectRoot` — the parent repository root, not
  * the worktree checkout path. `.env.local` lives in the main workspace and is
- * read by every worktree's `levelzero dev`. This is identical to how every
+ * read by every worktree's `lich dev`. This is identical to how every
  * other config-reading plugin behaves: `findWorktree` always resolves
  * `projectRoot` to the parent repo regardless of where the worktree itself
- * lives on disk (commonly under `/tmp/levelzero-worktrees/...`).
+ * lives on disk (commonly under `/tmp/lich-worktrees/...`).
  *
  * ## Wire it into a project
  *
  * ```ts
- * import dotenv from '@levelzero/plugin-dotenv';
+ * import dotenv from '@lich/plugin-dotenv';
  *
  * export default defineConfig({
  *   plugins: [dotenv()],
@@ -96,7 +96,7 @@ export default function dotenv(opts: DotenvOptions = {}): Plugin<
   const allowlist = opts.processEnvKeys ?? '*';
 
   return {
-    name: '@levelzero/plugin-dotenv',
+    name: '@lich/plugin-dotenv',
     namespace: (opts.namespace ?? 'dotenv') as 'dotenv',
     version: '0.1.0',
 
@@ -117,7 +117,7 @@ export default function dotenv(opts: DotenvOptions = {}): Plugin<
           }
 
           // process.env overlay — applied AFTER files so an explicit shell
-          // override (`FOO=bar levelzero dev`) wins over a file value.
+          // override (`FOO=bar lich dev`) wins over a file value.
           // `Object.entries(process.env)` only yields defined values, but
           // the type is `string | undefined`; the runtime guard satisfies
           // both the type-checker and Node's actual behavior.

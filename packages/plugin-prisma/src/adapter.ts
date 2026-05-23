@@ -13,7 +13,7 @@ import {
   type TableDescription,
   type ColumnDescription,
   type TableRow,
-} from '@levelzero/core';
+} from '@lich/core';
 
 /**
  * Error thrown when a prisma CLI invocation exits non-zero.
@@ -167,7 +167,7 @@ async function findNewestMigrationDir(projectRoot: string, name: string): Promis
 }
 
 /**
- * Force `localhost` to resolve to IPv4. Levelzero binds postgres to
+ * Force `localhost` to resolve to IPv4. Lich binds postgres to
  * `127.0.0.1:<port>` in `docker run`, but Node's default DNS prefers IPv6,
  * which causes `ECONNREFUSED ::1:<port>` on macOS / Linux dual-stack setups.
  * We rewrite the URL before handing it to `pg` to sidestep that.

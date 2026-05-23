@@ -57,7 +57,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-restart-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-restart-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
@@ -78,12 +78,12 @@ describe('makeRestartCommand — registration', () => {
     expect(cmd.describe.length).toBeGreaterThan(0);
   });
 
-  it('rejects when cwd is not inside a levelzero project', async () => {
+  it('rejects when cwd is not inside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-restart-outside-')));
     const cmd = makeRestartCommand(() => registry);
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(/not inside a levelzero project/i);
+    ).rejects.toThrow(/not inside a lich project/i);
   });
 
   it('throws CLIError when no stack entry exists in the registry', async () => {
@@ -113,7 +113,7 @@ describe('makeRestartCommand — orchestration (no compose teardown)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
@@ -149,12 +149,12 @@ describe('makeRestartCommand — orchestration (no compose teardown)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
     // Plant a real sleeping child pid in the state dir to exercise stop.
-    const pidDir = join(projectDir, '.levelzero', 'state', wtKey, 'pids');
+    const pidDir = join(projectDir, '.lich', 'state', wtKey, 'pids');
     mkdirSync(pidDir, { recursive: true });
 
     const child = spawn('sh', ['-c', 'sleep 30'], { detached: true, stdio: 'ignore' });
@@ -218,7 +218,7 @@ describe('makeRestartCommand — orchestration (no compose teardown)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
@@ -258,7 +258,7 @@ describe('makeRestartCommand — orchestration (no compose teardown)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
@@ -301,7 +301,7 @@ describe('makeRestartCommand — orchestration (no compose teardown)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 

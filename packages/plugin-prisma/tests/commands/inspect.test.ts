@@ -2,17 +2,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '@levelzero/core/registry';
-import { computeWorktreeKey } from '@levelzero/core/worktree';
-import { CLIError } from '@levelzero/core/errors';
-import { EnvSourceRegistry } from '@levelzero/core/env/registry';
+import { Registry } from '@lich/core/registry';
+import { computeWorktreeKey } from '@lich/core/worktree';
+import { CLIError } from '@lich/core/errors';
+import { EnvSourceRegistry } from '@lich/core/env/registry';
 import { makeDbInspectCommand, dbInspectCommand } from '../../src/commands/inspect';
 import type {
   ORMAdapter,
   ORMContext,
   SchemaDescription,
   TableRow,
-} from '@levelzero/core';
+} from '@lich/core';
 
 interface AdapterStubs {
   inspectSchemaImpl?: (ctx: ORMContext) => Promise<SchemaDescription>;
@@ -46,12 +46,12 @@ function envSourceRegistryWithPostgres(): EnvSourceRegistry {
     namespace: 'postgres',
     name: 'url',
     fullKey: 'postgres.url',
-    pluginName: '@levelzero/plugin-postgres',
+    pluginName: '@lich/plugin-postgres',
     source: {
       protocol: 'postgres',
       host: ({ ports }) =>
-        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
-      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+        `postgres://lich:lich@localhost:${ports.postgres ?? ''}/lich`,
+      container: () => `postgres://lich:lich@postgres:5432/lich`,
     },
   });
   return reg;
@@ -70,7 +70,7 @@ async function seedRegistryEntry(): Promise<void> {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
@@ -78,17 +78,17 @@ async function seedRegistryEntry(): Promise<void> {
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-inspect-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-inspect-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
-describe('levelzero db inspect', () => {
+describe('lich db inspect', () => {
   it('exports a command named "db.inspect"', () => {
     expect(dbInspectCommand.name).toBe('db.inspect');
     expect(typeof dbInspectCommand.describe).toBe('string');
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-inspect-outside-')));
     const adapter = stubAdapter();
     const cmd = makeDbInspectCommand({
@@ -185,7 +185,7 @@ describe('levelzero db inspect', () => {
     expect(captured).toBeDefined();
     expect(captured!.projectRoot).toBe(projectDir);
     expect(captured!.databaseUrl).toBe(
-      `postgres://levelzero:levelzero@localhost:${POSTGRES_PORT}/levelzero`,
+      `postgres://lich:lich@localhost:${POSTGRES_PORT}/lich`,
     );
     expect(result).toEqual(schema);
   });
@@ -220,7 +220,7 @@ describe('levelzero db inspect', () => {
     expect(adapter.inspectSchema).not.toHaveBeenCalled();
     expect(capturedCtx).toBeDefined();
     expect(capturedCtx!.databaseUrl).toBe(
-      `postgres://levelzero:levelzero@localhost:${POSTGRES_PORT}/levelzero`,
+      `postgres://lich:lich@localhost:${POSTGRES_PORT}/lich`,
     );
     expect(capturedName).toBe('users');
     // default limit per spec is 50

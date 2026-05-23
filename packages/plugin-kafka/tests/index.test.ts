@@ -9,7 +9,7 @@ import type {
   EnvSourceContext,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import kafka from '../src/index';
 
 /**
@@ -82,10 +82,10 @@ function makeCtx(overrides: Partial<EnvSourceContext> = {}): EnvSourceContext {
   };
 }
 
-describe('@levelzero/plugin-kafka factory (LEV-191)', () => {
+describe('@lich/plugin-kafka factory (LEV-191)', () => {
   it('produces a Plugin with the canonical name + namespace + version', () => {
     const plugin = kafka();
-    expect(plugin.name).toBe('@levelzero/plugin-kafka');
+    expect(plugin.name).toBe('@lich/plugin-kafka');
     expect(plugin.namespace).toBe('kafka');
     expect(plugin.version).toBe('0.1.0');
     expect(typeof plugin.register).toBe('function');
@@ -139,7 +139,7 @@ describe('@levelzero/plugin-kafka factory (LEV-191)', () => {
     expect(env.KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR).toBe('1');
     expect(env.KAFKA_TRANSACTION_STATE_LOG_MIN_ISR).toBe('1');
     // Stable cluster identifier
-    expect(env.CLUSTER_ID).toBe('levelzero-kafka-dev');
+    expect(env.CLUSTER_ID).toBe('lich-kafka-dev');
     // Zookeeper-mode fields must NOT be present in KRaft setup
     expect(env.KAFKA_ZOOKEEPER_CONNECT).toBeUndefined();
   });

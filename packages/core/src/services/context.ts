@@ -26,8 +26,8 @@ export async function resolveStackContext(cwd: string): Promise<StackContext> {
   if (!wt) {
     throw new CLIError(
       'NO_PROJECT',
-      'not inside a levelzero project',
-      'run `levelzero init` or cd into a directory with levelzero.config.ts',
+      'not inside a lich project',
+      'run `lich init` or cd into a directory with lich.config.ts',
     );
   }
   const branch = await currentBranch(wt.path);

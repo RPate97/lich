@@ -1,4 +1,4 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import {
   createClient as defaultCreateClient,
   type InfisicalClient,
@@ -6,7 +6,7 @@ import {
 } from './client';
 
 /**
- * Options accepted by the `@levelzero/plugin-infisical` factory.
+ * Options accepted by the `@lich/plugin-infisical` factory.
  *
  *  - `project`               — Infisical project ID. Required. The plugin
  *                              passes this through to the SDK as `projectId`
@@ -63,7 +63,7 @@ export interface InfisicalOptions {
  * something breaks.
  */
 function wrapError(detail: string, cause?: unknown): Error {
-  const message = `@levelzero/plugin-infisical: ${detail}`;
+  const message = `@lich/plugin-infisical: ${detail}`;
   // `cause` propagates the original error chain when supported, so
   // `console.error(err)` shows the SDK's failure underneath ours.
   if (cause !== undefined) {
@@ -73,11 +73,11 @@ function wrapError(detail: string, cause?: unknown): Error {
 }
 
 /**
- * `@levelzero/plugin-infisical` (LEV-189).
+ * `@lich/plugin-infisical` (LEV-189).
  *
  * Fetches secrets from an Infisical project + environment + folder at boot
  * and publishes them as a single **bulk EnvSource** under the `infisical`
- * namespace. The shape is identical to `@levelzero/plugin-dotenv`'s bulk
+ * namespace. The shape is identical to `@lich/plugin-dotenv`'s bulk
  * source — the framework treats both interchangeably from the consumer's
  * point of view; `envInjection: { importAll: ['infisical'] }` is enough to
  * pull every fetched secret into the generated `.env.<service>` files.
@@ -94,14 +94,14 @@ function wrapError(detail: string, cause?: unknown): Error {
  *     `client_secret` from `process.env`. The plugin invokes
  *     `auth().universalAuth.login({ clientId, clientSecret })` to exchange
  *     them for a short-lived access token. This is the recommended path
- *     for developer machines: pair with `@levelzero/plugin-dotenv` and
+ *     for developer machines: pair with `@lich/plugin-dotenv` and
  *     keep the credentials in `.env.local` (gitignored).
  *
  * If neither mode resolves to a complete credential set, the bulk resolver
  * throws at boot with a message pointing the user at `INFISICAL_CLIENT_ID`
  * / `INFISICAL_CLIENT_SECRET` and the dotenv plugin. We deliberately do NOT
  * throw at factory-call time — the env vars might be populated later in
- * the boot sequence by another plugin (specifically `@levelzero/plugin-
+ * the boot sequence by another plugin (specifically `@lich/plugin-
  * dotenv`, which the docs recommend running first).
  *
  * ## Worktree safety
@@ -114,7 +114,7 @@ function wrapError(detail: string, cause?: unknown): Error {
  *
  * ## Refresh
  *
- * Secrets are fetched ONCE per boot. Long-running `levelzero dev` sessions
+ * Secrets are fetched ONCE per boot. Long-running `lich dev` sessions
  * will not pick up upstream changes without a restart. This is documented
  * in the plan as out-of-scope for v0; a future ticket may add a TTL-based
  * re-resolve.
@@ -122,8 +122,8 @@ function wrapError(detail: string, cause?: unknown): Error {
  * ## Wire it into a project
  *
  * ```ts
- * import dotenv from '@levelzero/plugin-dotenv';
- * import infisical from '@levelzero/plugin-infisical';
+ * import dotenv from '@lich/plugin-dotenv';
+ * import infisical from '@lich/plugin-infisical';
  *
  * export default defineConfig({
  *   // Order matters: dotenv populates process.env so infisical can read
@@ -158,7 +158,7 @@ export default function infisical(opts: InfisicalOptions): Plugin<
   const clientFactory = opts._clientFactory ?? defaultCreateClient;
 
   return {
-    name: '@levelzero/plugin-infisical',
+    name: '@lich/plugin-infisical',
     namespace: (opts.namespace ?? 'infisical') as 'infisical',
     version: '0.1.0',
 
@@ -196,13 +196,13 @@ export default function infisical(opts: InfisicalOptions): Plugin<
               throw wrapError(
                 `missing credentials. Set either \`token\` in the plugin options ` +
                   `OR populate \`${clientIdVar}\` + \`${clientSecretVar}\` in process.env ` +
-                  `(typically via \`@levelzero/plugin-dotenv\` reading \`.env.local\`).`,
+                  `(typically via \`@lich/plugin-dotenv\` reading \`.env.local\`).`,
               );
             }
           } catch (err) {
             // Re-throw "missing credentials" errors verbatim — they're
             // already our own and carry the actionable message.
-            if (err instanceof Error && err.message.startsWith('@levelzero/plugin-infisical:')) {
+            if (err instanceof Error && err.message.startsWith('@lich/plugin-infisical:')) {
               throw err;
             }
             // Anything else came from the SDK (network failure, bad

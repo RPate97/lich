@@ -1,9 +1,9 @@
-# @levelzero/plugin-redis
+# @lich/plugin-redis
 
-A Levelzero plugin that contributes a Redis service to your docker-compose
+A Lich plugin that contributes a Redis service to your docker-compose
 stack, publishes `redis.*` EnvSources (url/host/port/driver/password) for
 downstream services, registers a small portless cache adapter, and adds a
-`levelzero redis.ping` command.
+`lich redis.ping` command.
 
 Promoted from `examples/plugin-redis/` to a real workspace package (LEV-190).
 
@@ -46,12 +46,12 @@ tooling can dispatch on it.
 ## Quickstart — load it into a project
 
 ```ts
-import type { LevelzeroConfig } from '@levelzero/core';
-import redis from '@levelzero/plugin-redis';
+import type { LichConfig } from '@lich/core';
+import redis from '@lich/plugin-redis';
 
 export default {
   plugins: [redis()],
-} satisfies LevelzeroConfig;
+} satisfies LichConfig;
 ```
 
 With a password:
@@ -64,21 +64,21 @@ plugins: [redis({ password: 'hunter2' })],
 
 ```sh
 # Start the stack — Redis now joins your compose services.
-levelzero dev
+lich dev
 
 # In another shell, ping it.
-levelzero redis.ping
+lich redis.ping
 # => PONG
 ```
 
 By default the command targets `127.0.0.1:6379`. Override with `--host` /
 `--port` flags or `REDIS_HOST` / `REDIS_PORT` env vars to point at the
-stack-allocated host port reported by `levelzero stacks.current`.
+stack-allocated host port reported by `lich stacks.current`.
 
 ```sh
 # Read the allocated host port from the stack registry, then ping it.
-PORT=$(levelzero stacks.current --format json | jq -r '.entry.ports.redis')
-levelzero redis.ping --port "$PORT"
+PORT=$(lich stacks.current --format json | jq -r '.entry.ports.redis')
+lich redis.ping --port "$PORT"
 ```
 
 ## What to read next

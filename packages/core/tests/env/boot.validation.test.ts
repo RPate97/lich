@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bootPlugins } from '../../src/plugins/boot';
 import { EnvSourceMissingError, NamespaceCollisionError } from '../../src/env/errors';
-import type { LevelzeroConfig } from '../../src/config';
+import type { LichConfig } from '../../src/config';
 import type { Plugin } from '../../src/plugins/types';
 
 const PROJECT_ROOT = '/tmp/lz-boot-validation-test';
@@ -82,7 +82,7 @@ describe('bootPlugins — namespace collision detection', () => {
 
 describe('bootPlugins — envInjection validation', () => {
   const postgres: Plugin<'postgres'> = {
-    name: '@levelzero/plugin-postgres',
+    name: '@lich/plugin-postgres',
     namespace: 'postgres',
     version: '0.0.1',
     register(api) {
@@ -94,7 +94,7 @@ describe('bootPlugins — envInjection validation', () => {
   };
 
   const infisical: Plugin<'infisical'> = {
-    name: '@levelzero/plugin-infisical',
+    name: '@lich/plugin-infisical',
     namespace: 'infisical',
     version: '0.0.1',
     register(api) {
@@ -103,7 +103,7 @@ describe('bootPlugins — envInjection validation', () => {
   };
 
   it('passes when every envInjection reference resolves', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [postgres, infisical],
       envInjection: {
         DATABASE_URL: 'postgres.url',
@@ -115,7 +115,7 @@ describe('bootPlugins — envInjection validation', () => {
   });
 
   it('throws ENV_SOURCE_MISSING when envInjection references an unknown named source', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [postgres],
       envInjection: { X: 'mysql.url' },
     };
@@ -132,7 +132,7 @@ describe('bootPlugins — envInjection validation', () => {
   });
 
   it('throws ENV_SOURCE_MISSING when importAll references an unknown bulk namespace', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [postgres], // no infisical
       envInjection: { importAll: ['infisical'] },
     };
@@ -142,7 +142,7 @@ describe('bootPlugins — envInjection validation', () => {
   });
 
   it('throws ENV_SOURCE_MISSING when explicit entry references a namespace with no source', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [postgres],
       envInjection: { K: 'unloaded.something' },
     };
@@ -153,7 +153,7 @@ describe('bootPlugins — envInjection validation', () => {
     // `infisical.WHATEVER` is statically allowed because `infisical` IS a
     // registered bulk namespace; the runtime key check happens later in
     // resolveEnvForService.
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [postgres, infisical],
       envInjection: { K: 'infisical.NOT_KNOWN_YET' },
     };

@@ -45,11 +45,11 @@ function execWithTimeout(
 }
 
 /**
- * Read pid files under <worktreePath>/.levelzero/state/<key>/pids/*.pid
+ * Read pid files under <worktreePath>/.lich/state/<key>/pids/*.pid
  * and return the list of numeric pids.
  */
 async function readOwnedPids(worktreePath: string, worktreeKey: string): Promise<number[]> {
-  const pidsDir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+  const pidsDir = join(worktreePath, '.lich', 'state', worktreeKey, 'pids');
   let files: string[];
   try {
     files = await readdir(pidsDir);

@@ -47,7 +47,7 @@ function infisical(values: Record<string, string>): BulkEnvSource {
   return { resolve: () => values };
 }
 
-describe('levelzero env list', () => {
+describe('lich env list', () => {
   it('exports a command named "env.list"', () => {
     expect(envListCommand.name).toBe('env.list');
     expect(typeof envListCommand.describe).toBe('string');
@@ -72,19 +72,19 @@ describe('levelzero env list', () => {
       name: 'url',
       fullKey: 'postgres.url',
       source: postgresUrl(),
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
     registry.registerNamed({
       namespace: 'postgres',
       name: 'host',
       fullKey: 'postgres.host',
       source: postgresHost(),
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
     registry.registerBulk({
       namespace: 'infisical',
       source: infisical({ STRIPE_KEY: 'sk_test', SENTRY_DSN: 'https://x' }),
-      pluginName: '@levelzero/plugin-infisical',
+      pluginName: '@lich/plugin-infisical',
     });
 
     const cmd = makeEnvListCommand({ getEnvSourceRegistry: () => registry });
@@ -96,7 +96,7 @@ describe('levelzero env list', () => {
         name: 'host',
         kind: 'named',
         protocol: 'postgres',
-        plugin: '@levelzero/plugin-postgres',
+        plugin: '@lich/plugin-postgres',
       },
       {
         key: 'postgres.url',
@@ -104,7 +104,7 @@ describe('levelzero env list', () => {
         name: 'url',
         kind: 'named',
         protocol: 'postgres',
-        plugin: '@levelzero/plugin-postgres',
+        plugin: '@lich/plugin-postgres',
       },
       {
         key: 'infisical.*',
@@ -112,7 +112,7 @@ describe('levelzero env list', () => {
         name: null,
         kind: 'bulk',
         protocol: null,
-        plugin: '@levelzero/plugin-infisical',
+        plugin: '@lich/plugin-infisical',
       },
     ]);
   });
@@ -124,12 +124,12 @@ describe('levelzero env list', () => {
       name: 'url',
       fullKey: 'postgres.url',
       source: postgresUrl(),
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
     registry.registerBulk({
       namespace: 'infisical',
       source: infisical({ STRIPE_KEY: 'sk' }),
-      pluginName: '@levelzero/plugin-infisical',
+      pluginName: '@lich/plugin-infisical',
     });
 
     const cmd = makeEnvListCommand({ getEnvSourceRegistry: () => registry });
@@ -139,8 +139,8 @@ describe('levelzero env list', () => {
     const lines = output.trimEnd().split('\n');
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatch(/^SOURCE\s+PROTOCOL\s+PLUGIN$/);
-    expect(lines[1]).toMatch(/^postgres\.url\s+postgres\s+@levelzero\/plugin-postgres$/);
-    expect(lines[2]).toMatch(/^infisical\.\* \(bulk\)\s+\(n\/a\)\s+@levelzero\/plugin-infisical$/);
+    expect(lines[1]).toMatch(/^postgres\.url\s+postgres\s+@lich\/plugin-postgres$/);
+    expect(lines[2]).toMatch(/^infisical\.\* \(bulk\)\s+\(n\/a\)\s+@lich\/plugin-infisical$/);
   });
 
   it('falls back to "-" when a named source has no declared protocol', async () => {
@@ -150,7 +150,7 @@ describe('levelzero env list', () => {
       name: 'value',
       fullKey: 'custom.value',
       source: { host: () => 'h', container: () => 'c' },
-      pluginName: '@levelzero/plugin-custom',
+      pluginName: '@lich/plugin-custom',
     });
 
     const cmd = makeEnvListCommand({ getEnvSourceRegistry: () => registry });
@@ -158,6 +158,6 @@ describe('levelzero env list', () => {
     expect(result.entries[0]?.protocol).toBeNull();
 
     const pretty = (await cmd.run(ctx())) as string;
-    expect(pretty).toMatch(/custom\.value\s+-\s+@levelzero\/plugin-custom/);
+    expect(pretty).toMatch(/custom\.value\s+-\s+@lich\/plugin-custom/);
   });
 });

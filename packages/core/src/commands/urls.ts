@@ -72,8 +72,8 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
       if (!wt) {
         throw new CLIError(
           'NO_PROJECT',
-          'not inside a levelzero project',
-          'run `levelzero init`, cd into a directory with levelzero.config.ts, or pass --all',
+          'not inside a lich project',
+          'run `lich init`, cd into a directory with lich.config.ts, or pass --all',
         );
       }
       const entry = await reg.get(wt.key);
@@ -85,7 +85,7 @@ export function makeUrlsCommand(opts: MakeUrlsCommandOptions): Command {
 }
 
 function renderUrlsPretty(urls: UrlRow[]): string {
-  if (urls.length === 0) return 'no urls registered (run `levelzero dev` to bring the stack up)\n';
+  if (urls.length === 0) return 'no urls registered (run `lich dev` to bring the stack up)\n';
   // Emit `service=target` lines so the output is greppable and survives
   // copy/paste into a shell `eval` without quoting headaches.
   return urls.map((u) => `${u.service}=${u.target}`).join('\n') + '\n';
@@ -109,13 +109,13 @@ function renderAllStacksUrlsPretty(
 }
 
 function defaultRegistryPath(): string {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return join(home, '.levelzero', 'registry.json');
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return join(home, '.lich', 'registry.json');
 }
 
 /**
  * Default `urlsCommand` instance that resolves the registry path from
- * `LEVELZERO_HOME` (or `$HOME`) on each invocation — the same convention used
+ * `LICH_HOME` (or `$HOME`) on each invocation — the same convention used
  * by `bin.ts` for the production registry. Exported alongside the
  * `makeUrlsCommand` factory so callers that don't need a custom registry
  * (e.g. simple imports in tests / scripts) get a working `Command` for free.

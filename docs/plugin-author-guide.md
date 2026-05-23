@@ -1,12 +1,12 @@
 # Plugin Author Guide
 
-This is the end-to-end walkthrough for building your first Levelzero plugin. By the end you will have a working `redis-cache` plugin that contributes a compose service, a CLI command, and a healthcheck — installed locally in a sibling project and ready to publish to npm.
+This is the end-to-end walkthrough for building your first Lich plugin. By the end you will have a working `redis-cache` plugin that contributes a compose service, a CLI command, and a healthcheck — installed locally in a sibling project and ready to publish to npm.
 
 If you want the terse reference of every `addX` hook, see [EXTENSION.md](./EXTENSION.md). This document is the slower, narrated path.
 
 ## 1. Set up the package
 
-A Levelzero plugin is just a normal Node package that exports an object satisfying the `Plugin` interface. Start with `bun init`:
+A Lich plugin is just a normal Node package that exports an object satisfying the `Plugin` interface. Start with `bun init`:
 
 ```sh
 mkdir my-plugin
@@ -16,13 +16,13 @@ bun init -y
 
 `bun init` will create `package.json`, `index.ts`, and `tsconfig.json`. Rename or replace the generated `index.ts` — we'll write our own below.
 
-## 2. Add `@levelzero/core` as a peerDependency
+## 2. Add `@lich/core` as a peerDependency
 
 A plugin must not bundle its own copy of the core types. The host project owns the version, and the plugin is compiled against the same one. Edit `package.json`:
 
 ```json
 {
-  "name": "levelzero-plugin-redis-cache",
+  "name": "lich-plugin-redis-cache",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.cjs",
@@ -36,17 +36,17 @@ A plugin must not bundle its own copy of the core types. The host project owns t
     }
   },
   "peerDependencies": {
-    "@levelzero/core": "^0.1.0"
+    "@lich/core": "^0.1.0"
   },
   "devDependencies": {
-    "@levelzero/core": "^0.1.0",
+    "@lich/core": "^0.1.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
   }
 }
 ```
 
-The `peerDependency` is the contract: any host project running your plugin must already have `@levelzero/core` installed. The matching `devDependency` is so your local TypeScript compiles cleanly.
+The `peerDependency` is the contract: any host project running your plugin must already have `@lich/core` installed. The matching `devDependency` is so your local TypeScript compiles cleanly.
 
 ## 3. Write the Plugin export
 
@@ -55,7 +55,7 @@ A `Plugin` has three fields — `name`, `version`, and a `register(api, ctx)` fu
 Open `index.ts`:
 
 ```ts
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 
 const plugin: Plugin = {
   name: 'redis-cache',
@@ -87,7 +87,7 @@ const plugin: Plugin = {
       },
     });
 
-    // addRule — register a check that `levelzero check` will run.
+    // addRule — register a check that `lich check` will run.
     // addAdapter / setActiveAdapter — contribute a custom adapter.
     // addOwnedService — register a long-running process the CLI manages.
     // addComposeVolume / addComposeNetwork — extend the compose topology.
@@ -95,7 +95,7 @@ const plugin: Plugin = {
     // addSkillsDir — surface plugin-shipped /skill markdown files.
 
     // ctx.projectRoot is the host project's root (absolute path).
-    // ctx.config is the loaded levelzero.config — narrow it yourself.
+    // ctx.config is the loaded lich.config — narrow it yourself.
   },
 };
 
@@ -106,21 +106,21 @@ The loader picks your export in this precedence: `default` → camelCased basena
 
 ## 4. Test locally in a sibling project
 
-Before publishing, point a real project at your local file. In a sibling repo, edit `levelzero.config.ts`:
+Before publishing, point a real project at your local file. In a sibling repo, edit `lich.config.ts`:
 
 ```ts
-import type { LevelzeroConfig } from '@levelzero/core';
+import type { LichConfig } from '@lich/core';
 
 export default {
   plugins: ['../my-plugin/index.ts'],
-} satisfies LevelzeroConfig;
+} satisfies LichConfig;
 ```
 
 Any specifier starting with `.` or `/` is treated as a local path and resolved relative to the project root (see [`loader.ts`](../packages/core/src/plugins/loader.ts)). Run a CLI command and confirm your plugin booted:
 
 ```sh
-levelzero adapter list
-levelzero cache.flush
+lich adapter list
+lich cache.flush
 ```
 
 If `register()` throws, the CLI rewraps the error as `plugin "redis-cache" failed during register(): <reason>` so you know exactly which plugin to fix.
@@ -155,7 +155,7 @@ Once your plugin works locally, publish it so other projects can install it from
 
 ### Build with tsup
 
-The repo-wide build strategy is documented in [build-strategy.md](./build-strategy.md): every published `@levelzero/*` (and plugin) package uses `tsup` to emit dual ESM + CJS plus `.d.ts`. A minimal `tsup.config.ts`:
+The repo-wide build strategy is documented in [build-strategy.md](./build-strategy.md): every published `@lich/*` (and plugin) package uses `tsup` to emit dual ESM + CJS plus `.d.ts`. A minimal `tsup.config.ts`:
 
 ```ts
 import { defineConfig } from 'tsup';
@@ -174,7 +174,7 @@ Add a script: `"build": "tsup"`. Then `bun run build` produces `dist/index.js`, 
 
 ### Use changesets for versioning
 
-The Levelzero repo uses [changesets](https://github.com/changesets/changesets) for SemVer bumps and changelogs. From your plugin package:
+The Lich repo uses [changesets](https://github.com/changesets/changesets) for SemVer bumps and changelogs. From your plugin package:
 
 ```sh
 bunx changeset            # describe the change interactively
@@ -190,13 +190,13 @@ bunx changeset publish    # publish to npm and tag
 Once published, host projects install your plugin like any npm dep and reference it by name:
 
 ```sh
-npm install levelzero-plugin-redis-cache
+npm install lich-plugin-redis-cache
 ```
 
 ```ts
-// levelzero.config.ts
+// lich.config.ts
 export default {
-  plugins: ['levelzero-plugin-redis-cache'],
+  plugins: ['lich-plugin-redis-cache'],
 };
 ```
 
@@ -204,7 +204,7 @@ The loader resolves bare specifiers through Node's algorithm rooted at the proje
 
 ## 8. EnvSource — publishing values for services to consume
 
-The most common reason a plugin exists is to stand up some piece of infrastructure (a database, a cache, an auth provider, a secret store) and then **tell the rest of the stack how to reach it**. The contract for that second half is the **EnvSource** system (Plan 16): plugins publish values, the consumer's `levelzero.config.ts` maps them to env-var names, and the runtime injects them into both host-spawned services and compose-managed containers.
+The most common reason a plugin exists is to stand up some piece of infrastructure (a database, a cache, an auth provider, a secret store) and then **tell the rest of the stack how to reach it**. The contract for that second half is the **EnvSource** system (Plan 16): plugins publish values, the consumer's `lich.config.ts` maps them to env-var names, and the runtime injects them into both host-spawned services and compose-managed containers.
 
 Two shapes are supported — pick whichever matches what your plugin actually knows.
 
@@ -224,7 +224,7 @@ The plugin types the **short local name** (`'url'`). The framework composes the 
 
 Each source has two resolvers — `host(ctx)` and `container(ctx)` — both receiving the same `EnvSourceContext` (`ports`, `projectRoot`, `worktreeKey`, `consumerContext`). The framework picks which one to call based on whether the consumer service is host-spawned or compose-managed; see §8.3.
 
-`protocol` is open-ended metadata (`'postgres'`, `'redis'`, `'kafka'`, an arbitrary string for novel protocols). Future tooling may dispatch on it; today it shows up in `levelzero env list`.
+`protocol` is open-ended metadata (`'postgres'`, `'redis'`, `'kafka'`, an arbitrary string for novel protocols). Future tooling may dispatch on it; today it shows up in `lich env list`.
 
 ### 8.2 Bulk EnvSource — for whatever-you-find collections
 
@@ -266,8 +266,8 @@ Implications when writing a resolver:
 
 Two paths matter, and they are not the same:
 
-- `ctx.projectRoot` — the absolute path to the consumer's **main repository root**. The same value regardless of which worktree the user invoked from. Secret-source plugins (dotenv, Infisical, Vault) read config from here so a `.env.local` in the main workspace is read by every worktree's `levelzero dev` without copying.
-- `ctx.worktreeKey` — a stable short identifier of the **active worktree**. Plugins that need worktree-scoped state (per-worktree caches, ephemeral tokens) scope it under `.levelzero/state/<worktreeKey>/`.
+- `ctx.projectRoot` — the absolute path to the consumer's **main repository root**. The same value regardless of which worktree the user invoked from. Secret-source plugins (dotenv, Infisical, Vault) read config from here so a `.env.local` in the main workspace is read by every worktree's `lich dev` without copying.
+- `ctx.worktreeKey` — a stable short identifier of the **active worktree**. Plugins that need worktree-scoped state (per-worktree caches, ephemeral tokens) scope it under `.lich/state/<worktreeKey>/`.
 
 Default to `projectRoot` for anything config-shaped (paths to look up secrets, paths to a schema file). Reach for `worktreeKey` only when the state is genuinely worktree-local — usually that means it's regenerated cheaply if it disappears.
 
@@ -277,7 +277,7 @@ The shortest interesting plugin: load `secrets.json` from the project root and p
 
 ```ts
 // packages/my-org-plugin-json-secrets/src/index.ts
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -319,10 +319,10 @@ export default function jsonSecrets(
 }
 ```
 
-A consumer wires it up in `levelzero.config.ts`:
+A consumer wires it up in `lich.config.ts`:
 
 ```ts
-import { defineConfig } from '@levelzero/core';
+import { defineConfig } from '@lich/core';
 import jsonSecrets from '@my-org/plugin-json-secrets';
 
 export default defineConfig({
@@ -392,8 +392,8 @@ Plugin<'my-plugin', { named: 'url' | 'host' | 'port'; bulk: false }>
 `defineConfig()` flows the plugins tuple through to `envInjection`:
 
 ```ts
-import { defineConfig } from '@levelzero/core';
-import postgres from '@levelzero/plugin-postgres';
+import { defineConfig } from '@lich/core';
+import postgres from '@lich/plugin-postgres';
 import myPlugin from '@my-org/plugin-my-plugin';
 
 export default defineConfig({
@@ -415,7 +415,7 @@ The pattern is the same for both shapes: build a recording `PluginAPI`, call you
 
 ```ts
 import { describe, it, expect, vi } from 'vitest';
-import type { EnvSource, EnvSourceContext, PluginAPI } from '@levelzero/core';
+import type { EnvSource, EnvSourceContext, PluginAPI } from '@lich/core';
 import myPlugin from '../src/index';
 
 function makeRecordingApi(): { api: PluginAPI<'my-plugin'>; sources: Record<string, EnvSource> } {

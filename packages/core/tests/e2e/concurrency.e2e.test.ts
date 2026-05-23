@@ -24,7 +24,7 @@
  *   3. /api/health on each api reaches its OWN stack (cross-checks the
  *      port allocation is correct end-to-end, not just internally consistent).
  *   4. `stacks list` from EITHER project sees BOTH stacks (registry is
- *      process-global, ~/.levelzero/registry.json).
+ *      process-global, ~/.lich/registry.json).
  *   5. `stop` in project A leaves project B alive — the destructive case:
  *      without per-stack isolation, A's stop would tear B down too.
  *
@@ -42,7 +42,7 @@
  *     covers the common case; if the test starts flaking with that error,
  *     file under doctor's hint and reconfigure docker.
  *   - **Registry lock contention** — both `dev` invocations acquire the
- *     global registry lock (~/.levelzero/registry.json.lock). Sequential
+ *     global registry lock (~/.lich/registry.json.lock). Sequential
  *     dev means there's no contention here, but if the lock somehow times
  *     out under e2e load that's a finding worth its own ticket: the lock
  *     should be per-stack or fall back faster, not per-process. Report and
@@ -69,7 +69,7 @@ let handleA: E2EProjectHandle;
 let handleB: E2EProjectHandle;
 
 /**
- * Shape of `levelzero dev --json` output we care about for this suite.
+ * Shape of `lich dev --json` output we care about for this suite.
  * Pulled into a type alias so the per-it `let` declarations don't repeat
  * the structural cast and so a future change to the dev result shape
  * lands here in one place.
@@ -189,19 +189,19 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
     // Distinct names — proves LEV-202's worktreeKey-suffixed naming
     // actually produces two distinct compose projects, not one that B's
     // up silently overwrote. Under TEST_RUN_ID the names are
-    // `levelzero-test-<run-id>-<worktreeKey>`; the run-id is shared (same
+    // `lich-test-<run-id>-<worktreeKey>`; the run-id is shared (same
     // vitest invocation) but the worktreeKey differs (different tmpdir →
     // different sha256 hash), so the suffix is what disambiguates.
     expect(devA.compose.projectName).not.toBe(devB.compose.projectName);
 
     // Both project names should be docker-visible. We grep
-    // `docker ps --filter name=levelzero-` (with the test-run prefix when
+    // `docker ps --filter name=lich-` (with the test-run prefix when
     // set) and assert each project name appears at least once. Using
     // execSync directly here rather than the runCli helper because this
-    // is a host-level assertion about docker state, not a levelzero CLI
+    // is a host-level assertion about docker state, not a lich CLI
     // invocation.
     const composed = execSync(
-      `docker ps --filter "name=levelzero-" --format "{{.Names}}"`,
+      `docker ps --filter "name=lich-" --format "{{.Names}}"`,
       { encoding: 'utf8' },
     );
     expect(
@@ -254,7 +254,7 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
   );
 
   it('stacks list from either project sees BOTH stacks', () => {
-    // The registry is process-global (~/.levelzero/registry.json), so a
+    // The registry is process-global (~/.lich/registry.json), so a
     // `stacks list` invocation from EITHER project's CWD must return both
     // entries. This is the regression check that the registry doesn't
     // accidentally scope itself to the current worktree.
@@ -283,7 +283,7 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
 
     // Sanity: the same query from B should produce a superset that also
     // contains both. If A and B were seeing different registries
-    // (e.g. ~/.levelzero shadowed by CWD), this would expose it.
+    // (e.g. ~/.lich shadowed by CWD), this would expose it.
     const fromB = runCliJson<{
       stacks: Array<{ key: string; path: string }>;
     }>(handleB.projectDir, ['stacks', 'list', '--json']);
@@ -299,9 +299,9 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
       // The destructive case: A's `stop` must scope to A's worktreeKey
       // and leave B's compose project + owned processes untouched. Pre-
       // LEV-202 (when stop's container kill was prefix-matched on
-      // `levelzero-`) this would tear down B too; post-LEV-202 the
-      // `levelzero-test-<run>-<keyA>` prefix is specific enough to
-      // exclude `levelzero-test-<run>-<keyB>`.
+      // `lich-`) this would tear down B too; post-LEV-202 the
+      // `lich-test-<run>-<keyA>` prefix is specific enough to
+      // exclude `lich-test-<run>-<keyB>`.
       const stopA = runCli(handleA.projectDir, ['stop', '--json'], {
         timeoutMs: 90_000,
       });

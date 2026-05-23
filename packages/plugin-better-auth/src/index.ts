@@ -11,7 +11,7 @@ import {
   type Plugin,
   type PluginAPI,
   type PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import { betterAuthAdapter } from './adapter';
 import { makeCurlCommand } from './curl';
 
@@ -42,8 +42,8 @@ export { makeCurlCommand, curlCommand } from './curl';
 export type { CurlResult, MakeCurlCommandOptions } from './curl';
 
 function defaultRegistryPath(): string {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return join(home, '.levelzero', 'registry.json');
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return join(home, '.lich', 'registry.json');
 }
 
 /**
@@ -79,7 +79,7 @@ async function resolveDatabaseUrl(input: {
     throw new CLIError(
       'NO_PROJECT',
       'no postgres EnvSource active',
-      'add a postgres-protocol DB plugin to your `levelzero.config.ts` plugins list so a ' +
+      'add a postgres-protocol DB plugin to your `lich.config.ts` plugins list so a ' +
         '`<ns>.url` source with `protocol: "postgres"` is registered.',
     );
   }
@@ -92,7 +92,7 @@ async function resolveDatabaseUrl(input: {
 }
 
 /**
- * Options for the `@levelzero/plugin-better-auth` factory. The `namespace`
+ * Options for the `@lich/plugin-better-auth` factory. The `namespace`
  * override exists so multi-instance setups can co-exist.
  */
 export interface BetterAuthOptions {
@@ -101,8 +101,8 @@ export interface BetterAuthOptions {
 }
 
 /**
- * `@levelzero/plugin-better-auth` — extracts the Better Auth `AuthAdapter` impl
- * out of `@levelzero/core` (LEV-152), along with the `curl` command that
+ * `@lich/plugin-better-auth` — extracts the Better Auth `AuthAdapter` impl
+ * out of `@lich/core` (LEV-152), along with the `curl` command that
  * depends on it.
  *
  * Contributes one impl under the `auth` adapter slot:
@@ -124,12 +124,12 @@ export interface BetterAuthOptions {
  * The command is constructed with a direct reference to `betterAuthAdapter`
  * rather than a `getActive('auth')` lookup on a merged registry. That keeps
  * this plugin self-contained: whatever the user wires up under `auth`
- * elsewhere, `levelzero curl --as` always uses the impl this plugin owns.
+ * elsewhere, `lich curl --as` always uses the impl this plugin owns.
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import betterAuth from '@levelzero/plugin-better-auth';
+ * import betterAuth from '@lich/plugin-better-auth';
  *
  * export default {
  *   plugins: [betterAuth()],
@@ -144,7 +144,7 @@ export default function betterAuth(opts: BetterAuthOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-better-auth',
+    name: '@lich/plugin-better-auth',
     namespace: (opts.namespace ?? 'better-auth') as 'better-auth',
     version: '0.1.0',
 
@@ -165,7 +165,7 @@ export default function betterAuth(opts: BetterAuthOptions = {}): Plugin<
 
       const buildAuthCtx = async (cmdCtx: CommandContext): Promise<AuthContext> => {
         const secret =
-          process.env['LEVELZERO_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa';
+          process.env['LICH_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa';
         const orm = getActiveOrm?.();
         // No ORM → keep the legacy in-memory sqlite ctx. NODE_ENV=test (the
         // test runner's default) is what unlocks the fallback inside the

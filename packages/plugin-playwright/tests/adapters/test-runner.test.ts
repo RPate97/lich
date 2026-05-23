@@ -63,7 +63,7 @@ vi.mock('node:child_process', () => {
 });
 
 import { playwrightTestAdapter } from '../../src/adapters/test-runner';
-import type { TestRunnerAdapter } from '@levelzero/core';
+import type { TestRunnerAdapter } from '@lich/core';
 
 beforeEach(() => {
   spawnQueue.length = 0;

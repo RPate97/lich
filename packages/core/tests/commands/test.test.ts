@@ -37,7 +37,7 @@ async function seedRegistry(): Promise<void> {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
@@ -45,11 +45,11 @@ async function seedRegistry(): Promise<void> {
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-test-cmd-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-test-cmd-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
-describe('levelzero test', () => {
+describe('lich test', () => {
   it('exports a command named "test"', () => {
     expect(testCommand.name).toBe('test');
     expect(typeof testCommand.describe).toBe('string');
@@ -164,7 +164,7 @@ describe('levelzero test', () => {
       expect(playwright.run).not.toHaveBeenCalled();
       expect(vitest.calls[0]!.pattern).toBe('tests/integration/**');
       expect(vitest.calls[0]!.env).toEqual({
-        DATABASE_URL: `postgres://levelzero:levelzero@localhost:${POSTGRES_PORT}/levelzero`,
+        DATABASE_URL: `postgres://lich:lich@localhost:${POSTGRES_PORT}/lich`,
         API_URL: `http://localhost:${API_PORT}`,
       });
     });
@@ -184,7 +184,7 @@ describe('levelzero test', () => {
       expect(vitest.run).not.toHaveBeenCalled();
     });
 
-    it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+    it('errors NO_PROJECT when cwd is outside a lich project', async () => {
       const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-test-cmd-outside-')));
       const vitest = stubAdapter('vitest');
       const playwright = stubAdapter('playwright');

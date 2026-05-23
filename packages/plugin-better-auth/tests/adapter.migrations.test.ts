@@ -5,7 +5,7 @@ import {
   resetBetterAuthCache,
 } from '../src/adapter';
 import { getMigrations } from 'better-auth/db/migration';
-import type { AuthContext } from '@levelzero/core';
+import type { AuthContext } from '@lich/core';
 
 const TEST_SECRET = 'test-secret-32-chars-min-length-aaaa';
 

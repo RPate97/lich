@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 /**
  * Adapter slot identifiers. Each slot represents one pluggable boundary in
- * the Levelzero stack — exactly one impl per slot is "active" at a time, but
+ * the Lich stack — exactly one impl per slot is "active" at a time, but
  * the registry can carry several alternative impls (e.g. prisma and drizzle
  * both registered under "orm", with prisma active).
  *
@@ -11,18 +11,18 @@ import { pathToFileURL } from 'node:url';
  * list curated. After Plan 14 ALL slots are now contributed by extracted
  * plugins and absent from `getBuiltinAdapters()` (which returns an empty
  * registry):
- *   - `orm`          → `@levelzero/plugin-prisma`
- *   - `auth`         → `@levelzero/plugin-better-auth`
- *   - `ui`           → `@levelzero/plugin-shadcn`
- *   - `browser`      → `@levelzero/plugin-playwright`
- *   - `backend`      → `@levelzero/plugin-hono`
- *   - `frontend`     → `@levelzero/plugin-typed-client`
- *   - `portless`     → `@levelzero/plugin-portless`
- *   - `test-runner`  → `@levelzero/plugin-vitest` (unit/integration),
- *                      `@levelzero/plugin-playwright` (e2e)
+ *   - `orm`          → `@lich/plugin-prisma`
+ *   - `auth`         → `@lich/plugin-better-auth`
+ *   - `ui`           → `@lich/plugin-shadcn`
+ *   - `browser`      → `@lich/plugin-playwright`
+ *   - `backend`      → `@lich/plugin-hono`
+ *   - `frontend`     → `@lich/plugin-typed-client`
+ *   - `portless`     → `@lich/plugin-portless`
+ *   - `test-runner`  → `@lich/plugin-vitest` (unit/integration),
+ *                      `@lich/plugin-playwright` (e2e)
  * Slot identifiers stay declared here so the types remain stable across
  * the extractions; consumers load whichever plugins they need via
- * `levelzero.config.ts`.
+ * `lich.config.ts`.
  */
 export type AdapterSlot =
   | 'orm'
@@ -264,8 +264,8 @@ function isAdapterSlot(value: string): value is AdapterSlot {
  * the sole impl per slot marked active. After Plan 14's extraction wave the
  * core no longer ships ANY built-in adapters — every slot (orm, auth, ui,
  * browser, backend, frontend, portless, test-runner) is contributed by a
- * separate `@levelzero/plugin-*` package that downstream projects declare in
- * their `levelzero.config.ts`. `getActive(slot)` throws "no active impl for
+ * separate `@lich/plugin-*` package that downstream projects declare in
+ * their `lich.config.ts`. `getActive(slot)` throws "no active impl for
  * slot X" until the corresponding plugin is loaded by `bootPlugins`. The
  * `test-runner` slot is intentionally left without an active impl by default:
  * the `test` command picks playwright vs vitest by subcommand name rather than

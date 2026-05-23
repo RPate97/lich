@@ -159,7 +159,7 @@ export function sweepStaleTmpdirs(prefix: string, maxAgeMs = 24 * 60 * 60 * 1000
  * never throws — we'd rather leak a tmpdir than block vitest's shutdown.
  *
  * Order:
- *   1. `levelzero stop` from inside the project (releases the registry
+ *   1. `lich stop` from inside the project (releases the registry
  *      lock, kills owned host processes, sends compose-down).
  *   2. `docker compose down` against the captured project name (catches
  *      anything `stop` missed — e.g. when the test never reached `stop`).

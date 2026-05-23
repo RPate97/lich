@@ -52,13 +52,13 @@ import type { PortlessAdapter } from './adapters/portless/types';
 export const VERSION = '0.0.0';
 
 function defaultRegistryPath(): string {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return join(home, '.levelzero', 'registry.json');
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return join(home, '.lich', 'registry.json');
 }
 
 /**
  * Build the inline-only command registry — the set of commands that ship with
- * `@levelzero/core` itself and do not depend on a project plugin to function.
+ * `@lich/core` itself and do not depend on a project plugin to function.
  *
  * Post-LEV-165 (Plan 14 Tier 7 cutover) this is the FINAL set of inline
  * registrations. Commands that depend on plugin-contributed adapters /
@@ -66,7 +66,7 @@ function defaultRegistryPath(): string {
  * seeded here — they are registered exclusively by {@link buildDispatchRegistry}
  * after `bootPlugins()` runs, with their factories wired against the merged
  * plugin-aware adapter registry. Outside a project (or when the relevant
- * plugins aren't declared in `levelzero.config.ts`) these commands are
+ * plugins aren't declared in `lich.config.ts`) these commands are
  * intentionally absent from the registry, matching the pattern established
  * for `curl`, `db.*`, and `ui.*` in earlier tiers.
  *
@@ -110,7 +110,7 @@ export function buildCommands(registryPath: string): CommandRegistry {
  * Build the dispatch registry for a single CLI invocation. Always seeds the
  * inline registrations from {@link buildCommands} (`init`, `dev`, `stacks.*`,
  * etc.), then — if the invocation is inside a project whose
- * `levelzero.config.ts` declares a non-empty `plugins` array — boots every
+ * `lich.config.ts` declares a non-empty `plugins` array — boots every
  * declared plugin and merges its command contributions on top.
  *
  * After LEV-165 (Plan 14 Tier 7 cutover) the inline seed is intentionally
@@ -136,7 +136,7 @@ export async function buildDispatchRegistry(
   const loadedPlugins: LoadedPluginInfo[] = [];
 
   // Register the help command early so even the inline-only dispatch path
-  // (no project, no config) gets `--help` / `levelzero help`. The closures
+  // (no project, no config) gets `--help` / `lich help`. The closures
   // capture `cli` and `loadedPlugins` by reference, so plugin commands
   // registered below still appear in the rendered output.
   cli.register(
@@ -176,9 +176,9 @@ export async function buildDispatchRegistry(
   // Re-register dev/stop/reset with the plugin compose + owned-service
   // contributions piped in (post-LEV-148, post-LEV-154). Without this,
   // services declared via `addComposeService` (e.g. `postgres` from
-  // `@levelzero/plugin-postgres`) would not reach the emitted compose file,
+  // `@lich/plugin-postgres`) would not reach the emitted compose file,
   // and `OwnedService` entries contributed via `addOwnedService` (e.g. `web`
-  // from `@levelzero/plugin-next`) would not be brought up alongside the
+  // from `@lich/plugin-next`) would not be brought up alongside the
   // built-ins. `bootPlugins` collects both, but the legacy inline command
   // registrations only know about `Service[]`-based contributions.
   // CommandRegistry.register is last-write-wins, so re-registering here
@@ -196,7 +196,7 @@ export async function buildDispatchRegistry(
   const getEnvInjection = () => config.envInjection;
   const getResolvedBulkSources = () => boot.resolvedBulkSources;
   // LEV-174 — `dev` previously imported `portlessAdapter` and
-  // `noopPortlessAdapter` directly from `@levelzero/plugin-portless` and
+  // `noopPortlessAdapter` directly from `@lich/plugin-portless` and
   // probed `available()` inline. Cutting the core → plugin dep moved that
   // selection to the dispatcher: probe every `portless`-slot impl registered
   // by the boot's plugins and pick the first whose `available()` returns
@@ -258,8 +258,8 @@ export async function buildDispatchRegistry(
   cli.register(makeAdapterListCommand({ getRegistry: () => merged }));
   // Register `gen` against the merged plugin-aware registries (LEV-124). The
   // unified command walks every generator the boot collected via
-  // `api.addGenerator(...)` — `api-client` from `@levelzero/plugin-typed-client`,
-  // `prisma` from `@levelzero/plugin-prisma`, plus any out-of-tree plugin
+  // `api.addGenerator(...)` — `api-client` from `@lich/plugin-typed-client`,
+  // `prisma` from `@lich/plugin-prisma`, plus any out-of-tree plugin
   // that contributes one. Outside a project (no `BootResult`) the inline
   // seed is omitted entirely; inside a project with no generator-contributing
   // plugins the command still registers and reports the friendly
@@ -368,14 +368,14 @@ function mergeAdapterRegistries(
 
 /**
  * Detect a help invocation from raw argv. Treated as help:
- *   - no args at all (`levelzero`)
+ *   - no args at all (`lich`)
  *   - `--help` or `-h` anywhere in argv
- *   - first positional arg is `help` (so `levelzero help` works and the
- *     deferred per-command form `levelzero help <topic>` parses)
+ *   - first positional arg is `help` (so `lich help` works and the
+ *     deferred per-command form `lich help <topic>` parses)
  *
  * Returned ahead of dispatch so the rendered output bypasses `runCli`'s
  * JSON-by-default formatting. The dispatched `helpCommand` is still wired
- * into the registry (so `levelzero help` shows up in introspection and the
+ * into the registry (so `lich help` shows up in introspection and the
  * unit tests can exercise it through the normal `Command.run` path); this
  * interceptor exists purely to keep the stdout shape as plain text.
  */

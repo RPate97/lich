@@ -21,7 +21,7 @@ function parsePositiveInt(value: string, flag: string): number {
     throw new CLIError(
       'CONFIG_INVALID',
       `--${flag} must be a positive integer (got: ${value})`,
-      `usage: levelzero screenshot <url> --${flag} <number>`,
+      `usage: lich screenshot <url> --${flag} <number>`,
     );
   }
   const n = Number(value);
@@ -29,7 +29,7 @@ function parsePositiveInt(value: string, flag: string): number {
     throw new CLIError(
       'CONFIG_INVALID',
       `--${flag} must be a positive integer (got: ${value})`,
-      `usage: levelzero screenshot <url> --${flag} <number>`,
+      `usage: lich screenshot <url> --${flag} <number>`,
     );
   }
   return n;
@@ -55,7 +55,7 @@ export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command 
   // Lazy resolve so an `adapter swap browser ...` between command construction
   // and run-time is honored, and so tests that pass an explicit adapter never
   // touch the global registry. After LEV-174 there is no inline plugin
-  // fallback: core no longer imports `@levelzero/plugin-playwright` directly,
+  // fallback: core no longer imports `@lich/plugin-playwright` directly,
   // so callers MUST either pass an explicit `adapter` (typical for tests) or
   // a `getAdapterRegistry` that resolves a `browser` adapter (typical for the
   // CLI, where `bin.ts` injects the merged plugin-aware registry).
@@ -65,7 +65,7 @@ export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command 
     throw new CLIError(
       'CONFIG_INVALID',
       'no browser adapter configured for `screenshot`',
-      'load `@levelzero/plugin-playwright` (or another browser plugin) in your levelzero.config.ts',
+      'load `@lich/plugin-playwright` (or another browser plugin) in your lich.config.ts',
     );
   };
   return {
@@ -77,7 +77,7 @@ export function makeScreenshotCommand(opts?: ScreenshotCommandOptions): Command 
         throw new CLIError(
           'CONFIG_INVALID',
           'screenshot requires a URL argument',
-          'usage: levelzero screenshot <url> [--out <path>]',
+          'usage: lich screenshot <url> [--out <path>]',
         );
       }
       const url = validateUrl(rawUrl);

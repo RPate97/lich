@@ -5,11 +5,11 @@
 // pick up the driver, but the connection string is read here at config
 // load time.
 //
-// levelzero's plugin-postgres publishes DATABASE_URL through envInjection
-// (declared in `levelzero.config.ts`), so by the time prisma loads this
+// lich's plugin-postgres publishes DATABASE_URL through envInjection
+// (declared in `lich.config.ts`), so by the time prisma loads this
 // file the variable is already present in `process.env`. We pull it in
 // via `dotenv/config` for the case where prisma CLI is invoked directly
-// (outside `levelzero run`) and the project's `.env` is the source of
+// (outside `lich run`) and the project's `.env` is the source of
 // truth.
 import 'dotenv/config';
 import { defineConfig } from 'prisma/config';

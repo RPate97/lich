@@ -23,7 +23,7 @@ beforeEach(() => {
   mockReverseDeps.mockReset();
 });
 
-describe('levelzero impact', () => {
+describe('lich impact', () => {
   it('exports a command named "impact"', () => {
     expect(impactCommand.name).toBe('impact');
     expect(typeof impactCommand.describe).toBe('string');

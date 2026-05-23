@@ -4,7 +4,7 @@ import type {
   AuthContext,
   SessionInfo,
   User,
-} from '@levelzero/core';
+} from '@lich/core';
 
 export interface GetOrCreateUserArgs {
   adapter: AuthAdapter;

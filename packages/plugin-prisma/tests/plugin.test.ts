@@ -5,8 +5,8 @@ import type {
   Generator,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
-import { EnvSourceRegistry } from '@levelzero/core/env/registry';
+} from '@lich/core';
+import { EnvSourceRegistry } from '@lich/core/env/registry';
 import prisma, { prismaAdapter, prismaGenerator } from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
@@ -59,9 +59,9 @@ function makeRecordingApi(): {
   return { api, adapters, actives, commands, generators };
 }
 
-describe('@levelzero/plugin-prisma default export', () => {
+describe('@lich/plugin-prisma default export', () => {
   it('exposes name + version + register', () => {
-    expect(plugin.name).toBe('@levelzero/plugin-prisma');
+    expect(plugin.name).toBe('@lich/plugin-prisma');
     expect(typeof plugin.version).toBe('string');
     expect(typeof plugin.register).toBe('function');
   });

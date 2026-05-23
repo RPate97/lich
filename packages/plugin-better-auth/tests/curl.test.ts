@@ -14,7 +14,7 @@ import {
   type SessionToken,
   type SessionInfo,
   type User,
-} from '@levelzero/core';
+} from '@lich/core';
 import { makeCurlCommand } from '../src/curl';
 
 /**
@@ -164,7 +164,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-curl-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-curl-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
@@ -176,7 +176,7 @@ async function seedStackWithApiUrl(apiUrl: string): Promise<void> {
     urls: { api: apiUrl },
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
@@ -189,12 +189,12 @@ async function seedStackWithApiPortOnly(port: number): Promise<void> {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
 
-describe('levelzero curl', () => {
+describe('lich curl', () => {
   it('exports a Command named "curl"', () => {
     const { adapter } = makeStubAuthAdapter();
     const cmd = makeCurlCommand({
@@ -274,7 +274,7 @@ describe('levelzero curl', () => {
     }
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const { adapter } = makeStubAuthAdapter();
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-curl-outside-')));
     const cmd = makeCurlCommand({

@@ -1,6 +1,6 @@
 ---
 name: better-auth
-description: better-auth session and credential reference for the levelzero stack
+description: better-auth session and credential reference for the lich stack
 applies-to: reference
 ---
 
@@ -35,7 +35,7 @@ server is mounted inside the Hono API at `apps/api/src/auth.ts` and exposes
 
 ## Acting as a user (testing)
 
-- `levelzero curl --as <user-email> <path>` issues an HTTP request against
+- `lich curl --as <user-email> <path>` issues an HTTP request against
   the running API with the given user's session cookie injected. Use this
   from agent loops to exercise protected endpoints without writing a login
   flow each time.

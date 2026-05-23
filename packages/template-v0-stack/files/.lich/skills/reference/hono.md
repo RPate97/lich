@@ -1,14 +1,14 @@
 ---
 name: hono
-description: Hono API framework reference for the levelzero stack
+description: Hono API framework reference for the lich stack
 applies-to: reference
 ---
 
 # Hono
 
 The API lives at `apps/api`. The entrypoint is `apps/api/src/index.ts` and the
-dev server is launched by `levelzero dev` (which boots the database, then
-api, then web). Logs stream via `levelzero logs api`.
+dev server is launched by `lich dev` (which boots the database, then
+api, then web). Logs stream via `lich logs api`.
 
 ## Route patterns
 

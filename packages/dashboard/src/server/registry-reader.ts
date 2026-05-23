@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
 /**
- * One stack's registry entry — mirrors the shape `@levelzero/core` writes to
- * `~/.levelzero/registry.json`. Defined locally (rather than imported from
- * `@levelzero/core/registry`) so the dashboard package carries no build-order
+ * One stack's registry entry — mirrors the shape `@lich/core` writes to
+ * `~/.lich/registry.json`. Defined locally (rather than imported from
+ * `@lich/core/registry`) so the dashboard package carries no build-order
  * dependency on core: the dashboard only ever *reads* this JSON file.
  */
 export interface StackEntry {

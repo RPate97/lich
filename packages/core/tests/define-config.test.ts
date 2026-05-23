@@ -5,7 +5,7 @@ import type { Plugin } from '../src/plugins/types';
 // Plugin fixtures with explicit NS + SourceManifest so the typed branches of
 // `envInjection` (named keys + importAll) accept the runtime test values.
 const postgres: Plugin<'postgres', { named: 'url' | 'host'; bulk: false }> = {
-  name: '@levelzero/plugin-postgres',
+  name: '@lich/plugin-postgres',
   version: '1.0.0',
   namespace: 'postgres',
   register() {
@@ -13,7 +13,7 @@ const postgres: Plugin<'postgres', { named: 'url' | 'host'; bulk: false }> = {
   },
 };
 const infisical: Plugin<'infisical', { bulk: true }> = {
-  name: '@levelzero/plugin-infisical',
+  name: '@lich/plugin-infisical',
   version: '1.0.0',
   namespace: 'infisical',
   register() {
@@ -55,6 +55,6 @@ describe('defineConfig — runtime behavior', () => {
       plugins: [postgres] as const,
       envInjection: { DATABASE_URL: 'postgres.url' },
     });
-    expect(cfg.plugins[0]?.name).toBe('@levelzero/plugin-postgres');
+    expect(cfg.plugins[0]?.name).toBe('@lich/plugin-postgres');
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bootPlugins } from '../../src/plugins/boot';
-import type { LevelzeroConfig } from '../../src/config';
+import type { LichConfig } from '../../src/config';
 import type { Plugin } from '../../src/plugins/types';
 import type { OwnedService } from '../../src/services/types';
 import type { Rule } from '../../src/check/types';
@@ -37,7 +37,7 @@ const commandPlugin: Plugin = {
 
 describe('bootPlugins', () => {
   it('returns empty registries when config has no plugins', async () => {
-    const result = await bootPlugins({} as LevelzeroConfig, PROJECT_ROOT);
+    const result = await bootPlugins({} as LichConfig, PROJECT_ROOT);
     expect(result.commands.all()).toEqual([]);
     expect(result.adapters.list()).toEqual([]);
     expect(result.generators.all()).toEqual([]);
@@ -48,7 +48,7 @@ describe('bootPlugins', () => {
   });
 
   it('assembles contributions from two plugins (adapter + command)', async () => {
-    const config: LevelzeroConfig = { plugins: [adapterPlugin, commandPlugin] };
+    const config: LichConfig = { plugins: [adapterPlugin, commandPlugin] };
     const result = await bootPlugins(config, PROJECT_ROOT);
 
     // adapter contribution landed and is active
@@ -184,14 +184,14 @@ describe('bootPlugins', () => {
         seen = { projectRoot: ctx.projectRoot, config: ctx.config };
       },
     };
-    const config: LevelzeroConfig = { name: 'my-project', plugins: [inspector] };
+    const config: LichConfig = { name: 'my-project', plugins: [inspector] };
     await bootPlugins(config, PROJECT_ROOT);
     expect(seen.projectRoot).toBe(PROJECT_ROOT);
     expect(seen.config).toBe(config);
   });
 
   it('unwraps a Promise<{ default: Plugin }> entry', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [Promise.resolve({ default: commandPlugin })],
     };
     const result = await bootPlugins(config, PROJECT_ROOT);
@@ -199,7 +199,7 @@ describe('bootPlugins', () => {
   });
 
   it('accepts a Promise<Plugin> entry directly', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       plugins: [Promise.resolve(adapterPlugin)],
     };
     const result = await bootPlugins(config, PROJECT_ROOT);
@@ -220,7 +220,7 @@ describe('bootPlugins', () => {
   });
 
   it('rejects a Promise entry that resolves to something other than a Plugin', async () => {
-    const config: LevelzeroConfig = {
+    const config: LichConfig = {
       // Cast: this is exactly the misuse the runtime check is for.
       plugins: [Promise.resolve({ not: 'a plugin' }) as unknown as Promise<Plugin>],
     };

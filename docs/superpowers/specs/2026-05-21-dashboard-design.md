@@ -34,12 +34,12 @@ Read-only in v1. It observes; it does not mutate.
 
 ### Package
 
-New package `@levelzero/dashboard` at `packages/dashboard/`. Contains both the
+New package `@lich/dashboard` at `packages/dashboard/`. Contains both the
 frontend SPA and the HTTP/SSE server. Keeps the React/Vite build isolated from
 `core`. `core` registers a `dashboard` command that imports the server entry
 point from this package.
 
-(Note: package naming follows the current `@levelzero/*` scheme. If LEV-221
+(Note: package naming follows the current `@lich/*` scheme. If LEV-221
 renames the npm scope to `@lich/*`, this package renames with the rest.)
 
 ### Three layers
@@ -50,7 +50,7 @@ renames the npm scope to `@lich/*`, this package renames with the rest.)
    JSON API and an SSE endpoint. Binds to `127.0.0.1` only.
 3. **Data layer** — reads existing on-disk state. Owns no new state of its own.
    Sources:
-   - the global registry `~/.levelzero/registry.json` (via the existing
+   - the global registry `~/.lich/registry.json` (via the existing
      `Registry` class)
    - owned-service liveness: `process.kill(pid, 0)` against the `<service>.pid`
      files in each stack's state dir
@@ -174,7 +174,7 @@ another.
 ### v1 cut
 
 The tailer follows the **active** log file only. The detached `.log` accumulates
-across `dev` runs (separated by `--- levelzero dev <ts> ---` markers), so history
+across `dev` runs (separated by `--- lich dev <ts> ---` markers), so history
 is preserved without live-merging the `.log` and `.jsonl` sources.
 
 ## Frontend / UI
@@ -272,7 +272,7 @@ so the UI can display the captured stderr to the developer.
 ### Implementation
 
 - **`packages/dashboard/src/server/actions.ts`** — `runLichAction(worktreePath,
-  command)` shells `bun run levelzero <command>` with `cwd: worktreePath` and a
+  command)` shells `bun run lich <command>` with `cwd: worktreePath` and a
   30-second timeout. Named `runLichAction` so the upcoming `lich` rename (LEV-221)
   only changes the literal string in one place.
 - **`server.ts`** — two new POST routes delegating to the above; GET on those
@@ -286,6 +286,6 @@ so the UI can display the captured stderr to the developer.
 ## Open items for the implementation plan
 
 - Confirm the package-build wiring: Vite build of the SPA must run as part of
-  `@levelzero/dashboard`'s build and emit `dist/web/` into the published package.
+  `@lich/dashboard`'s build and emit `dist/web/` into the published package.
 - Confirm the `dashboard` command registration path in `core`'s command registry.
 - Decide the exact free-port helper reuse (`packages/core/src/ports/`).

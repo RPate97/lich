@@ -11,21 +11,21 @@ beforeEach(() => {
 });
 
 describe('findWorktree', () => {
-  it('returns null when no levelzero.config.ts is found above cwd', async () => {
+  it('returns null when no lich.config.ts is found above cwd', async () => {
     const result = await findWorktree(tmp);
     expect(result).toBeNull();
   });
 
   it('finds the config when it is directly in cwd', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const result = await findWorktree(tmp);
     expect(result).not.toBeNull();
     expect(result!.path).toBe(tmp);
-    expect(result!.configPath).toBe(join(tmp, 'levelzero.config.ts'));
+    expect(result!.configPath).toBe(join(tmp, 'lich.config.ts'));
   });
 
   it('walks up the directory tree to find the config', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const nested = join(tmp, 'apps', 'web', 'src');
     mkdirSync(nested, { recursive: true });
     const result = await findWorktree(nested);

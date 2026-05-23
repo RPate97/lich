@@ -6,12 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /**
- * LEV-210 — e2e for `@levelzero/create-stack-v0` itself.
+ * LEV-210 — e2e for `@lich/create-stack-v0` itself.
  *
  * The dogfood suite (LEV-198) used to spawn this binary as its scaffold
  * step, but the LEV-198-extended agent bypassed it (uses copyTemplate
  * directly) to avoid cross-worktree template contamination — `bin.ts`
- * imports `@levelzero/template-v0-stack` via node_modules, and in a
+ * imports `@lich/template-v0-stack` via node_modules, and in a
  * multi-worktree dev setup that symlink chains up to a SIBLING worktree's
  * template tree, which can diverge from THIS worktree's plugin set. The
  * upshot: the user-facing scaffolder binary lost end-to-end coverage.
@@ -73,7 +73,7 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
     const projectDir = join(tmp, projectName);
     // Root-level files the template always emits.
     expect(existsSync(join(projectDir, 'package.json'))).toBe(true);
-    expect(existsSync(join(projectDir, 'levelzero.config.ts'))).toBe(true);
+    expect(existsSync(join(projectDir, 'lich.config.ts'))).toBe(true);
     expect(existsSync(join(projectDir, 'tsconfig.json'))).toBe(true);
     expect(existsSync(join(projectDir, 'turbo.json'))).toBe(true);
     expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(true);
@@ -91,7 +91,7 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
     expect(existsSync(join(projectDir, 'e2e/auth-flow.spec.ts'))).toBe(true);
   });
 
-  it('substitutes the project name into package.json and levelzero.config.ts', () => {
+  it('substitutes the project name into package.json and lich.config.ts', () => {
     const projectName = 'lev210-substitution-probe';
     const r = runBin(projectName, tmp);
     expect(r.status, r.stderr).toBe(0);
@@ -99,7 +99,7 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
     const projectDir = join(tmp, projectName);
     const pkg = readFileSync(join(projectDir, 'package.json'), 'utf8');
     expect(pkg).toContain(`"name": "${projectName}"`);
-    const cfg = readFileSync(join(projectDir, 'levelzero.config.ts'), 'utf8');
+    const cfg = readFileSync(join(projectDir, 'lich.config.ts'), 'utf8');
     expect(cfg).toContain(`name: '${projectName}'`);
   });
 
@@ -107,13 +107,13 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
   // `bin.test.ts` covers the same assertion against `runBin`'s captured
   // stdout, but having the check fire here too protects against the
   // case where the unit test's stdout capture drifts from what users
-  // actually see when invoking `bunx @levelzero/create-stack-v0`.
-  it("next-steps message recommends 'bun run levelzero dev' (LEV-216)", () => {
+  // actually see when invoking `bunx @lich/create-stack-v0`.
+  it("next-steps message recommends 'bun run lich dev' (LEV-216)", () => {
     const projectName = 'lev210-output-probe';
     const r = runBin(projectName, tmp);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain('bun run levelzero dev');
-    // The bare `bun run dev` (without the `levelzero` token) must not be
+    expect(r.stdout).toContain('bun run lich dev');
+    // The bare `bun run dev` (without the `lich` token) must not be
     // recommended as its own next-step line — that's the exact UX bug
     // LEV-216 closed and we don't want it sneaking back in.
     const lines = r.stdout.split('\n');
@@ -142,7 +142,7 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
       // but none of the canonical template files should be there.
       expect(existsSync(projectDir)).toBe(true);
       expect(existsSync(join(projectDir, 'package.json'))).toBe(false);
-      expect(existsSync(join(projectDir, 'levelzero.config.ts'))).toBe(false);
+      expect(existsSync(join(projectDir, 'lich.config.ts'))).toBe(false);
     } finally {
       try {
         rmSync(emptyTemplate, { recursive: true, force: true });

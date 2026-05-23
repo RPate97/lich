@@ -11,7 +11,7 @@ import {
 let projectDir: string;
 
 function writeSkill(name: string, category: 'workflow' | 'reference', description: string): void {
-  const dir = join(projectDir, '.levelzero', 'skills', category);
+  const dir = join(projectDir, '.lich', 'skills', category);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, `${name}.md`),
@@ -28,16 +28,16 @@ function writeSkill(name: string, category: 'workflow' | 'reference', descriptio
 
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-skills-idx-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
 });
 
-describe('levelzero skills index', () => {
+describe('lich skills index', () => {
   it('exports a command named "skills.index"', () => {
     expect(skillsIndexCommand.name).toBe('skills.index');
     expect(typeof skillsIndexCommand.describe).toBe('string');
   });
 
-  it('errors NO_PROJECT when cwd is not inside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is not inside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-skills-idx-out-')));
     const cmd = makeSkillsIndexCommand();
     await expect(
@@ -78,7 +78,7 @@ describe('levelzero skills index', () => {
     await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
 
     const contents = readFileSync(join(projectDir, 'CLAUDE.md'), 'utf8');
-    expect(contents).toContain('See `.levelzero/skills/workflow/change.md`');
+    expect(contents).toContain('See `.lich/skills/workflow/change.md`');
     expect(contents).not.toContain(projectDir);
   });
 
@@ -98,12 +98,12 @@ describe('levelzero skills index', () => {
     expect(contents).not.toContain('## Reference Skills');
   });
 
-  it('invokes scanSkills against <projectRoot>/.levelzero/skills (injectable)', async () => {
+  it('invokes scanSkills against <projectRoot>/.lich/skills (injectable)', async () => {
     writeSkill('change', 'workflow', 'd');
     const scan = vi.fn(async (_dir: string) => []);
     const cmd = makeSkillsIndexCommand({ scanSkills: scan });
     await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
     expect(scan).toHaveBeenCalledTimes(1);
-    expect(scan).toHaveBeenCalledWith(join(projectDir, '.levelzero', 'skills'));
+    expect(scan).toHaveBeenCalledWith(join(projectDir, '.lich', 'skills'));
   });
 });

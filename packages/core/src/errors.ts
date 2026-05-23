@@ -13,7 +13,7 @@ export type CLIErrorCode =
   | 'BULK_RESOLVE_FAILED'
   // Plan 15 / LEV-173 — auth-slot impls that need a database surface this
   // when no ORM plugin is loaded (and the test-mode fallback isn't active).
-  // Raised by `@levelzero/plugin-better-auth`'s adapter when
+  // Raised by `@lich/plugin-better-auth`'s adapter when
   // `AuthContext.getActiveOrm()` returns undefined.
   | 'AUTH_NO_ORM';
 

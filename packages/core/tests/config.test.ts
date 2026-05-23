@@ -11,21 +11,21 @@ beforeEach(() => {
 
 describe('loadConfig', () => {
   it('loads an empty config', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default {};');
     const cfg = await loadConfig(path);
     expect(cfg).toEqual({});
   });
 
   it('loads a config with a name field', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default { name: "myapp" };');
     const cfg = await loadConfig(path);
     expect(cfg.name).toBe('myapp');
   });
 
   it('throws a useful error when config has no default export', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export const foo = 1;');
     await expect(loadConfig(path)).rejects.toThrow(/default export/i);
   });
@@ -33,7 +33,7 @@ describe('loadConfig', () => {
   // ----- adapters block (LEV-103) -----------------------------------------
 
   it('loads a config with an adapters block', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -48,7 +48,7 @@ describe('loadConfig', () => {
   });
 
   it('loads a config with adapters.custom plugin paths', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -70,7 +70,7 @@ describe('loadConfig', () => {
   });
 
   it('accepts every valid adapter slot', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -100,7 +100,7 @@ describe('loadConfig', () => {
   });
 
   it('throws a clear error for an unknown adapter slot', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -113,13 +113,13 @@ describe('loadConfig', () => {
   });
 
   it('throws a clear error when adapters is not an object', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { adapters: 'prisma' };`);
     await expect(loadConfig(path)).rejects.toThrow(/adapters.*object/i);
   });
 
   it('throws when an adapter slot value is not a string', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -130,7 +130,7 @@ describe('loadConfig', () => {
   });
 
   it('throws when adapters.custom is not an object of strings', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -141,7 +141,7 @@ describe('loadConfig', () => {
   });
 
   it('remains backward compatible when no adapters block is present', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default { name: "legacy" };');
     const cfg = await loadConfig(path);
     expect(cfg.name).toBe('legacy');
@@ -151,25 +151,25 @@ describe('loadConfig', () => {
   // ----- plugins block (LEV-129) ------------------------------------------
 
   it('loads a config with a plugins array of string specifiers', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
         plugins: [
-          '@levelzero/plugin-postgres',
+          '@lich/plugin-postgres',
           './local-plugins/redis',
         ],
       };`,
     );
     const cfg = await loadConfig(path);
     expect(cfg.plugins).toEqual([
-      '@levelzero/plugin-postgres',
+      '@lich/plugin-postgres',
       './local-plugins/redis',
     ]);
   });
 
   it('loads a config with a plugins array of Plugin objects', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `const postgres = {
@@ -205,7 +205,7 @@ describe('loadConfig', () => {
       };
       export default plugin;`,
     );
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -223,7 +223,7 @@ describe('loadConfig', () => {
   });
 
   it('loads a config mixing all three plugin entry shapes', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `const inline = { name: 'inline', version: '1.0.0', register() {} };
@@ -240,13 +240,13 @@ describe('loadConfig', () => {
   });
 
   it('throws a clear error when plugins is not an array', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { plugins: 'not-an-array' };`);
     await expect(loadConfig(path)).rejects.toThrow(/plugins.*array/i);
   });
 
   it('throws a clear error when a plugin entry is a number, including the index', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default { plugins: ['ok', 42] };`,
@@ -255,7 +255,7 @@ describe('loadConfig', () => {
   });
 
   it('throws a clear error when a plugin entry is null, including the index', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default { plugins: [null] };`,
@@ -264,7 +264,7 @@ describe('loadConfig', () => {
   });
 
   it('throws a clear error when a plugin object is missing required fields', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default { plugins: [{ name: 'incomplete' }] };`,
@@ -273,7 +273,7 @@ describe('loadConfig', () => {
   });
 
   it('remains backward compatible when no plugins block is present', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default { name: "legacy" };');
     const cfg = await loadConfig(path);
     expect(cfg.name).toBe('legacy');
@@ -283,7 +283,7 @@ describe('loadConfig', () => {
   // ----- envInjection block (LEV-180) -------------------------------------
 
   it('loads a config with an envInjection block of named source references', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -301,7 +301,7 @@ describe('loadConfig', () => {
   });
 
   it('loads a config with importAll bulk-source pass-through', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(
       path,
       `export default {
@@ -317,32 +317,32 @@ describe('loadConfig', () => {
   });
 
   it('accepts an empty envInjection object', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { envInjection: {} };`);
     const cfg = await loadConfig(path);
     expect(cfg.envInjection).toEqual({});
   });
 
   it('throws a clear error when envInjection is not an object', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { envInjection: 'oops' };`);
     await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
   });
 
   it('throws a clear error when envInjection is an array', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { envInjection: ['nope'] };`);
     await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
   });
 
   it('throws a clear error when envInjection is null', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, `export default { envInjection: null };`);
     await expect(loadConfig(path)).rejects.toThrow(/envInjection.*object/i);
   });
 
   it('remains backward compatible when no envInjection block is present', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default { name: "legacy" };');
     const cfg = await loadConfig(path);
     expect(cfg.envInjection).toBeUndefined();

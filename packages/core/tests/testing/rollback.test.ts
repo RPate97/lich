@@ -10,8 +10,8 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
-import { prismaAdapter } from '@levelzero/plugin-prisma';
-import { pgService } from '@levelzero/plugin-postgres';
+import { prismaAdapter } from '@lich/plugin-prisma';
+import { pgService } from '@lich/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import { withRollback, RollbackSignal } from '../../src/testing/rollback';
 
@@ -21,7 +21,7 @@ const onlyPostgres = (): Service[] => [pgService];
 const status = dockerOrSkip();
 const describeIfDocker = status.available ? describe : describe.skip;
 
-// Force IPv4 host: Levelzero binds postgres on 127.0.0.1:<port>, but Node may
+// Force IPv4 host: Lich binds postgres on 127.0.0.1:<port>, but Node may
 // prefer ::1 by default which yields ECONNREFUSED on dual-stack systems.
 function ipv4(url: string): string {
   try {
@@ -61,7 +61,7 @@ describeIfDocker('withRollback (integration)', () => {
   beforeEach(async () => {
     projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-rb-proj-')));
     homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-rb-home-')));
-    writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
     registry = new Registry(join(homeDir, 'registry.json'));
     // Disjoint port reservation from other suites so dev's allocator doesn't collide.
     await registry.upsert('rollback-reserved-base', {
@@ -84,7 +84,7 @@ describeIfDocker('withRollback (integration)', () => {
     // LEV-187: pgService no longer publishes DATABASE_URL through the legacy
     // envContributions hook (the postgres plugin's `addEnvSource('url')` is
     // the new source of truth). Build the URL inline using the same formula.
-    databaseUrl = `postgres://levelzero:levelzero@localhost:${result.ports.postgres}/levelzero`;
+    databaseUrl = `postgres://lich:lich@localhost:${result.ports.postgres}/lich`;
     fixtureRoot = makePrismaFixture();
     await prismaAdapter.applyMigrations({ databaseUrl, projectRoot: fixtureRoot });
     prisma = new PrismaClient({ datasources: { db: { url: ipv4(databaseUrl) } } });

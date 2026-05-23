@@ -2,7 +2,7 @@
  * FrontendAdapter — pluggable interface for the typed-client slot.
  *
  * Hypothetical alternative implementations:
- *   - TypedClient  (current default; ships in `@levelzero/plugin-typed-client`)
+ *   - TypedClient  (current default; ships in `@lich/plugin-typed-client`)
  *   - OpenAPI      (codegen against an OpenAPI document; `openapi-typescript`)
  *   - tRPC         (passes through the backend's procedure router types)
  *   - GraphQL      (codegen against an introspected schema)

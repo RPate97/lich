@@ -12,20 +12,20 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p05-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p05-home-')));
-  // Wire `@levelzero/plugin-prisma` so the bin's dispatcher registers the
+  // Wire `@lich/plugin-prisma` so the bin's dispatcher registers the
   // db.* commands. Post-LEV-149 they live in the plugin, not inline in
   // bin.ts, so the test's expectations (commands resolve past
   // UNKNOWN_COMMAND) only hold when the plugin is declared.
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
-    `export default { plugins: ['@levelzero/plugin-prisma'] };\n`,
+    join(projectDir, 'lich.config.ts'),
+    `export default { plugins: ['@lich/plugin-prisma'] };\n`,
   );
 });
 
 function run(args: string[], cwd: string = projectDir) {
   return spawnSync('bun', [BIN, ...args], {
     cwd,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -33,7 +33,7 @@ function run(args: string[], cwd: string = projectDir) {
 /**
  * Plan-05 (db.*) end-to-end: prove each of the four db subcommands —
  * `db migrate`, `db migration new`, `db seed`, `db inspect` — is registered
- * in `bin.ts` and reachable via the CLI when `@levelzero/plugin-prisma` is
+ * in `bin.ts` and reachable via the CLI when `@lich/plugin-prisma` is
  * declared in the project config (LEV-149 moved them out of core's inline
  * registrations).
  *
@@ -103,7 +103,7 @@ describe('bin: plan-05 db.* commands end-to-end', () => {
     // plugin is declared. With no plugin in the config, the dispatcher
     // should fall back to bare `buildCommands()` — UNKNOWN_COMMAND.
     const bareDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p05-bare-')));
-    writeFileSync(join(bareDir, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(bareDir, 'lich.config.ts'), 'export default {};');
     const res = run(['db', 'migrate', '--json'], bareDir);
     expect(res.status).toBe(1);
     const err = JSON.parse(res.stderr);

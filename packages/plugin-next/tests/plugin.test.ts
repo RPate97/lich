@@ -8,7 +8,7 @@ import type {
   OwnedService,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import next, { webService } from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
@@ -72,9 +72,9 @@ function makeEnvCtx(
   };
 }
 
-describe('@levelzero/plugin-next default export', () => {
+describe('@lich/plugin-next default export', () => {
   it('exposes name + version + register', () => {
-    expect(plugin.name).toBe('@levelzero/plugin-next');
+    expect(plugin.name).toBe('@lich/plugin-next');
     expect(typeof plugin.version).toBe('string');
     expect(typeof plugin.register).toBe('function');
   });

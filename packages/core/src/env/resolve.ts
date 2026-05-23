@@ -46,7 +46,7 @@ export type BulkResolutionCache = Map<string, Record<string, string>>;
 /**
  * Parameters for {@link resolveEnvForService}.
  *
- * `injection` carries the raw `envInjection` block from `LevelzeroConfig` —
+ * `injection` carries the raw `envInjection` block from `LichConfig` —
  * the parser (LEV-180) already validated it's a plain object whose values are
  * `string | string[]`, but didn't check the references resolve.
  *

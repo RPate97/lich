@@ -9,10 +9,10 @@ import type { Rule } from '../../src/check/types';
 let projectDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-chk-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
 });
 
-describe('levelzero check', () => {
+describe('lich check', () => {
   it('returns ok=true with default stub rules (all skip)', async () => {
     const cmd = makeCheckCommand();
     const result = (await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} })) as any;

@@ -130,7 +130,7 @@ describe('loadPlugin — local path resolution', () => {
 
   // LEV-186: v0 plugins are factories. The string-specifier path needs to
   // invoke a factory default export and unwrap to the produced Plugin so
-  // existing `plugins: ['@levelzero/plugin-x']` configs keep working after
+  // existing `plugins: ['@lich/plugin-x']` configs keep working after
   // the conversion.
   it('invokes a factory default export and unwraps the returned Plugin', async () => {
     const plugin = await loadPlugin('./plugins/factory-default.mjs', ctx);
@@ -163,9 +163,9 @@ describe('loadPlugin — error paths', () => {
   });
 
   it('throws with the specifier embedded for a missing npm package', async () => {
-    const spec = '@levelzero/definitely-not-a-real-pkg-xyz';
+    const spec = '@lich/definitely-not-a-real-pkg-xyz';
     await expect(loadPlugin(spec, ctx)).rejects.toThrow(
-      /@levelzero\/definitely-not-a-real-pkg-xyz/,
+      /@lich\/definitely-not-a-real-pkg-xyz/,
     );
   });
 });
@@ -215,7 +215,7 @@ describe('loadPlugin — npm package resolution', () => {
 
 describe('deriveNamespace', () => {
   it('strips the @scope/plugin- prefix from a scoped package name', () => {
-    expect(deriveNamespace('@levelzero/plugin-postgres')).toBe('postgres');
+    expect(deriveNamespace('@lich/plugin-postgres')).toBe('postgres');
     expect(deriveNamespace('@my-org/plugin-foo')).toBe('foo');
   });
 
@@ -224,20 +224,20 @@ describe('deriveNamespace', () => {
   });
 
   it('preserves digits and hyphens inside the namespace tail', () => {
-    expect(deriveNamespace('@levelzero/plugin-typed-client')).toBe('typed-client');
+    expect(deriveNamespace('@lich/plugin-typed-client')).toBe('typed-client');
     expect(deriveNamespace('plugin-redis-7')).toBe('redis-7');
   });
 
   it('returns the package name unchanged when no plugin- prefix matches', () => {
     expect(deriveNamespace('whatever-else')).toBe('whatever-else');
-    expect(deriveNamespace('@levelzero/core')).toBe('@levelzero/core');
+    expect(deriveNamespace('@lich/core')).toBe('@lich/core');
   });
 });
 
 describe('resolvePluginEntry', () => {
   /** Minimal valid plugin reused across the resolver cases. */
   const samplePlugin: Plugin = {
-    name: '@levelzero/plugin-sample',
+    name: '@lich/plugin-sample',
     version: '0.0.1',
     register() {},
   };
@@ -271,7 +271,7 @@ describe('resolvePluginEntry', () => {
 
   it('auto-derives the namespace for a scoped plugin package when omitted', async () => {
     const factory = (): Plugin => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       version: '0.0.1',
       register() {},
     });
@@ -281,7 +281,7 @@ describe('resolvePluginEntry', () => {
 
   it('keeps an explicit `namespace` field over the auto-derived one', async () => {
     const factory = (): Plugin => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'pg',
       version: '0.0.1',
       register() {},
@@ -292,7 +292,7 @@ describe('resolvePluginEntry', () => {
 
   it('auto-derives the namespace on plain Plugin entries too', async () => {
     const plugin: Plugin = {
-      name: '@levelzero/plugin-foo',
+      name: '@lich/plugin-foo',
       version: '0.0.1',
       register() {},
     };

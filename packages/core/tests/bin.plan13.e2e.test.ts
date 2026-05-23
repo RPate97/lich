@@ -20,15 +20,15 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p13-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p13-home-')));
-  // resolveStackContext walks up looking for levelzero.config.ts — provide one
+  // resolveStackContext walks up looking for lich.config.ts — provide one
   // so adapter swap (which requires being inside a project) succeeds.
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
 });
 
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -50,15 +50,15 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
 
       // After Plan 14 the built-in registry is empty — every slot is now
       // contributed by an extracted plugin and only appears in `adapter list`
-      // when its plugin is declared in `levelzero.config.ts`:
-      //   - orm         → @levelzero/plugin-prisma (LEV-149)
-      //   - auth        → @levelzero/plugin-better-auth (LEV-152)
-      //   - ui          → @levelzero/plugin-shadcn (LEV-153)
-      //   - browser     → @levelzero/plugin-playwright (LEV-156)
-      //   - backend     → @levelzero/plugin-hono (LEV-150)
-      //   - frontend    → @levelzero/plugin-typed-client (LEV-151)
-      //   - portless    → @levelzero/plugin-portless (LEV-145)
-      //   - test-runner → @levelzero/plugin-vitest / @levelzero/plugin-playwright
+      // when its plugin is declared in `lich.config.ts`:
+      //   - orm         → @lich/plugin-prisma (LEV-149)
+      //   - auth        → @lich/plugin-better-auth (LEV-152)
+      //   - ui          → @lich/plugin-shadcn (LEV-153)
+      //   - browser     → @lich/plugin-playwright (LEV-156)
+      //   - backend     → @lich/plugin-hono (LEV-150)
+      //   - frontend    → @lich/plugin-typed-client (LEV-151)
+      //   - portless    → @lich/plugin-portless (LEV-145)
+      //   - test-runner → @lich/plugin-vitest / @lich/plugin-playwright
       // With an empty config the list is empty. The next test covers the
       // loader path.
       const byKey = new Map(
@@ -97,11 +97,11 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
     it('surfaces plugin-contributed portless adapters when the plugin is declared in config (LEV-146)', () => {
       // Replace the empty config with one that loads the extracted plugin.
       // The loader resolves the npm specifier through Node's algorithm rooted
-      // at the project — bun's workspace symlinks under `node_modules/@levelzero/`
+      // at the project — bun's workspace symlinks under `node_modules/@lich/`
       // make this resolve from any cwd within the workspace.
       writeFileSync(
-        join(projectDir, 'levelzero.config.ts'),
-        `export default { plugins: ['@levelzero/plugin-portless'] };`,
+        join(projectDir, 'lich.config.ts'),
+        `export default { plugins: ['@lich/plugin-portless'] };`,
       );
 
       const res = run(['adapter', 'list', '--json']);
@@ -125,15 +125,15 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
   });
 
   describe('adapter swap', () => {
-    it('writes .levelzero/adapter.json with the chosen {slot: name}', () => {
-      // Post-LEV-149: orm/prisma is only present when `@levelzero/plugin-prisma`
+    it('writes .lich/adapter.json with the chosen {slot: name}', () => {
+      // Post-LEV-149: orm/prisma is only present when `@lich/plugin-prisma`
       // is loaded. The swap command validates against the merged registry
       // (built-ins + plugin contributions) so without the plugin declared in
-      // `levelzero.config.ts` the swap would fail with "unknown adapter slot
+      // `lich.config.ts` the swap would fail with "unknown adapter slot
       // 'orm'".
       writeFileSync(
-        join(projectDir, 'levelzero.config.ts'),
-        `export default { plugins: ['@levelzero/plugin-prisma'] };`,
+        join(projectDir, 'lich.config.ts'),
+        `export default { plugins: ['@lich/plugin-prisma'] };`,
       );
 
       const res = run(['adapter', 'swap', 'orm', 'prisma', '--json']);
@@ -148,7 +148,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       expect(out.slot).toBe('orm');
       expect(out.name).toBe('prisma');
 
-      const adapterJson = join(projectDir, '.levelzero', 'adapter.json');
+      const adapterJson = join(projectDir, '.lich', 'adapter.json');
       expect(existsSync(adapterJson)).toBe(true);
       expect(out.path).toBe(adapterJson);
       const parsed = JSON.parse(readFileSync(adapterJson, 'utf8'));
@@ -180,7 +180,7 @@ describe('bin: plan-13 adapter commands end-to-end', () => {
       );
 
       // Drive the loader directly (the CLI binary does not yet auto-load
-      // project plugins from levelzero.config.ts — that wiring lands in a
+      // project plugins from lich.config.ts — that wiring lands in a
       // later wave). The smoke check is: the loader resolves the file,
       // detects the slot, and registers the entry under that slot.
       const registry = new AdapterRegistry();

@@ -1,10 +1,10 @@
 import { defineConfig } from 'tsup';
 
 /**
- * `@levelzero/create-stack-v0` exposes both a library entry (`index.ts`) and a
+ * `@lich/create-stack-v0` exposes both a library entry (`index.ts`) and a
  * CLI bin (`bin.ts`). The source `#!/usr/bin/env bun` shebang is preserved in
  * the built artifact: the scaffolded project it produces is a Bun-first
- * toolchain, and the sibling `levelzero` CLI it bootstraps requires Bun to
+ * toolchain, and the sibling `lich` CLI it bootstraps requires Bun to
  * load `.ts` config files. `onSuccess` only marks the built bin executable.
  */
 export default defineConfig({

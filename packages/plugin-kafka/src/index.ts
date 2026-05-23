@@ -3,10 +3,10 @@ import type {
   Plugin,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 
 /**
- * Options accepted by the `@levelzero/plugin-kafka` factory.
+ * Options accepted by the `@lich/plugin-kafka` factory.
  *
  *  - `image`     — Docker image tag, defaults to `confluentinc/cp-kafka:7.6.0`.
  *  - `namespace` — override the default `kafka` namespace if a project
@@ -20,7 +20,7 @@ export interface KafkaOptions {
 }
 
 /**
- * `@levelzero/plugin-kafka` (LEV-191).
+ * `@lich/plugin-kafka` (LEV-191).
  *
  * Validates that the EnvSource design accommodates **non-URL** connection
  * strings. Kafka clients do not consume a `kafka://host:port/path`-shaped
@@ -56,7 +56,7 @@ export interface KafkaOptions {
  * Wire it into a project:
  *
  * ```ts
- * import kafka from '@levelzero/plugin-kafka';
+ * import kafka from '@lich/plugin-kafka';
  *
  * export default {
  *   plugins: [kafka()],
@@ -71,7 +71,7 @@ export default function kafka(opts: KafkaOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-kafka',
+    name: '@lich/plugin-kafka',
     namespace: (opts.namespace ?? 'kafka') as 'kafka',
     version: '0.1.0',
 
@@ -98,7 +98,7 @@ export default function kafka(opts: KafkaOptions = {}): Plugin<
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1',
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1',
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1',
-          CLUSTER_ID: 'levelzero-kafka-dev',
+          CLUSTER_ID: 'lich-kafka-dev',
         },
         ports: ['${PORT_kafka}:9092'],
         healthcheck: {

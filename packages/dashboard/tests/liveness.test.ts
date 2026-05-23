@@ -135,7 +135,7 @@ describe('readOwnedServices', () => {
 
   it('reads pid files and reports alive process as healthy (no URL)', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'abc', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'abc', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
     await writeFile(join(pidsDir, 'web.pid'), '2147483646\n');
@@ -152,7 +152,7 @@ describe('readOwnedServices', () => {
 
   it('treats an empty pid file as a down service', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'abc', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'abc', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), '');
     const out = await readOwnedServices(wt, 'abc', {
@@ -166,7 +166,7 @@ describe('readOwnedServices', () => {
   it('returns healthy when alive and probe returns ok', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'k1', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'k1', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
 
@@ -184,7 +184,7 @@ describe('readOwnedServices', () => {
   it('returns unhealthy when alive, probe fails, and past grace window', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 503 }));
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'k2', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'k2', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
 
@@ -203,7 +203,7 @@ describe('readOwnedServices', () => {
   it('returns starting when alive, probe fails, and within grace window', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 503 }));
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'k3', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'k3', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
 

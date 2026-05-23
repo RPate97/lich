@@ -10,7 +10,7 @@ import {
   type User,
   type SessionToken,
   type SessionInfo,
-} from '@levelzero/core';
+} from '@lich/core';
 
 export interface BetterAuthInstance {
   // We type this minimally; Better Auth's full shape lives in its own types.
@@ -138,7 +138,7 @@ async function buildDatabaseForCtx(ctx: AuthContext): Promise<unknown> {
     'AUTH_NO_ORM',
     `plugin-better-auth: no active ORM plugin (and not in test fallback mode). ` +
       `databaseUrl=${JSON.stringify(ctx.databaseUrl)}`,
-    'load an ORM plugin (e.g. @levelzero/plugin-prisma) in your levelzero.config.ts, ' +
+    'load an ORM plugin (e.g. @lich/plugin-prisma) in your lich.config.ts, ' +
       'or set NODE_ENV=test with a sqlite::memory: URL for unit-test fixtures.',
   );
 }

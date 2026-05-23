@@ -143,7 +143,7 @@ function toCamelCase(input: string): string {
 
 /**
  * Normalize a single `PluginEntry` into a `Plugin`. The shapes accepted here
- * are the same union `LevelzeroConfig['plugins']` permits — see `PluginEntry`
+ * are the same union `LichConfig['plugins']` permits — see `PluginEntry`
  * in `config.ts`. The dispatch order is:
  *
  *  - **string** — handed to {@link loadPlugin} (npm specifier or relative path
@@ -208,7 +208,7 @@ export async function resolvePluginEntry(
  * Derive a short namespace from a plugin package name by stripping the
  * standard `@scope/plugin-` (or bare `plugin-`) prefix. Examples:
  *
- *   `@levelzero/plugin-postgres` → `postgres`
+ *   `@lich/plugin-postgres` → `postgres`
  *   `@my-org/plugin-foo`         → `foo`
  *   `plugin-bar`                 → `bar`
  *   `whatever-else`              → `whatever-else` (no prefix match → identity)

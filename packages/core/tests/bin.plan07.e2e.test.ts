@@ -18,19 +18,19 @@ beforeEach(() => {
   // the merged plugin-aware registry). The smoke checks below exercise the
   // command's arg-validation, which runs BEFORE adapter resolution, so any
   // plugin that contributes a `test-runner` impl satisfies the registration.
-  // We declare `@levelzero/plugin-vitest` to make `test` a real registered
+  // We declare `@lich/plugin-vitest` to make `test` a real registered
   // command — without it the failures below would surface as
   // UNKNOWN_COMMAND, which is exactly what the assertions guard against.
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
-    `export default { plugins: ['@levelzero/plugin-vitest'] };`,
+    join(projectDir, 'lich.config.ts'),
+    `export default { plugins: ['@lich/plugin-vitest'] };`,
   );
 });
 
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }

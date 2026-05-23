@@ -9,7 +9,7 @@ import { screenshotCommand, makeScreenshotCommand } from '../../src/commands/scr
 import { CLIError } from '../../src/errors';
 import type { BrowserAdapter } from '../../src/adapters/browser/types';
 
-// After LEV-174 core no longer imports `@levelzero/plugin-playwright`
+// After LEV-174 core no longer imports `@lich/plugin-playwright`
 // directly. Tests construct a stub adapter via the existing `adapter`
 // injection point on `makeScreenshotCommand`. The smoke check below still
 // imports the real adapter to keep the playwright-integration test
@@ -42,7 +42,7 @@ beforeEach(() => {
   mockScreenshot.mockReset();
 });
 
-describe('levelzero screenshot (unit)', () => {
+describe('lich screenshot (unit)', () => {
   it('exports a command named "screenshot"', () => {
     expect(screenshotCommand.name).toBe('screenshot');
     expect(typeof screenshotCommand.describe).toBe('string');
@@ -226,13 +226,13 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-describeIfBrowser('levelzero screenshot (real chromium)', () => {
+describeIfBrowser('lich screenshot (real chromium)', () => {
   it('writes a non-empty PNG (magic bytes) for a real page', async () => {
     // Construct the command with the real playwright adapter for this
     // end-to-end check. After LEV-174 the real adapter is no longer the
     // default inline import — tests opt in by passing it explicitly.
     const { playwrightAdapter: realAdapter } = await import(
-      '@levelzero/plugin-playwright'
+      '@lich/plugin-playwright'
     );
     const realCmd = makeScreenshotCommand({ adapter: realAdapter });
 

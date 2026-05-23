@@ -3,9 +3,9 @@
  *
  * Used by `<SignInForm>` / `<SignUpForm>` / sign-out buttons. The base URL is
  * the api origin (`NEXT_PUBLIC_API_URL`, exposed in `next.config.js` from the
- * server-side `API_URL` env that `@levelzero/plugin-hono` publishes). It
+ * server-side `API_URL` env that `@lich/plugin-hono` publishes). It
  * defaults to `http://localhost:3001` so the app still works when run with
- * a bare `bun run dev` outside the levelzero harness.
+ * a bare `bun run dev` outside the lich harness.
  *
  * NOTE: every method on `authClient` performs a fetch with
  * `credentials: 'include'` so the session cookie set by the api round-trips.

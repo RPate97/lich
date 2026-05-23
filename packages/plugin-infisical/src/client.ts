@@ -94,7 +94,7 @@ export const createClient: InfisicalClientFactory = async (inputs) => {
   const SDKCtor = mod.InfisicalSDK ?? mod.default?.InfisicalSDK ?? mod.default;
   if (typeof SDKCtor !== 'function') {
     throw new Error(
-      '@levelzero/plugin-infisical: failed to load InfisicalSDK from @infisical/sdk — ' +
+      '@lich/plugin-infisical: failed to load InfisicalSDK from @infisical/sdk — ' +
         'the installed SDK does not export the expected class. ' +
         'Pin `@infisical/sdk@^3.0.0` in your project dependencies.',
     );
@@ -123,7 +123,7 @@ export const createClient: InfisicalClientFactory = async (inputs) => {
     // Shouldn't happen — plugin validates first — but throw a clear error
     // if it ever does so debugging doesn't require reading the SDK source.
     throw new Error(
-      '@levelzero/plugin-infisical: createClient called without credentials. ' +
+      '@lich/plugin-infisical: createClient called without credentials. ' +
         'Pass either `token` or `clientId` + `clientSecret`.',
     );
   }

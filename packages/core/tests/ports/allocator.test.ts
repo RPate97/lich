@@ -7,7 +7,7 @@ describe('allocatePorts', () => {
     expect(Object.keys(map).sort()).toEqual(['api', 'postgres', 'web']);
   });
 
-  it('assigns ports inside the levelzero range', async () => {
+  it('assigns ports inside the lich range', async () => {
     const map = await allocatePorts(['postgres'], { isFree: async () => true });
     expect(map.postgres).toBeGreaterThanOrEqual(PORT_RANGE_START);
     expect(map.postgres).toBeLessThanOrEqual(PORT_RANGE_END);

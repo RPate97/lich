@@ -139,7 +139,7 @@ describe('vitestAdapter', () => {
       setNextSpawn({ exitCode: 0, stdout: sampleVitestJson });
       await vitestAdapter.run({
         cwd: '/abs/project',
-        env: { LEVELZERO_TEST_FLAG: 'on' },
+        env: { LICH_TEST_FLAG: 'on' },
       });
 
       const env = spawnCalls[0]?.options?.env;
@@ -147,7 +147,7 @@ describe('vitestAdapter', () => {
       // Inherits PATH (or similar) from process.env...
       expect(env?.PATH ?? env?.Path).toBeDefined();
       // ...and includes the caller-provided override.
-      expect(env?.LEVELZERO_TEST_FLAG).toBe('on');
+      expect(env?.LICH_TEST_FLAG).toBe('on');
     });
 
     it('parses pass/fail/skip counts and totals from the JSON report', async () => {

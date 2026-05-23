@@ -9,9 +9,9 @@
  *
  * Usage:
  * ```ts
- * import { defineConfig } from "@levelzero/core";
- * import postgres from "@levelzero/plugin-postgres";
- * import infisical from "@levelzero/plugin-infisical";
+ * import { defineConfig } from "@lich/core";
+ * import postgres from "@lich/plugin-postgres";
+ * import infisical from "@lich/plugin-infisical";
  *
  * export default defineConfig({
  *   plugins: [postgres(), infisical({ ... })],
@@ -28,7 +28,7 @@
  */
 
 import type { Plugin } from './plugins/types';
-import type { LevelzeroConfig as BaseLevelzeroConfig } from './config';
+import type { LichConfig as BaseLichConfig } from './config';
 
 /**
  * Union of fully-qualified named source keys (`${namespace}.${name}`) extracted
@@ -92,7 +92,7 @@ export interface EnvInjectionConfig<P extends readonly Plugin<any, any>[]> {
 }
 
 /**
- * Generic variant of `LevelzeroConfig` that carries the `plugins` tuple type
+ * Generic variant of `LichConfig` that carries the `plugins` tuple type
  * through to `envInjection`. The base type's `plugins` and `envInjection`
  * fields are replaced with parameterized versions; everything else (name,
  * adapters, …) is inherited untouched.
@@ -101,8 +101,8 @@ export interface EnvInjectionConfig<P extends readonly Plugin<any, any>[]> {
  * `export default defineConfig({ ... })` and still get IDE jump-to-definition
  * on the inferred shape.
  */
-export interface TypedLevelzeroConfig<P extends readonly Plugin<any, any>[]>
-  extends Omit<BaseLevelzeroConfig, 'plugins' | 'envInjection'> {
+export interface TypedLichConfig<P extends readonly Plugin<any, any>[]>
+  extends Omit<BaseLichConfig, 'plugins' | 'envInjection'> {
   plugins: P;
   envInjection?: EnvInjectionConfig<P>;
 }
@@ -116,7 +116,7 @@ export interface TypedLevelzeroConfig<P extends readonly Plugin<any, any>[]>
  * produced via `defineConfig()` or written as a plain object literal.
  */
 export function defineConfig<P extends readonly Plugin<any, any>[]>(
-  cfg: TypedLevelzeroConfig<P>,
-): TypedLevelzeroConfig<P> {
+  cfg: TypedLichConfig<P>,
+): TypedLichConfig<P> {
   return cfg;
 }

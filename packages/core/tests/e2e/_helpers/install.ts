@@ -1,7 +1,7 @@
 /**
  * E2E harness — install step.
  *
- * The freshly scaffolded project's `package.json` lists `@levelzero/*`
+ * The freshly scaffolded project's `package.json` lists `@lich/*`
  * dependencies with semver ranges (`^0.1.0`). Those packages are not yet
  * published to npm (LEV-167 is pending), so a naive `bun install` would
  * fail with ERR_NPM_NOT_FOUND for every workspace package.
@@ -9,10 +9,10 @@
  * To make `bun install` succeed end-to-end without cheating (i.e. without
  * symlinking into the monorepo `node_modules`), we walk `packages/*` here
  * and write a bun `overrides` block into the scaffolded `package.json`
- * pointing every `@levelzero/*` dep at the local checkout via `file:`.
+ * pointing every `@lich/*` dep at the local checkout via `file:`.
  *
  * `file:` installs copy the workspace package's tree into
- * `node_modules/@levelzero/<pkg>/` — they're not symlinks, so each test
+ * `node_modules/@lich/<pkg>/` — they're not symlinks, so each test
  * run gets an isolated copy that won't be polluted by the host's
  * `bun install --frozen` state. That mirrors what an end user with a
  * published package would see.
@@ -30,10 +30,10 @@ import { spawnSync } from 'node:child_process';
 import { REPO_PACKAGES_DIR } from './scaffold';
 
 /**
- * Enumerate every `@levelzero/<name>` workspace package and return a map
+ * Enumerate every `@lich/<name>` workspace package and return a map
  * from package name → absolute path. The package's `name` field (not the
  * directory name) is what's authoritative — e.g. `template-v0-stack/` ships
- * `@levelzero/template-v0-stack`.
+ * `@lich/template-v0-stack`.
  */
 export function discoverWorkspacePackages(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -50,7 +50,7 @@ export function discoverWorkspacePackages(): Record<string, string> {
     if (!existsSync(pkgPath)) continue;
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string };
-      if (typeof pkg.name === 'string' && pkg.name.startsWith('@levelzero/')) {
+      if (typeof pkg.name === 'string' && pkg.name.startsWith('@lich/')) {
         out[pkg.name] = dir;
       }
     } catch {
@@ -62,12 +62,12 @@ export function discoverWorkspacePackages(): Record<string, string> {
 }
 
 /**
- * Patch the scaffolded `package.json` so every `@levelzero/*` dep resolves
+ * Patch the scaffolded `package.json` so every `@lich/*` dep resolves
  * to the local workspace via `file:` overrides. Returns the new overrides
  * object so the caller can assert on it if useful.
  *
- * The template's `package.json` declares `@levelzero/core` as a direct
- * devDependency (LEV-205), which is what makes `node_modules/.bin/levelzero`
+ * The template's `package.json` declares `@lich/core` as a direct
+ * devDependency (LEV-205), which is what makes `node_modules/.bin/lich`
  * land at the demo root after `bun install`. The overrides set below steer
  * resolution to the local file: path without changing the dep graph.
  */
@@ -170,7 +170,7 @@ export async function installDeps(projectDir: string): Promise<InstallResult> {
         `next to be hoisted to the root node_modules)`,
     );
   }
-  // `@prisma/client` is a transitive of `@levelzero/plugin-prisma` and
+  // `@prisma/client` is a transitive of `@lich/plugin-prisma` and
   // lands at the root after bun hoists.
   const prismaClient = join(projectDir, 'node_modules', '@prisma', 'client');
   if (!existsSync(prismaClient)) {

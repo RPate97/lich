@@ -46,7 +46,7 @@ interface PlaywrightModule {
  *   2. The chromium browser binary exists in the registry directory.
  *
  * Both are needed: a host can have playwright installed (via
- * `@levelzero/core`'s devDeps) but no chromium downloaded, in which case
+ * `@lich/core`'s devDeps) but no chromium downloaded, in which case
  * `chromium.launch()` throws a misleading "Executable doesn't exist"
  * error mid-test. Better to skip cleanly at the describe boundary.
  *

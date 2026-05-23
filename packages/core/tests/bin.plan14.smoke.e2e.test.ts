@@ -1,7 +1,7 @@
 /**
  * Plan 14 / LEV-166 — Final end-to-end smoke test.
  *
- * Scaffolds a fresh v0 project via the `@levelzero/create-stack-v0` binary,
+ * Scaffolds a fresh v0 project via the `@lich/create-stack-v0` binary,
  * then walks the canonical user flow against it:
  *
  *   scaffold → --help → adapter list → env list → env resolve →
@@ -16,11 +16,11 @@
  * unconditionally.
  *
  * Why the project is scaffolded *inside* `packages/` rather than the OS
- * tmpdir: the generated `levelzero.config.ts` does
- * `import postgres from '@levelzero/plugin-postgres'`. Bun's resolver walks
+ * tmpdir: the generated `lich.config.ts` does
+ * `import postgres from '@lich/plugin-postgres'`. Bun's resolver walks
  * ancestor directories looking for `node_modules`, so the import only
  * succeeds when the scaffold lands somewhere under the monorepo root (where
- * workspace symlinks live in `<root>/node_modules/@levelzero/`). The OS
+ * workspace symlinks live in `<root>/node_modules/@lich/`). The OS
  * tmpdir has no such ancestor, so `loadConfig` would throw and `bin.ts`
  * would silently fall back to inline-only commands, defeating the whole
  * point of the smoke test. The `afterAll` cleanup removes the scratch
@@ -50,8 +50,8 @@ const CREATE_BIN = join(
   'bin.ts',
 );
 // Scaffold scratch dirs live under `packages/` so the workspace
-// `node_modules/@levelzero/*` symlinks are reachable via ancestor lookup —
-// that's how bare imports in the generated `levelzero.config.ts` resolve
+// `node_modules/@lich/*` symlinks are reachable via ancestor lookup —
+// that's how bare imports in the generated `lich.config.ts` resolve
 // without a real `bun install` step.
 const PACKAGES_DIR = join(__dirname, '..', '..');
 const PROJECT_NAME = 'demo';
@@ -93,7 +93,7 @@ const dockerUsable = canCreateNetwork();
 function run(args: string[], cwd: string = projectDir) {
   return spawnSync('bun', [BIN, ...args], {
     cwd,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -173,7 +173,7 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
   // -------------------------------------------------------------------------
   it('scaffolds a working v0 project tree at <scratch>/demo/', () => {
     expect(existsSync(projectDir)).toBe(true);
-    expect(existsSync(join(projectDir, 'levelzero.config.ts'))).toBe(true);
+    expect(existsSync(join(projectDir, 'lich.config.ts'))).toBe(true);
     expect(existsSync(join(projectDir, 'package.json'))).toBe(true);
     expect(existsSync(join(projectDir, 'turbo.json'))).toBe(true);
     expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(true);
@@ -188,19 +188,19 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
     // The substituted projectName lands in both package.json and the config.
     const pkg = readFileSync(join(projectDir, 'package.json'), 'utf8');
     expect(pkg).toContain(`"name": "${PROJECT_NAME}"`);
-    const cfg = readFileSync(join(projectDir, 'levelzero.config.ts'), 'utf8');
+    const cfg = readFileSync(join(projectDir, 'lich.config.ts'), 'utf8');
     expect(cfg).toContain(`name: '${PROJECT_NAME}'`);
     // Every plugin the v0 stack ships with must be declared — this is the
     // single source of truth for which slots the later phases will exercise.
-    expect(cfg).toContain("from '@levelzero/plugin-postgres'");
-    expect(cfg).toContain("from '@levelzero/plugin-prisma'");
-    expect(cfg).toContain("from '@levelzero/plugin-hono'");
-    expect(cfg).toContain("from '@levelzero/plugin-better-auth'");
-    expect(cfg).toContain("from '@levelzero/plugin-typed-client'");
-    expect(cfg).toContain("from '@levelzero/plugin-next'");
-    expect(cfg).toContain("from '@levelzero/plugin-shadcn'");
-    expect(cfg).toContain("from '@levelzero/plugin-vitest'");
-    expect(cfg).toContain("from '@levelzero/plugin-playwright'");
+    expect(cfg).toContain("from '@lich/plugin-postgres'");
+    expect(cfg).toContain("from '@lich/plugin-prisma'");
+    expect(cfg).toContain("from '@lich/plugin-hono'");
+    expect(cfg).toContain("from '@lich/plugin-better-auth'");
+    expect(cfg).toContain("from '@lich/plugin-typed-client'");
+    expect(cfg).toContain("from '@lich/plugin-next'");
+    expect(cfg).toContain("from '@lich/plugin-shadcn'");
+    expect(cfg).toContain("from '@lich/plugin-vitest'");
+    expect(cfg).toContain("from '@lich/plugin-playwright'");
   });
 
   // -------------------------------------------------------------------------
@@ -236,15 +236,15 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
     expect(out).toMatch(/^\s+gen\s+/m);
     expect(out).toContain('curl');
     // LOADED PLUGINS footer lists every v0 plugin.
-    expect(out).toContain('@levelzero/plugin-postgres');
-    expect(out).toContain('@levelzero/plugin-prisma');
-    expect(out).toContain('@levelzero/plugin-hono');
-    expect(out).toContain('@levelzero/plugin-better-auth');
-    expect(out).toContain('@levelzero/plugin-typed-client');
-    expect(out).toContain('@levelzero/plugin-next');
-    expect(out).toContain('@levelzero/plugin-shadcn');
-    expect(out).toContain('@levelzero/plugin-vitest');
-    expect(out).toContain('@levelzero/plugin-playwright');
+    expect(out).toContain('@lich/plugin-postgres');
+    expect(out).toContain('@lich/plugin-prisma');
+    expect(out).toContain('@lich/plugin-hono');
+    expect(out).toContain('@lich/plugin-better-auth');
+    expect(out).toContain('@lich/plugin-typed-client');
+    expect(out).toContain('@lich/plugin-next');
+    expect(out).toContain('@lich/plugin-shadcn');
+    expect(out).toContain('@lich/plugin-vitest');
+    expect(out).toContain('@lich/plugin-playwright');
   });
 
   // -------------------------------------------------------------------------
@@ -300,14 +300,14 @@ describe('bin: Plan 14 / LEV-166 end-to-end smoke test', () => {
     };
     const byKey = new Map(out.entries.map((e) => [e.key, e]));
     expect(byKey.get('postgres.url')?.protocol).toBe('postgres');
-    expect(byKey.get('postgres.url')?.plugin).toBe('@levelzero/plugin-postgres');
+    expect(byKey.get('postgres.url')?.plugin).toBe('@lich/plugin-postgres');
     expect(byKey.get('postgres.driver')?.plugin).toBe(
-      '@levelzero/plugin-postgres',
+      '@lich/plugin-postgres',
     );
     expect(byKey.get('hono.url')?.protocol).toBe('http');
-    expect(byKey.get('hono.url')?.plugin).toBe('@levelzero/plugin-hono');
+    expect(byKey.get('hono.url')?.plugin).toBe('@lich/plugin-hono');
     expect(byKey.get('next.url')?.protocol).toBe('http');
-    expect(byKey.get('next.url')?.plugin).toBe('@levelzero/plugin-next');
+    expect(byKey.get('next.url')?.plugin).toBe('@lich/plugin-next');
     // postgres exports the granular pieces too — they're what env injection
     // expands when a service's env map lists `postgres.host` etc. explicitly.
     expect(byKey.has('postgres.host')).toBe(true);
@@ -377,12 +377,12 @@ describe.skipIf(!dockerUsable)(
         expect(out.containers).toContain(
           containerName(worktreeKey, 'postgres'),
         );
-        // LEV-183 wrote per-service env files under .levelzero/state/<key>/env/.
+        // LEV-183 wrote per-service env files under .lich/state/<key>/env/.
         // The api service is the canonical one: it's the consumer of
         // DATABASE_URL + API_URL + WEB_URL.
         const apiEnvPath = join(
           projectDir,
-          '.levelzero',
+          '.lich',
           'state',
           worktreeKey,
           'env',

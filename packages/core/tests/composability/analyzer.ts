@@ -1,16 +1,16 @@
 /**
  * Static analyzer for the composability rule (see docs/EXTENSION.md
  * "Composability rule"): a file under `packages/plugin-X/src/**` must not
- * import from a sibling `@levelzero/plugin-*` package, nor from
- * `@levelzero/template-*`. Allowed: `@levelzero/core` (and subpaths),
+ * import from a sibling `@lich/plugin-*` package, nor from
+ * `@lich/template-*`. Allowed: `@lich/core` (and subpaths),
  * third-party npm packages, and relative paths.
  *
  * Implementation: a regex pass over source text that has been
  * pre-processed to blank out comments and unrelated string literals.
  * That keeps false positives off JSDoc lines like
- *   `* import dotenv from '@levelzero/plugin-dotenv';`
+ *   `* import dotenv from '@lich/plugin-dotenv';`
  * and identifier strings like
- *   `name: '@levelzero/plugin-foo',`
+ *   `name: '@lich/plugin-foo',`
  * while still catching real `import`/`export`/`require`/`import(...)`
  * statements.
  */
@@ -53,7 +53,7 @@ const IMPORT_PATTERNS: RegExp[] = [
  *
  * @param fileLabel  Filename used in returned violations (caller chooses
  *                   absolute or relative).
- * @param ownPackage The owning package's name (e.g. `@levelzero/plugin-foo`).
+ * @param ownPackage The owning package's name (e.g. `@lich/plugin-foo`).
  *                   Imports of `ownPackage` from within `ownPackage`'s own
  *                   sources are allowed (degenerate self-reference).
  * @param source     The full text of the file.
@@ -98,14 +98,14 @@ export function analyzeSource(
  * `ownPackage`, else `null`.
  */
 function classify(specifier: string, ownPackage: string): string | null {
-  if (specifier.startsWith('@levelzero/plugin-')) {
+  if (specifier.startsWith('@lich/plugin-')) {
     // Allow self-imports — they degenerate to a relative path.
     const head = specifier.split('/').slice(0, 2).join('/');
     if (head === ownPackage) return null;
-    return 'cross-plugin import: a plugin package may not import from another @levelzero/plugin-* package (use core capability lookups instead — see docs/EXTENSION.md "Composability rule")';
+    return 'cross-plugin import: a plugin package may not import from another @lich/plugin-* package (use core capability lookups instead — see docs/EXTENSION.md "Composability rule")';
   }
-  if (specifier.startsWith('@levelzero/template-')) {
-    return 'template import: plugins must not import from @levelzero/template-* (templates are consumer artifacts, not runtime dependencies)';
+  if (specifier.startsWith('@lich/template-')) {
+    return 'template import: plugins must not import from @lich/template-* (templates are consumer artifacts, not runtime dependencies)';
   }
   return null;
 }
@@ -238,7 +238,7 @@ export function formatViolations(violations: Violation[]): string {
   }
   lines.push('');
   lines.push(
-    'Plugin packages may only import from @levelzero/core, third-party npm packages, or relative paths.',
+    'Plugin packages may only import from @lich/core, third-party npm packages, or relative paths.',
   );
   lines.push('See docs/EXTENSION.md "Composability rule" for details.');
   return lines.join('\n');

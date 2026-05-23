@@ -1,10 +1,10 @@
-# levelzero CLI Foundation Implementation Plan
+# lich CLI Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the `levelzero` CLI binary with config loading, worktree-key detection from `cwd`, machine-local registry management, structured output, a command framework, and the first set of registry-only commands (`init`, `stacks current`, `stacks list`, `stacks prune`, `doctor`).
+**Goal:** Build the `lich` CLI binary with config loading, worktree-key detection from `cwd`, machine-local registry management, structured output, a command framework, and the first set of registry-only commands (`init`, `stacks current`, `stacks list`, `stacks prune`, `doctor`).
 
-**Architecture:** A Bun-runtime TypeScript CLI under `tools/cli/`. Single binary `levelzero`. Commands are registered objects implementing a `Command` interface. Every command auto-resolves a "stack context" from cwd by walking up looking for `levelzero.config.ts` (its parent directory is the worktree root; the SHA-256 of its canonical path is the worktree key). A JSON registry at `~/.levelzero/registry.json` is the source of truth for what stacks are tracked. No Docker, no services running yet — that's plan 02.
+**Architecture:** A Bun-runtime TypeScript CLI under `tools/cli/`. Single binary `lich`. Commands are registered objects implementing a `Command` interface. Every command auto-resolves a "stack context" from cwd by walking up looking for `lich.config.ts` (its parent directory is the worktree root; the SHA-256 of its canonical path is the worktree key). A JSON registry at `~/.lich/registry.json` is the source of truth for what stacks are tracked. No Docker, no services running yet — that's plan 02.
 
 **Tech Stack:** Bun, TypeScript, Vitest, Node `node:fs`/`node:crypto`/`node:path` (work identically under Bun).
 
@@ -23,13 +23,13 @@ tools/cli/
     errors.ts                    # CLIError class + error codes
     output.ts                    # JSON + pretty formatters
     worktree.ts                  # walk up cwd; compute key; load config
-    config.ts                    # load levelzero.config.ts via dynamic import
-    registry.ts                  # read/write ~/.levelzero/registry.json
+    config.ts                    # load lich.config.ts via dynamic import
+    registry.ts                  # read/write ~/.lich/registry.json
     commands/
       types.ts                   # Command + CommandContext interfaces
       registry.ts                # register/lookup commands
-      init.ts                    # levelzero init
-      doctor.ts                  # levelzero doctor
+      init.ts                    # lich init
+      doctor.ts                  # lich doctor
       stacks/
         current.ts
         list.ts
@@ -84,10 +84,10 @@ Expected: FAIL (`Cannot find module '../src/bin'`).
 ```json
 // tools/cli/package.json
 {
-  "name": "@levelzero/cli",
+  "name": "@lich/cli",
   "version": "0.0.0",
   "type": "module",
-  "bin": { "levelzero": "./src/bin.ts" },
+  "bin": { "lich": "./src/bin.ts" },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -172,21 +172,21 @@ beforeEach(() => {
 });
 
 describe('findWorktree', () => {
-  it('returns null when no levelzero.config.ts is found above cwd', async () => {
+  it('returns null when no lich.config.ts is found above cwd', async () => {
     const result = await findWorktree(tmp);
     expect(result).toBeNull();
   });
 
   it('finds the config when it is directly in cwd', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const result = await findWorktree(tmp);
     expect(result).not.toBeNull();
     expect(result!.path).toBe(tmp);
-    expect(result!.configPath).toBe(join(tmp, 'levelzero.config.ts'));
+    expect(result!.configPath).toBe(join(tmp, 'lich.config.ts'));
   });
 
   it('walks up the directory tree to find the config', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const nested = join(tmp, 'apps', 'web', 'src');
     mkdirSync(nested, { recursive: true });
     const result = await findWorktree(nested);
@@ -225,11 +225,11 @@ import { dirname, join } from 'node:path';
 
 export interface Worktree {
   path: string;          // canonical absolute path of the worktree root
-  configPath: string;    // absolute path to levelzero.config.ts
+  configPath: string;    // absolute path to lich.config.ts
   key: string;           // 12-char hex sha256
 }
 
-const CONFIG_FILENAME = 'levelzero.config.ts';
+const CONFIG_FILENAME = 'lich.config.ts';
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -300,21 +300,21 @@ beforeEach(() => {
 
 describe('loadConfig', () => {
   it('loads an empty config', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default {};');
     const cfg = await loadConfig(path);
     expect(cfg).toEqual({});
   });
 
   it('loads a config with a name field', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export default { name: "myapp" };');
     const cfg = await loadConfig(path);
     expect(cfg.name).toBe('myapp');
   });
 
   it('throws a useful error when config has no default export', async () => {
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     writeFileSync(path, 'export const foo = 1;');
     await expect(loadConfig(path)).rejects.toThrow(/default export/i);
   });
@@ -330,21 +330,21 @@ Expected: FAIL (`Cannot find module '../src/config'`).
 
 ```ts
 // tools/cli/src/config.ts
-export interface LevelzeroConfig {
+export interface LichConfig {
   name?: string;
   // Adapter slots and services land in later plans. Keep this surface
   // minimal in plan 01 — every later plan extends it via module
   // declaration merging or interface extension.
 }
 
-export async function loadConfig(configPath: string): Promise<LevelzeroConfig> {
+export async function loadConfig(configPath: string): Promise<LichConfig> {
   // Dynamic import works under Bun for .ts files natively. Use a cache-busting
   // query so successive loads in a single process pick up edits during tests.
   const url = `file://${configPath}?t=${Date.now()}`;
-  const mod = (await import(url)) as { default?: LevelzeroConfig };
+  const mod = (await import(url)) as { default?: LichConfig };
   if (!mod.default || typeof mod.default !== 'object') {
     throw new Error(
-      `levelzero config at ${configPath} has no default export (expected: \`export default { ... }\`)`,
+      `lich config at ${configPath} has no default export (expected: \`export default { ... }\`)`,
     );
   }
   return mod.default;
@@ -657,7 +657,7 @@ describe('runCli', () => {
       name: 'bad',
       describe: 'bad',
       run: async () => {
-        throw new CLIError('NO_PROJECT', 'not inside a levelzero project');
+        throw new CLIError('NO_PROJECT', 'not inside a lich project');
       },
     };
     const out = await runCli(['bad'], makeRegistry([bad]), { cwd: '/' });
@@ -847,13 +847,13 @@ git commit -m "feat(cli): error model, command registry, dispatch"
 
 ---
 
-### Task 7: `levelzero init` (minimal)
+### Task 7: `lich init` (minimal)
 
 **Files:**
 - Create: `tools/cli/src/commands/init.ts`
 - Create: `tools/cli/tests/commands/init.test.ts`
 
-The full scaffolder lands in plan 11. This is the v0.0 stub: creates a bare `levelzero.config.ts` in the target directory so it becomes a valid levelzero project.
+The full scaffolder lands in plan 11. This is the v0.0 stub: creates a bare `lich.config.ts` in the target directory so it becomes a valid lich project.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -870,10 +870,10 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-init-')));
 });
 
-describe('levelzero init', () => {
-  it('creates levelzero.config.ts in cwd if not present', async () => {
+describe('lich init', () => {
+  it('creates lich.config.ts in cwd if not present', async () => {
     const result = await initCommand.run({ cwd: tmp, format: 'json', args: [], flags: {} });
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     expect(existsSync(path)).toBe(true);
     expect(readFileSync(path, 'utf8')).toMatch(/export default/);
     expect(result).toMatchObject({ created: true, configPath: path });
@@ -927,13 +927,13 @@ async function exists(p: string): Promise<boolean> {
 
 export const initCommand: Command = {
   name: 'init',
-  describe: 'Scaffold a levelzero.config.ts in the current directory',
+  describe: 'Scaffold a lich.config.ts in the current directory',
   async run(ctx) {
-    const path = join(ctx.cwd, 'levelzero.config.ts');
+    const path = join(ctx.cwd, 'lich.config.ts');
     if ((await exists(path)) && !ctx.flags['force']) {
       throw new CLIError(
         'CONFIG_INVALID',
-        `levelzero.config.ts already exists at ${path}`,
+        `lich.config.ts already exists at ${path}`,
         'pass --force to overwrite',
       );
     }
@@ -957,7 +957,7 @@ git commit -m "feat(cli): minimal init command (config stub)"
 
 ---
 
-### Task 8: `levelzero stacks current`
+### Task 8: `lich stacks current`
 
 **Files:**
 - Create: `tools/cli/src/commands/stacks/current.ts`
@@ -982,8 +982,8 @@ beforeEach(() => {
   registryPath = join(tmp, 'registry.json');
 });
 
-describe('levelzero stacks current', () => {
-  it('errors NO_PROJECT when cwd is not inside a levelzero project', async () => {
+describe('lich stacks current', () => {
+  it('errors NO_PROJECT when cwd is not inside a lich project', async () => {
     const cmd = makeStacksCurrentCommand(() => new Registry(registryPath));
     await expect(
       cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} }),
@@ -991,7 +991,7 @@ describe('levelzero stacks current', () => {
   });
 
   it('returns worktree info even with no registry entry', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const cmd = makeStacksCurrentCommand(() => new Registry(registryPath));
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     expect(result.path).toBe(tmp);
@@ -1001,7 +1001,7 @@ describe('levelzero stacks current', () => {
   });
 
   it('returns the registry entry when one exists', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const reg = new Registry(registryPath);
     const { computeWorktreeKey } = await import('../../src/worktree');
     const key = computeWorktreeKey(tmp);
@@ -1012,7 +1012,7 @@ describe('levelzero stacks current', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-16T00:00:00Z',
     });
     const cmd = makeStacksCurrentCommand(() => reg);
@@ -1046,8 +1046,8 @@ export function makeStacksCurrentCommand(getRegistry: () => Registry): Command {
       if (!wt) {
         throw new CLIError(
           'NO_PROJECT',
-          'not inside a levelzero project',
-          'run `levelzero init` or cd into a directory with levelzero.config.ts',
+          'not inside a lich project',
+          'run `lich init` or cd into a directory with lich.config.ts',
         );
       }
       const entry = await getRegistry().get(wt.key);
@@ -1077,7 +1077,7 @@ git commit -m "feat(cli): stacks current"
 
 ---
 
-### Task 9: `levelzero stacks list`
+### Task 9: `lich stacks list`
 
 **Files:**
 - Create: `tools/cli/src/commands/stacks/list.ts`
@@ -1101,7 +1101,7 @@ beforeEach(() => {
   reg = new Registry(join(tmp, 'registry.json'));
 });
 
-describe('levelzero stacks list', () => {
+describe('lich stacks list', () => {
   it('returns an empty array when no stacks are registered', async () => {
     const cmd = makeStacksListCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
@@ -1139,7 +1139,7 @@ import type { Command } from '../types';
 export function makeStacksListCommand(getRegistry: () => Registry): Command {
   return {
     name: 'stacks.list',
-    describe: 'List every running levelzero stack on this machine',
+    describe: 'List every running lich stack on this machine',
     async run() {
       const entries = await getRegistry().list();
       return {
@@ -1171,7 +1171,7 @@ git commit -m "feat(cli): stacks list"
 
 ---
 
-### Task 10: `levelzero stacks prune`
+### Task 10: `lich stacks prune`
 
 **Files:**
 - Create: `tools/cli/src/commands/stacks/prune.ts`
@@ -1197,7 +1197,7 @@ beforeEach(() => {
   reg = new Registry(join(tmp, 'registry.json'));
 });
 
-describe('levelzero stacks prune', () => {
+describe('lich stacks prune', () => {
   it('removes entries pointing at paths that no longer exist', async () => {
     const live = join(tmp, 'live');
     const dead = join(tmp, 'dead');
@@ -1278,7 +1278,7 @@ git commit -m "feat(cli): stacks prune (registry-only)"
 
 ---
 
-### Task 11: `levelzero doctor`
+### Task 11: `lich doctor`
 
 **Files:**
 - Create: `tools/cli/src/commands/doctor.ts`
@@ -1304,7 +1304,7 @@ beforeEach(() => {
   reg = new Registry(join(tmp, 'registry.json'));
 });
 
-describe('levelzero doctor', () => {
+describe('lich doctor', () => {
   it('reports no_project when not inside a project, with all infra checks ok', async () => {
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
@@ -1314,7 +1314,7 @@ describe('levelzero doctor', () => {
   });
 
   it('reports project ok when inside a valid project', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     expect(result.ok).toBe(true);
@@ -1323,7 +1323,7 @@ describe('levelzero doctor', () => {
   });
 
   it('reports config error when the config file is malformed', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export const foo = 1;'); // no default export
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export const foo = 1;'); // no default export
     const cmd = makeDoctorCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     expect(result.ok).toBe(false);
@@ -1381,7 +1381,7 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       // Worktree presence
       const wt = await findWorktree(ctx.cwd);
       if (!wt) {
-        checks.push({ id: 'project', status: 'skipped', message: 'not inside a levelzero project' });
+        checks.push({ id: 'project', status: 'skipped', message: 'not inside a lich project' });
       } else {
         checks.push({ id: 'project', status: 'ok', message: wt.path });
         // Config loadable
@@ -1448,10 +1448,10 @@ function run(args: string[], cwd: string, env: Record<string, string> = {}) {
 
 describe('bin end-to-end', () => {
   it('init then stacks current returns running:false', () => {
-    const initRes = run(['init'], tmp, { LEVELZERO_HOME: tmp });
+    const initRes = run(['init'], tmp, { LICH_HOME: tmp });
     expect(initRes.status).toBe(0);
 
-    const curRes = run(['stacks', 'current'], tmp, { LEVELZERO_HOME: tmp });
+    const curRes = run(['stacks', 'current'], tmp, { LICH_HOME: tmp });
     expect(curRes.status).toBe(0);
     const parsed = JSON.parse(curRes.stdout);
     expect(parsed.path).toBe(tmp);
@@ -1459,8 +1459,8 @@ describe('bin end-to-end', () => {
   });
 
   it('unknown command returns exit 1 with JSON error', () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
-    const res = run(['no-such-command'], tmp, { LEVELZERO_HOME: tmp });
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
+    const res = run(['no-such-command'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(1);
     const parsed = JSON.parse(res.stderr);
     expect(parsed.code).toBe('UNKNOWN_COMMAND');
@@ -1492,8 +1492,8 @@ import { makeStacksPruneCommand } from './commands/stacks/prune';
 export const VERSION = '0.0.0';
 
 function defaultRegistryPath(): string {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return join(home, '.levelzero', 'registry.json');
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return join(home, '.lich', 'registry.json');
 }
 
 export function buildCommands(registryPath: string): CommandRegistry {
@@ -1529,7 +1529,7 @@ if (invokedAsScript) {
 }
 ```
 
-`LEVELZERO_HOME` overrides the registry location for tests so the real `~/.levelzero` is never touched.
+`LICH_HOME` overrides the registry location for tests so the real `~/.lich` is never touched.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1554,7 +1554,7 @@ git commit -m "feat(cli): wire commands into bin; end-to-end test"
 
 - [ ] `cd tools/cli && bunx vitest run` is green (all suites).
 - [ ] `cd tools/cli && bun tsc --noEmit` reports no type errors.
-- [ ] From a scratch directory: `bun /path/to/tools/cli/src/bin.ts init` creates `levelzero.config.ts`.
+- [ ] From a scratch directory: `bun /path/to/tools/cli/src/bin.ts init` creates `lich.config.ts`.
 - [ ] From inside that directory: `bun /path/to/tools/cli/src/bin.ts stacks current` prints JSON containing the expected `key` and `running: false`.
 - [ ] From inside that directory: `bun /path/to/tools/cli/src/bin.ts doctor` prints JSON with `ok: true` and a `project` check `ok`.
 
@@ -1564,8 +1564,8 @@ These are pulled forward into later plans on purpose; do not add them here:
 
 - Docker, Postgres, or any other service runtime (plan 02).
 - The `Service` contract, port allocator, container naming (plan 02).
-- `levelzero dev` / `levelzero stop` (plan 02).
-- `levelzero logs` (plan 03).
+- `lich dev` / `lich stop` (plan 02).
+- `lich logs` (plan 03).
 - DB/auth/test/codegen/UI/scaffolder commands (plans 05–11).
 - A real scaffold inside `init` (plan 11).
 - Adapter slot system beyond the empty config type (plan 13).

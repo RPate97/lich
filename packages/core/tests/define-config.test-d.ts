@@ -36,31 +36,31 @@ type DotenvPlugin = Plugin<'dotenv', { named: 'NODE_ENV'; bulk: true }>;
 type StripePlugin = Plugin<'stripe', { named: 'api_key' | 'webhook_secret' }>;
 
 const postgres: PostgresPlugin = {
-  name: '@levelzero/plugin-postgres',
+  name: '@lich/plugin-postgres',
   version: '1.0.0',
   namespace: 'postgres',
   register() {},
 };
 const redis: RedisPlugin = {
-  name: '@levelzero/plugin-redis',
+  name: '@lich/plugin-redis',
   version: '1.0.0',
   namespace: 'redis',
   register() {},
 };
 const infisical: InfisicalPlugin = {
-  name: '@levelzero/plugin-infisical',
+  name: '@lich/plugin-infisical',
   version: '1.0.0',
   namespace: 'infisical',
   register() {},
 };
 const dotenv: DotenvPlugin = {
-  name: '@levelzero/plugin-dotenv',
+  name: '@lich/plugin-dotenv',
   version: '1.0.0',
   namespace: 'dotenv',
   register() {},
 };
 const stripe: StripePlugin = {
-  name: '@levelzero/plugin-stripe',
+  name: '@lich/plugin-stripe',
   version: '1.0.0',
   namespace: 'stripe',
   register() {},

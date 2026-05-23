@@ -4,7 +4,7 @@ import type {
   BackendAdapter,
   RouteEntry,
   RouteManifest,
-} from '@levelzero/core';
+} from '@lich/core';
 
 /**
  * Options for {@link honoBackendAdapter.extractRoutes}. Most consumers will

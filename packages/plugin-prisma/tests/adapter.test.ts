@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip } from './_helpers/docker';
-import { Registry } from '@levelzero/core/registry';
-import { makeDevCommand } from '@levelzero/core/commands/dev';
-import { computeWorktreeKey } from '@levelzero/core/worktree';
-import { containerName, volumeName } from '@levelzero/core/compose/naming';
+import { Registry } from '@lich/core/registry';
+import { makeDevCommand } from '@lich/core/commands/dev';
+import { computeWorktreeKey } from '@lich/core/worktree';
+import { containerName, volumeName } from '@lich/core/compose/naming';
 import { makePrismaFixture } from './_helpers/prisma-fixture';
 import { prismaAdapter } from '../src/adapter';
-import { pgService } from '@levelzero/plugin-postgres';
-import type { Service } from '@levelzero/core/services/types';
+import { pgService } from '@lich/plugin-postgres';
+import type { Service } from '@lich/core/services/types';
 
 // Default builtins now include api+web OwnedServices (LEV-90). Inject
 // `[pgService]` so dev only manages postgres in this tmpdir fixture (this
@@ -30,7 +30,7 @@ let fixtureRoot: string;
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-pri-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-pri-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
   // Reserve ports 54000-54079 so this file's dev lands at 54080+ (disjoint from prior files).
   await registry.upsert('prisma-reserved-base', {
@@ -49,7 +49,7 @@ beforeEach(async () => {
   // envContributions hook (the postgres plugin's `addEnvSource('url')` is
   // the new source of truth). Build the URL inline using the same formula
   // — matches what `commands/test.ts` and the prisma db.* commands do.
-  databaseUrl = `postgres://levelzero:levelzero@localhost:${result.ports.postgres}/levelzero`;
+  databaseUrl = `postgres://lich:lich@localhost:${result.ports.postgres}/lich`;
   fixtureRoot = makePrismaFixture();
 }, 120_000);
 

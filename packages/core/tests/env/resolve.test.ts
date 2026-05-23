@@ -43,7 +43,7 @@ function fixtureRegistry(opts: {
       name: 'url',
       fullKey: 'postgres.url',
       source: postgresUrlSource(),
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
   }
   if (opts.withInfisical !== false) {
@@ -53,7 +53,7 @@ function fixtureRegistry(opts: {
         STRIPE_KEY: 'sk_test_infisical',
         SENTRY_DSN: 'https://sentry.io/infisical',
       }),
-      pluginName: '@levelzero/plugin-infisical',
+      pluginName: '@lich/plugin-infisical',
     });
   }
   return r;

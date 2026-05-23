@@ -5,7 +5,7 @@ import type {
   GeneratorContext,
   GeneratorResult,
   ORMAdapter,
-} from '@levelzero/core';
+} from '@lich/core';
 import { prismaAdapter } from './adapter';
 
 /**
@@ -13,14 +13,14 @@ import { prismaAdapter } from './adapter';
  *
  * Wraps `prismaAdapter.generateClient(ctx)` — which shells out to
  * `prisma generate --schema prisma/schema.prisma` — under the unified
- * Generator contract so `levelzero gen` can drive it alongside the typed-
- * client codegen from `@levelzero/plugin-typed-client` (and any future
+ * Generator contract so `lich gen` can drive it alongside the typed-
+ * client codegen from `@lich/plugin-typed-client` (and any future
  * plugin-contributed generator) from a single invocation.
  *
  * Skip semantics:
  *   - Returns `status: 'skip'` with a clear reason when the project has no
  *     `prisma/schema.prisma`. Pretty for projects scaffolded without an ORM:
- *     `levelzero gen` reports `[SKIP] prisma` and keeps running siblings
+ *     `lich gen` reports `[SKIP] prisma` and keeps running siblings
  *     instead of failing the whole run.
  *
  * Failure mode:
@@ -35,7 +35,7 @@ import { prismaAdapter } from './adapter';
  * composability rule the `db.*` commands follow), and fall back to a
  * placeholder protocol-shaped URL when none is. That keeps the generator
  * runnable for fresh scaffolds that haven't booted a postgres plugin yet
- * (e.g. running `levelzero gen` immediately after `init` on a stack that
+ * (e.g. running `lich gen` immediately after `init` on a stack that
  * declares prisma but not a DB plugin).
  */
 export function makePrismaGenerator(opts?: { adapter?: ORMAdapter }): Generator {

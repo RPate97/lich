@@ -1,7 +1,7 @@
 {
-  "name": "@levelzero/plugin-infisical",
+  "name": "@lich/plugin-infisical",
   "version": "0.1.0",
-  "description": "Levelzero plugin contributing a bulk EnvSource that fetches secrets from Infisical (machine-identity / service-token auth) and re-publishes them under the `infisical` namespace. Pairs with `@levelzero/plugin-dotenv`, which loads the credentials at boot.",
+  "description": "Lich plugin contributing a bulk EnvSource that fetches secrets from Infisical (machine-identity / service-token auth) and re-publishes them under the `infisical` namespace. Pairs with `@lich/plugin-dotenv`, which loads the credentials at boot.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "dependencies": {
     "@infisical/sdk": "^3.0.0"

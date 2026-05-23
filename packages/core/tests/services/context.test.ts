@@ -11,12 +11,12 @@ beforeEach(() => {
 });
 
 describe('resolveStackContext', () => {
-  it('throws when no levelzero.config.ts is found', async () => {
-    await expect(resolveStackContext(tmp)).rejects.toThrow(/not inside a levelzero project/i);
+  it('throws when no lich.config.ts is found', async () => {
+    await expect(resolveStackContext(tmp)).rejects.toThrow(/not inside a lich project/i);
   });
 
   it('returns key, path, and branch for a worktree (empty branch if not a git repo)', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const ctx = await resolveStackContext(tmp);
     expect(ctx.worktreePath).toBe(tmp);
     expect(ctx.worktreeKey).toMatch(/^[0-9a-f]{12}$/);
@@ -24,7 +24,7 @@ describe('resolveStackContext', () => {
   });
 
   it('reads branch from git when the worktree is a git repo on a named branch', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     spawnSync('git', ['init', '-q', '-b', 'mybranch'], { cwd: tmp });
     spawnSync('git', ['config', 'user.email', 't@t'], { cwd: tmp });
     spawnSync('git', ['config', 'user.name', 't'], { cwd: tmp });

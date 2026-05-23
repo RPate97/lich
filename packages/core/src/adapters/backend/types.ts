@@ -2,7 +2,7 @@
  * BackendAdapter — pluggable interface for the HTTP backend slot.
  *
  * Hypothetical alternative implementations:
- *   - Hono     (current default; ships in `@levelzero/plugin-hono`)
+ *   - Hono     (current default; ships in `@lich/plugin-hono`)
  *   - Express  (long-standing Node HTTP framework)
  *   - Elysia   (Bun-native framework)
  *   - Fastify  (schema-first; JSON-schema route declarations)

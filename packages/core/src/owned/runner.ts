@@ -55,7 +55,7 @@ export type DetachedServiceStatus = 'ready' | 'failed' | 'timeout' | 'skipped';
  * Result of the detached owned-service spawn path (LEV-194 / LEV-219).
  *
  * `pids` maps `service.name` to the pid the OS assigned. The CLI prints these
- * in its summary so users can `kill <pid>` directly if `levelzero stop`
+ * in its summary so users can `kill <pid>` directly if `lich stop`
  * is unavailable.
  *
  * `statuses` reports the resolved per-service outcome (see
@@ -73,7 +73,7 @@ export type DetachedServiceStatus = 'ready' | 'failed' | 'timeout' | 'skipped';
  * `lastLogTail` carries the last ~20 lines of each non-healthy service's
  * combined stdout/stderr log file — captured best-effort so `dev` can show
  * the user WHY a service is `failed` / `timeout` without them having to run
- * `levelzero logs`. Empty string when nothing could be read.
+ * `lich logs`. Empty string when nothing could be read.
  *
  * `logPaths` and `pidPaths` are absolute paths to the files the runner wrote.
  * Exposed so `dev` can surface them in the summary and so `stop` / tests can
@@ -291,7 +291,7 @@ export async function runOwnedServices(
 }
 
 /**
- * Best-effort TCP-port readiness probe. `levelzero dev` (detached default)
+ * Best-effort TCP-port readiness probe. `lich dev` (detached default)
  * uses this to give services a chance to come up before printing the summary,
  * so the user's first `curl` doesn't race the spawn.
  *
@@ -361,7 +361,7 @@ interface ExitObservation {
  * loop). If a service is expected to produce output after the readiness window
  * and needs every line captured, use `dev --live` instead.
  *
- * Each child's pid is written to `<pidDir>/<service>.pid`. `levelzero stop`
+ * Each child's pid is written to `<pidDir>/<service>.pid`. `lich stop`
  * reads these later to signal the processes — there's no in-memory handle
  * across the CLI exit boundary so the filesystem is the source of truth.
  *
@@ -376,7 +376,7 @@ interface ExitObservation {
  *
  * Returns once every service has resolved a status. No `done` promise is
  * exposed because the parent will not wait on long-running children —
- * `levelzero stop` inspects pid liveness instead.
+ * `lich stop` inspects pid liveness instead.
  */
 export async function runOwnedServicesDetached(
   services: OwnedService[],
@@ -502,7 +502,7 @@ export async function runOwnedServicesDetached(
     }
 
     // Decouple the child from the parent: combined with `detached: true`
-    // above, `unref()` lets `levelzero dev` exit while the child keeps
+    // above, `unref()` lets `lich dev` exit while the child keeps
     // running. Without `unref()` the parent's event loop would stay alive
     // waiting on the child handle.
     child.unref();

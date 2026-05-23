@@ -11,7 +11,7 @@ export interface ComposeRunner {
   up(opts?: { detach?: boolean; waitForHealthy?: boolean }): Promise<void>;
   /**
    * Tear down the stack. `volumes` adds `-v` (drops named volumes — DESTRUCTIVE,
-   * `levelzero stop`/SIGINT teardown leave it false to preserve user data).
+   * `lich stop`/SIGINT teardown leave it false to preserve user data).
    * `removeOrphans` adds `--remove-orphans` so containers that linger from a
    * previously-emitted compose file (e.g. an old plugin set that since changed)
    * get cleaned up too — LEV-203 SIGINT teardown sets this so a partial up

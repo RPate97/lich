@@ -1,12 +1,12 @@
 # Plan 11 — Scaffolder (`init`) + the starter template
 
-**Goal:** Extend `levelzero init` (from plan 01, currently writes a stub `levelzero.config.ts`) into a full project generator. Output: a complete working monorepo with Hono api, Next web, Prisma schema, Better Auth wired, base e2e tests, CLAUDE.md, the full skill set. Adds `getBuiltinServices()` real definitions so `levelzero dev` brings up `api` + `web` + `postgres`.
+**Goal:** Extend `lich init` (from plan 01, currently writes a stub `lich.config.ts`) into a full project generator. Output: a complete working monorepo with Hono api, Next web, Prisma schema, Better Auth wired, base e2e tests, CLAUDE.md, the full skill set. Adds `getBuiltinServices()` real definitions so `lich dev` brings up `api` + `web` + `postgres`.
 
 **Architecture:**
 - Template lives in `tools/cli/templates/v0-stack/` as a tree of static files (with `__placeholder__` markers swapped at copy time).
 - `init <name>` (new positional arg) creates `./<name>/`, copies the template, replaces placeholders (project name, default ports etc.), runs `bun install`, prints a "next steps" message.
 - `services/builtins.ts` gains real entries for `api` (Hono) and `web` (Next), both `kind: 'owned'` with `command: 'bun run dev'`, `cwd: 'apps/api'`/`apps/web'`, `dependsOn: ['postgres']`, `envContributions`/`portNames`.
-- A `levelzero curl --as <user>` command lands here (was deferred from plan 06) since it needs a real api.
+- A `lich curl --as <user>` command lands here (was deferred from plan 06) since it needs a real api.
 
 **Files:**
 ```
@@ -17,7 +17,7 @@ tools/cli/
       bun.lock
       turbo.json
       tsconfig.json
-      levelzero.config.ts
+      lich.config.ts
       CLAUDE.md
       apps/
         api/
@@ -40,12 +40,12 @@ tools/cli/
       prisma/
         schema.prisma
         seed.ts
-      .levelzero/
+      .lich/
         skills/                 # placeholder; populated by plan 12
   src/
     commands/
       init.ts                   # MODIFY: template copy + placeholder substitution
-      curl.ts                   # NEW: levelzero curl --as <user>
+      curl.ts                   # NEW: lich curl --as <user>
     services/
       builtins.ts               # MODIFY: real api + web service definitions
 ```
@@ -57,7 +57,7 @@ tools/cli/
 | 11.1 | Template directory tree + placeholder substitution helper | 1 | `templates/v0-stack/**`, `src/scaffolder.ts` |
 | 11.2 | Extend `init` to copy template + substitute + bun install | 2 | `commands/init.ts` |
 | 11.3 | Real `api` and `web` entries in `getBuiltinServices()` | 2 | `services/builtins.ts` |
-| 11.4 | `levelzero curl --as <user>` command (uses auth/helpers from LEV-66) | 3 | `commands/curl.ts` |
+| 11.4 | `lich curl --as <user>` command (uses auth/helpers from LEV-66) | 3 | `commands/curl.ts` |
 | 11.5 | Wire `curl` into bin + e2e | 4 | `bin.ts`, tests |
 | 11.6 | Plan-11 e2e: `init my-app && dev && curl --as alice /api/me` | 4 | tests |
 
@@ -72,13 +72,13 @@ Wave 2 is parallel pair. Wave 3 single. Wave 4 is parallel pair.
 - Template variants (only v0 stack — Hono+Next+Prisma+BetterAuth+shadcn+Tailwind).
 - Interactive prompts (`init <name>` is non-interactive).
 - Post-init git init / first commit (user does that).
-- Custom port overrides via flags (use levelzero.config.ts for that).
+- Custom port overrides via flags (use lich.config.ts for that).
 
 ## Verification
 
-- `levelzero init demo` produces a working `./demo/` directory.
-- `cd demo && levelzero dev` brings up postgres + api + web.
-- `levelzero curl --as alice@example.com /api/me` returns alice's session JSON.
-- `levelzero db migrate && levelzero db seed` work in the scaffolded project.
-- `levelzero ui add button` succeeds in `apps/web`.
+- `lich init demo` produces a working `./demo/` directory.
+- `cd demo && lich dev` brings up postgres + api + web.
+- `lich curl --as alice@example.com /api/me` returns alice's session JSON.
+- `lich db migrate && lich db seed` work in the scaffolded project.
+- `lich ui add button` succeeds in `apps/web`.
 - Full suite green; tsc clean.

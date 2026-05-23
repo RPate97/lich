@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/plugin-better-auth",
+  "name": "@lich/plugin-better-auth",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -28,13 +28,13 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "dependencies": {
     "better-auth": "^1.6.11"
   },
   "devDependencies": {
-    "@levelzero/plugin-prisma": "workspace:*",
+    "@lich/plugin-prisma": "workspace:*",
     "@prisma/client": "^5.18.0",
     "@types/node": "^20.12.0",
     "better-sqlite3": "^12.10.0",

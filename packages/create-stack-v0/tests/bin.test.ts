@@ -32,7 +32,7 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-create-')));
 });
 
-describe('@levelzero/create-stack-v0 bin', () => {
+describe('@lich/create-stack-v0 bin', () => {
   it('scaffolds the v0 template into ./<name>/ and prints next steps', () => {
     const r = runBin(['my-app'], tmp);
     expect(r.status).toBe(0);
@@ -44,7 +44,7 @@ describe('@levelzero/create-stack-v0 bin', () => {
     const targetDir = join(tmp, 'my-app');
     // Canonical files from the v0 template should land at the destination.
     expect(existsSync(join(targetDir, 'package.json'))).toBe(true);
-    expect(existsSync(join(targetDir, 'levelzero.config.ts'))).toBe(true);
+    expect(existsSync(join(targetDir, 'lich.config.ts'))).toBe(true);
     expect(existsSync(join(targetDir, 'CLAUDE.md'))).toBe(true);
     expect(existsSync(join(targetDir, 'tsconfig.json'))).toBe(true);
     expect(existsSync(join(targetDir, 'turbo.json'))).toBe(true);
@@ -55,10 +55,10 @@ describe('@levelzero/create-stack-v0 bin', () => {
     // at the project root (not on the `datasource` block in `schema.prisma`).
     expect(existsSync(join(targetDir, 'prisma.config.ts'))).toBe(true);
 
-    // {{projectName}} substitution applied to package.json + levelzero.config.ts.
+    // {{projectName}} substitution applied to package.json + lich.config.ts.
     const pkg = readFileSync(join(targetDir, 'package.json'), 'utf8');
     expect(pkg).toContain('"name": "my-app"');
-    const cfg = readFileSync(join(targetDir, 'levelzero.config.ts'), 'utf8');
+    const cfg = readFileSync(join(targetDir, 'lich.config.ts'), 'utf8');
     expect(cfg).toContain("name: 'my-app'");
   });
 
@@ -73,7 +73,7 @@ describe('@levelzero/create-stack-v0 bin', () => {
     const r = runBin([], tmp);
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('Usage:');
-    expect(r.stdout).toContain('npx @levelzero/create-stack-v0');
+    expect(r.stdout).toContain('npx @lich/create-stack-v0');
   });
 
   it('prints help and exits 0 on --help', () => {
@@ -100,13 +100,13 @@ describe('@levelzero/create-stack-v0 bin', () => {
     expect(r.stderr).toContain('Invalid project name');
   });
 
-  // LEV-216: the canonical post-scaffold command is `bun run levelzero dev`
+  // LEV-216: the canonical post-scaffold command is `bun run lich dev`
   // (not the bare `bun run dev`, which can fall through to a broken template
   // script). This is a forward-regression guard against re-introducing it.
-  it('recommends `bun run levelzero dev` (not bare `bun run dev`) in next steps', () => {
+  it('recommends `bun run lich dev` (not bare `bun run dev`) in next steps', () => {
     const r = runBin(['lev216-app'], tmp);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('bun run levelzero dev');
+    expect(r.stdout).toContain('bun run lich dev');
     // Defensive: the bare command must not appear as its own next-step line.
     expect(r.stdout).not.toMatch(/^ {2}bun run dev$/m);
   });

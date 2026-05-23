@@ -1,7 +1,7 @@
 {
-  "name": "@levelzero/plugin-dotenv",
+  "name": "@lich/plugin-dotenv",
   "version": "0.1.0",
-  "description": "Levelzero plugin contributing a bulk EnvSource that loads variables from `.env.local` / `.env` files (resolved against the project root, worktree-safe) and optionally the host `process.env`. Foundation for secret-loader plugins like Infisical.",
+  "description": "Lich plugin contributing a bulk EnvSource that loads variables from `.env.local` / `.env` files (resolved against the project root, worktree-safe) and optionally the host `process.env`. Foundation for secret-loader plugins like Infisical.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "dependencies": {
     "dotenv": "^16.4.0"

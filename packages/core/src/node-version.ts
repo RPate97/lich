@@ -1,5 +1,5 @@
 /**
- * LEV-114 — Single source of truth for the minimum Node.js version levelzero
+ * LEV-114 — Single source of truth for the minimum Node.js version lich
  * supports across the workspace.
  *
  * Why this matters: Vitest 1.6 (and a growing set of our runtime imports — e.g.
@@ -87,7 +87,7 @@ export function formatNodeVersionError(
   requiredVersion: string = MIN_NODE_VERSION,
 ): string {
   return (
-    `levelzero requires Node ${requiredVersion}+; you have ${actualVersion}.\n` +
+    `lich requires Node ${requiredVersion}+; you have ${actualVersion}.\n` +
     `Upgrade Node (e.g. \`nvm install 20 && nvm use 20\`) and re-run the command.`
   );
 }

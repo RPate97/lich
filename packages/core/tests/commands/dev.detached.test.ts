@@ -1,12 +1,12 @@
 /**
- * LEV-194 — default detached `levelzero dev` path.
+ * LEV-194 — default detached `lich dev` path.
  * LEV-245 — detached runner writes structured JSONL (not raw .log).
  *
  * Companion to dev.test.ts and dev.owned.test.ts. Where those exercise the
  * `--live` foreground runner (today's behavior), this file pins the detached
  * behavior: spawn unrefs the children, pid files land under
- * `.levelzero/state/<key>/pids/`, and the per-service `.jsonl` file under
- * `.levelzero/state/<key>/logs/` accumulates structured JSONL records.
+ * `.lich/state/<key>/pids/`, and the per-service `.jsonl` file under
+ * `.lich/state/<key>/logs/` accumulates structured JSONL records.
  *
  * Each test spawns a real `sh` child via `runOwnedServicesDetached` so the
  * detached / unref / pipe semantics are exercised end-to-end. A mock
@@ -54,7 +54,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-det-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-det-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
@@ -76,7 +76,7 @@ async function waitFor(
   }
 }
 
-describe('levelzero dev (default detached, LEV-194)', () => {
+describe('lich dev (default detached, LEV-194)', () => {
   it('writes a pid file and structured JSONL log for each owned service (LEV-245)', async () => {
     const echoer: OwnedService = {
       name: 'echoer',
@@ -106,7 +106,7 @@ describe('levelzero dev (default detached, LEV-194)', () => {
     expect(result.detached).toBe(true);
     const pidPath = join(
       projectDir,
-      '.levelzero',
+      '.lich',
       'state',
       result.key,
       'pids',
@@ -115,7 +115,7 @@ describe('levelzero dev (default detached, LEV-194)', () => {
     // LEV-245: detached runner now writes .jsonl, not .log.
     const jsonlPath = join(
       projectDir,
-      '.levelzero',
+      '.lich',
       'state',
       result.key,
       'logs',
@@ -404,14 +404,14 @@ describe('levelzero dev (default detached, LEV-194)', () => {
     expect(result.live).toBe(true);
     expect(result.owned.exitCodes.echoer).toBe(0);
 
-    // Foreground runner writes JSONL to .levelzero/logs, not the state dir.
-    const jsonlPath = join(projectDir, '.levelzero', 'logs', 'echoer.jsonl');
+    // Foreground runner writes JSONL to .lich/logs, not the state dir.
+    const jsonlPath = join(projectDir, '.lich', 'logs', 'echoer.jsonl');
     expect(existsSync(jsonlPath)).toBe(true);
 
     // No pid file is created by the foreground path.
     const pidPath = join(
       projectDir,
-      '.levelzero',
+      '.lich',
       'state',
       result.key,
       'pids',

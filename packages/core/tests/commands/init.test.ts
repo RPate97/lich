@@ -10,10 +10,10 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), 'lz-init-')));
 });
 
-describe('levelzero init (no name)', () => {
-  it('creates levelzero.config.ts in cwd if not present', async () => {
+describe('lich init (no name)', () => {
+  it('creates lich.config.ts in cwd if not present', async () => {
     const result = await initCommand.run({ cwd: tmp, format: 'json', args: [], flags: {} });
-    const path = join(tmp, 'levelzero.config.ts');
+    const path = join(tmp, 'lich.config.ts');
     expect(existsSync(path)).toBe(true);
     expect(readFileSync(path, 'utf8')).toMatch(/export default/);
     expect(result).toMatchObject({ created: true, configPath: path });
@@ -48,7 +48,7 @@ async function writeFakeTemplate(root: string): Promise<void> {
   );
 }
 
-describe('levelzero init <name>', () => {
+describe('lich init <name>', () => {
   it('throws CLIError pointing at create-stack-v0 when no --template-dir is supplied (LEV-174)', async () => {
     await expect(
       initCommand.run({

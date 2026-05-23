@@ -32,7 +32,7 @@ export async function allocatePorts(
     }
     if (found === null) {
       throw new Error(
-        `no free ports remain in levelzero range ${PORT_RANGE_START}-${PORT_RANGE_END}`,
+        `no free ports remain in lich range ${PORT_RANGE_START}-${PORT_RANGE_END}`,
       );
     }
     result[name] = found;

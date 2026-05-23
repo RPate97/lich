@@ -18,7 +18,7 @@ export interface AdapterListEntry {
 }
 
 /**
- * Build `levelzero adapter list`. Returns every entry in the in-memory adapter
+ * Build `lich adapter list`. Returns every entry in the in-memory adapter
  * registry with a per-slot `active` flag so consumers can see at a glance which
  * impl is currently wired in for each pluggable boundary.
  *
@@ -46,7 +46,7 @@ export function makeAdapterListCommand(opts?: AdapterListOptions): Command {
         throw new CLIError(
           'INTERNAL',
           `unexpected extra arguments: ${rest.join(' ')}`,
-          'usage: levelzero adapter list [<slot>]',
+          'usage: lich adapter list [<slot>]',
         );
       }
       if (slotArg !== undefined) {
@@ -55,7 +55,7 @@ export function makeAdapterListCommand(opts?: AdapterListOptions): Command {
           throw new CLIError(
             'INTERNAL',
             `unknown slot: ${slotArg}. known slots: ${validSlots.join(', ')}`,
-            'usage: levelzero adapter list [<slot>]',
+            'usage: lich adapter list [<slot>]',
           );
         }
       }

@@ -1,11 +1,11 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { postgresComposeService, postgresPgdataVolume } from './compose';
 
 export { pgService } from './service';
 export { postgresComposeService, postgresPgdataVolume } from './compose';
 
 /**
- * Options for the `@levelzero/plugin-postgres` factory. The `namespace`
+ * Options for the `@lich/plugin-postgres` factory. The `namespace`
  * override exists so multi-instance setups can co-exist (e.g. two postgres
  * instances under different namespaces).
  */
@@ -15,8 +15,8 @@ export interface PostgresOptions {
 }
 
 /**
- * `@levelzero/plugin-postgres` — extracts the postgres builtin out of
- * `@levelzero/core` (LEV-148).
+ * `@lich/plugin-postgres` — extracts the postgres builtin out of
+ * `@lich/core` (LEV-148).
  *
  * Contributes a `postgres` compose service plus the `pgdata` named volume the
  * service mounts at `/var/lib/postgresql/data`. The contribution shape mirrors
@@ -34,10 +34,10 @@ export interface PostgresOptions {
  * Node worker sees `localhost:<allocated-port>` while a sibling compose
  * service sees `postgres:5432` (compose DNS).
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import postgres from '@levelzero/plugin-postgres';
+ * import postgres from '@lich/plugin-postgres';
  *
  * export default {
  *   plugins: [postgres()],
@@ -52,7 +52,7 @@ export default function postgres(opts: PostgresOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-postgres',
+    name: '@lich/plugin-postgres',
     namespace: (opts.namespace ?? 'postgres') as 'postgres',
     version: '0.1.0',
 
@@ -75,16 +75,16 @@ export default function postgres(opts: PostgresOptions = {}): Plugin<
         container: () => '5432',
       });
       api.addEnvSource('user', {
-        host: () => 'levelzero',
-        container: () => 'levelzero',
+        host: () => 'lich',
+        container: () => 'lich',
       });
       api.addEnvSource('password', {
-        host: () => 'levelzero',
-        container: () => 'levelzero',
+        host: () => 'lich',
+        container: () => 'lich',
       });
       api.addEnvSource('database', {
-        host: () => 'levelzero',
-        container: () => 'levelzero',
+        host: () => 'lich',
+        container: () => 'lich',
       });
       api.addEnvSource('driver', {
         host: () => 'postgresql',
@@ -92,8 +92,8 @@ export default function postgres(opts: PostgresOptions = {}): Plugin<
       });
       api.addEnvSource('url', {
         host: ({ ports }) =>
-          `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
-        container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+          `postgres://lich:lich@localhost:${ports.postgres ?? ''}/lich`,
+        container: () => `postgres://lich:lich@postgres:5432/lich`,
         protocol: 'postgres',
       });
     },

@@ -1,10 +1,10 @@
-import type { OwnedService } from '@levelzero/core';
+import type { OwnedService } from '@lich/core';
 
 /**
  * `web` service — Next.js frontend at `apps/web`. Depends on `api` so URLs
  * are registered in dependency order. `cwd` is relative to the project root.
  *
- * Re-exported from `@levelzero/plugin-next` so callers that still need the
+ * Re-exported from `@lich/plugin-next` so callers that still need the
  * raw `OwnedService` definition (notably `commands/test.ts`, which derives
  * `WEB_URL` inline during the LEV-187 transition) can keep importing it.
  * New plugin authors should instead express the contribution through this

@@ -2,7 +2,7 @@
  * AuthAdapter — pluggable interface for the auth slot.
  *
  * Hypothetical alternative implementations:
- *   - BetterAuth  (current default; ships in `@levelzero/plugin-better-auth`)
+ *   - BetterAuth  (current default; ships in `@lich/plugin-better-auth`)
  *   - Clerk       (managed identity service; sessions issued by Clerk's API)
  *   - Auth.js     (NextAuth; OAuth-first with optional credentials)
  *   - Lucia       (session-cookie focused, DB-backed)

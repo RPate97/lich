@@ -9,7 +9,7 @@ import { makeDevCommand } from '../../src/commands/dev';
 import { makeResetCommand } from '../../src/commands/reset';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
 
@@ -64,7 +64,7 @@ let registry: Registry;
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-reset-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-reset-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
   // Pre-seed reserved ports 54000-54019 so this file's dev call lands at 54020+.
   // Avoids parallel-worker collisions with dev.test.ts (54000+) and stop.test.ts.
@@ -101,14 +101,14 @@ afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describe('levelzero reset (unit, mocked compose)', () => {
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+describe('lich reset (unit, mocked compose)', () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-reset-outside-')));
     const { factory } = makeMockComposeFactory();
     const cmd = makeResetCommand(() => registry, { composeRunnerFactory: factory });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(/not inside a levelzero project/i);
+    ).rejects.toThrow(/not inside a lich project/i);
   });
 
   it('calls down({volumes:true}) then up via dev — full cycle', async () => {
@@ -174,7 +174,7 @@ describe('levelzero reset (unit, mocked compose)', () => {
   });
 });
 
-describeIfDocker('levelzero reset (integration with real docker compose)', () => {
+describeIfDocker('lich reset (integration with real docker compose)', () => {
   it('after dev, reset wipes the volume and brings up an empty DB', async () => {
     // LEV-202 — withDockerStack ensures the compose stack is torn down even
     // if the assertions throw mid-test, before `afterEach`'s cleanup runs.
@@ -194,7 +194,7 @@ describeIfDocker('levelzero reset (integration with real docker compose)', () =>
       const insert = spawnSync(
         'docker',
         [
-          'exec', cname, 'psql', '-U', 'levelzero', '-d', 'levelzero',
+          'exec', cname, 'psql', '-U', 'lich', '-d', 'lich',
           '-c', 'create table marker(x int); insert into marker values (1);',
         ],
         { encoding: 'utf8', timeout: 10_000 },
@@ -220,7 +220,7 @@ describeIfDocker('levelzero reset (integration with real docker compose)', () =>
       const select = spawnSync(
         'docker',
         [
-          'exec', result.containers[0], 'psql', '-U', 'levelzero', '-d', 'levelzero',
+          'exec', result.containers[0], 'psql', '-U', 'lich', '-d', 'lich',
           '-c', 'select 1 from marker;',
         ],
         { encoding: 'utf8', timeout: 10_000 },

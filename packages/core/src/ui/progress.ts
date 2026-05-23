@@ -1,7 +1,7 @@
 /**
  * Per-phase progress UX framework (LEV-217).
  *
- * The problem: `levelzero dev` runs through phases that take anywhere from
+ * The problem: `lich dev` runs through phases that take anywhere from
  * 10ms (config load) to 60s (cold `docker pull` + healthchecks). Pre-LEV-217
  * the CLI was silent until the final summary printed, so humans had no
  * signal whether the run was hung or working. This module gives commands a

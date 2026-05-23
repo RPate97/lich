@@ -1,9 +1,9 @@
 # Plan 08 — Validation tools (impact / coverage / check)
 
 **Goal:** Ship the three deterministic-validation commands an agent calls during authoring:
-- `levelzero impact <path|symbol>` — list files that depend on the changed path/symbol (import graph)
-- `levelzero coverage [--threshold N]` — unified coverage across unit + integration + e2e via vitest's coverage
-- `levelzero check` — pluggable conformance-rule engine + v0 built-in rules
+- `lich impact <path|symbol>` — list files that depend on the changed path/symbol (import graph)
+- `lich coverage [--threshold N]` — unified coverage across unit + integration + e2e via vitest's coverage
+- `lich check` — pluggable conformance-rule engine + v0 built-in rules
 
 **Architecture:**
 - `impact`: static import-graph scanning via `ts-morph`. v0 = file-level reverse-deps (no symbol granularity yet — that's a follow-on).
@@ -36,10 +36,10 @@ tools/cli/src/
 |---|---|---|---|
 | 08.1 | `Rule` interface + rule registry | 1 | `check/types.ts`, `check/registry.ts` |
 | 08.2 | Impact graph (ts-morph reverse-deps) | 1 | `impact/graph.ts` |
-| 08.3 | `levelzero impact` command | 2 | `commands/impact.ts` |
+| 08.3 | `lich impact` command | 2 | `commands/impact.ts` |
 | 08.4 | Coverage runner (vitest spawn + JSON parse) | 2 | `coverage/runner.ts` |
-| 08.5 | `levelzero coverage` command | 3 | `commands/coverage.ts` |
-| 08.6 | `levelzero check` command + 3 stub rules | 3 | `commands/check.ts`, `check/rules/*` |
+| 08.5 | `lich coverage` command | 3 | `commands/coverage.ts` |
+| 08.6 | `lich check` command + 3 stub rules | 3 | `commands/check.ts`, `check/rules/*` |
 | 08.7 | Wire `impact`/`coverage`/`check` into bin + e2e | 4 | `bin.ts` + tests |
 
 Wave 1 + 2 are parallel pairs. Wave 3 is parallel pair. Wave 4 is sequential single.
@@ -56,7 +56,7 @@ Wave 1 + 2 are parallel pairs. Wave 3 is parallel pair. Wave 4 is sequential sin
 
 ## Verification
 
-- `levelzero impact tools/cli/src/registry.ts` returns files that import it (json array).
-- `levelzero coverage` returns coverage summary; `--threshold 80` fails if any file under 80%.
-- `levelzero check` runs all registered rules, returns pass/skip/fail per rule.
+- `lich impact tools/cli/src/registry.ts` returns files that import it (json array).
+- `lich coverage` returns coverage summary; `--threshold 80` fails if any file under 80%.
+- `lich check` runs all registered rules, returns pass/skip/fail per rule.
 - Full suite green; tsc clean.

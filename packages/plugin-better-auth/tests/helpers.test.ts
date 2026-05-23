@@ -4,7 +4,7 @@ import {
   _resetBetterAuthCacheForTests,
   InvalidSessionError,
 } from '../src/adapter';
-import type { AuthAdapter, AuthContext } from '@levelzero/core';
+import type { AuthAdapter, AuthContext } from '@lich/core';
 import {
   getOrCreateUser,
   loginAs,

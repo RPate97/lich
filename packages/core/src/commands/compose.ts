@@ -20,7 +20,7 @@ export interface MakeComposeCommandOptions {
    * Provider for the runtime {@link Registry} this command should consult to
    * find the compose file path for the active stack. Required: post-LEV-208
    * the passthrough no longer reconstructs the path from the worktree key
-   * (the old hardcoded `.levelzero/docker-compose.yml` was wrong once `dev`
+   * (the old hardcoded `.lich/docker-compose.yml` was wrong once `dev`
    * started writing per-worktree subdirs), it reads `entry.composeFile`
    * verbatim from the registry entry `dev` wrote.
    */
@@ -39,8 +39,8 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 /**
- * `levelzero compose <subcommand> [args...]` — thin wrapper around
- * `docker compose -p levelzero-<key> -f <composeFile> <subcommand>` that lets
+ * `lich compose <subcommand> [args...]` — thin wrapper around
+ * `docker compose -p lich-<key> -f <composeFile> <subcommand>` that lets
  * operators reach for familiar compose tooling without having to remember the
  * per-worktree project name or compose file path.
  *
@@ -53,7 +53,7 @@ async function fileExists(p: string): Promise<boolean> {
  * All trailing positional args are forwarded transparently. Long-form flags
  * (`--foo bar`) are NOT forwarded — the CLI's top-level parser intercepts
  * them — so users should prefer the short-flag forms (`-f`, `-t`, …) that
- * `docker compose` already supports. This matches `levelzero curl`'s
+ * `docker compose` already supports. This matches `lich curl`'s
  * passthrough approach for the same reason.
  *
  * Errors:
@@ -80,7 +80,7 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
         throw new CLIError(
           'CONFIG_INVALID',
           'compose requires a subcommand',
-          'usage: levelzero compose <subcommand> [args...]   (e.g., `levelzero compose ps`)',
+          'usage: lich compose <subcommand> [args...]   (e.g., `lich compose ps`)',
         );
       }
 
@@ -88,8 +88,8 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
       if (!wt) {
         throw new CLIError(
           'NO_PROJECT',
-          'not inside a levelzero project',
-          'run `levelzero init` or cd into a directory with levelzero.config.ts',
+          'not inside a lich project',
+          'run `lich init` or cd into a directory with lich.config.ts',
         );
       }
 
@@ -103,7 +103,7 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           `no running stack for ${wt.key}`,
-          'run `levelzero dev` to bring the stack up — that generates the compose file this command shells into',
+          'run `lich dev` to bring the stack up — that generates the compose file this command shells into',
         );
       }
 
@@ -112,11 +112,11 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           `no compose file at ${composeFile}`,
-          'run `levelzero dev` to regenerate the compose file — it was removed since the stack came up',
+          'run `lich dev` to regenerate the compose file — it was removed since the stack came up',
         );
       }
 
-      const projectName = `levelzero-${wt.key}`;
+      const projectName = `lich-${wt.key}`;
       // Order matters here: `-p` and `-f` must come BEFORE the subcommand,
       // mirroring `docker compose -p <name> -f <file> <subcommand>`. Putting
       // them after the subcommand breaks for several compose subcommands.

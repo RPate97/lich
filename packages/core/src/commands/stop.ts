@@ -121,7 +121,7 @@ export function makeStopCommand(
         // the regenerated compose file matches what `dev` produced. Compose
         // teardown only matches on project name, so the env round-trip is
         // belt-and-suspenders, but it keeps the on-disk file consistent for
-        // operators inspecting `.levelzero/<key>/docker-compose.yml`.
+        // operators inspecting `.lich/<key>/docker-compose.yml`.
         const envRegistry = getEnvSourceRegistry?.();
         const envInjection = getEnvInjection?.();
         const bulkCache = getResolvedBulkSources?.();
@@ -156,7 +156,7 @@ export function makeStopCommand(
         // so killing the api first means postgres goes away to no readers.
         const pidDir = join(
           stackCtx.worktreePath,
-          '.levelzero',
+          '.lich',
           'state',
           stackCtx.worktreeKey,
           'pids',

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Project } from 'ts-morph';
 import { typedClientFrontendAdapter } from '../src/adapter';
-import type { FrontendAdapter, RouteManifest } from '@levelzero/core';
+import type { FrontendAdapter, RouteManifest } from '@lich/core';
 
 describe('typedClientFrontendAdapter', () => {
   let outDir: string;

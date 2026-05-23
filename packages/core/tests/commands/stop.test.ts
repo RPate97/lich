@@ -15,7 +15,7 @@ import { makeDevCommand } from '../../src/commands/dev';
 import { makeStopCommand } from '../../src/commands/stop';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { Service } from '../../src/services/types';
 import type { ComposeRunner } from '../../src/compose/runner';
 
@@ -71,9 +71,9 @@ let registry: Registry;
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-stop-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-stop-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
-  // Reserve the low end of the levelzero port range so this file's dev()
+  // Reserve the low end of the lich port range so this file's dev()
   // call allocates a port that does not race with dev.test.ts (which also
   // starts a postgres container from port 54000 in a sibling worker).
   await registry.upsert('aaaaaaaaaaaa', {
@@ -82,8 +82,8 @@ beforeEach(async () => {
     ports: { postgres: 54000, _1: 54001, _2: 54002 },
     urls: {},
     containers: [],
-    network: 'levelzero-aaaaaaaaaaaa',
-    logDir: '.levelzero/logs',
+    network: 'lich-aaaaaaaaaaaa',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 });
@@ -107,14 +107,14 @@ afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describe('levelzero stop (unit, mocked compose)', () => {
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+describe('lich stop (unit, mocked compose)', () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-stop-outside-')));
     const { factory } = makeMockComposeFactory();
     const cmd = makeStopCommand(() => registry, { composeRunnerFactory: factory });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(/not inside a levelzero project/i);
+    ).rejects.toThrow(/not inside a lich project/i);
   });
 
   it('returns stopped:false when no entry exists, without invoking compose runner', async () => {
@@ -133,7 +133,7 @@ describe('levelzero stop (unit, mocked compose)', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('signals pid files in .levelzero/state/<key>/pids/ and removes them (LEV-194)', async () => {
+  it('signals pid files in .lich/state/<key>/pids/ and removes them (LEV-194)', async () => {
     // Manually plant a registry entry + a pid file pointing at a real
     // sleeping child. Verifies the SIGTERM -> wait -> SIGKILL escalation
     // path and the cleanup of the pid file.
@@ -145,11 +145,11 @@ describe('levelzero stop (unit, mocked compose)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
-    const pidDir = join(projectDir, '.levelzero', 'state', wtKey, 'pids');
+    const pidDir = join(projectDir, '.lich', 'state', wtKey, 'pids');
     mkdirSync(pidDir, { recursive: true });
 
     // A long-running child that ignores nothing; SIGTERM will kill it
@@ -205,7 +205,7 @@ describe('levelzero stop (unit, mocked compose)', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: new Date().toISOString(),
     });
 
@@ -266,7 +266,7 @@ describe('levelzero stop (unit, mocked compose)', () => {
   });
 });
 
-describeIfDocker('levelzero stop (integration with real docker compose)', () => {
+describeIfDocker('lich stop (integration with real docker compose)', () => {
   it('after dev, stop removes containers, clears registry entry, leaves volume intact', async () => {
     // LEV-202 — withDockerStack ensures the compose stack is torn down even
     // if the assertions throw mid-test, before `afterEach`'s cleanup runs.

@@ -10,7 +10,7 @@ import type {
   EnvSourceContext,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import infisical from '../src/index';
 import type {
   InfisicalAuthInputs,
@@ -155,10 +155,10 @@ afterEach(() => {
   process.env = originalEnv;
 });
 
-describe('@levelzero/plugin-infisical factory (LEV-189)', () => {
+describe('@lich/plugin-infisical factory (LEV-189)', () => {
   it('produces a Plugin with the canonical name + namespace + version', () => {
     const plugin = infisical({ project: 'p', environment: 'dev' });
-    expect(plugin.name).toBe('@levelzero/plugin-infisical');
+    expect(plugin.name).toBe('@lich/plugin-infisical');
     expect(plugin.namespace).toBe('infisical');
     expect(plugin.version).toBe('0.1.0');
     expect(typeof plugin.register).toBe('function');
@@ -196,7 +196,7 @@ describe('@levelzero/plugin-infisical factory (LEV-189)', () => {
   });
 });
 
-describe('@levelzero/plugin-infisical token auth', () => {
+describe('@lich/plugin-infisical token auth', () => {
   it('uses opts.token when set, skipping the env-var path entirely', async () => {
     // Salt process.env with universal-auth vars to prove they're ignored
     // when an explicit token is present.
@@ -244,7 +244,7 @@ describe('@levelzero/plugin-infisical token auth', () => {
   });
 });
 
-describe('@levelzero/plugin-infisical universal-auth (machine identity)', () => {
+describe('@lich/plugin-infisical universal-auth (machine identity)', () => {
   it('reads INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET from process.env by default', async () => {
     process.env.INFISICAL_CLIENT_ID = 'ci-id';
     process.env.INFISICAL_CLIENT_SECRET = 'ci-sec';
@@ -291,7 +291,7 @@ describe('@levelzero/plugin-infisical universal-auth (machine identity)', () => 
   });
 });
 
-describe('@levelzero/plugin-infisical missing credentials', () => {
+describe('@lich/plugin-infisical missing credentials', () => {
   it('throws a clear boot-time error when nothing is set', async () => {
     // Make sure no defaults leak in from the host shell.
     delete process.env.INFISICAL_CLIENT_ID;
@@ -306,7 +306,7 @@ describe('@levelzero/plugin-infisical missing credentials', () => {
     // without rewriting the test — but pin the load-bearing pieces:
     // plugin name + both env var names + hint about plugin-dotenv.
     await expect(bulk.resolve(makeCtx())).rejects.toThrowError(
-      /@levelzero\/plugin-infisical.*missing credentials.*INFISICAL_CLIENT_ID.*INFISICAL_CLIENT_SECRET.*plugin-dotenv/s,
+      /@lich\/plugin-infisical.*missing credentials.*INFISICAL_CLIENT_ID.*INFISICAL_CLIENT_SECRET.*plugin-dotenv/s,
     );
     // The factory must not be called when validation fails — otherwise we
     // would have hit the SDK with empty creds and gotten a less helpful
@@ -350,7 +350,7 @@ describe('@levelzero/plugin-infisical missing credentials', () => {
   });
 });
 
-describe('@levelzero/plugin-infisical SDK error wrapping', () => {
+describe('@lich/plugin-infisical SDK error wrapping', () => {
   it('wraps auth failures with the plugin attribution', async () => {
     const fake = makeFakeClient({ authError: new Error('401 unauthorized') });
     const bulk = await bootAndGetBulk(
@@ -363,7 +363,7 @@ describe('@levelzero/plugin-infisical SDK error wrapping', () => {
     );
 
     await expect(bulk.resolve(makeCtx())).rejects.toThrowError(
-      /@levelzero\/plugin-infisical: authentication failed.*401 unauthorized/,
+      /@lich\/plugin-infisical: authentication failed.*401 unauthorized/,
     );
   });
 
@@ -386,7 +386,7 @@ describe('@levelzero/plugin-infisical SDK error wrapping', () => {
     // tell whether the project ID, environment slug, or folder path is
     // the typo.
     await expect(bulk.resolve(makeCtx())).rejects.toThrowError(
-      /@levelzero\/plugin-infisical: listSecrets failed.*proj-missing.*staging.*\/api.*project not found/,
+      /@lich\/plugin-infisical: listSecrets failed.*proj-missing.*staging.*\/api.*project not found/,
     );
   });
 
@@ -412,7 +412,7 @@ describe('@levelzero/plugin-infisical SDK error wrapping', () => {
   });
 });
 
-describe('@levelzero/plugin-infisical secret-fetch arguments', () => {
+describe('@lich/plugin-infisical secret-fetch arguments', () => {
   it('passes project + environment + folder through to listSecrets', async () => {
     const fake = makeFakeClient({ secrets: [] });
     const bulk = await bootAndGetBulk(
@@ -482,7 +482,7 @@ describe('@levelzero/plugin-infisical secret-fetch arguments', () => {
   });
 });
 
-describe('@levelzero/plugin-infisical namespace override', () => {
+describe('@lich/plugin-infisical namespace override', () => {
   it('still registers exactly one bulk source under the overridden namespace', async () => {
     const fake = makeFakeClient({ secrets: [{ secretKey: 'X', secretValue: 'y' }] });
     const plugin = infisical({

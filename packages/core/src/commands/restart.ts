@@ -38,7 +38,7 @@ export interface RestartOptions {
   /**
    * Plugin-contributed `OwnedService` entries (post-LEV-154). The dispatcher
    * fills this from `bootPlugins().ownedServices` so plugins like
-   * `@levelzero/plugin-next` that call `api.addOwnedService` get their
+   * `@lich/plugin-next` that call `api.addOwnedService` get their
    * services bounced alongside the built-ins. Defaults to empty when omitted.
    */
   getPluginOwnedServices?: () => OwnedService[];
@@ -128,7 +128,7 @@ export function makeRestartCommand(
       // ------------------------------------------------------------------
       const pidDir = join(
         stackCtx.worktreePath,
-        '.levelzero',
+        '.lich',
         'state',
         stackCtx.worktreeKey,
         'pids',
@@ -180,7 +180,7 @@ export function makeRestartCommand(
       // ------------------------------------------------------------------
       const detachedLogDir = join(
         stackCtx.worktreePath,
-        '.levelzero',
+        '.lich',
         'state',
         stackCtx.worktreeKey,
         'logs',

@@ -91,13 +91,13 @@ describe('renderHelp', () => {
       cmd('stacks.current', 'Show current stack'),
     ]);
     const out = renderHelp(reg, []);
-    expect(out).toContain('levelzero — extensible dev environment orchestrator');
+    expect(out).toContain('lich — extensible dev environment orchestrator');
     expect(out).toContain('USAGE');
     expect(out).toContain('CORE COMMANDS');
     expect(out).toContain('STACKS');
     expect(out).toContain('Start services');
     expect(out).toContain('Show current stack');
-    expect(out).toContain('Run `levelzero <command>` to invoke a command.');
+    expect(out).toContain('Run `lich <command>` to invoke a command.');
     // Trailing newline so direct write to stdout yields a clean prompt.
     expect(out.endsWith('\n')).toBe(true);
   });
@@ -123,22 +123,22 @@ describe('renderHelp', () => {
     const reg = makeRegistry([cmd('dev', 'Start')]);
     const out = renderHelp(reg, []);
     expect(out).toContain('LOADED PLUGINS');
-    expect(out).toContain('(no project plugins loaded — declare them in levelzero.config.ts)');
+    expect(out).toContain('(no project plugins loaded — declare them in lich.config.ts)');
   });
 
   it('lists loaded plugins alphabetically with their version', () => {
     const reg = makeRegistry([cmd('dev', 'Start')]);
     const plugins: LoadedPluginInfo[] = [
-      { name: '@levelzero/plugin-zeta', version: '0.2.0' },
-      { name: '@levelzero/plugin-alpha', version: '1.0.0' },
+      { name: '@lich/plugin-zeta', version: '0.2.0' },
+      { name: '@lich/plugin-alpha', version: '1.0.0' },
     ];
     const out = renderHelp(reg, plugins);
-    const alphaIdx = out.indexOf('@levelzero/plugin-alpha');
-    const zetaIdx = out.indexOf('@levelzero/plugin-zeta');
+    const alphaIdx = out.indexOf('@lich/plugin-alpha');
+    const zetaIdx = out.indexOf('@lich/plugin-zeta');
     expect(alphaIdx).toBeGreaterThan(0);
     expect(zetaIdx).toBeGreaterThan(alphaIdx);
-    expect(out).toContain('@levelzero/plugin-alpha (1.0.0)');
-    expect(out).toContain('@levelzero/plugin-zeta (0.2.0)');
+    expect(out).toContain('@lich/plugin-alpha (1.0.0)');
+    expect(out).toContain('@lich/plugin-zeta (0.2.0)');
   });
 
   it('omits the version suffix when none is provided', () => {

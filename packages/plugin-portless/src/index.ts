@@ -1,4 +1,4 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { portlessAdapter } from './portless';
 import { noopPortlessAdapter } from './noop';
 
@@ -7,7 +7,7 @@ export { noopPortlessAdapter } from './noop';
 export type { PortlessAdapter, URLEntry } from './types';
 
 /**
- * Options for the `@levelzero/plugin-portless` factory. The `namespace`
+ * Options for the `@lich/plugin-portless` factory. The `namespace`
  * override exists so multi-instance setups can co-exist; it's reserved for
  * Plan 16 (LEV-186 onward) and not exercised today.
  */
@@ -17,7 +17,7 @@ export interface PortlessOptions {
 }
 
 /**
- * `@levelzero/plugin-portless` — the pilot plugin extraction.
+ * `@lich/plugin-portless` — the pilot plugin extraction.
  *
  * Contributes two impls under the `portless` adapter slot:
  *
@@ -29,10 +29,10 @@ export interface PortlessOptions {
  * the `dev` command can probe `portlessAdapter.available()` and swap to the
  * real impl at runtime if the binary is found.
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import portless from '@levelzero/plugin-portless';
+ * import portless from '@lich/plugin-portless';
  *
  * export default {
  *   plugins: [portless()],
@@ -51,7 +51,7 @@ export default function portless(opts: PortlessOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-portless',
+    name: '@lich/plugin-portless',
     namespace: (opts.namespace ?? 'portless') as 'portless',
     version: '0.1.0',
 

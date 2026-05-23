@@ -14,13 +14,13 @@ let projectDir: string;
 
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-swap-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
 });
 
 /**
  * Test-local registry seeded with the orm/prisma pair that used to ship in
  * `getBuiltinAdapters()`. Post-LEV-149 prisma was extracted into
- * `@levelzero/plugin-prisma`; these unit tests still want to exercise the
+ * `@lich/plugin-prisma`; these unit tests still want to exercise the
  * swap command's validation/disk-write paths against a known-good (slot,
  * name) pair without booting the plugin loader. The impl is intentionally
  * `{}` — the swap command never invokes adapter methods, it only checks
@@ -41,13 +41,13 @@ function run(
   return cmd.run({ cwd, format: 'json' as const, args, flags: {} });
 }
 
-describe('levelzero adapter swap', () => {
+describe('lich adapter swap', () => {
   it('exports a command named "adapter.swap"', () => {
     expect(adapterSwapCommand.name).toBe('adapter.swap');
     expect(typeof adapterSwapCommand.describe).toBe('string');
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-adapter-swap-outside-')));
     const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const err = await run(cmd, outside, ['orm', 'prisma']).then(
@@ -90,7 +90,7 @@ describe('levelzero adapter swap', () => {
     expect((err as CLIError).message).toMatch(/drizzle/);
   });
 
-  it('writes .levelzero/adapter.json with {slot: name} and returns confirmation', async () => {
+  it('writes .lich/adapter.json with {slot: name} and returns confirmation', async () => {
     const cmd = makeAdapterSwapCommand({ getRegistry: getBuiltinsWithPrisma });
     const result = (await run(cmd, projectDir, ['orm', 'prisma'])) as {
       ok: boolean;
@@ -102,7 +102,7 @@ describe('levelzero adapter swap', () => {
     expect(result.slot).toBe('orm');
     expect(result.name).toBe('prisma');
 
-    const adapterJson = join(projectDir, '.levelzero', 'adapter.json');
+    const adapterJson = join(projectDir, '.lich', 'adapter.json');
     expect(existsSync(adapterJson)).toBe(true);
     expect(result.path).toBe(adapterJson);
 
@@ -121,7 +121,7 @@ describe('levelzero adapter swap', () => {
     await run(cmd, projectDir, ['auth', 'better-auth']);
 
     const parsed = JSON.parse(
-      readFileSync(join(projectDir, '.levelzero', 'adapter.json'), 'utf8'),
+      readFileSync(join(projectDir, '.lich', 'adapter.json'), 'utf8'),
     );
     expect(parsed).toEqual({ orm: 'prisma', auth: 'better-auth' });
   });
@@ -136,7 +136,7 @@ describe('levelzero adapter swap', () => {
     await run(cmd, projectDir, ['orm', 'drizzle']);
 
     const parsed = JSON.parse(
-      readFileSync(join(projectDir, '.levelzero', 'adapter.json'), 'utf8'),
+      readFileSync(join(projectDir, '.lich', 'adapter.json'), 'utf8'),
     );
     expect(parsed).toEqual({ orm: 'drizzle' });
   });

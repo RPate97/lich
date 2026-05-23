@@ -1,14 +1,14 @@
 /**
  * Thin client wrappers around the `{{projectName}}` api (LEV-196).
  *
- * Why this file exists, given that `levelzero gen --only api-client` emits a
+ * Why this file exists, given that `lich gen --only api-client` emits a
  * typed client at `packages/api-client/src/index.ts`: the generated client is
  * a strict mirror of the api's routes (one function per route, fetch-only,
  * no auth-cookie plumbing). In a freshly-scaffolded project the generated
- * file may not yet exist (the user hasn't run `levelzero gen`), so this
+ * file may not yet exist (the user hasn't run `lich gen`), so this
  * shim provides a small handwritten surface the pages can rely on no matter
  * what — and it sets `credentials: 'include'` so the Better Auth session
- * cookie rides along on every request. Once you run `levelzero gen`, you
+ * cookie rides along on every request. Once you run `lich gen`, you
  * can replace these helpers with the generated functions; until then this
  * keeps the dashboard functional out of the box.
  */

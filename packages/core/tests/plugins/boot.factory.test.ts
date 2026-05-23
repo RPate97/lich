@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bootPlugins } from '../../src/plugins/boot';
-import type { LevelzeroConfig } from '../../src/config';
+import type { LichConfig } from '../../src/config';
 import type { Plugin, PluginFactory } from '../../src/plugins/types';
 
 const PROJECT_ROOT = '/tmp/lz-boot-factory-test';
@@ -19,7 +19,7 @@ const PROJECT_ROOT = '/tmp/lz-boot-factory-test';
 describe('bootPlugins — factory entries (LEV-179)', () => {
   it('invokes a sync factory and registers its plugin', async () => {
     const factory: PluginFactory<'postgres'> = () => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'postgres',
       version: '0.1.0',
       register(api) {
@@ -34,7 +34,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
     const result = await bootPlugins({ plugins: [factory] }, PROJECT_ROOT);
 
     expect(result.loadedPlugins).toEqual([
-      { name: '@levelzero/plugin-postgres', version: '0.1.0' },
+      { name: '@lich/plugin-postgres', version: '0.1.0' },
     ]);
     expect(result.envSources.getNamed('postgres.url')?.fullKey).toBe('postgres.url');
     expect(result.envSources.getNamed('postgres.url')?.source.protocol).toBe('postgres');
@@ -42,7 +42,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
 
   it('awaits an async factory and registers its plugin', async () => {
     const factory: PluginFactory<'redis'> = async () => ({
-      name: '@levelzero/plugin-redis',
+      name: '@lich/plugin-redis',
       namespace: 'redis',
       version: '0.1.0',
       register(api) {
@@ -60,9 +60,9 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
 
   it('auto-derives the namespace when a factory plugin omits it', async () => {
     // Factory's plugin has no `namespace` field — loader should derive
-    // `postgres` from `@levelzero/plugin-postgres`.
+    // `postgres` from `@lich/plugin-postgres`.
     const factory = (): Plugin => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       version: '0.1.0',
       register(api) {
         api.addEnvSource('url', { host: () => 'h', container: () => 'c' });
@@ -75,7 +75,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
     // package name. This is the consumer-facing payoff of LEV-179's loader
     // tweak: `defineConfig()` (LEV-180) can rely on the short namespace.
     expect(result.envSources.getNamed('postgres.url')).toBeDefined();
-    expect(result.envSources.getNamed('@levelzero/plugin-postgres.url')).toBeUndefined();
+    expect(result.envSources.getNamed('@lich/plugin-postgres.url')).toBeUndefined();
   });
 
   it('passes factory options through to the resulting plugin', async () => {
@@ -83,7 +83,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
     // factory closes over `opts` and bakes them into the EnvSource resolvers.
     type Opts = { port: number };
     const postgres = (opts: Opts): Plugin<'postgres'> => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'postgres',
       version: '0.1.0',
       register(api) {
@@ -95,7 +95,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
       },
     });
 
-    const config: LevelzeroConfig = { plugins: [postgres({ port: 5433 })] };
+    const config: LichConfig = { plugins: [postgres({ port: 5433 })] };
     const result = await bootPlugins(config, PROJECT_ROOT);
     const entry = result.envSources.getNamed('postgres.url');
     expect(entry).toBeDefined();
@@ -110,7 +110,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
 
   it('lets a config mix factory and Plugin-object entries side by side', async () => {
     const factoryPlugin: PluginFactory<'postgres'> = () => ({
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'postgres',
       version: '0.1.0',
       register(api) {
@@ -118,7 +118,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
       },
     });
     const objectPlugin: Plugin<'mysql'> = {
-      name: '@levelzero/plugin-mysql',
+      name: '@lich/plugin-mysql',
       namespace: 'mysql',
       version: '0.1.0',
       register(api) {
@@ -137,7 +137,7 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
 
   it('surfaces a register() error from a factory-created plugin with the plugin name', async () => {
     const exploding = (): Plugin => ({
-      name: '@levelzero/plugin-explode',
+      name: '@lich/plugin-explode',
       version: '0.0.1',
       register() {
         throw new Error('boom inside register');
@@ -145,6 +145,6 @@ describe('bootPlugins — factory entries (LEV-179)', () => {
     });
     await expect(
       bootPlugins({ plugins: [exploding] }, PROJECT_ROOT),
-    ).rejects.toThrow(/@levelzero\/plugin-explode.*boom inside register/);
+    ).rejects.toThrow(/@lich\/plugin-explode.*boom inside register/);
   });
 });

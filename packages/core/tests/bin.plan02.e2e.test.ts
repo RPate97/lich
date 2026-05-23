@@ -19,15 +19,15 @@ beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p02-home-')));
   // Postgres is no longer a built-in (LEV-148) — it ships as a compose
-  // contribution from `@levelzero/plugin-postgres`. The `web` OwnedService is
+  // contribution from `@lich/plugin-postgres`. The `web` OwnedService is
   // likewise no longer a built-in (LEV-154) — it ships from
-  // `@levelzero/plugin-next`. Load both here so the generated compose file
+  // `@lich/plugin-next`. Load both here so the generated compose file
   // still contains the postgres service and the spawned owned-service list
   // still includes web, keeping the assertions on `result.ports.postgres` /
   // `result.containers` plus the `apps/web` startup behaviour holding.
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
-    `import postgres from '@levelzero/plugin-postgres';\nimport next from '@levelzero/plugin-next';\nexport default { plugins: [postgres, next] };\n`,
+    join(projectDir, 'lich.config.ts'),
+    `import postgres from '@lich/plugin-postgres';\nimport next from '@lich/plugin-next';\nexport default { plugins: [postgres, next] };\n`,
   );
   // The default builtins (LEV-90, partially extracted by LEV-148/LEV-154) plus
   // the plugin-next contribution above mean `dev` will spawn `bun run dev` in
@@ -58,7 +58,7 @@ afterEach(() => {
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -80,7 +80,7 @@ describeIfDocker('bin: plan-02 commands end-to-end', () => {
 
     const psql = spawnSync('docker', [
       'exec', devJson.containers[0],
-      'psql', '-U', 'levelzero', '-d', 'levelzero', '-c', 'select 42;',
+      'psql', '-U', 'lich', '-d', 'lich', '-c', 'select 42;',
     ], { encoding: 'utf8' });
     expect(psql.status).toBe(0);
 

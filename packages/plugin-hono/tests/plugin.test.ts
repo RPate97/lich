@@ -8,7 +8,7 @@ import type {
   OwnedService,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import hono, { apiService } from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
@@ -80,9 +80,9 @@ function makeEnvCtx(
   };
 }
 
-describe('@levelzero/plugin-hono default export', () => {
+describe('@lich/plugin-hono default export', () => {
   it('exposes name + version + register', () => {
-    expect(plugin.name).toBe('@levelzero/plugin-hono');
+    expect(plugin.name).toBe('@lich/plugin-hono');
     expect(typeof plugin.version).toBe('string');
     expect(typeof plugin.register).toBe('function');
   });

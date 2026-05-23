@@ -1,4 +1,4 @@
-import type { ComposeServiceDef, ComposeVolumeDef } from '@levelzero/core';
+import type { ComposeServiceDef, ComposeVolumeDef } from '@lich/core';
 
 /**
  * Compose service definition for postgres.
@@ -10,7 +10,7 @@ import type { ComposeServiceDef, ComposeVolumeDef } from '@levelzero/core';
  *    Debian base.
  *  - **Port string uses the `${PORT_postgres}` placeholder.** The compose
  *    emitter substitutes a stack-allocated host port at render time, so
- *    multiple Levelzero stacks can run side-by-side without colliding on 5432.
+ *    multiple Lich stacks can run side-by-side without colliding on 5432.
  *    Container side stays fixed at `5432` (the image's listening port).
  *  - **Healthcheck uses `pg_isready` against the seed user/db.** Downstream
  *    services that wait via `depends_on: { condition: service_healthy }` will
@@ -28,12 +28,12 @@ export const postgresComposeService: ComposeServiceDef = {
   image: 'postgres:16-alpine',
   ports: ['${PORT_postgres}:5432'],
   environment: {
-    POSTGRES_USER: 'levelzero',
-    POSTGRES_PASSWORD: 'levelzero',
-    POSTGRES_DB: 'levelzero',
+    POSTGRES_USER: 'lich',
+    POSTGRES_PASSWORD: 'lich',
+    POSTGRES_DB: 'lich',
   },
   healthcheck: {
-    test: ['CMD-SHELL', 'pg_isready -U levelzero -d levelzero'],
+    test: ['CMD-SHELL', 'pg_isready -U lich -d lich'],
     interval: '5s',
     timeout: '5s',
     retries: 10,
@@ -48,6 +48,6 @@ export const postgresComposeService: ComposeServiceDef = {
  * No `name:` pin: compose namespaces it under the stack's project
  * (`<project>_pgdata`), which is what we want now that postgres is contributed
  * via the plugin path rather than the legacy `dockerServiceToCompose` adapter
- * (which had to pin names to preserve `levelzero-<key>-postgres-data`).
+ * (which had to pin names to preserve `lich-<key>-postgres-data`).
  */
 export const postgresPgdataVolume: ComposeVolumeDef = {};

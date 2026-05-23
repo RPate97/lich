@@ -1,22 +1,22 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '@levelzero/core/errors';
-import { Registry } from '@levelzero/core/registry';
-import { resolveStackContext } from '@levelzero/core/services/context';
-import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import type { Command, ORMAdapter } from '@levelzero/core';
+import { CLIError } from '@lich/core/errors';
+import { Registry } from '@lich/core/registry';
+import { resolveStackContext } from '@lich/core/services/context';
+import type { AdapterRegistry } from '@lich/core/adapters/registry';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
+import type { Command, ORMAdapter } from '@lich/core';
 import { prismaAdapter } from '../adapter';
 import { resolveDatabaseUrl } from './database-url';
 
 export interface DbMigrateOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /**
    * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
    * command falls back to this package's `prismaAdapter`. Tests pass an
    * explicit stub to keep behaviour independent of the registry. Callers that
-   * want `levelzero adapter swap orm ...` to take effect at runtime should
+   * want `lich adapter swap orm ...` to take effect at runtime should
    * supply `getAdapterRegistry` instead — see field below.
    */
   adapter?: ORMAdapter;
@@ -42,12 +42,12 @@ export interface DbMigrateOptions {
 }
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 /**
- * Build `levelzero db migrate`. Resolves the current worktree's stack, asks
+ * Build `lich db migrate`. Resolves the current worktree's stack, asks
  * the EnvSource registry for the active `postgres`-protocol URL source, and
  * invokes the ORM adapter's `applyMigrations` (which for prisma shells out
  * to `prisma migrate deploy`).
@@ -93,7 +93,7 @@ export function makeDbMigrateCommand(opts?: DbMigrateOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `levelzero dev` first to bring postgres up',
+          'run `lich dev` first to bring postgres up',
         );
       }
 

@@ -4,7 +4,7 @@
 
 **Goal:** Build `lich dashboard` — an on-demand local web dashboard showing every running lich stack, its status, UI links, and live per-service logs.
 
-**Architecture:** A new standalone package `@levelzero/dashboard` containing a Bun HTTP/SSE server and a Vite+React+shadcn SPA. The server reads existing on-disk state (the global registry JSON, pid files, docker, log files) and owns no new state. `@levelzero/core` gets a small `dashboard` command that lazy-imports and starts the server. The dashboard package reads the registry JSON file directly (read-only, stable format) — it does NOT depend on core's runtime code, only on core's `StackEntry` type (type-only import, erased at build).
+**Architecture:** A new standalone package `@lich/dashboard` containing a Bun HTTP/SSE server and a Vite+React+shadcn SPA. The server reads existing on-disk state (the global registry JSON, pid files, docker, log files) and owns no new state. `@lich/core` gets a small `dashboard` command that lazy-imports and starts the server. The dashboard package reads the registry JSON file directly (read-only, stable format) — it does NOT depend on core's runtime code, only on core's `StackEntry` type (type-only import, erased at build).
 
 **Tech Stack:** Bun (HTTP server), TypeScript, Vitest (tests), Vite + React 18 + shadcn/ui (frontend, `dashboard-01` block), tsup (server build), Server-Sent Events (live logs).
 
@@ -16,7 +16,7 @@ Spec: `docs/superpowers/specs/2026-05-21-dashboard-design.md`
 
 ```
 packages/dashboard/
-  package.json               # @levelzero/dashboard — server deps + build scripts
+  package.json               # @lich/dashboard — server deps + build scripts
   tsconfig.json              # server tsconfig
   tsup.config.ts             # builds src/server → dist/server
   vite.config.ts             # builds src/web → dist/web
@@ -25,7 +25,7 @@ packages/dashboard/
   src/
     types.ts                 # shared API types (StackView, ServiceView, LogEvent)
     server/
-      registry-reader.ts     # read + parse ~/.levelzero/registry.json
+      registry-reader.ts     # read + parse ~/.lich/registry.json
       liveness.ts            # pid liveness + docker container liveness
       stacks.ts              # derive StackView[] from registry + liveness
       log-tailer.ts          # byte-offset file tailer for SSE
@@ -52,14 +52,14 @@ packages/dashboard/
 
 packages/core/src/commands/dashboard.ts   # the `dashboard` command (new)
 packages/core/src/bin.ts                  # register dashboard command (modify)
-packages/core/package.json                # add @levelzero/dashboard dep (modify)
+packages/core/package.json                # add @lich/dashboard dep (modify)
 ```
 
 The server and frontend are split by responsibility. Each server file has one job (read registry, check liveness, derive views, tail logs, serve HTTP). Each frontend component renders one thing.
 
 ---
 
-## Task 1: Scaffold the `@levelzero/dashboard` package
+## Task 1: Scaffold the `@lich/dashboard` package
 
 **Files:**
 - Create: `packages/dashboard/package.json`
@@ -71,7 +71,7 @@ The server and frontend are split by responsibility. Each server file has one jo
 
 ```json
 {
-  "name": "@levelzero/dashboard",
+  "name": "@lich/dashboard",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/server/index.js",
@@ -101,7 +101,7 @@ The server and frontend are split by responsibility. Each server file has one jo
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "dependencies": {
     "react": "^18.3.0",
@@ -122,7 +122,7 @@ The server and frontend are split by responsibility. Each server file has one jo
 }
 ```
 
-Note: the `build` script runs `vite build` (SPA → `dist/web/`) then `tsup` (server → `dist/server/`). `@levelzero/core` is a `peerDependency` (type-only use) — this avoids an install-time cycle since core will depend on this package.
+Note: the `build` script runs `vite build` (SPA → `dist/web/`) then `tsup` (server → `dist/server/`). `@lich/core` is a `peerDependency` (type-only use) — this avoids an install-time cycle since core will depend on this package.
 
 - [ ] **Step 2: Create `packages/dashboard/tsconfig.json`**
 
@@ -198,7 +198,7 @@ Expected: PASS (only `src/types.ts` exists so far — no errors).
 
 ```bash
 git add packages/dashboard/package.json packages/dashboard/tsconfig.json packages/dashboard/vitest.config.ts packages/dashboard/src/types.ts bun.lock
-git commit -m "feat(LEV-240): scaffold @levelzero/dashboard package"
+git commit -m "feat(LEV-240): scaffold @lich/dashboard package"
 ```
 
 ---
@@ -209,7 +209,7 @@ git commit -m "feat(LEV-240): scaffold @levelzero/dashboard package"
 - Create: `packages/dashboard/src/server/registry-reader.ts`
 - Test: `packages/dashboard/tests/registry-reader.test.ts`
 
-The dashboard reads `~/.levelzero/registry.json` directly — read-only, no locking, simple format. The `StackEntry` type is imported type-only from core (erased at build).
+The dashboard reads `~/.lich/registry.json` directly — read-only, no locking, simple format. The `StackEntry` type is imported type-only from core (erased at build).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -240,7 +240,7 @@ describe('readRegistry', () => {
             ports: { 'api-http': 5402 },
             containers: ['proj-postgres-1'],
             network: 'proj_net',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-21T00:00:00.000Z',
           },
         },
@@ -272,7 +272,7 @@ Expected: FAIL — cannot find `../src/server/registry-reader`.
 
 ```ts
 import { readFile } from 'node:fs/promises';
-import type { StackEntry } from '@levelzero/core/registry';
+import type { StackEntry } from '@lich/core/registry';
 
 export interface RegistryData {
   stacks: Record<string, StackEntry>;
@@ -338,7 +338,7 @@ git commit -m "feat(LEV-240): registry reader for the dashboard"
 Two liveness checks: owned services via pid (`process.kill(pid, 0)`), compose services via `docker inspect`.
 
 **Layout reference (confirmed in `packages/core/src/commands/dev.ts` / `stop.ts`):**
-- pid files: `<worktreePath>/.levelzero/state/<worktreeKey>/pids/<service>.pid`
+- pid files: `<worktreePath>/.lich/state/<worktreeKey>/pids/<service>.pid`
 - each pid file contains the pid as text (may be empty if spawn failed)
 
 - [ ] **Step 1: Write the failing test**
@@ -375,7 +375,7 @@ describe('readOwnedServices', () => {
 
   it('reads pid files and reports liveness', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'abc', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'abc', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
     await writeFile(join(pidsDir, 'web.pid'), '2147483646\n');
@@ -389,7 +389,7 @@ describe('readOwnedServices', () => {
 
   it('treats an empty pid file as a down service', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'abc', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'abc', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), '');
     const out = await readOwnedServices(wt, 'abc');
@@ -439,14 +439,14 @@ export interface OwnedServiceLiveness {
 /**
  * Discover owned (host-process) services for a stack by reading the
  * `<service>.pid` files the detached `dev` runner writes to
- * `<worktreePath>/.levelzero/state/<worktreeKey>/pids/`. Each file's status is
+ * `<worktreePath>/.lich/state/<worktreeKey>/pids/`. Each file's status is
  * derived from pid liveness. A missing dir → no owned services (returns []).
  */
 export async function readOwnedServices(
   worktreePath: string,
   worktreeKey: string,
 ): Promise<OwnedServiceLiveness[]> {
-  const pidsDir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+  const pidsDir = join(worktreePath, '.lich', 'state', worktreeKey, 'pids');
   let files: string[];
   try {
     files = await readdir(pidsDir);
@@ -538,7 +538,7 @@ async function makeWorktreeWithPids(
   pids: Record<string, number>,
 ): Promise<string> {
   const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-  const pidsDir = join(wt, '.levelzero', 'state', key, 'pids');
+  const pidsDir = join(wt, '.lich', 'state', key, 'pids');
   await mkdir(pidsDir, { recursive: true });
   for (const [name, pid] of Object.entries(pids)) {
     await writeFile(join(pidsDir, `${name}.pid`), `${pid}\n`);
@@ -557,7 +557,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -579,7 +579,7 @@ describe('buildStackViews', () => {
           urls: { api: 'http://localhost:5402' },
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -606,7 +606,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -626,7 +626,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -753,8 +753,8 @@ git commit -m "feat(LEV-240): derive StackView from registry + liveness"
 A byte-offset file tailer. Emits an initial backlog, then one event per appended line. Handles truncation. Cleans up on stop.
 
 **Log source selection (matches the `logs` command):** prefer the raw detached log at
-`<worktreePath>/.levelzero/state/<worktreeKey>/logs/<service>.log`; if absent, fall
-back to the JSONL at `<worktreePath>/.levelzero/logs/<service>.jsonl`.
+`<worktreePath>/.lich/state/<worktreeKey>/logs/<service>.log`; if absent, fall
+back to the JSONL at `<worktreePath>/.lich/logs/<service>.jsonl`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -860,9 +860,9 @@ export async function resolveLogFile(
   service: string,
 ): Promise<string | undefined> {
   const rawLog = join(
-    worktreePath, '.levelzero', 'state', worktreeKey, 'logs', `${service}.log`,
+    worktreePath, '.lich', 'state', worktreeKey, 'logs', `${service}.log`,
   );
-  const jsonl = join(worktreePath, '.levelzero', 'logs', `${service}.jsonl`);
+  const jsonl = join(worktreePath, '.lich', 'logs', `${service}.jsonl`);
   for (const candidate of [rawLog, jsonl]) {
     try {
       await access(candidate);
@@ -1014,9 +1014,9 @@ describe('dashboard server', () => {
   it('serves GET /api/stacks from the registry', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'srv-'));
     const wt = join(dir, 'wt');
-    await mkdir(join(wt, '.levelzero', 'state', 'abc', 'pids'), { recursive: true });
+    await mkdir(join(wt, '.lich', 'state', 'abc', 'pids'), { recursive: true });
     await writeFile(
-      join(wt, '.levelzero', 'state', 'abc', 'pids', 'api.pid'),
+      join(wt, '.lich', 'state', 'abc', 'pids', 'api.pid'),
       `${process.pid}\n`,
     );
     const registryPath = join(dir, 'registry.json');
@@ -1026,7 +1026,7 @@ describe('dashboard server', () => {
         stacks: {
           abc: {
             path: wt, branch: 'main', ports: {}, urls: {},
-            containers: [], network: 'n', logDir: '.levelzero/logs',
+            containers: [], network: 'n', logDir: '.lich/logs',
             createdAt: '2026-05-21T00:00:00.000Z',
           },
         },
@@ -1071,7 +1071,7 @@ import { LogTailer, resolveLogFile } from './log-tailer';
 import type { StacksResponse } from '../types';
 
 export interface ServerConfig {
-  /** Absolute path to ~/.levelzero/registry.json. */
+  /** Absolute path to ~/.lich/registry.json. */
   registryPath: string;
   /** Directory holding the built SPA (index.html + assets). */
   webDir: string;
@@ -1194,7 +1194,7 @@ export async function routeRequest(cfg: ServerConfig, req: Request): Promise<Res
 import { routeRequest, type ServerConfig } from './server';
 
 export interface StartOptions {
-  /** Absolute path to ~/.levelzero/registry.json. */
+  /** Absolute path to ~/.lich/registry.json. */
   registryPath: string;
   /** Directory holding the built SPA. Defaults to the package's dist/web. */
   webDir?: string;
@@ -1270,7 +1270,7 @@ git commit -m "feat(LEV-240): dashboard HTTP/SSE server"
 **Files:**
 - Create: `packages/core/src/commands/dashboard.ts`
 - Modify: `packages/core/src/bin.ts` (register the command)
-- Modify: `packages/core/package.json` (add `@levelzero/dashboard` dependency)
+- Modify: `packages/core/package.json` (add `@lich/dashboard` dependency)
 - Test: `packages/core/tests/commands/dashboard.test.ts`
 
 The command allocates a free port, starts the server, prints + opens the URL, and runs until interrupted. The server is lazy-imported so core has no load-time dependency on the dashboard package.
@@ -1280,7 +1280,7 @@ The command allocates a free port, starts the server, prints + opens the URL, an
 In the `dependencies` object add:
 
 ```json
-"@levelzero/dashboard": "workspace:*"
+"@lich/dashboard": "workspace:*"
 ```
 
 Run: `bun install`
@@ -1334,15 +1334,15 @@ function openBrowser(url: string): void {
  * `lich dashboard` — start the local monitoring dashboard server and open it
  * in the browser. Runs in the foreground until Ctrl-C.
  *
- * The dashboard server lives in `@levelzero/dashboard` and is lazy-imported so
- * `@levelzero/core` carries no load-time dependency on it.
+ * The dashboard server lives in `@lich/dashboard` and is lazy-imported so
+ * `@lich/core` carries no load-time dependency on it.
  */
 export function makeDashboardCommand(getRegistryPath: () => string): Command {
   return {
     name: 'dashboard',
     describe: 'Start the lich monitoring dashboard (live view of all stacks)',
     async run(ctx) {
-      const { startDashboardServer } = await import('@levelzero/dashboard');
+      const { startDashboardServer } = await import('@lich/dashboard');
       const handle = await startDashboardServer({
         registryPath: getRegistryPath(),
         port: 0,
@@ -2104,7 +2104,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Manual smoke test**
 
-With at least one stack up (`bun run levelzero dev` in a project), run `bun run levelzero dashboard`. Expected: a URL is printed, the browser opens, the stack appears with correct status, UI links work, and expanding a service's logs streams live output. Ctrl-C prints `dashboard stopped`.
+With at least one stack up (`bun run lich dev` in a project), run `bun run lich dashboard`. Expected: a URL is printed, the browser opens, the stack appears with correct status, UI links work, and expanding a service's logs streams live output. Ctrl-C prints `dashboard stopped`.
 
 - [ ] **Step 7: Commit**
 

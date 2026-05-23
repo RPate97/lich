@@ -37,7 +37,7 @@ function fakeRunner(out: CoverageSummary) {
   return { fn, calls };
 }
 
-describe('levelzero coverage', () => {
+describe('lich coverage', () => {
   it('exposes name "coverage"', () => {
     const cmd = makeCoverageCommand(async () => summary);
     expect(cmd.name).toBe('coverage');

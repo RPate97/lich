@@ -2,16 +2,16 @@
  * Generator contract (LEV-124).
  *
  * Plugins contribute one or more `Generator`s via `api.addGenerator(...)` so
- * the unified `levelzero gen` command can drive every codegen task through a
+ * the unified `lich gen` command can drive every codegen task through a
  * single dispatch path. Each generator owns its own resolution chain — the
  * registry just hands it the boot-scoped {@link GeneratorContext} and calls
  * `generate()`.
  *
  * Built-in generators that ship with first-party plugins today:
- *   - `api-client` (from `@levelzero/plugin-typed-client`) — extracts a
+ *   - `api-client` (from `@lich/plugin-typed-client`) — extracts a
  *     `RouteManifest` from the active backend adapter and writes a typed
  *     fetch client to disk.
- *   - `prisma` (from `@levelzero/plugin-prisma`) — runs `prisma generate`
+ *   - `prisma` (from `@lich/plugin-prisma`) — runs `prisma generate`
  *     against the project's `prisma/schema.prisma`. Skips when no schema is
  *     present.
  *
@@ -93,7 +93,7 @@ export interface GeneratorResult {
  * A single registered generator. Plugins build these inside `register()` and
  * pass to `api.addGenerator({...})`.
  *
- * `id` is the user-facing handle — what shows up in `levelzero gen --list`
+ * `id` is the user-facing handle — what shows up in `lich gen --list`
  * and what the user passes to `--only`. Keep it short and kebab-cased
  * (`api-client`, `prisma`, `openapi`). Re-registering an existing id replaces
  * the prior entry, matching adapter/command registry semantics.

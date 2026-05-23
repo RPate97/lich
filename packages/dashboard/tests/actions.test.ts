@@ -67,7 +67,7 @@ describe('runLichAction', () => {
     await runLichAction('/my/stack', 'stop');
     expect(mockedExecFile).toHaveBeenCalledWith(
       'bun',
-      ['run', 'levelzero', 'stop'],
+      ['run', 'lich', 'stop'],
       expect.objectContaining({ cwd: '/my/stack', timeout: 30_000 }),
       expect.any(Function),
     );

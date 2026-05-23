@@ -21,7 +21,7 @@ export default defineConfigShared({
   test: {
     include: ['tests/e2e/**/*.e2e.test.ts'],
     setupFiles: ['./tests/setup.ts'],
-    // LEV-202 — stamp TEST_RUN_ID + sweep stale `levelzero-*` networks
+    // LEV-202 — stamp TEST_RUN_ID + sweep stale `lich-*` networks
     // from prior crashed runs. Same machinery as `vitest.config.ts`; the
     // e2e suite needs it just as badly since it spins up real compose
     // stacks per test file.

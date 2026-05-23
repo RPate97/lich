@@ -65,17 +65,17 @@ beforeEach(() => {
   // A "real" project root so `resolveStackContext` finds a worktree. The
   // command resolves the worktree before any generator dispatch.
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-gen-proj-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
 });
 
-describe('levelzero gen', () => {
+describe('lich gen', () => {
   it('exports a top-level command named "gen"', () => {
     expect(genCommand.name).toBe('gen');
     expect(typeof genCommand.describe).toBe('string');
     expect(typeof genCommand.run).toBe('function');
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-gen-outside-')));
     const cmd = makeGenCommand({
       getGeneratorRegistry: () => registry(stubGen('foo', { status: 'ok' })),

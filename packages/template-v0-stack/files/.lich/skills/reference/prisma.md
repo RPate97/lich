@@ -1,6 +1,6 @@
 ---
 name: prisma
-description: Prisma ORM reference for the levelzero stack
+description: Prisma ORM reference for the lich stack
 applies-to: reference
 ---
 
@@ -13,13 +13,13 @@ schema and let the tooling regenerate.
 ## Editing the schema
 
 - Add or change a model in `prisma/schema.prisma`.
-- Run `levelzero db migrate --name <short-description>` to generate a new
+- Run `lich db migrate --name <short-description>` to generate a new
   SQL migration and apply it to the running dev database. This wraps
   `prisma migrate dev` and the appropriate codegen step.
 - After the migration succeeds the Prisma client is regenerated automatically.
-  If you need to regenerate manually, run `levelzero gen --only prisma`
-  (or `levelzero gen` to also run the typed API client generator).
-- Inspect the live schema with `levelzero db inspect`. Use this to verify a
+  If you need to regenerate manually, run `lich gen --only prisma`
+  (or `lich gen` to also run the typed API client generator).
+- Inspect the live schema with `lich db inspect`. Use this to verify a
   migration applied the columns and indexes you expected before committing.
 
 ## Common patterns
@@ -35,8 +35,8 @@ schema and let the tooling regenerate.
 ## Pitfalls
 
 - Editing an applied migration directly causes drift. Create a new migration
-  instead with `levelzero db migrate --name fix-<thing>`.
+  instead with `lich db migrate --name fix-<thing>`.
 - Don't import `PrismaClient` from `apps/web` server components without
   reusing the shared singleton — each instance opens its own pool.
-- Seed data lives in `prisma/seed.ts`; run it with `levelzero db seed` rather
+- Seed data lives in `prisma/seed.ts`; run it with `lich db seed` rather
   than calling `prisma db seed` directly so the right env file is loaded.

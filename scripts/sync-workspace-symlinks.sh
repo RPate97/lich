@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# sync-workspace-symlinks.sh — repair stale @levelzero/* workspace symlinks.
+# sync-workspace-symlinks.sh — repair stale @lich/* workspace symlinks.
 #
 # BACKGROUND (LEV-220)
 # --------------------
 # During parallel agent-driven development each agent runs in a temporary git
-# worktree under /tmp/levelzero-worktrees/agent-XXX/.  The worktree hook
+# worktree under /tmp/lich-worktrees/agent-XXX/.  The worktree hook
 # symlinks that worktree's node_modules -> main repo's node_modules (to avoid
 # a full per-worktree bun install).  If an agent then runs `bun install`
 # inside its worktree, Bun resolves the "packages/*" workspace glob relative
-# to the WORKTREE's directory and writes @levelzero/* symlinks into what is
+# to the WORKTREE's directory and writes @lich/* symlinks into what is
 # actually the main repo's node_modules.  After the worktree is merged and
 # discarded, those symlinks point at stale (or deleted) paths — causing the
 # CLI to silently run old code.
@@ -16,7 +16,7 @@
 # HOW THIS SCRIPT WORKS
 # ---------------------
 # It resolves node_modules to its REAL path (following any symlink created by
-# the worktree hook), then re-anchors every @levelzero/* symlink relative to
+# the worktree hook), then re-anchors every @lich/* symlink relative to
 # that real node_modules location.  Works correctly whether invoked from the
 # main repo or any agent worktree.
 #
@@ -57,11 +57,11 @@ fi
 # python3 -c for cross-platform realpath (macOS lacks GNU readlink -f on older systems).
 REAL_NM="$(python3 -c "import os; print(os.path.realpath('$NM_LINK'))")"
 REAL_ROOT="$(dirname "$REAL_NM")"
-REAL_NM_LEVELZERO="$REAL_NM/@levelzero"
+REAL_NM_LICH="$REAL_NM/@lich"
 REAL_PACKAGES="$REAL_ROOT/packages"
 
-if [[ ! -d "$REAL_NM_LEVELZERO" ]]; then
-  echo "node_modules/@levelzero does not exist; run 'bun install' first." >&2
+if [[ ! -d "$REAL_NM_LICH" ]]; then
+  echo "node_modules/@lich does not exist; run 'bun install' first." >&2
   exit 2
 fi
 
@@ -105,10 +105,10 @@ while IFS= read -r link; do
 
   # Stale or broken.
   if [[ -z "$resolved" || ! -d "$resolved" ]]; then
-    echo "BROKEN: node_modules/@levelzero/$pkg -> $raw_target"
+    echo "BROKEN: node_modules/@lich/$pkg -> $raw_target"
     ((broken++)) || true
   else
-    echo "STALE:  node_modules/@levelzero/$pkg -> $resolved"
+    echo "STALE:  node_modules/@lich/$pkg -> $resolved"
     ((stale++)) || true
   fi
 
@@ -121,13 +121,13 @@ while IFS= read -r link; do
     continue
   fi
 
-  # Compute relative path from @levelzero/ dir to the package dir so the
+  # Compute relative path from @lich/ dir to the package dir so the
   # symlink remains valid if the whole tree is moved.
   rel_target="$(python3 -c "import os; print(os.path.relpath('$expected_pkg_dir', '$(dirname "$link")'))")"
   ln -sfn "$rel_target" "$link"
   echo "  FIXED -> $rel_target (in $REAL_ROOT)"
   ((fixed++)) || true
-done < <(find "$REAL_NM_LEVELZERO" -maxdepth 1 -mindepth 1 2>/dev/null || true)
+done < <(find "$REAL_NM_LICH" -maxdepth 1 -mindepth 1 2>/dev/null || true)
 
 total_bad=$((stale + broken))
 
@@ -138,13 +138,13 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
     echo "Run 'bun run sync-workspace-symlinks' to repair."
     exit 1
   else
-    echo "CHECK OK: all $ok @levelzero/* symlinks are healthy."
+    echo "CHECK OK: all $ok @lich/* symlinks are healthy."
     exit 0
   fi
 fi
 
 if [[ "$total_bad" -eq 0 ]]; then
-  echo "All $ok @levelzero/* symlinks are already healthy — nothing to do."
+  echo "All $ok @lich/* symlinks are already healthy — nothing to do."
 else
   echo ""
   echo "Repaired $fixed of $total_bad stale/broken symlink(s). $ok were already healthy."

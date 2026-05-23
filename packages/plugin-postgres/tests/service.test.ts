@@ -33,9 +33,9 @@ describe('pgService (legacy DockerService re-export)', () => {
 
   it('passes POSTGRES_USER/PASSWORD/DB into the container env', () => {
     expect(pgService.containerEnv).toMatchObject({
-      POSTGRES_USER: 'levelzero',
-      POSTGRES_PASSWORD: 'levelzero',
-      POSTGRES_DB: 'levelzero',
+      POSTGRES_USER: 'lich',
+      POSTGRES_PASSWORD: 'lich',
+      POSTGRES_DB: 'lich',
     });
   });
 

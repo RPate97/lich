@@ -63,7 +63,7 @@ function pickFormat(flags: Record<string, string | boolean>): OutputFormat {
  * Structural duck-type for {@link CLIError}.
  *
  * Plugins loaded via dynamic import live in a separate module instance even
- * when they import `@levelzero/core/errors` from the workspace — `instanceof
+ * when they import `@lich/core/errors` from the workspace — `instanceof
  * CLIError` is therefore unreliable across the plugin boundary. Test it as
  * an own-property shape instead so plugin-thrown CLIErrors round-trip
  * through `runCli`'s catch with their `code`/`hint` intact rather than being

@@ -24,7 +24,7 @@ describe('readRegistry', () => {
             ports: { 'api-http': 5402 },
             containers: ['proj-postgres-1'],
             network: 'proj_net',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-21T00:00:00.000Z',
           },
         },

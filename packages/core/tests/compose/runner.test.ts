@@ -12,7 +12,7 @@ const describeIfDocker = status.available ? describe : describe.skip;
 // Use a fixed project name so a stray failed run can be cleaned up
 // pre-emptively in beforeAll. Suffix is random enough to avoid collisions
 // with other repos but stable within this test file.
-const PROJECT = 'levelzero-compose-runner-test';
+const PROJECT = 'lich-compose-runner-test';
 
 // A minimal postgres-with-healthcheck compose. Healthcheck lets us exercise
 // `up({ waitForHealthy: true })` and gives `ps` a non-trivial state to assert.

@@ -14,16 +14,16 @@
  *        a) sibling agents running tests in parallel can't trample each
  *           other (different ids → different names)
  *        b) the cleanup sweep can target THIS run's stacks via
- *           `docker network ls --filter name=levelzero-test-<id>-` instead
- *           of the global `levelzero-` namespace that would catch the
+ *           `docker network ls --filter name=lich-test-<id>-` instead
+ *           of the global `lich-` namespace that would catch the
  *           user's real running stacks too
  *        c) the post-suite global `stacks prune --all` (Layer 3 sweep
- *           below) can still find them via the `levelzero-` prefix that
+ *           below) can still find them via the `lich-` prefix that
  *           every name still carries.
  *
- *   2. Pre-emptively sweep stale `levelzero-*` networks / containers /
+ *   2. Pre-emptively sweep stale `lich-*` networks / containers /
  *      volumes left over from previous (crashed) test runs. Uses the
- *      existing `levelzero stacks prune --all --json` CLI, which already
+ *      existing `lich stacks prune --all --json` CLI, which already
  *      knows the safe-reap rules (skip running stacks that aren't ours,
  *      idempotent network rm, graceful when docker isn't installed).
  *

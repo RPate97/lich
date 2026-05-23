@@ -20,7 +20,7 @@ describe('EnvSourceRegistry — named sources', () => {
       name: 'url',
       fullKey: 'postgres.url',
       source,
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
 
     const entry = r.getNamed('postgres.url');
@@ -29,7 +29,7 @@ describe('EnvSourceRegistry — named sources', () => {
     expect(entry?.name).toBe('url');
     expect(entry?.fullKey).toBe('postgres.url');
     expect(entry?.source).toBe(source);
-    expect(entry?.pluginName).toBe('@levelzero/plugin-postgres');
+    expect(entry?.pluginName).toBe('@lich/plugin-postgres');
   });
 
   it('isolates same-name sources under different namespaces', () => {

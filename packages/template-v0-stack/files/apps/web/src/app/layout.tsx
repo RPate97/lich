@@ -15,7 +15,7 @@ import type { ReactNode } from 'react';
  */
 export const metadata = {
   title: '{{projectName}}',
-  description: 'A {{projectName}} app built with levelzero.',
+  description: 'A {{projectName}} app built with lich.',
 };
 
 const LANDING_CSS = `

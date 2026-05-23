@@ -10,11 +10,11 @@ describe('postgresComposeService', () => {
     expect(postgresComposeService.ports).toEqual(['${PORT_postgres}:5432']);
   });
 
-  it('seeds POSTGRES_USER/PASSWORD/DB to the levelzero defaults', () => {
+  it('seeds POSTGRES_USER/PASSWORD/DB to the lich defaults', () => {
     expect(postgresComposeService.environment).toEqual({
-      POSTGRES_USER: 'levelzero',
-      POSTGRES_PASSWORD: 'levelzero',
-      POSTGRES_DB: 'levelzero',
+      POSTGRES_USER: 'lich',
+      POSTGRES_PASSWORD: 'lich',
+      POSTGRES_DB: 'lich',
     });
   });
 
@@ -28,7 +28,7 @@ describe('postgresComposeService', () => {
     expect(postgresComposeService.healthcheck).toBeDefined();
     expect(postgresComposeService.healthcheck!.test).toEqual([
       'CMD-SHELL',
-      'pg_isready -U levelzero -d levelzero',
+      'pg_isready -U lich -d lich',
     ]);
     expect(postgresComposeService.healthcheck!.interval).toBe('5s');
     expect(postgresComposeService.healthcheck!.retries).toBe(10);

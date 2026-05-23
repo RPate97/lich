@@ -4,7 +4,7 @@ import type { Skill } from '../../src/skills/indexer';
 
 function makeSkill(over: Partial<Skill> & Pick<Skill, 'name' | 'category'>): Skill {
   return {
-    filePath: `.levelzero/skills/${over.category}/${over.name}.md`,
+    filePath: `.lich/skills/${over.category}/${over.name}.md`,
     description: 'a description',
     appliesTo: over.category,
     body: 'body',
@@ -30,7 +30,7 @@ describe('renderClaudeMd', () => {
     ]);
     expect(out).toContain('## Workflow Skills');
     expect(out).toContain(
-      '- **change** — How to make a change. See `.levelzero/skills/workflow/change.md`.',
+      '- **change** — How to make a change. See `.lich/skills/workflow/change.md`.',
     );
     expect(out).not.toContain('## Reference Skills');
   });
@@ -45,7 +45,7 @@ describe('renderClaudeMd', () => {
     ]);
     expect(out).toContain('## Reference Skills');
     expect(out).toContain(
-      '- **prisma** — Prisma reference. See `.levelzero/skills/reference/prisma.md`.',
+      '- **prisma** — Prisma reference. See `.lich/skills/reference/prisma.md`.',
     );
     expect(out).not.toContain('## Workflow Skills');
   });
@@ -84,10 +84,10 @@ describe('renderClaudeMd', () => {
         name: 'debug',
         category: 'workflow',
         description: 'Debug systematically',
-        filePath: '.levelzero/skills/workflow/debug.md',
+        filePath: '.lich/skills/workflow/debug.md',
       }),
     ]);
-    expect(out).toContain('See `.levelzero/skills/workflow/debug.md`');
+    expect(out).toContain('See `.lich/skills/workflow/debug.md`');
   });
 
   it('terminates the document with a single trailing newline', () => {

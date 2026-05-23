@@ -4,7 +4,7 @@ import type {
   Generator,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import typedClient, {
   typedClientFrontendAdapter,
   apiClientGenerator,
@@ -53,9 +53,9 @@ function makeRecordingApi(): {
   return { api, adapters, actives, generators };
 }
 
-describe('@levelzero/plugin-typed-client default export', () => {
+describe('@lich/plugin-typed-client default export', () => {
   it('exposes name + version + register', () => {
-    expect(plugin.name).toBe('@levelzero/plugin-typed-client');
+    expect(plugin.name).toBe('@lich/plugin-typed-client');
     expect(typeof plugin.version).toBe('string');
     expect(typeof plugin.register).toBe('function');
   });

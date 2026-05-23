@@ -87,7 +87,7 @@ export interface OwnedServicesContext {
 /**
  * Discover owned (host-process) services for a stack by reading the
  * `<service>.pid` files the detached `dev` runner writes to
- * `<worktreePath>/.levelzero/state/<worktreeKey>/pids/`. Each file's status is
+ * `<worktreePath>/.lich/state/<worktreeKey>/pids/`. Each file's status is
  * derived from pid liveness + an optional HTTP probe. A missing dir → no owned
  * services (returns []).
  */
@@ -96,7 +96,7 @@ export async function readOwnedServices(
   worktreeKey: string,
   ctx: OwnedServicesContext = { urls: {}, createdAt: new Date(0).toISOString() },
 ): Promise<OwnedServiceLiveness[]> {
-  const pidsDir = join(worktreePath, '.levelzero', 'state', worktreeKey, 'pids');
+  const pidsDir = join(worktreePath, '.lich', 'state', worktreeKey, 'pids');
   let files: string[];
   try {
     files = await readdir(pidsDir);

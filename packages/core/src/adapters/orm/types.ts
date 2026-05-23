@@ -2,7 +2,7 @@
  * ORMAdapter — pluggable interface for the ORM slot.
  *
  * Hypothetical alternative implementations:
- *   - Prisma   (current default; ships in `@levelzero/plugin-prisma`)
+ *   - Prisma   (current default; ships in `@lich/plugin-prisma`)
  *   - Drizzle  (`drizzle-orm` + `drizzle-kit`)
  *   - Kysely   (raw query builder + codegen)
  *   - Mongoose (NoSQL via MongoDB)

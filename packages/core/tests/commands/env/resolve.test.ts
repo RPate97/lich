@@ -45,12 +45,12 @@ function registryWithFixtures(): EnvSourceRegistry {
     name: 'url',
     fullKey: 'postgres.url',
     source: postgresUrl(),
-    pluginName: '@levelzero/plugin-postgres',
+    pluginName: '@lich/plugin-postgres',
   });
   registry.registerBulk({
     namespace: 'infisical',
     source: infisical({ STRIPE_KEY: 'sk_test', SENTRY_DSN: 'https://x' }),
-    pluginName: '@levelzero/plugin-infisical',
+    pluginName: '@lich/plugin-infisical',
   });
   return registry;
 }
@@ -61,7 +61,7 @@ const STACK_INPUT = {
   worktreeKey: 'wt-abcd1234',
 };
 
-describe('levelzero env resolve', () => {
+describe('lich env resolve', () => {
   it('exports a command named "env.resolve"', () => {
     expect(envResolveCommand.name).toBe('env.resolve');
     expect(typeof envResolveCommand.describe).toBe('string');

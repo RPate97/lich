@@ -9,7 +9,7 @@ import type {
   EnvSourceContext,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import redis, {
   redisCacheAdapter,
   redisComposeService,
@@ -87,10 +87,10 @@ function makeCtx(overrides: Partial<EnvSourceContext> = {}): EnvSourceContext {
   };
 }
 
-describe('@levelzero/plugin-redis factory (LEV-190)', () => {
+describe('@lich/plugin-redis factory (LEV-190)', () => {
   it('produces a Plugin with the canonical name + namespace + version', () => {
     const plugin = redis();
-    expect(plugin.name).toBe('@levelzero/plugin-redis');
+    expect(plugin.name).toBe('@lich/plugin-redis');
     expect(plugin.namespace).toBe('redis');
     expect(plugin.version).toBe('0.1.0');
     expect(typeof plugin.register).toBe('function');

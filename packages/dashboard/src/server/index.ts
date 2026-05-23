@@ -1,7 +1,7 @@
 import { routeRequest, type ServerConfig } from './server';
 
 export interface StartOptions {
-  /** Absolute path to ~/.levelzero/registry.json. */
+  /** Absolute path to ~/.lich/registry.json. */
   registryPath: string;
   /** Directory holding the built SPA. Defaults to the package's dist/web. */
   webDir?: string;

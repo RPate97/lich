@@ -2,11 +2,11 @@ import type { AdapterSlot } from './adapters/registry';
 import type { Plugin, PluginFactory } from './plugins/types';
 
 /**
- * Entry in the `plugins` array of `levelzero.config.ts`. May be:
+ * Entry in the `plugins` array of `lich.config.ts`. May be:
  *  - a fully-constructed `Plugin` object (`import postgres from '...' ; { plugins: [postgres] }`)
  *  - a string specifier (npm package name or relative path) the loader will
  *    dynamic-import at boot
- *  - a thenable (typically `import('@levelzero/plugin-x')`) resolving to a
+ *  - a thenable (typically `import('@lich/plugin-x')`) resolving to a
  *    `Plugin` or a CJS-style `{ default: Plugin }` module namespace
  *  - a zero-argument factory (sync or async) returning a `Plugin` — the shape
  *    Plan 16 / LEV-179 standardizes on so plugins can take options at
@@ -41,7 +41,7 @@ const VALID_ADAPTER_SLOTS = new Set<AdapterSlot>([
 ] satisfies AdapterSlot[]);
 
 /**
- * Adapter selections from `levelzero.config.ts`. Per-slot values name a
+ * Adapter selections from `lich.config.ts`. Per-slot values name a
  * built-in adapter (e.g. `orm: 'prisma'`) registered in `AdapterRegistry`;
  * the boot path will call `setActive(slot, name)` for each entry.
  *
@@ -61,7 +61,7 @@ export interface AdaptersConfig {
   custom?: Record<string, string>;
 }
 
-export interface LevelzeroConfig {
+export interface LichConfig {
   name?: string;
   /**
    * Optional adapter selections. Absent block = use built-in defaults from
@@ -71,7 +71,7 @@ export interface LevelzeroConfig {
   /**
    * Optional plugin list. Each entry is a `Plugin` object, a string specifier
    * (package name or relative path) the loader will dynamic-import, or a
-   * Promise resolving to a Plugin (e.g. `import('@levelzero/plugin-postgres')`).
+   * Promise resolving to a Plugin (e.g. `import('@lich/plugin-postgres')`).
    * See `PluginEntry` for the full shape.
    */
   plugins?: PluginEntry[];
@@ -92,14 +92,14 @@ export interface LevelzeroConfig {
   // merging or interface extension.
 }
 
-export async function loadConfig(configPath: string): Promise<LevelzeroConfig> {
+export async function loadConfig(configPath: string): Promise<LichConfig> {
   // Dynamic import works under Bun for .ts files natively. Use a cache-busting
   // query so successive loads in a single process pick up edits during tests.
   const url = `file://${configPath}?t=${Date.now()}`;
-  const mod = (await import(url)) as { default?: LevelzeroConfig };
+  const mod = (await import(url)) as { default?: LichConfig };
   if (!mod.default || typeof mod.default !== 'object') {
     throw new Error(
-      `levelzero config at ${configPath} has no default export (expected: \`export default { ... }\`)`,
+      `lich config at ${configPath} has no default export (expected: \`export default { ... }\`)`,
     );
   }
   const cfg = mod.default;
@@ -127,7 +127,7 @@ function validateEnvInjection(
 ): asserts envInjection is Record<string, string | string[]> {
   if (typeof envInjection !== 'object' || envInjection === null || Array.isArray(envInjection)) {
     throw new Error(
-      `levelzero config at ${configPath}: \`envInjection\` must be an object (got ${describe(envInjection)})`,
+      `lich config at ${configPath}: \`envInjection\` must be an object (got ${describe(envInjection)})`,
     );
   }
 }
@@ -135,7 +135,7 @@ function validateEnvInjection(
 function validatePlugins(plugins: unknown, configPath: string): asserts plugins is PluginEntry[] {
   if (!Array.isArray(plugins)) {
     throw new Error(
-      `levelzero config at ${configPath}: \`plugins\` must be an array (got ${describe(plugins)})`,
+      `lich config at ${configPath}: \`plugins\` must be an array (got ${describe(plugins)})`,
     );
   }
   for (let i = 0; i < plugins.length; i++) {
@@ -145,7 +145,7 @@ function validatePlugins(plugins: unknown, configPath: string): asserts plugins 
     if (isThenable(entry)) continue;
     if (isPluginObject(entry)) continue;
     throw new Error(
-      `levelzero config at ${configPath}: \`plugins[${i}]\` must be a string specifier, a Plugin object ({ name, version, register }), a factory function returning a Plugin, or a Promise resolving to one (got ${describe(entry)})`,
+      `lich config at ${configPath}: \`plugins[${i}]\` must be a string specifier, a Plugin object ({ name, version, register }), a factory function returning a Plugin, or a Promise resolving to one (got ${describe(entry)})`,
     );
   }
 }
@@ -171,7 +171,7 @@ function isPluginObject(value: unknown): value is Plugin {
 function validateAdapters(adapters: unknown, configPath: string): asserts adapters is AdaptersConfig {
   if (typeof adapters !== 'object' || adapters === null || Array.isArray(adapters)) {
     throw new Error(
-      `levelzero config at ${configPath}: \`adapters\` must be an object (got ${describe(adapters)})`,
+      `lich config at ${configPath}: \`adapters\` must be an object (got ${describe(adapters)})`,
     );
   }
   for (const [key, value] of Object.entries(adapters as Record<string, unknown>)) {
@@ -182,12 +182,12 @@ function validateAdapters(adapters: unknown, configPath: string): asserts adapte
     if (!VALID_ADAPTER_SLOTS.has(key as AdapterSlot)) {
       const valid = Array.from(VALID_ADAPTER_SLOTS).join(', ');
       throw new Error(
-        `levelzero config at ${configPath}: unknown adapter slot "${key}" (valid slots: ${valid}, or "custom")`,
+        `lich config at ${configPath}: unknown adapter slot "${key}" (valid slots: ${valid}, or "custom")`,
       );
     }
     if (typeof value !== 'string') {
       throw new Error(
-        `levelzero config at ${configPath}: \`adapters.${key}\` must be a string adapter name (got ${describe(value)})`,
+        `lich config at ${configPath}: \`adapters.${key}\` must be a string adapter name (got ${describe(value)})`,
       );
     }
   }
@@ -196,13 +196,13 @@ function validateAdapters(adapters: unknown, configPath: string): asserts adapte
 function validateCustom(custom: unknown, configPath: string): void {
   if (typeof custom !== 'object' || custom === null || Array.isArray(custom)) {
     throw new Error(
-      `levelzero config at ${configPath}: \`adapters.custom\` must be an object of { name: pluginPath } (got ${describe(custom)})`,
+      `lich config at ${configPath}: \`adapters.custom\` must be an object of { name: pluginPath } (got ${describe(custom)})`,
     );
   }
   for (const [key, value] of Object.entries(custom as Record<string, unknown>)) {
     if (typeof value !== 'string') {
       throw new Error(
-        `levelzero config at ${configPath}: \`adapters.custom.${key}\` must be a string plugin path (got ${describe(value)})`,
+        `lich config at ${configPath}: \`adapters.custom.${key}\` must be a string plugin path (got ${describe(value)})`,
       );
     }
   }
