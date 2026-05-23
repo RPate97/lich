@@ -288,3 +288,91 @@ describe('merged log stream endpoint', () => {
     await rm(dir, { recursive: true, force: true });
   });
 });
+
+// ── Metrics endpoint tests ────────────────────────────────────────────────────
+
+describe('metrics endpoint', () => {
+  it('returns 404 for an unknown stack key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'metrics-'));
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(registryPath, JSON.stringify({ stacks: {} }));
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(cfg, new Request('http://h/api/stacks/nope/metrics'));
+    expect(res.status).toBe(404);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns 200 with cpuPct and memMB for a live pid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'metrics-'));
+    const wt = join(dir, 'wt');
+    const pidsDir = join(wt, '.levelzero', 'state', 'teststack', 'pids');
+    await mkdir(pidsDir, { recursive: true });
+    // Write the current process pid — guaranteed to be alive.
+    await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
+
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        stacks: {
+          teststack: {
+            path: wt,
+            branch: 'main',
+            ports: {},
+            urls: {},
+            containers: [],
+            network: 'n',
+            logDir: '.levelzero/logs',
+            createdAt: '2026-05-22T00:00:00.000Z',
+          },
+        },
+      }),
+    );
+
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(cfg, new Request('http://h/api/stacks/teststack/metrics'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cpuPct?: number; memMB?: number };
+    // cpuPct should be a non-negative number
+    expect(typeof body.cpuPct).toBe('number');
+    expect(body.cpuPct).toBeGreaterThanOrEqual(0);
+    // memMB should be positive (the process is using memory)
+    expect(typeof body.memMB).toBe('number');
+    expect(body.memMB).toBeGreaterThan(0);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns 200 with empty object for a stack with no pids and no containers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'metrics-'));
+    const wt = join(dir, 'wt');
+    await mkdir(wt, { recursive: true });
+
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        stacks: {
+          empty: {
+            path: wt,
+            branch: 'main',
+            ports: {},
+            urls: {},
+            containers: [],
+            network: 'n',
+            logDir: '.levelzero/logs',
+            createdAt: '2026-05-22T00:00:00.000Z',
+          },
+        },
+      }),
+    );
+
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(cfg, new Request('http://h/api/stacks/empty/metrics'));
+    expect(res.status).toBe(200);
+    // With no pids and no containers, both metrics are absent
+    const body = (await res.json()) as { cpuPct?: number; memMB?: number };
+    expect(body.cpuPct).toBeUndefined();
+    expect(body.memMB).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
+  });
+});

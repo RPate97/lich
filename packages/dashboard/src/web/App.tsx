@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePolledStacks } from './hooks/usePolledStacks';
+import { usePolledMetrics } from './hooks/usePolledMetrics';
 import { Sidebar } from './components/Sidebar';
 import { Main } from './components/Main';
 import type { StackView } from '../types';
@@ -44,6 +45,8 @@ export function App() {
     stacks.find((s) => s.key === selectedKey) ?? stacks[0];
   const newestKey = stacks[0]?.key;
 
+  const { metrics } = usePolledMetrics(selected?.key);
+
   return (
     <div className="app">
       <Sidebar
@@ -54,7 +57,7 @@ export function App() {
         arrivedKeys={arrivedKeys}
       />
       {selected ? (
-        <Main stack={selected} />
+        <Main stack={selected} metrics={metrics} />
       ) : (
         <main className="main">
           <div className="empty">

@@ -1,10 +1,17 @@
-import type { StacksResponse, LogEvent } from '../types';
+import type { StacksResponse, LogEvent, StackMetrics } from '../types';
 
 /** Fetch the current stack list from the dashboard server. */
 export async function fetchStacks(): Promise<StacksResponse> {
   const res = await fetch('/api/stacks');
   if (!res.ok) throw new Error(`/api/stacks responded ${res.status}`);
   return (await res.json()) as StacksResponse;
+}
+
+/** Fetch live CPU + memory metrics for one stack, sampled on demand. */
+export async function fetchStackMetrics(key: string): Promise<StackMetrics> {
+  const res = await fetch(`/api/stacks/${encodeURIComponent(key)}/metrics`);
+  if (!res.ok) throw new Error(`/api/stacks/${key}/metrics responded ${res.status}`);
+  return (await res.json()) as StackMetrics;
 }
 
 /**
