@@ -48,6 +48,7 @@ export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
         services: [],
         ports: entry.ports,
         urls: entry.urls,
+        startedBy: entry.startedBy,
       });
       continue;
     }
@@ -79,6 +80,7 @@ export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
       services,
       ports: entry.ports,
       urls: entry.urls,
+      startedBy: entry.startedBy,
     });
   }
   return views;

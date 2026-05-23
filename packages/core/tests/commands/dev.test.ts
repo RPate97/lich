@@ -211,6 +211,74 @@ describe('levelzero dev (unit, mocked compose)', () => {
     expect(calls.filter((c) => c.op === 'up')).toHaveLength(0);
   });
 
+  it('LEV-241: persists startedBy from LICH_STARTED_BY env var when set', async () => {
+    // Arrange: set the env var before the run.
+    process.env['LICH_STARTED_BY'] = 'claude-code';
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    try {
+      const result = (await cmd.run({
+        cwd: projectDir,
+        format: 'json',
+        args: [],
+        flags: {},
+      })) as any;
+      const entry = await registry.get(result.key);
+      expect(entry).toBeDefined();
+      expect(entry!.startedBy).toBe('claude-code');
+    } finally {
+      delete process.env['LICH_STARTED_BY'];
+    }
+  });
+
+  it('LEV-241: startedBy is undefined in registry when LICH_STARTED_BY is unset', async () => {
+    // Ensure the var is absent for this test.
+    delete process.env['LICH_STARTED_BY'];
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    const result = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+    const entry = await registry.get(result.key);
+    expect(entry).toBeDefined();
+    expect(entry!.startedBy).toBeUndefined();
+  });
+
+  it('LEV-241: second run preserves original startedBy even when LICH_STARTED_BY is unset', async () => {
+    // First run with the env var set.
+    process.env['LICH_STARTED_BY'] = 'cursor';
+    const { factory } = makeMockComposeFactory();
+    const cmd = makeDevCommand(() => registry, {
+      getServices: onlyPostgres,
+      composeRunnerFactory: factory,
+    });
+    try {
+      await cmd.run({ cwd: projectDir, format: 'json', args: [], flags: {} });
+    } finally {
+      delete process.env['LICH_STARTED_BY'];
+    }
+
+    // Second run without the env var — attribution must not be overwritten.
+    const result2 = (await cmd.run({
+      cwd: projectDir,
+      format: 'json',
+      args: [],
+      flags: {},
+    })) as any;
+    const entry = await registry.get(result2.key);
+    expect(entry).toBeDefined();
+    expect(entry!.startedBy).toBe('cursor');
+  });
+
   it('appends getPluginOwnedServices entries onto the merged service list (post-LEV-154)', async () => {
     // Simulates how the dispatcher wires `bootPlugins().ownedServices`
     // through to `dev` post-LEV-154 so plugins like `@levelzero/plugin-next`

@@ -27,6 +27,13 @@ export interface StackEntry {
    * `undefined` as "no recorded path" (typically: re-run `dev`).
    */
   composeFile?: string;
+  /**
+   * Agent that started this stack, e.g. "claude-code"; absent / null = manual.
+   * Populated from the `LICH_STARTED_BY` environment variable at `dev` time.
+   * Omitted entirely for manual invocations — `undefined` is the natural
+   * "manual" signal. Existing entries that don't carry the field are manual.
+   */
+  startedBy?: string;
 }
 
 export interface RegistryData {

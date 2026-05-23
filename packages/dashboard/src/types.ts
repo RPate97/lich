@@ -26,6 +26,8 @@ export interface StackView {
   /** Allocated ports for the stack, keyed by port name. */
   ports: Record<string, number>;
   urls: Record<string, string>;
+  /** Agent that started this stack; undefined = manual (LEV-241). */
+  startedBy?: string;
 }
 
 /** Response shape of `GET /api/stacks`. */

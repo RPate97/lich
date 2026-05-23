@@ -460,6 +460,16 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           );
         }
 
+        // LEV-241 — capture the agent identity from the environment. The env
+        // var `LICH_STARTED_BY` is the forward-looking name (lich rename).
+        // Agent harnesses (Claude Code, Cursor, etc.) set this before invoking
+        // the CLI; manual runs leave it unset, and the field is omitted.
+        // On idempotent re-runs we preserve the original `startedBy` so the
+        // attribution isn't overwritten if the env var is absent on the second
+        // invocation (e.g. the user re-runs `dev` from a plain shell).
+        const startedBy: string | undefined =
+          existing?.startedBy ?? process.env['LICH_STARTED_BY'] ?? undefined;
+
         const newEntry: StackEntry = {
           path: stackCtx.worktreePath,
           branch: stackCtx.branch,
@@ -475,6 +485,9 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           // commands (`levelzero compose ps`, etc.) can shell into the same
           // file `dev` wrote without reconstructing the per-worktree path.
           composeFile: bundle.composeFilePath,
+          // LEV-241 — omit the field entirely when absent so the JSON stays
+          // clean and `undefined` remains the natural "manual" signal.
+          ...(startedBy !== undefined ? { startedBy } : {}),
         };
         await reg.upsert(stackCtx.worktreeKey, newEntry);
         return { entry: newEntry, bundle };

@@ -27,7 +27,7 @@ function MainHeader({ stack }: { stack: StackView }) {
           </h1>
         </div>
         <div className="subtitle">
-          <MetaItem label="agent" value="manual" />
+          <MetaItem label="agent" value={stack.startedBy ?? 'manual'} />
           <span className="sep" />
           <MetaItem label="worktree" value={stack.path} />
           <span className="sep" />

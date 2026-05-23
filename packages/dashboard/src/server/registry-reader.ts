@@ -16,6 +16,8 @@ export interface StackEntry {
   logDir: string;
   createdAt: string;
   composeFile?: string;
+  /** Agent that started this stack; absent / undefined = manual (LEV-241). */
+  startedBy?: string;
 }
 
 export interface RegistryData {

@@ -106,4 +106,45 @@ describe('buildStackViews', () => {
     expect(views[0]!.status).toBe('down');
     await rm(wt, { recursive: true, force: true });
   });
+
+  // LEV-241 — agent attribution round-trip tests.
+  it('LEV-241: carries startedBy through to StackView when present', async () => {
+    const views = await buildStackViews({
+      stacks: {
+        abc: {
+          path: '/gone/worktree',
+          branch: 'feat',
+          ports: {},
+          urls: {},
+          containers: [],
+          network: 'n',
+          logDir: '.levelzero/logs',
+          createdAt: '2026-05-21T00:00:00.000Z',
+          startedBy: 'wraith',
+        },
+      },
+    });
+    expect(views).toHaveLength(1);
+    expect(views[0]!.startedBy).toBe('wraith');
+  });
+
+  it('LEV-241: startedBy is undefined in StackView when absent from registry entry', async () => {
+    const views = await buildStackViews({
+      stacks: {
+        abc: {
+          path: '/gone/worktree',
+          branch: 'feat',
+          ports: {},
+          urls: {},
+          containers: [],
+          network: 'n',
+          logDir: '.levelzero/logs',
+          createdAt: '2026-05-21T00:00:00.000Z',
+          // startedBy deliberately omitted — legacy / manual entry.
+        },
+      },
+    });
+    expect(views).toHaveLength(1);
+    expect(views[0]!.startedBy).toBeUndefined();
+  });
 });
