@@ -248,6 +248,41 @@ No global state library — React state suffices at this size.
 - No live merge of `.log` and `.jsonl` sources — the tailer follows the active
   file.
 
+## v1.1 — Stop / Restart actions (LEV-246)
+
+The read-only invariant was intentional in v1 to ship a safe, observable-only
+tool quickly. v1.1 deliberately relaxes it for exactly two mutating actions:
+**Stop** and **Restart**.
+
+### Rationale
+
+`lich restart` (LEV-249) and `lich stop` are the two most common operations a
+developer wants to perform immediately after viewing the dashboard. Without
+buttons, the only path is to leave the browser, find the right terminal, and
+run the CLI manually — defeating the "single pane" goal.
+
+### Safety constraint preserved
+
+The server continues to bind to `127.0.0.1` only (no remote surface). Both
+action endpoints (`POST /api/stacks/:key/restart`, `POST /api/stacks/:key/stop`)
+require an explicit POST and check that the key exists in the registry before
+shelling out. A non-zero CLI exit is returned as an `ActionResult` (not a 500)
+so the UI can display the captured stderr to the developer.
+
+### Implementation
+
+- **`packages/dashboard/src/server/actions.ts`** — `runLichAction(worktreePath,
+  command)` shells `bun run levelzero <command>` with `cwd: worktreePath` and a
+  30-second timeout. Named `runLichAction` so the upcoming `lich` rename (LEV-221)
+  only changes the literal string in one place.
+- **`server.ts`** — two new POST routes delegating to the above; GET on those
+  paths returns 405.
+- **`web/api.ts`** — `restartStack(key)` and `stopStack(key)` POST to the new
+  endpoints and return `ActionResult`.
+- **`web/components/Main.tsx`** — Restart and Stop buttons wired with confirm
+  dialogs, in-flight disabled state (`Restart…` / `Stop…`), and `alert` on
+  failure. After success the existing poll picks up state changes automatically.
+
 ## Open items for the implementation plan
 
 - Confirm the package-build wiring: Vite build of the SPA must run as part of

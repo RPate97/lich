@@ -4,6 +4,7 @@ import { readRegistry } from './registry-reader';
 import { buildStackViews } from './stacks';
 import { LogTailer, resolveLogFile } from './log-tailer';
 import { sampleStackMetrics } from './metrics';
+import { runLichAction } from './actions';
 import type { StacksResponse, LogEvent } from '../types';
 import type { StackEntry } from './registry-reader';
 
@@ -178,6 +179,33 @@ async function handleMergedLogStream(
   });
 }
 
+/**
+ * POST /api/stacks/:key/restart — shell into `levelzero restart` for the
+ * given stack's worktree. Returns 404 if the stack is not in the registry.
+ * Always returns 200 with an ActionResult body — the `ok` field communicates
+ * the CLI outcome; we intentionally don't 500 on a non-zero exit code so the
+ * UI can show the stdout/stderr.
+ */
+async function handleRestart(cfg: ServerConfig, key: string): Promise<Response> {
+  const reg = await readRegistry(cfg.registryPath);
+  const entry = reg.stacks[key];
+  if (!entry) return new Response('unknown stack', { status: 404 });
+  const result = await runLichAction(entry.path, 'restart');
+  return Response.json(result);
+}
+
+/**
+ * POST /api/stacks/:key/stop — shell into `levelzero stop` for the given
+ * stack's worktree. Returns 404 if the stack is not in the registry.
+ */
+async function handleStop(cfg: ServerConfig, key: string): Promise<Response> {
+  const reg = await readRegistry(cfg.registryPath);
+  const entry = reg.stacks[key];
+  if (!entry) return new Response('unknown stack', { status: 404 });
+  const result = await runLichAction(entry.path, 'stop');
+  return Response.json(result);
+}
+
 /** Serve a static file from webDir; returns 404 Response if missing. */
 async function handleStatic(cfg: ServerConfig, pathname: string): Promise<Response> {
   // Default to index.html; strip the leading slash and block path traversal.
@@ -206,6 +234,7 @@ async function handleStatic(cfg: ServerConfig, pathname: string): Promise<Respon
 export async function routeRequest(cfg: ServerConfig, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const { pathname } = url;
+  const method = req.method.toUpperCase();
 
   if (pathname === '/api/stacks') return handleStacks(cfg);
 
@@ -213,6 +242,20 @@ export async function routeRequest(cfg: ServerConfig, req: Request): Promise<Res
   const metricsMatch = pathname.match(/^\/api\/stacks\/([^/]+)\/metrics$/);
   if (metricsMatch) {
     return handleMetrics(cfg, decodeURIComponent(metricsMatch[1]!));
+  }
+
+  // Restart: POST /api/stacks/:key/restart
+  const restartMatch = pathname.match(/^\/api\/stacks\/([^/]+)\/restart$/);
+  if (restartMatch) {
+    if (method !== 'POST') return new Response('method not allowed', { status: 405 });
+    return handleRestart(cfg, decodeURIComponent(restartMatch[1]!));
+  }
+
+  // Stop: POST /api/stacks/:key/stop
+  const stopMatch = pathname.match(/^\/api\/stacks\/([^/]+)\/stop$/);
+  if (stopMatch) {
+    if (method !== 'POST') return new Response('method not allowed', { status: 405 });
+    return handleStop(cfg, decodeURIComponent(stopMatch[1]!));
   }
 
   // Merged multi-service stream: GET /api/stacks/:key/logs
