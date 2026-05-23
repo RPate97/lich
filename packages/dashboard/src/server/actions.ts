@@ -12,26 +12,25 @@ export interface ActionResult {
 }
 
 /**
- * Shell into `levelzero <command>` for a given stack's worktree.
+ * Shell into `lich <command>` for a given stack's worktree.
  *
- * Runs `bun run levelzero <command>` with `cwd` set to `worktreePath` so
+ * Runs `bun run lich <command>` with `cwd` set to `worktreePath` so
  * the CLI picks up the correct stack context. A generous 30-second timeout
  * accommodates `restart` (which is essentially a `dev` cold-start).
  *
  * Never throws — any spawn or process error is captured and returned as
  * `{ ok: false, exitCode: -1, stderr: err.message }`.
  *
- * Named `runLichAction` because the CLI binary will be renamed from
- * `levelzero` to `lich` in a later ticket (LEV-221). Renaming the
- * import-site string from `'levelzero'` to `'lich'` will be the only
- * change required at that point.
+ * Named `runLichAction` after the LEV-221 rename from `levelzero` to
+ * `lich`. The binary it shells out to is the `bin.lich` entry in
+ * `packages/core/package.json`.
  */
 export async function runLichAction(
   worktreePath: string,
   command: 'restart' | 'stop',
 ): Promise<ActionResult> {
   try {
-    const { stdout, stderr } = await execFile('bun', ['run', 'levelzero', command], {
+    const { stdout, stderr } = await execFile('bun', ['run', 'lich', command], {
       cwd: worktreePath,
       timeout: 30_000,
     });

@@ -1,6 +1,6 @@
 ---
 name: vitest
-description: Vitest unit and integration test reference for the levelzero stack
+description: Vitest unit and integration test reference for the lich stack
 applies-to: reference
 ---
 
@@ -9,7 +9,7 @@ applies-to: reference
 Vitest runs every non-browser test in the repo. Configs live next to the code
 they test: `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, and
 `packages/core/vitest.config.ts`. Run the full suite via
-`levelzero test unit` or `levelzero test integration`.
+`lich test unit` or `lich test integration`.
 
 ## Test layout
 
@@ -29,7 +29,7 @@ they test: `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, and
   across files.
 - Mock the Prisma client per-test with `vi.mock('@/db', () => ({ db: ... }))`
   for unit tests. Reach for the real database only in integration tests run
-  via `levelzero test integration`, which boots the dev Postgres first.
+  via `lich test integration`, which boots the dev Postgres first.
 
 ## Snapshots
 

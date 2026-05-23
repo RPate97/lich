@@ -66,7 +66,7 @@ export interface GenListResult {
 }
 
 /**
- * Build `levelzero gen`. The unified codegen entrypoint (LEV-124): walks every
+ * Build `lich gen`. The unified codegen entrypoint (LEV-124): walks every
  * generator the plugin registry contributed (or just the subset named by
  * `--only`) and reports per-id status.
  *
@@ -307,7 +307,7 @@ function flagString(value: string | boolean | undefined): string | undefined {
 }
 
 /**
- * Render `levelzero gen` output as a status table:
+ * Render `lich gen` output as a status table:
  *
  *   [OK] api-client (4 files)
  *   [SKIP] prisma: no prisma/schema.prisma found

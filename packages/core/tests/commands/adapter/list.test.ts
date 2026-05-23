@@ -19,7 +19,7 @@ function ctx(cwd: string) {
   return { cwd, format: 'json' as const, args: [], flags: {} };
 }
 
-describe('levelzero adapter list', () => {
+describe('lich adapter list', () => {
   it('exports a command named "adapter.list"', () => {
     expect(adapterListCommand.name).toBe('adapter.list');
     expect(typeof adapterListCommand.describe).toBe('string');
@@ -33,13 +33,13 @@ describe('levelzero adapter list', () => {
     expect(Array.isArray(result.adapters)).toBe(true);
     // After Plan 14 the built-in registry is empty — every adapter is now
     // contributed by a plugin and only shows up when loaded via config:
-    //   - orm/prisma          → @levelzero/plugin-prisma
-    //   - auth/better-auth    → @levelzero/plugin-better-auth
-    //   - ui/shadcn           → @levelzero/plugin-shadcn
-    //   - browser/playwright  → @levelzero/plugin-playwright
-    //   - backend/hono        → @levelzero/plugin-hono
-    //   - frontend/typed-client → @levelzero/plugin-typed-client
-    //   - portless            → @levelzero/plugin-portless
+    //   - orm/prisma          → @lich/plugin-prisma
+    //   - auth/better-auth    → @lich/plugin-better-auth
+    //   - ui/shadcn           → @lich/plugin-shadcn
+    //   - browser/playwright  → @lich/plugin-playwright
+    //   - backend/hono        → @lich/plugin-hono
+    //   - frontend/typed-client → @lich/plugin-typed-client
+    //   - portless            → @lich/plugin-portless
     expect(result.adapters).toEqual([]);
   });
 

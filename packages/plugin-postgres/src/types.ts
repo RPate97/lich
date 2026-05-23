@@ -1,15 +1,15 @@
 /**
- * Local type re-declarations the plugin needs from `@levelzero/core`.
+ * Local type re-declarations the plugin needs from `@lich/core`.
  *
- * Why duplicate: the worktree's `node_modules/@levelzero/core` may resolve to
+ * Why duplicate: the worktree's `node_modules/@lich/core` may resolve to
  * a sibling/parent project's copy in shared-cache workspaces (e.g. when
  * Bun/Turbo dedup across worktrees), so type-only imports against unreleased
  * additions to the core barrel can silently target the older sibling. Keeping
  * these structural copies inside the plugin lets the package typecheck against
- * its own source regardless of how `@levelzero/core` resolves at install time.
+ * its own source regardless of how `@lich/core` resolves at install time.
  *
  * The shapes mirror `packages/core/src/services/types.ts` exactly — `pgService`
- * is consumed elsewhere as a `DockerService` from `@levelzero/core` (those
+ * is consumed elsewhere as a `DockerService` from `@lich/core` (those
  * call sites already import the canonical version, structural compatibility
  * is enough).
  */

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { bootPlugins } from '../../src/plugins/boot';
-import type { LevelzeroConfig } from '../../src/config';
+import type { LichConfig } from '../../src/config';
 import type { Plugin } from '../../src/plugins/types';
 
 const PROJECT_ROOT = '/tmp/lz-envsource-wiring-test';
 
 describe('bootPlugins — EnvSource wiring', () => {
   it('exposes an EnvSourceRegistry on BootResult', async () => {
-    const result = await bootPlugins({} as LevelzeroConfig, PROJECT_ROOT);
+    const result = await bootPlugins({} as LichConfig, PROJECT_ROOT);
     expect(result.envSources).toBeDefined();
     expect(result.envSources.listNamed()).toEqual([]);
     expect(result.envSources.listBulk()).toEqual([]);
@@ -15,7 +15,7 @@ describe('bootPlugins — EnvSource wiring', () => {
 
   it('composes the fully-qualified key from the plugin namespace when present', async () => {
     const postgres: Plugin<'postgres'> = {
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'postgres',
       version: '0.0.1',
       register(api) {
@@ -33,7 +33,7 @@ describe('bootPlugins — EnvSource wiring', () => {
     expect(entry?.namespace).toBe('postgres');
     expect(entry?.name).toBe('url');
     expect(entry?.fullKey).toBe('postgres.url');
-    expect(entry?.pluginName).toBe('@levelzero/plugin-postgres');
+    expect(entry?.pluginName).toBe('@lich/plugin-postgres');
     expect(entry?.source.protocol).toBe('postgres');
   });
 
@@ -55,7 +55,7 @@ describe('bootPlugins — EnvSource wiring', () => {
 
   it('wires bulk sources under the plugin namespace', async () => {
     const dotenv: Plugin<'dotenv'> = {
-      name: '@levelzero/plugin-dotenv',
+      name: '@lich/plugin-dotenv',
       namespace: 'dotenv',
       version: '0.0.1',
       register(api) {
@@ -68,12 +68,12 @@ describe('bootPlugins — EnvSource wiring', () => {
     const entry = result.envSources.getBulk('dotenv');
     expect(entry).toBeDefined();
     expect(entry?.namespace).toBe('dotenv');
-    expect(entry?.pluginName).toBe('@levelzero/plugin-dotenv');
+    expect(entry?.pluginName).toBe('@lich/plugin-dotenv');
   });
 
   it('lets two plugins with different namespaces register the same short name', async () => {
     const postgres: Plugin<'postgres'> = {
-      name: '@levelzero/plugin-postgres',
+      name: '@lich/plugin-postgres',
       namespace: 'postgres',
       version: '0.0.1',
       register(api) {
@@ -81,7 +81,7 @@ describe('bootPlugins — EnvSource wiring', () => {
       },
     };
     const mysql: Plugin<'mysql'> = {
-      name: '@levelzero/plugin-mysql',
+      name: '@lich/plugin-mysql',
       namespace: 'mysql',
       version: '0.0.1',
       register(api) {

@@ -1,6 +1,6 @@
 # Testing tiers
 
-levelzero has three test tiers. The right tier for new code depends on which
+lich has three test tiers. The right tier for new code depends on which
 seam you're exercising and what kind of regression you want to catch.
 
 ## 1. Unit (`tests/**/*.test.ts`)
@@ -32,7 +32,7 @@ one assertion).
 without paying the full dogfood-scaffold cost. The existing
 `bin.plan14.smoke.e2e.test.ts` is in this tier — it walks the canonical
 user flow but cheats on `bun install` by scaffolding inside `packages/`
-so the workspace `node_modules/@levelzero/*` symlinks resolve bare imports.
+so the workspace `node_modules/@lich/*` symlinks resolve bare imports.
 
 **When to write one:** a command-level change where you want to exercise the
 registered command's handler against a real registry + real filesystem.
@@ -48,9 +48,9 @@ pattern.
 
 1. Scaffolds a real project into an OS tmpdir (NOT under `packages/`).
 2. Runs a real `bun install` against `file:` overrides pointing at the
-   workspace packages. After this step, `node_modules/.bin/levelzero` exists
+   workspace packages. After this step, `node_modules/.bin/lich` exists
    and the project tree is structurally identical to what a `bunx
-   @levelzero/create-stack-v0 my-app` user would see after their first
+   @lich/create-stack-v0 my-app` user would see after their first
    `bun install`.
 3. Exercises the CLI as a real subprocess from the scaffolded project's cwd.
 4. Drives the served stack with a real browser (playwright).
@@ -97,7 +97,7 @@ ten unit tests around a problem that only manifests in a real install.
 
 Build on `packages/core/tests/e2e/_helpers/*`:
 
-* `scaffold.ts` — spawns `@levelzero/create-stack-v0`.
+* `scaffold.ts` — spawns `@lich/create-stack-v0`.
 * `install.ts` — writes `file:` overrides, runs `bun install`.
 * `cli.ts` — `runCli(projectDir, args)` for subprocess invocation; also a
   `runCliJson` convenience that parses JSON.

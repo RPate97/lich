@@ -80,7 +80,7 @@ function ensureSignalCleanupRegistered(): void {
  * Read the PID recorded in a lock file. Returns `undefined` if the file
  * is missing, empty, or contains something that doesn't parse as a
  * positive integer. We tolerate the empty/junk case because lock files
- * written by pre-LEV-199 levelzero are zero-byte — we want to treat
+ * written by pre-LEV-199 lich are zero-byte — we want to treat
  * those as stale-but-recoverable rather than crashing.
  */
 async function readLockPid(lockPath: string): Promise<number | undefined> {
@@ -138,7 +138,7 @@ async function reclaimIfStale(lockPath: string): Promise<boolean> {
   }
   // eslint-disable-next-line no-console
   console.warn(
-    `levelzero: reclaimed stale lock ${lockPath} (held by dead pid ${pid})`,
+    `lich: reclaimed stale lock ${lockPath} (held by dead pid ${pid})`,
   );
   return true;
 }

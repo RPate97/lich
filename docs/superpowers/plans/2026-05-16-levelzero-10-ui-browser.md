@@ -1,6 +1,6 @@
 # Plan 10 — UI commands + shadcn + browser adapter
 
-**Goal:** Define `UIAdapter` (shadcn impl) and `BrowserAdapter` (Playwright impl). Ship `levelzero ui add / ui list / screenshot / visual diff`.
+**Goal:** Define `UIAdapter` (shadcn impl) and `BrowserAdapter` (Playwright impl). Ship `lich ui add / ui list / screenshot / visual diff`.
 
 **Architecture:**
 - `UIAdapter`: shell-out to `npx shadcn` CLI in the apps/web subdir. v0 = thin wrapper; no shadcn-specific logic in the orchestrator.
@@ -53,8 +53,8 @@ Wave 1 + 2 are parallel pairs. Wave 3 + 4 are sequential single.
 
 ## Verification
 
-- `levelzero ui add button` shells out to shadcn against `apps/web/` (or fails clearly if absent — plan 11 produces apps/web).
-- `levelzero ui list` reads installed components from components.json.
-- `levelzero screenshot http://localhost:<test-port>` produces a PNG.
-- `levelzero visual diff <baseline.png> <current.png>` returns a diff count and an optional --threshold gate.
+- `lich ui add button` shells out to shadcn against `apps/web/` (or fails clearly if absent — plan 11 produces apps/web).
+- `lich ui list` reads installed components from components.json.
+- `lich screenshot http://localhost:<test-port>` produces a PNG.
+- `lich visual diff <baseline.png> <current.png>` returns a diff count and an optional --threshold gate.
 - Full suite green; tsc clean.

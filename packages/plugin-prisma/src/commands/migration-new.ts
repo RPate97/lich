@@ -1,16 +1,16 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '@levelzero/core/errors';
-import { Registry } from '@levelzero/core/registry';
-import { resolveStackContext } from '@levelzero/core/services/context';
-import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import type { Command, ORMAdapter } from '@levelzero/core';
+import { CLIError } from '@lich/core/errors';
+import { Registry } from '@lich/core/registry';
+import { resolveStackContext } from '@lich/core/services/context';
+import type { AdapterRegistry } from '@lich/core/adapters/registry';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
+import type { Command, ORMAdapter } from '@lich/core';
 import { prismaAdapter } from '../adapter';
 import { resolveDatabaseUrl } from './database-url';
 
 export interface DbMigrationNewOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /**
    * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
@@ -32,8 +32,8 @@ export interface DbMigrationNewOptions {
 }
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 /**
@@ -48,7 +48,7 @@ function defaultRegistry(): Registry {
 const MIGRATION_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 /**
- * Build `levelzero db migration new <name>`. Validates `<name>` as snake_case,
+ * Build `lich db migration new <name>`. Validates `<name>` as snake_case,
  * resolves the current worktree's stack, asks the EnvSource registry for
  * `DATABASE_URL`, then asks the ORM adapter to scaffold a new migration. For
  * prisma this shells out to `prisma migrate dev --create-only`, producing
@@ -78,7 +78,7 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
         throw new CLIError(
           'CONFIG_INVALID',
           'missing required <name> argument',
-          'usage: levelzero db migration new <snake_case_name>',
+          'usage: lich db migration new <snake_case_name>',
         );
       }
       if (!MIGRATION_NAME_RE.test(rawName)) {
@@ -95,7 +95,7 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `levelzero dev` first to bring postgres up',
+          'run `lich dev` first to bring postgres up',
         );
       }
 

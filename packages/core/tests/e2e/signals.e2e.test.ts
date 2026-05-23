@@ -5,14 +5,14 @@
  *
  * Both bugs were fixed in the unit tier, but the unit tests stub out spawn
  * + signal delivery — they prove "the handlers fire and call the right
- * cleanups in isolation," not "a real `levelzero dev` process actually
+ * cleanups in isolation," not "a real `lich dev` process actually
  * cleans up when the user hits Ctrl-C." This file closes that gap by
  * spawning a real subprocess (`spawnCli`) and sending a real `SIGINT`.
  *
  * Three tests:
  *
  *   1. LEV-199 stale-lock reclaim (no docker): pre-write a lock file
- *      pointing at a dead PID, run `levelzero stop --json` against an empty
+ *      pointing at a dead PID, run `lich stop --json` against an empty
  *      registry. `acquireLock`'s reclaim path should unlink the stale lock,
  *      proceed, and release cleanly. Asserts lock file absent after.
  *
@@ -58,7 +58,7 @@ const PROJECT_NAME = 'demo';
 
 let tmpdir: string;
 let projectDir: string;
-/** Per-suite isolated `LEVELZERO_HOME` so the test never touches the user's real registry. */
+/** Per-suite isolated `LICH_HOME` so the test never touches the user's real registry. */
 let homeDir: string;
 let registryPath: string;
 let registryLockPath: string;
@@ -69,13 +69,13 @@ let registryLockPath: string;
 let composeProjectName: string | null = null;
 
 /**
- * Resolve the host-context env we hand to the spawned `levelzero` process.
- * `LEVELZERO_HOME` redirects `registry.json` to our scratch dir. `TEST_RUN_ID`
+ * Resolve the host-context env we hand to the spawned `lich` process.
+ * `LICH_HOME` redirects `registry.json` to our scratch dir. `TEST_RUN_ID`
  * (inherited from the vitest globalSetup) keeps compose names namespaced so
  * a sibling agent running the same test can't trample us.
  */
 function spawnEnv(): Record<string, string> {
-  return { LEVELZERO_HOME: homeDir };
+  return { LICH_HOME: homeDir };
 }
 
 /**
@@ -129,7 +129,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
     tmpdir = realpathSync(mkdtempSync(join(osTmpdir(), 'lz-e2e-signals-')));
     homeDir = join(tmpdir, 'home');
     mkdirSync(homeDir, { recursive: true });
-    registryPath = join(homeDir, '.levelzero', 'registry.json');
+    registryPath = join(homeDir, '.lich', 'registry.json');
     registryLockPath = `${registryPath}.lock`;
 
     const { projectDir: dir } = await scaffoldProject({
@@ -139,7 +139,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
     projectDir = dir;
 
     // Real `bun install` against the workspace overrides so
-    // `node_modules/.bin/levelzero` is materialized — `spawnCli` resolves
+    // `node_modules/.bin/lich` is materialized — `spawnCli` resolves
     // that bin directly (matching what the user types).
     await installDeps(projectDir);
   }, 240_000);
@@ -188,7 +188,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
   it('LEV-199 regression: stale lock with dead PID is reclaimed (no docker)', () => {
     // Make sure the registry dir exists — `stop` would create it on its
     // own, but we need it to drop the stale lock first.
-    mkdirSync(join(homeDir, '.levelzero'), { recursive: true });
+    mkdirSync(join(homeDir, '.lich'), { recursive: true });
     // Write the stale lock pointing at a deliberately-dead PID. The reclaim
     // logic in `registry-lock.ts` calls `process.kill(pid, 0)` and treats
     // ESRCH as "stale, reclaim ok." PID 99999999 has never existed on any
@@ -220,14 +220,14 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
   // ---------------------------------------------------------------------------
   // Test 2 — LEV-199 SIGINT during `dev` releases the lock (docker-gated).
   //
-  // This is the proper signal-handler path: the levelzero process IS
+  // This is the proper signal-handler path: the lich process IS
   // holding the lock when SIGINT arrives, and the registered cleanup
   // (`releaseAllLocksSync` in `registry-lock.ts`) must synchronously
   // unlink it before the process exits.
   //
   // Strategy: spawn `dev --json`, poll for the lock file to appear (it's
   // written inside `acquireLock` immediately after the file is opened, with
-  // the levelzero process's PID as the content), send SIGINT, wait for
+  // the lich process's PID as the content), send SIGINT, wait for
   // exit, assert the lock is gone. We poll the FILE rather than waiting on
   // stdout because dev's JSON-mode stdout only emits at the very end (after
   // teardown), so there's no in-flight signal we could match on.
@@ -267,7 +267,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
             if (!existsSync(registryLockPath)) return false;
             // Make sure the PID inside is the child's (not a leftover from
             // some other process). Defensive — protects against a stray
-            // lock file written by an unrelated levelzero invocation.
+            // lock file written by an unrelated lich invocation.
             const raw = readFileSync(registryLockPath, 'utf8').trim();
             const lockPid = Number(raw);
             return Number.isFinite(lockPid) && lockPid === spawned.proc.pid;
@@ -350,7 +350,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
       // partially-brought-up compose stack behind (it interrupts `docker
       // compose up` mid-flight, and the LEV-199 cleanup only handles
       // lock-file cleanup — compose containers are out of scope for the
-      // default-mode SIGINT path, by design). Run a real `levelzero stop`
+      // default-mode SIGINT path, by design). Run a real `lich stop`
       // to sweep any stragglers BEFORE we start a fresh `dev --live`, so
       // the registry entry / port allocation / docker network state is
       // pristine.
@@ -395,14 +395,14 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
               const keys = Object.keys(data.stacks ?? {});
               if (keys.length === 0) return false;
               const key = keys[0]!;
-              // composeProjectName is `levelzero-<test-prefix>-<key>` —
+              // composeProjectName is `lich-<test-prefix>-<key>` —
               // see `compose/naming.ts`. We reproduce the format here
               // rather than importing the function so this test stays
               // decoupled from the worktree's source tree (it runs
-              // against the installed `node_modules/@levelzero/core`).
+              // against the installed `node_modules/@lich/core`).
               const prefix = process.env.TEST_RUN_ID
-                ? `levelzero-test-${process.env.TEST_RUN_ID}-`
-                : 'levelzero-';
+                ? `lich-test-${process.env.TEST_RUN_ID}-`
+                : 'lich-';
               projectNameLocal = `${prefix}${key}`;
               composeProjectName = projectNameLocal;
               return true;
@@ -440,7 +440,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
         //       child exit code to 0 — confirmed by code inspection of
         //       the pinned version in `node_modules`).
         //
-        //   (b) levelzero's own shared `signal-handlers.ts` cleanup that
+        //   (b) lich's own shared `signal-handlers.ts` cleanup that
         //       runs `teardownLiveStack` → `docker compose down`.
         //
         // The race between bin's `process.exit(0)` (after dev's run()

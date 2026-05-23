@@ -194,7 +194,7 @@ your own? Read [docs/EXTENSION.md](docs/EXTENSION.md).
 ```
 
 **Notes:**
-- "Typed api client" describes by function not by current implementation name (currently homegrown `@levelzero/plugin-typed-client`; LEV-225 plans to replace with `@hey-api/openapi-ts`) — the description survives the swap.
+- "Typed api client" describes by function not by current implementation name (currently homegrown `@lich/plugin-typed-client`; LEV-225 plans to replace with `@hey-api/openapi-ts`) — the description survives the swap.
 - Examples in the close (Temporal, Redis, Cloudflare tunnel) reference real planned plugins (LEV-227, existing plugin-redis, LEV-231) without falsely claiming they ship in v0.
 
 ### §6 — Extending lich
@@ -336,7 +336,7 @@ a proper CONTRIBUTING.md.
 - All eight sections present in the order specified
 - Voice consistent throughout (confident, with the flippant scaling moment + escape-hatch parenthetical)
 - All links resolve to existing docs
-- No "@levelzero" references anywhere (post-rename or paired with the rename)
+- No "@lich" references anywhere (post-rename or paired with the rename)
 - No badges
 - License placeholder is explicit, not vague
 

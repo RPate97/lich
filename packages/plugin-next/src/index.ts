@@ -1,10 +1,10 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { webService } from './service';
 
 export { webService } from './service';
 
 /**
- * Options for the `@levelzero/plugin-next` factory. The `namespace` override
+ * Options for the `@lich/plugin-next` factory. The `namespace` override
  * exists so multi-instance setups can co-exist.
  */
 export interface NextOptions {
@@ -13,8 +13,8 @@ export interface NextOptions {
 }
 
 /**
- * `@levelzero/plugin-next` — extracts the Next.js `web` owned-service builtin
- * out of `@levelzero/core` (LEV-154).
+ * `@lich/plugin-next` — extracts the Next.js `web` owned-service builtin
+ * out of `@lich/core` (LEV-154).
  *
  * Contributes a single `web` `OwnedService` via `api.addOwnedService`, with
  * the same shape the legacy core builtin published: `apps/web` working
@@ -28,10 +28,10 @@ export interface NextOptions {
  * process sees `http://localhost:<allocated-port>` while a co-located compose
  * service sees `http://web:3000` (compose DNS).
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import next from '@levelzero/plugin-next';
+ * import next from '@lich/plugin-next';
  *
  * export default {
  *   plugins: [next()],
@@ -46,7 +46,7 @@ export default function next(opts: NextOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-next',
+    name: '@lich/plugin-next',
     namespace: (opts.namespace ?? 'next') as 'next',
     version: '0.1.0',
 

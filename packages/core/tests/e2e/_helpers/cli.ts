@@ -1,11 +1,11 @@
 /**
  * E2E harness — CLI runner.
  *
- * Spawns the `levelzero` binary as a real subprocess from within the
- * scaffolded project. After `installDeps` runs, `node_modules/.bin/levelzero`
+ * Spawns the `lich` binary as a real subprocess from within the
+ * scaffolded project. After `installDeps` runs, `node_modules/.bin/lich`
  * symlinks to the workspace `packages/core/src/bin.ts` (because bun runs
  * `.ts` directly), which is the entry point real users hit when they type
- * `levelzero ...` in their project directory.
+ * `lich ...` in their project directory.
  *
  * We intentionally do NOT import the bin module directly. The whole point
  * of LEV-198 is to catch the wiring bugs that unit tests miss — bin module
@@ -50,7 +50,7 @@ export class CliTimeoutError extends Error {
   readonly result: CliResult;
   constructor(args: string[], timeoutMs: number, result: CliResult) {
     super(
-      `levelzero ${args.join(' ')} timed out after ${timeoutMs}ms\n` +
+      `lich ${args.join(' ')} timed out after ${timeoutMs}ms\n` +
         `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
     );
     this.name = 'CliTimeoutError';
@@ -59,12 +59,12 @@ export class CliTimeoutError extends Error {
 }
 
 /**
- * Run `bun run levelzero <args>` from within `projectDir`.
+ * Run `bun run lich <args>` from within `projectDir`.
  *
- * Why `bun run levelzero` and not the .bin shim directly: bun's `run`
- * command picks up the project-local `node_modules/.bin/levelzero` first,
- * matching what a user would see if they typed `bun levelzero ...`. Also
- * gives us a stable invocation that works whether levelzero is installed
+ * Why `bun run lich` and not the .bin shim directly: bun's `run`
+ * command picks up the project-local `node_modules/.bin/lich` first,
+ * matching what a user would see if they typed `bun lich ...`. Also
+ * gives us a stable invocation that works whether lich is installed
  * as a local dependency or globally.
  */
 export function runCli(
@@ -76,12 +76,12 @@ export function runCli(
   const env = { ...process.env, ...opts.env };
 
   // Prefer the local bin if present (post-install path). The fallback
-  // `bun run levelzero …` branch is defensive scaffolding: every e2e code
+  // `bun run lich …` branch is defensive scaffolding: every e2e code
   // path goes through `installDeps()` first, which materializes
-  // `node_modules/.bin/levelzero` (and asserts on it). If the .bin shim is
+  // `node_modules/.bin/lich` (and asserts on it). If the .bin shim is
   // somehow missing here, we'd rather fall back gracefully than crash on a
   // not-found exec — but in practice this branch is unreachable today.
-  const localBin = join(projectDir, 'node_modules', '.bin', 'levelzero');
+  const localBin = join(projectDir, 'node_modules', '.bin', 'lich');
   let command: string;
   let spawnArgs: string[];
   if (existsSync(localBin)) {
@@ -89,9 +89,9 @@ export function runCli(
     spawnArgs = args;
   } else {
     // Resolve the workspace bin path through node_modules — bun picks up
-    // the `bin` field from the resolved `@levelzero/core/package.json`.
+    // the `bin` field from the resolved `@lich/core/package.json`.
     command = 'bun';
-    spawnArgs = ['run', 'levelzero', ...args];
+    spawnArgs = ['run', 'lich', ...args];
   }
 
   const r: SpawnSyncReturns<string> = spawnSync(command, spawnArgs, {
@@ -132,7 +132,7 @@ export function runCliJson<T = unknown>(
   }
   if (result.exitCode !== 0) {
     throw new Error(
-      `levelzero ${args.join(' ')} exited ${result.exitCode}\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
+      `lich ${args.join(' ')} exited ${result.exitCode}\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
     );
   }
   let json: T;
@@ -143,7 +143,7 @@ export function runCliJson<T = unknown>(
     // renderer can show the underlying parse error position alongside our
     // wrapping message (M11 in LEV-206).
     throw new Error(
-      `levelzero ${args.join(' ')} did not emit valid JSON: ${(err as Error).message}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      `lich ${args.join(' ')} did not emit valid JSON: ${(err as Error).message}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       { cause: err as Error },
     );
   }
@@ -204,9 +204,9 @@ export interface SpawnedCli {
 }
 
 /**
- * Spawn `levelzero <args>` from within `projectDir` as a backgrounded child
+ * Spawn `lich <args>` from within `projectDir` as a backgrounded child
  * process. Same binary-resolution rules as `runCli` (prefer the local
- * `.bin/levelzero` symlink, fall back to `bun run levelzero`).
+ * `.bin/lich` symlink, fall back to `bun run lich`).
  *
  * The returned handle has the live `stdoutChunks` / `stderrChunks` arrays,
  * plus `waitForStdout`/`waitForStderr` matchers and a `kill` helper that
@@ -224,7 +224,7 @@ export function spawnCli(
   opts: SpawnCliOptions = {},
 ): SpawnedCli {
   const env = { ...process.env, ...opts.env };
-  const localBin = join(projectDir, 'node_modules', '.bin', 'levelzero');
+  const localBin = join(projectDir, 'node_modules', '.bin', 'lich');
   let command: string;
   let spawnArgs: string[];
   if (existsSync(localBin)) {
@@ -232,7 +232,7 @@ export function spawnCli(
     spawnArgs = args;
   } else {
     command = 'bun';
-    spawnArgs = ['run', 'levelzero', ...args];
+    spawnArgs = ['run', 'lich', ...args];
   }
 
   const proc = spawn(command, spawnArgs, {

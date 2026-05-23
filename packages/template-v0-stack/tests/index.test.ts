@@ -3,7 +3,7 @@ import { statSync, existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { templateRoot } from '../src/index';
 
-describe('@levelzero/template-v0-stack', () => {
+describe('@lich/template-v0-stack', () => {
   it('exports an absolute path', () => {
     expect(typeof templateRoot).toBe('string');
     expect(isAbsolute(templateRoot)).toBe(true);
@@ -19,7 +19,7 @@ describe('@levelzero/template-v0-stack', () => {
     // package.json, the CLI config, the CLAUDE.md, and the apps/ subtree.
     const expected = [
       'package.json',
-      'levelzero.config.ts',
+      'lich.config.ts',
       'CLAUDE.md',
       'tsconfig.json',
       'apps/web/package.json',
@@ -29,7 +29,7 @@ describe('@levelzero/template-v0-stack', () => {
       // and into a sibling `prisma.config.ts`. Both files must ship.
       'prisma.config.ts',
       // LEV-195: the v0 template ships a basic landing page so the very
-      // first request to the web URL after `levelzero dev` renders a real
+      // first request to the web URL after `lich dev` renders a real
       // page instead of a 404.
       'apps/web/src/app/page.tsx',
       'apps/web/src/app/layout.tsx',
@@ -41,7 +41,7 @@ describe('@levelzero/template-v0-stack', () => {
   });
 
   it('ships a landing page that checks api health and points at next steps (LEV-195)', () => {
-    // Without this page, the first thing a user sees after `levelzero dev` is
+    // Without this page, the first thing a user sees after `lich dev` is
     // Next.js's default 404 on a black background — looks broken. The landing
     // page must (a) be a server component that fetches the api's `/api/health`
     // route, (b) reference the editable file path so users know where to go,
@@ -62,8 +62,8 @@ describe('@levelzero/template-v0-stack', () => {
       'landing page must name itself so users know which file to edit',
     ).toBe(true);
     expect(
-      page.includes('levelzero --help'),
-      'landing page must point users at `levelzero --help` for command discovery',
+      page.includes('lich --help'),
+      'landing page must point users at `lich --help` for command discovery',
     ).toBe(true);
 
     // The api app must actually expose `/api/health` so the page's health
@@ -78,23 +78,23 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
-  it('levelzero.config.ts imports and declares every v0 plugin', () => {
-    // The scaffolded config is what makes a fresh `levelzero init` project
+  it('lich.config.ts imports and declares every v0 plugin', () => {
+    // The scaffolded config is what makes a fresh `lich init` project
     // actually runnable — after Tier 5 the core ships zero built-in adapters,
     // so every slot has to be filled by a plugin declared here. Guard against
     // accidental drops/renames with a literal string match on each import line
     // plus the `plugins:` array entry.
-    const config = readFileSync(join(templateRoot, 'levelzero.config.ts'), 'utf8');
+    const config = readFileSync(join(templateRoot, 'lich.config.ts'), 'utf8');
     const expectedPlugins: Array<{ binding: string; pkg: string }> = [
-      { binding: 'postgres', pkg: '@levelzero/plugin-postgres' },
-      { binding: 'prisma', pkg: '@levelzero/plugin-prisma' },
-      { binding: 'hono', pkg: '@levelzero/plugin-hono' },
-      { binding: 'typedClient', pkg: '@levelzero/plugin-typed-client' },
-      { binding: 'betterAuth', pkg: '@levelzero/plugin-better-auth' },
-      { binding: 'shadcn', pkg: '@levelzero/plugin-shadcn' },
-      { binding: 'next', pkg: '@levelzero/plugin-next' },
-      { binding: 'vitest', pkg: '@levelzero/plugin-vitest' },
-      { binding: 'playwright', pkg: '@levelzero/plugin-playwright' },
+      { binding: 'postgres', pkg: '@lich/plugin-postgres' },
+      { binding: 'prisma', pkg: '@lich/plugin-prisma' },
+      { binding: 'hono', pkg: '@lich/plugin-hono' },
+      { binding: 'typedClient', pkg: '@lich/plugin-typed-client' },
+      { binding: 'betterAuth', pkg: '@lich/plugin-better-auth' },
+      { binding: 'shadcn', pkg: '@lich/plugin-shadcn' },
+      { binding: 'next', pkg: '@lich/plugin-next' },
+      { binding: 'vitest', pkg: '@lich/plugin-vitest' },
+      { binding: 'playwright', pkg: '@lich/plugin-playwright' },
     ];
     for (const { binding, pkg } of expectedPlugins) {
       expect(
@@ -111,17 +111,17 @@ describe('@levelzero/template-v0-stack', () => {
     }
   });
 
-  it('levelzero.config.ts uses defineConfig and declares an envInjection block (LEV-187)', () => {
+  it('lich.config.ts uses defineConfig and declares an envInjection block (LEV-187)', () => {
     // Post-LEV-187 every v0 plugin publishes its env values through
     // `api.addEnvSource()`, so the scaffolded config maps DATABASE_URL /
     // API_URL / WEB_URL to the qualified source keys exposed by the
     // postgres / hono / next plugins. `defineConfig` is the typed-authoring
     // wrapper (LEV-180) that flows the plugin tuple types into autocomplete
     // on these values.
-    const config = readFileSync(join(templateRoot, 'levelzero.config.ts'), 'utf8');
+    const config = readFileSync(join(templateRoot, 'lich.config.ts'), 'utf8');
     expect(
-      config.includes(`import { defineConfig } from '@levelzero/core';`),
-      'expected defineConfig import from @levelzero/core',
+      config.includes(`import { defineConfig } from '@lich/core';`),
+      'expected defineConfig import from @lich/core',
     ).toBe(true);
     expect(
       /export default defineConfig\(/.test(config),
@@ -146,7 +146,7 @@ describe('@levelzero/template-v0-stack', () => {
     }
   });
 
-  it('api + web bind to the levelzero-allocated ports via env (LEV-200)', () => {
+  it('api + web bind to the lich-allocated ports via env (LEV-200)', () => {
     // The api template must read `API_PORT` from env and pass it to bun's
     // `port` export on the default export object so the runtime binds there.
     // Default must NOT be 3000 — that's next dev's port; keep them disjoint
@@ -157,7 +157,7 @@ describe('@levelzero/template-v0-stack', () => {
     );
     expect(
       apiIndex.includes('API_PORT'),
-      'apps/api/src/index.ts must read API_PORT from process.env so levelzero dev can bind it',
+      'apps/api/src/index.ts must read API_PORT from process.env so lich dev can bind it',
     ).toBe(true);
     expect(
       /port\s*:/.test(apiIndex) || /port\s*,/.test(apiIndex),
@@ -180,22 +180,22 @@ describe('@levelzero/template-v0-stack', () => {
 
   it('package.json declares every v0 plugin as a dependency', () => {
     // Mirror of the config test: every plugin imported by the scaffolded
-    // levelzero.config.ts must also be a dependency so `bun install` resolves
+    // lich.config.ts must also be a dependency so `bun install` resolves
     // it (via workspace symlink in the monorepo, via npm in a real project).
     const pkg = JSON.parse(
       readFileSync(join(templateRoot, 'package.json'), 'utf8'),
     ) as { dependencies?: Record<string, string> };
     const deps = pkg.dependencies ?? {};
     const expected = [
-      '@levelzero/plugin-postgres',
-      '@levelzero/plugin-prisma',
-      '@levelzero/plugin-hono',
-      '@levelzero/plugin-typed-client',
-      '@levelzero/plugin-better-auth',
-      '@levelzero/plugin-shadcn',
-      '@levelzero/plugin-next',
-      '@levelzero/plugin-vitest',
-      '@levelzero/plugin-playwright',
+      '@lich/plugin-postgres',
+      '@lich/plugin-prisma',
+      '@lich/plugin-hono',
+      '@lich/plugin-typed-client',
+      '@lich/plugin-better-auth',
+      '@lich/plugin-shadcn',
+      '@lich/plugin-next',
+      '@lich/plugin-vitest',
+      '@lich/plugin-playwright',
     ];
     for (const name of expected) {
       expect(deps[name], `expected ${name} in dependencies`).toBeTruthy();
@@ -233,12 +233,12 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
-  it('package.json declares @levelzero/core as a direct devDependency (LEV-205)', () => {
-    // LEV-205: the template lists `@levelzero/plugin-*` but used to omit
-    // `@levelzero/core`. Plugins all depend on core transitively, but bun
-    // won't materialize a top-level `node_modules/.bin/levelzero` from a
-    // transitive — so `bun run levelzero --help` would die with "Script not
-    // found 'levelzero'" in a fresh scaffold. The fix is to declare core
+  it('package.json declares @lich/core as a direct devDependency (LEV-205)', () => {
+    // LEV-205: the template lists `@lich/plugin-*` but used to omit
+    // `@lich/core`. Plugins all depend on core transitively, but bun
+    // won't materialize a top-level `node_modules/.bin/lich` from a
+    // transitive — so `bun run lich --help` would die with "Script not
+    // found 'lich'" in a fresh scaffold. The fix is to declare core
     // directly here so its `bin` entry lands at the demo root. Forward
     // regression guard: if a future refactor drops this line, the
     // documented first-run flow breaks again.
@@ -249,11 +249,11 @@ describe('@levelzero/template-v0-stack', () => {
       devDependencies?: Record<string, string>;
     };
     const declared =
-      pkg.dependencies?.['@levelzero/core'] ??
-      pkg.devDependencies?.['@levelzero/core'];
+      pkg.dependencies?.['@lich/core'] ??
+      pkg.devDependencies?.['@lich/core'];
     expect(
       declared,
-      'expected `@levelzero/core` to be declared at the template root so `node_modules/.bin/levelzero` resolves after `bun install`',
+      'expected `@lich/core` to be declared at the template root so `node_modules/.bin/lich` resolves after `bun install`',
     ).toBeTruthy();
   });
 
@@ -267,7 +267,7 @@ describe('@levelzero/template-v0-stack', () => {
     //
     // The fix is to pin `prisma` at the template root so a scaffolded
     // project gets `node_modules/prisma/` reachable from `prisma.config.ts`.
-    // Pinning the major version here (in lockstep with `@levelzero/plugin-
+    // Pinning the major version here (in lockstep with `@lich/plugin-
     // prisma`'s own `prisma` dep) is what prevents bun from hoisting an
     // older v5 transitive that wouldn't have the `config` subpath at all.
     const pkg = JSON.parse(
@@ -285,12 +285,12 @@ describe('@levelzero/template-v0-stack', () => {
     expect(devDeps['prisma']).toMatch(/^[\^~]?7\./);
   });
 
-  it('ships the .levelzero/skills reference + workflow directories', () => {
+  it('ships the .lich/skills reference + workflow directories', () => {
     // The skills tree is load-bearing for plan-12's `skills index`; assert a
     // couple of representative files to guard against an accidental drop of
-    // the whole `.levelzero/` subtree during future template moves.
-    expect(existsSync(join(templateRoot, '.levelzero/skills/workflow/onboard.md'))).toBe(true);
-    expect(existsSync(join(templateRoot, '.levelzero/skills/reference/prisma.md'))).toBe(true);
+    // the whole `.lich/` subtree during future template moves.
+    expect(existsSync(join(templateRoot, '.lich/skills/workflow/onboard.md'))).toBe(true);
+    expect(existsSync(join(templateRoot, '.lich/skills/reference/prisma.md'))).toBe(true);
   });
 
   it('ships the LEV-196 auth + todo CRUD scaffolding', () => {
@@ -340,7 +340,7 @@ describe('@levelzero/template-v0-stack', () => {
       apiIndex.includes('getSession'),
       'apps/api/src/index.ts must guard todo routes with a session check',
     ).toBe(true);
-    // The default export must expose `routes` so `levelzero gen --only
+    // The default export must expose `routes` so `lich gen --only
     // api-client`'s hono extractor can walk the route table even after we
     // moved to a Bun-shaped `{ fetch, port }` export.
     expect(
@@ -449,7 +449,7 @@ describe('@levelzero/template-v0-stack', () => {
 
   it('ships an initial prisma migration with auth + Todo tables (LEV-215)', () => {
     // LEV-215: pre-fix the template shipped NO `prisma/migrations/`
-    // directory, so `levelzero db migrate` in a freshly-scaffolded project
+    // directory, so `lich db migrate` in a freshly-scaffolded project
     // was a no-op — `prisma migrate deploy` finds no migrations to apply
     // and the auth + Todo tables never get created. `db seed` then trips
     // on `relation "User" does not exist`. The fix is to generate an
@@ -503,14 +503,14 @@ describe('@levelzero/template-v0-stack', () => {
     ).toBe(true);
   });
 
-  it('root dev script invokes the levelzero CLI, not turbo (LEV-216)', () => {
+  it('root dev script invokes the lich CLI, not turbo (LEV-216)', () => {
     // LEV-216: scaffolding inside a turbo-managed monorepo (or even
     // standalone) blew up at first `bun run dev` because the template's root
     // dev script was `turbo run dev` and a `turbo.json` shipped at the root.
     // Turbo then walked the ancestor tree, found the parent workspace, and
     // refused the sub-workspace config with "No 'extends' key found." More
     // fundamentally: `turbo run dev` skips compose + port allocation + env
-    // injection — the whole point of `levelzero dev`. The first command users
+    // injection — the whole point of `lich dev`. The first command users
     // run after install MUST bring the full stack up via the CLI.
     const pkg = JSON.parse(
       readFileSync(join(templateRoot, 'package.json'), 'utf8'),
@@ -520,8 +520,8 @@ describe('@levelzero/template-v0-stack', () => {
     };
     expect(
       pkg.scripts?.dev,
-      'root dev script must be `levelzero dev` so the first run brings up compose + api + web with port allocation',
-    ).toBe('levelzero dev');
+      'root dev script must be `lich dev` so the first run brings up compose + api + web with port allocation',
+    ).toBe('lich dev');
     // Turbo MUST be gone — the template no longer orchestrates anything via
     // turbo, and leaving a stale dep would silently re-add a `turbo.json`
     // expectation on `bun install` if a user added back a `turbo run *`

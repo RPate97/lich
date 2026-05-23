@@ -9,7 +9,7 @@ import type { StacksResponse, LogEvent } from '../types';
 import type { StackEntry } from './registry-reader';
 
 export interface ServerConfig {
-  /** Absolute path to ~/.levelzero/registry.json. */
+  /** Absolute path to ~/.lich/registry.json. */
   registryPath: string;
   /** Directory holding the built SPA (index.html + assets). */
   webDir: string;
@@ -103,8 +103,8 @@ async function handleLogStream(
 async function discoverLogServices(entry: StackEntry, key: string): Promise<string[]> {
   const seen = new Set<string>();
 
-  // Raw .log dir: <worktreePath>/.levelzero/state/<key>/logs/
-  const rawLogDir = join(entry.path, '.levelzero', 'state', key, 'logs');
+  // Raw .log dir: <worktreePath>/.lich/state/<key>/logs/
+  const rawLogDir = join(entry.path, '.lich', 'state', key, 'logs');
   try {
     const files = await readdir(rawLogDir);
     for (const f of files) {
@@ -114,8 +114,8 @@ async function discoverLogServices(entry: StackEntry, key: string): Promise<stri
     /* dir doesn't exist yet — fine */
   }
 
-  // JSONL dir: <worktreePath>/.levelzero/logs/
-  const jsonlDir = join(entry.path, '.levelzero', 'logs');
+  // JSONL dir: <worktreePath>/.lich/logs/
+  const jsonlDir = join(entry.path, '.lich', 'logs');
   try {
     const files = await readdir(jsonlDir);
     for (const f of files) {
@@ -180,7 +180,7 @@ async function handleMergedLogStream(
 }
 
 /**
- * POST /api/stacks/:key/restart — shell into `levelzero restart` for the
+ * POST /api/stacks/:key/restart — shell into `lich restart` for the
  * given stack's worktree. Returns 404 if the stack is not in the registry.
  * Always returns 200 with an ActionResult body — the `ok` field communicates
  * the CLI outcome; we intentionally don't 500 on a non-zero exit code so the
@@ -195,7 +195,7 @@ async function handleRestart(cfg: ServerConfig, key: string): Promise<Response> 
 }
 
 /**
- * POST /api/stacks/:key/stop — shell into `levelzero stop` for the given
+ * POST /api/stacks/:key/stop — shell into `lich stop` for the given
  * stack's worktree. Returns 404 if the stack is not in the registry.
  */
 async function handleStop(cfg: ServerConfig, key: string): Promise<Response> {

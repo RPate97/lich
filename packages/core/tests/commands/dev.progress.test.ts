@@ -1,5 +1,5 @@
 /**
- * LEV-217 — `levelzero dev` per-phase progress UX integration tests.
+ * LEV-217 — `lich dev` per-phase progress UX integration tests.
  *
  * Companion to `dev.test.ts` / `dev.detached.test.ts`. Where those pin
  * behavior of the compose runner and the detached-spawn pipeline, this
@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { ComposeRunner } from '../../src/compose/runner';
 import type { OwnedService, Service } from '../../src/services/types';
 import type { ProgressReporter, Step } from '../../src/ui/progress';
@@ -103,7 +103,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-progress-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-progress-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 

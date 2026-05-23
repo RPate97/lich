@@ -4,7 +4,7 @@ import type { Command } from './types';
 /**
  * Identifier of a plugin that was loaded into the current dispatch — surfaced
  * in the "LOADED PLUGINS" section of `--help`. Always taken straight from each
- * `Plugin.name` (e.g. `@levelzero/plugin-portless`). `version` is optional so
+ * `Plugin.name` (e.g. `@lich/plugin-portless`). `version` is optional so
  * callers can construct entries without forcing a plugin manifest read; when
  * present it's rendered after the name.
  */
@@ -34,7 +34,7 @@ export interface HelpFactoryDeps {
  *
  * `core` is the synthetic group for top-level (dot-free) commands. The rest
  * mirror the dotted prefixes used across the inline-registered commands and
- * the plugins shipped from `@levelzero/plugin-*` after Tier 5.
+ * the plugins shipped from `@lich/plugin-*` after Tier 5.
  */
 const GROUP_ORDER: readonly string[] = [
   'core',
@@ -133,7 +133,7 @@ function renderCommandLine(cmd: Command): string | null {
   // today; this guard is defensive against future plugin contributions.
   if (!cmd.describe || cmd.describe.trim() === '') return null;
   // Render dotted names with spaces — `stacks.current` is invoked as
-  // `levelzero stacks current` so showing it dotted would mislead users about
+  // `lich stacks current` so showing it dotted would mislead users about
   // how to type it. The grouping/sort logic still keys on the dotted name.
   const display = cmd.name.replace(/\./g, ' ');
   const padded = display.padEnd(NAME_COL_WIDTH, ' ');
@@ -153,7 +153,7 @@ function renderGroup(key: string, cmds: Command[]): string[] {
 function renderLoadedPlugins(plugins: LoadedPluginInfo[]): string[] {
   const lines: string[] = ['LOADED PLUGINS'];
   if (plugins.length === 0) {
-    lines.push('  (no project plugins loaded — declare them in levelzero.config.ts)');
+    lines.push('  (no project plugins loaded — declare them in lich.config.ts)');
   } else {
     const sorted = [...plugins].sort((a, b) => a.name.localeCompare(b.name));
     for (const p of sorted) {
@@ -178,11 +178,11 @@ export function renderHelp(
   const order = orderGroupKeys(groups);
 
   const lines: string[] = [];
-  lines.push('levelzero — extensible dev environment orchestrator');
+  lines.push('lich — extensible dev environment orchestrator');
   lines.push('');
   lines.push('USAGE');
-  lines.push('  levelzero <command> [args] [--flags]');
-  lines.push('  levelzero --help               # show this help');
+  lines.push('  lich <command> [args] [--flags]');
+  lines.push('  lich --help               # show this help');
   lines.push('');
 
   for (const key of order) {
@@ -193,7 +193,7 @@ export function renderHelp(
 
   lines.push(...renderLoadedPlugins(loadedPlugins));
 
-  lines.push('Run `levelzero <command>` to invoke a command.');
+  lines.push('Run `lich <command>` to invoke a command.');
 
   return lines.join('\n') + '\n';
 }
@@ -201,7 +201,7 @@ export function renderHelp(
 /**
  * Build a `helpCommand` bound to the live dispatch state. Returns a `Command`
  * whose `run()` produces the rendered help string — the bin-level interceptor
- * (and the plain `levelzero help` route) both call into this same renderer so
+ * (and the plain `lich help` route) both call into this same renderer so
  * the output stays in lockstep across invocation styles.
  *
  * Note: the returned command's `run()` returns a `string`, not a structured
@@ -212,7 +212,7 @@ export function renderHelp(
 export function makeHelpCommand(deps: HelpFactoryDeps): Command {
   return {
     name: 'help',
-    describe: 'Show this help (run `levelzero --help` for the same output)',
+    describe: 'Show this help (run `lich --help` for the same output)',
     async run() {
       return renderHelp(deps.getRegistry(), deps.getLoadedPlugins());
     },

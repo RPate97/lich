@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { CLIError } from '../../errors';
-import { LEVELZERO_PREFIX } from '../../compose/naming';
+import { LICH_PREFIX } from '../../compose/naming';
 import type { Registry } from '../../registry';
 import type { Command } from '../types';
 
@@ -48,22 +48,22 @@ async function removeContainer(name: string): Promise<void> {
   }
 }
 
-async function listLevelzeroContainers(): Promise<string[]> {
+async function listLichContainers(): Promise<string[]> {
   const r = await dockerExec(
-    ['ps', '-a', '--filter', `name=${LEVELZERO_PREFIX}`, '--format', '{{.Names}}'],
+    ['ps', '-a', '--filter', `name=${LICH_PREFIX}`, '--format', '{{.Names}}'],
     10_000,
   );
   if (r.exitCode !== 0) return [];
   return r.stdout
     .split('\n')
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+    .filter((s) => s.length > 0 && s.startsWith(LICH_PREFIX));
 }
 
 export function makeStacksStopAllCommand(getRegistry: () => Registry): Command {
   return {
     name: 'stacks.stop',
-    describe: 'Tear down every running levelzero stack on this machine (requires --all)',
+    describe: 'Tear down every running lich stack on this machine (requires --all)',
     async run(ctx) {
       if (!ctx.flags['all']) {
         throw new CLIError(
@@ -89,7 +89,7 @@ export function makeStacksStopAllCommand(getRegistry: () => Registry): Command {
       });
 
       // Orphan sweep outside the lock — best-effort.
-      const remaining = await listLevelzeroContainers();
+      const remaining = await listLichContainers();
       const stoppedOrphans: string[] = [];
       for (const cname of remaining) {
         if (fromRegistryContainers.has(cname)) continue;

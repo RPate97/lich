@@ -7,7 +7,7 @@ import type {
   EnvSourceContext,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import postgres from '../src/index';
 
 // LEV-186: the package now default-exports a factory. Instantiate once so the
@@ -67,9 +67,9 @@ function makeEnvCtx(
   };
 }
 
-describe('@levelzero/plugin-postgres default export', () => {
+describe('@lich/plugin-postgres default export', () => {
   it('exposes name + version + register', () => {
-    expect(plugin.name).toBe('@levelzero/plugin-postgres');
+    expect(plugin.name).toBe('@lich/plugin-postgres');
     expect(typeof plugin.version).toBe('string');
     expect(typeof plugin.register).toBe('function');
   });
@@ -86,7 +86,7 @@ describe('@levelzero/plugin-postgres default export', () => {
     expect(pg.volumes).toEqual(['pgdata:/var/lib/postgresql/data']);
     expect(pg.healthcheck?.test).toEqual([
       'CMD-SHELL',
-      'pg_isready -U levelzero -d levelzero',
+      'pg_isready -U lich -d lich',
     ]);
   });
 
@@ -131,12 +131,12 @@ describe('@levelzero/plugin-postgres default export', () => {
     const ec = makeEnvCtx({ postgres: 54123 }, 'host');
     expect(await envSources.host!.host(ec)).toBe('localhost');
     expect(await envSources.port!.host(ec)).toBe('54123');
-    expect(await envSources.user!.host(ec)).toBe('levelzero');
-    expect(await envSources.password!.host(ec)).toBe('levelzero');
-    expect(await envSources.database!.host(ec)).toBe('levelzero');
+    expect(await envSources.user!.host(ec)).toBe('lich');
+    expect(await envSources.password!.host(ec)).toBe('lich');
+    expect(await envSources.database!.host(ec)).toBe('lich');
     expect(await envSources.driver!.host(ec)).toBe('postgresql');
     expect(await envSources.url!.host(ec)).toBe(
-      'postgres://levelzero:levelzero@localhost:54123/levelzero',
+      'postgres://lich:lich@localhost:54123/lich',
     );
   });
 
@@ -149,7 +149,7 @@ describe('@levelzero/plugin-postgres default export', () => {
     expect(await envSources.host!.container(ec)).toBe('postgres');
     expect(await envSources.port!.container(ec)).toBe('5432');
     expect(await envSources.url!.container(ec)).toBe(
-      'postgres://levelzero:levelzero@postgres:5432/levelzero',
+      'postgres://lich:lich@postgres:5432/lich',
     );
   });
 

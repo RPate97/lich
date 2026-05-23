@@ -10,7 +10,7 @@ import type {
   EnvSourceContext,
   PluginAPI,
   PluginContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -147,10 +147,10 @@ async function bootAndGetBulk(plugin = dotenv()): Promise<BulkEnvSource> {
   return bulk[0]!;
 }
 
-describe('@levelzero/plugin-dotenv factory (LEV-188)', () => {
+describe('@lich/plugin-dotenv factory (LEV-188)', () => {
   it('produces a Plugin with the canonical name + namespace + version', () => {
     const plugin = dotenv();
-    expect(plugin.name).toBe('@levelzero/plugin-dotenv');
+    expect(plugin.name).toBe('@lich/plugin-dotenv');
     expect(plugin.namespace).toBe('dotenv');
     expect(plugin.version).toBe('0.1.0');
     expect(typeof plugin.register).toBe('function');
@@ -185,7 +185,7 @@ describe('@levelzero/plugin-dotenv factory (LEV-188)', () => {
   });
 });
 
-describe('@levelzero/plugin-dotenv file loading', () => {
+describe('@lich/plugin-dotenv file loading', () => {
   let project: ReturnType<typeof makeTempProject>;
 
   beforeEach(() => {
@@ -237,7 +237,7 @@ describe('@levelzero/plugin-dotenv file loading', () => {
   });
 });
 
-describe('@levelzero/plugin-dotenv precedence', () => {
+describe('@lich/plugin-dotenv precedence', () => {
   let project: ReturnType<typeof makeTempProject>;
 
   beforeEach(() => {
@@ -281,7 +281,7 @@ describe('@levelzero/plugin-dotenv precedence', () => {
   });
 });
 
-describe('@levelzero/plugin-dotenv process.env passthrough', () => {
+describe('@lich/plugin-dotenv process.env passthrough', () => {
   let project: ReturnType<typeof makeTempProject>;
 
   beforeEach(() => {
@@ -331,7 +331,7 @@ describe('@levelzero/plugin-dotenv process.env passthrough', () => {
   });
 });
 
-describe('@levelzero/plugin-dotenv worktree safety', () => {
+describe('@lich/plugin-dotenv worktree safety', () => {
   let project: ReturnType<typeof makeTempProject>;
   let worktree: ReturnType<typeof makeTempProject>;
 
@@ -349,7 +349,7 @@ describe('@levelzero/plugin-dotenv worktree safety', () => {
   it('reads from ctx.projectRoot regardless of where the worktree lives', async () => {
     // The "parent repo" has the real .env.local with the secret.
     project.writeFile('.env.local', 'MY_SECRET=from-project-root\n');
-    // The worktree checkout (e.g. `/tmp/levelzero-worktrees/...`) carries a
+    // The worktree checkout (e.g. `/tmp/lich-worktrees/...`) carries a
     // DIFFERENT .env.local. If the resolver mistakenly used the worktree
     // path it would pick this one up.
     worktree.writeFile('.env.local', 'MY_SECRET=from-worktree\n');

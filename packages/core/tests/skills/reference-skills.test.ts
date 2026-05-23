@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { templateRoot } from '@levelzero/template-v0-stack';
+import { templateRoot } from '@lich/template-v0-stack';
 import { scanSkills } from '../../src/skills/indexer';
 
 // The vendored reference skills shipped with the v0-stack template must all
 // parse via the canonical `scanSkills` indexer. This test guards against
 // frontmatter regressions when the templates are edited.
-const REFERENCE_DIR = join(templateRoot, '.levelzero', 'skills');
+const REFERENCE_DIR = join(templateRoot, '.lich', 'skills');
 
 const EXPECTED = ['prisma', 'hono', 'next', 'tailwind', 'shadcn'] as const;
 

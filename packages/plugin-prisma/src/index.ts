@@ -1,4 +1,4 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { prismaAdapter } from './adapter';
 import { makeDbMigrateCommand } from './commands/migrate';
 import { makeDbMigrationNewCommand } from './commands/migration-new';
@@ -36,7 +36,7 @@ export {
 } from './commands/reset';
 
 /**
- * Options for the `@levelzero/plugin-prisma` factory. The `namespace`
+ * Options for the `@lich/plugin-prisma` factory. The `namespace`
  * override exists so multi-instance setups can co-exist.
  */
 export interface PrismaOptions {
@@ -45,8 +45,8 @@ export interface PrismaOptions {
 }
 
 /**
- * `@levelzero/plugin-prisma` — extracts the Prisma `ORMAdapter` impl plus the
- * `db.*` command family out of `@levelzero/core` (LEV-149).
+ * `@lich/plugin-prisma` — extracts the Prisma `ORMAdapter` impl plus the
+ * `db.*` command family out of `@lich/core` (LEV-149).
  *
  * Contributes:
  *   - the `prisma` impl under the `orm` adapter slot (marked active by
@@ -68,10 +68,10 @@ export interface PrismaOptions {
  * directly — composability lives in the EnvSource contract, not in
  * package-level dependencies.
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import prisma from '@levelzero/plugin-prisma';
+ * import prisma from '@lich/plugin-prisma';
  *
  * export default {
  *   plugins: [prisma()],
@@ -87,7 +87,7 @@ export default function prisma(opts: PrismaOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-prisma',
+    name: '@lich/plugin-prisma',
     namespace: (opts.namespace ?? 'prisma') as 'prisma',
     version: '0.1.0',
 
@@ -95,7 +95,7 @@ export default function prisma(opts: PrismaOptions = {}): Plugin<
       api.addAdapter('orm', 'prisma', prismaAdapter);
       api.setActiveAdapter('orm', 'prisma');
 
-      // LEV-124: contribute the `prisma` generator so `levelzero gen` can
+      // LEV-124: contribute the `prisma` generator so `lich gen` can
       // drive `prisma generate` alongside other plugin-contributed
       // generators from a single invocation. Skips cleanly when the project
       // has no `prisma/schema.prisma` (see `./generator.ts`).

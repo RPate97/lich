@@ -7,8 +7,8 @@ import { analyzeSource, formatViolations, type Violation } from './analyzer';
 
 /**
  * Static check enforcing the composability rule (LEV-175): no plugin source
- * file may import from another `@levelzero/plugin-*` package or from
- * `@levelzero/template-*`. See docs/EXTENSION.md "Composability rule".
+ * file may import from another `@lich/plugin-*` package or from
+ * `@lich/template-*`. See docs/EXTENSION.md "Composability rule".
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -68,7 +68,7 @@ function readPluginPackageName(pluginDir: string): string | null {
   }
 }
 
-describe('plugin packages must not import from sibling @levelzero/plugin-* or @levelzero/template-*', () => {
+describe('plugin packages must not import from sibling @lich/plugin-* or @lich/template-*', () => {
   it('every packages/plugin-*/src/** file passes the composability check', () => {
     let pluginDirs: string[] = [];
     try {
@@ -121,62 +121,62 @@ describe('plugin packages must not import from sibling @levelzero/plugin-* or @l
 describe('analyzer self-tests', () => {
   it('flags a cross-plugin import statement', () => {
     const source = [
-      `import { pgService } from '@levelzero/plugin-postgres';`,
-      `import { ok } from '@levelzero/core';`,
+      `import { pgService } from '@lich/plugin-postgres';`,
+      `import { ok } from '@lich/core';`,
       `export const x = pgService;`,
     ].join('\n');
-    const violations = analyzeSource('packages/plugin-foo/src/index.ts', '@levelzero/plugin-foo', source);
+    const violations = analyzeSource('packages/plugin-foo/src/index.ts', '@lich/plugin-foo', source);
     expect(violations).toHaveLength(1);
     const v = violations[0]!;
-    expect(v.specifier).toBe('@levelzero/plugin-postgres');
+    expect(v.specifier).toBe('@lich/plugin-postgres');
     expect(v.line).toBe(1);
     expect(v.reason).toMatch(/cross-plugin import/);
   });
 
   it('flags a cross-plugin import on a subpath', () => {
-    const source = `import { foo } from '@levelzero/plugin-postgres/internals';`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const source = `import { foo } from '@lich/plugin-postgres/internals';`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.specifier).toBe('@levelzero/plugin-postgres/internals');
+    expect(violations[0]!.specifier).toBe('@lich/plugin-postgres/internals');
   });
 
   it('flags dynamic import() of a sibling plugin', () => {
-    const source = `const m = await import('@levelzero/plugin-redis');`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const source = `const m = await import('@lich/plugin-redis');`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.specifier).toBe('@levelzero/plugin-redis');
+    expect(violations[0]!.specifier).toBe('@lich/plugin-redis');
   });
 
   it('flags require() of a sibling plugin', () => {
-    const source = `const m = require('@levelzero/plugin-hono');`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const source = `const m = require('@lich/plugin-hono');`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.specifier).toBe('@levelzero/plugin-hono');
+    expect(violations[0]!.specifier).toBe('@lich/plugin-hono');
   });
 
   it('flags re-export from a sibling plugin', () => {
-    const source = `export { x } from '@levelzero/plugin-prisma';`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const source = `export { x } from '@lich/plugin-prisma';`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toHaveLength(1);
-    expect(violations[0]!.specifier).toBe('@levelzero/plugin-prisma');
+    expect(violations[0]!.specifier).toBe('@lich/plugin-prisma');
   });
 
-  it('flags imports from @levelzero/template-*', () => {
-    const source = `import { x } from '@levelzero/template-v0-stack';`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+  it('flags imports from @lich/template-*', () => {
+    const source = `import { x } from '@lich/template-v0-stack';`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toHaveLength(1);
     const v = violations[0]!;
-    expect(v.specifier).toBe('@levelzero/template-v0-stack');
+    expect(v.specifier).toBe('@lich/template-v0-stack');
     expect(v.reason).toMatch(/template import/);
   });
 
-  it('allows imports from @levelzero/core (and subpaths)', () => {
+  it('allows imports from @lich/core (and subpaths)', () => {
     const source = [
-      `import { Plugin } from '@levelzero/core';`,
-      `import { Registry } from '@levelzero/core/registry';`,
-      `import type { EnvSourceRegistry } from '@levelzero/core/env/registry';`,
+      `import { Plugin } from '@lich/core';`,
+      `import { Registry } from '@lich/core/registry';`,
+      `import type { EnvSourceRegistry } from '@lich/core/env/registry';`,
     ].join('\n');
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toEqual([]);
   });
 
@@ -187,22 +187,22 @@ describe('analyzer self-tests', () => {
       `import { local } from './helpers';`,
       `import { sib } from '../other';`,
     ].join('\n');
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-bar', source);
+    const violations = analyzeSource('f.ts', '@lich/plugin-bar', source);
     expect(violations).toEqual([]);
   });
 
-  it('ignores @levelzero/plugin-* mentions inside JSDoc and string literals', () => {
+  it('ignores @lich/plugin-* mentions inside JSDoc and string literals', () => {
     const source = [
       `/**`,
       ` * Example usage:`,
       ` *`,
-      ` * import postgres from '@levelzero/plugin-postgres';`,
+      ` * import postgres from '@lich/plugin-postgres';`,
       ` */`,
-      `export const plugin = { name: '@levelzero/plugin-foo' };`,
-      `// import { x } from '@levelzero/plugin-bar';`,
-      `throw new Error('@levelzero/plugin-prisma: missing config');`,
+      `export const plugin = { name: '@lich/plugin-foo' };`,
+      `// import { x } from '@lich/plugin-bar';`,
+      `throw new Error('@lich/plugin-prisma: missing config');`,
     ].join('\n');
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-foo', source);
+    const violations = analyzeSource('f.ts', '@lich/plugin-foo', source);
     expect(violations).toEqual([]);
   });
 
@@ -210,24 +210,24 @@ describe('analyzer self-tests', () => {
     // Edge case: a plugin importing from itself by name (e.g. via an
     // explicit subpath export) — degenerate but not a composability
     // violation.
-    const source = `import { internal } from '@levelzero/plugin-foo/internal';`;
-    const violations = analyzeSource('f.ts', '@levelzero/plugin-foo', source);
+    const source = `import { internal } from '@lich/plugin-foo/internal';`;
+    const violations = analyzeSource('f.ts', '@lich/plugin-foo', source);
     expect(violations).toEqual([]);
   });
 
   it('formats a multi-violation report with file/line/specifier and a pointer to the docs', () => {
     const source = [
-      `import a from '@levelzero/plugin-redis';`,
+      `import a from '@lich/plugin-redis';`,
       ``,
-      `import b from '@levelzero/template-v0-stack';`,
+      `import b from '@lich/template-v0-stack';`,
     ].join('\n');
-    const violations = analyzeSource('packages/plugin-foo/src/index.ts', '@levelzero/plugin-foo', source);
+    const violations = analyzeSource('packages/plugin-foo/src/index.ts', '@lich/plugin-foo', source);
     expect(violations).toHaveLength(2);
     const msg = formatViolations(violations);
     expect(msg).toContain("packages/plugin-foo/src/index.ts:1");
     expect(msg).toContain("packages/plugin-foo/src/index.ts:3");
-    expect(msg).toContain("@levelzero/plugin-redis");
-    expect(msg).toContain("@levelzero/template-v0-stack");
+    expect(msg).toContain("@lich/plugin-redis");
+    expect(msg).toContain("@lich/template-v0-stack");
     expect(msg).toContain('docs/EXTENSION.md');
   });
 });

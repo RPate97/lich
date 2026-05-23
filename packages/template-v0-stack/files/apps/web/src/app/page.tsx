@@ -1,13 +1,13 @@
 /**
  * `{{projectName}}` landing page.
  *
- * This is the page a user sees the first time they run `levelzero dev` and
+ * This is the page a user sees the first time they run `lich dev` and
  * open the web URL. It exists to replace Next.js's default 404 (or the empty
  * starter) with something that proves the stack is wired up:
  *
  *   - Confirms the api is reachable (server-side fetch to `/api/health`).
  *   - Points at the file to edit to customize the page.
- *   - Names the CLI entry point (`levelzero --help`) for discovery.
+ *   - Names the CLI entry point (`lich --help`) for discovery.
  *
  * Renders as an async server component so the api health check happens at
  * request time without any client-side JS. The styling is intentionally
@@ -27,10 +27,10 @@ async function checkApiHealth(apiUrl: string): Promise<boolean> {
 }
 
 export default async function HomePage() {
-  // `API_URL` is the server-side env var injected by `@levelzero/plugin-hono`
+  // `API_URL` is the server-side env var injected by `@lich/plugin-hono`
   // via the config's `envInjection` block. We fall back to a sensible default
   // so the page still renders if someone runs `next dev` directly without
-  // going through `levelzero dev`.
+  // going through `lich dev`.
   const apiUrl = process.env.API_URL ?? API_URL_FALLBACK;
   const apiHealthy = await checkApiHealth(apiUrl);
 
@@ -39,7 +39,7 @@ export default async function HomePage() {
       <header className="lz-header">
         <h1 className="lz-title">{'{{projectName}}'}</h1>
         <p className="lz-subtitle">
-          Next.js + Hono + Prisma + Better Auth, wired up by levelzero.
+          Next.js + Hono + Prisma + Better Auth, wired up by lich.
         </p>
       </header>
 
@@ -84,7 +84,7 @@ export default async function HomePage() {
             Visit the api at <a href={apiUrl}>{apiUrl}</a>.
           </li>
           <li>
-            Run <code className="lz-code">levelzero --help</code> in this project to see available
+            Run <code className="lz-code">lich --help</code> in this project to see available
             commands.
           </li>
         </ul>

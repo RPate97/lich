@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/core",
+  "name": "@lich/core",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -63,7 +63,7 @@
     }
   },
   "bin": {
-    "levelzero": "./dist/bin.js"
+    "lich": "./dist/bin.js"
   },
   "publishConfig": {
     "access": "public"
@@ -94,7 +94,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
-    "@levelzero/dashboard": "workspace:*",
+    "@lich/dashboard": "workspace:*",
     "@prisma/client": "^5.18.0",
     "concurrently": "^9.0.0",
     "pg": "^8.12.0",

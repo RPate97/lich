@@ -1,4 +1,4 @@
-import { resolveStackContext, CLIError, type Command, type UIAdapter } from '@levelzero/core';
+import { resolveStackContext, CLIError, type Command, type UIAdapter } from '@lich/core';
 import { shadcnAdapter } from '../adapter';
 
 export interface UiAddOptions {
@@ -10,7 +10,7 @@ export interface UiAddOptions {
 }
 
 /**
- * Build `levelzero ui add <component>`. Resolves the worktree, then hands the
+ * Build `lich ui add <component>`. Resolves the worktree, then hands the
  * component name to the UI adapter (shadcn by default). The `--dry-run` flag
  * is forwarded so callers can inspect the generated command without executing
  * it.
@@ -28,7 +28,7 @@ export function makeUiAddCommand(opts?: UiAddOptions): Command {
         throw new CLIError(
           'INTERNAL',
           'ui add requires a component name',
-          'usage: levelzero ui add <name>',
+          'usage: lich ui add <name>',
         );
       }
       const dryRun = Boolean(ctx.flags['dry-run']);

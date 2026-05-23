@@ -161,14 +161,14 @@ describe('getBuiltinAdapters', () => {
     const r = getBuiltinAdapters();
     const slots = new Set(r.list().map((e) => e.slot));
     // After Plan 14 ALL slots are extracted:
-    //   - orm         → @levelzero/plugin-prisma
-    //   - auth        → @levelzero/plugin-better-auth
-    //   - ui          → @levelzero/plugin-shadcn
-    //   - browser     → @levelzero/plugin-playwright
-    //   - backend     → @levelzero/plugin-hono
-    //   - frontend    → @levelzero/plugin-typed-client
-    //   - portless    → @levelzero/plugin-portless
-    //   - test-runner → @levelzero/plugin-vitest, @levelzero/plugin-playwright
+    //   - orm         → @lich/plugin-prisma
+    //   - auth        → @lich/plugin-better-auth
+    //   - ui          → @lich/plugin-shadcn
+    //   - browser     → @lich/plugin-playwright
+    //   - backend     → @lich/plugin-hono
+    //   - frontend    → @lich/plugin-typed-client
+    //   - portless    → @lich/plugin-portless
+    //   - test-runner → @lich/plugin-vitest, @lich/plugin-playwright
     expect(slots.size).toBe(0);
   });
 

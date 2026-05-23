@@ -5,11 +5,11 @@ import type {
   Generator,
   GeneratorContext,
   GeneratorResult,
-} from '@levelzero/core';
+} from '@lich/core';
 import { typedClientFrontendAdapter } from './adapter';
 
 /**
- * Default location of the API app inside a levelzero project. Mirrors the
+ * Default location of the API app inside a lich project. Mirrors the
  * `DEFAULT_ENTRY` constant inside the Hono adapter — the generator turns this
  * into `<api-dir>/src/index.ts` before handing it to the backend adapter.
  */
@@ -67,7 +67,7 @@ export function makeApiClientGenerator(): Generator {
         return {
           status: 'skip',
           message:
-            'no active backend adapter — load `@levelzero/plugin-hono` (or another backend plugin) to enable this generator',
+            'no active backend adapter — load `@lich/plugin-hono` (or another backend plugin) to enable this generator',
         };
       }
       // Frontend defaults to this package's impl when no plugin contributed

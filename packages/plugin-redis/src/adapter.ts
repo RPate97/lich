@@ -15,7 +15,7 @@ import { Socket } from 'node:net';
  * (here, a cache client) without forking the core slot list.
  *
  * `name` is required by the portless interface; it's the human-readable
- * label that shows up in `levelzero adapter list`.
+ * label that shows up in `lich adapter list`.
  */
 export interface RedisCacheAdapter {
   slot: 'portless';

@@ -5,7 +5,7 @@ import {
   volumeName,
   composeProjectName,
   activeNamingPrefix,
-  LEVELZERO_PREFIX,
+  LICH_PREFIX,
   TEST_RUN_PREFIX,
 } from '../../src/compose/naming';
 
@@ -25,20 +25,20 @@ describe('compose naming', () => {
     else process.env.TEST_RUN_ID = PREV;
   });
 
-  it('LEVELZERO_PREFIX is "levelzero-"', () => {
-    expect(LEVELZERO_PREFIX).toBe('levelzero-');
+  it('LICH_PREFIX is "lich-"', () => {
+    expect(LICH_PREFIX).toBe('lich-');
   });
 
-  it('containerName produces "levelzero-<key>-<service>"', () => {
-    expect(containerName(KEY, 'postgres')).toBe(`levelzero-${KEY}-postgres`);
+  it('containerName produces "lich-<key>-<service>"', () => {
+    expect(containerName(KEY, 'postgres')).toBe(`lich-${KEY}-postgres`);
   });
 
-  it('networkName produces "levelzero-<key>"', () => {
-    expect(networkName(KEY)).toBe(`levelzero-${KEY}`);
+  it('networkName produces "lich-<key>"', () => {
+    expect(networkName(KEY)).toBe(`lich-${KEY}`);
   });
 
-  it('volumeName produces "levelzero-<key>-<service>-data"', () => {
-    expect(volumeName(KEY, 'postgres')).toBe(`levelzero-${KEY}-postgres-data`);
+  it('volumeName produces "lich-<key>-<service>-data"', () => {
+    expect(volumeName(KEY, 'postgres')).toBe(`lich-${KEY}-postgres-data`);
   });
 
   it('composeProjectName matches networkName', () => {
@@ -73,33 +73,33 @@ describe('compose naming — TEST_RUN_ID prefix (LEV-202)', () => {
 
   it('without TEST_RUN_ID, names are unchanged (production path)', () => {
     delete process.env.TEST_RUN_ID;
-    expect(networkName(KEY)).toBe(`levelzero-${KEY}`);
-    expect(containerName(KEY, 'postgres')).toBe(`levelzero-${KEY}-postgres`);
-    expect(volumeName(KEY, 'postgres')).toBe(`levelzero-${KEY}-postgres-data`);
-    expect(composeProjectName(KEY)).toBe(`levelzero-${KEY}`);
-    expect(activeNamingPrefix()).toBe(LEVELZERO_PREFIX);
+    expect(networkName(KEY)).toBe(`lich-${KEY}`);
+    expect(containerName(KEY, 'postgres')).toBe(`lich-${KEY}-postgres`);
+    expect(volumeName(KEY, 'postgres')).toBe(`lich-${KEY}-postgres-data`);
+    expect(composeProjectName(KEY)).toBe(`lich-${KEY}`);
+    expect(activeNamingPrefix()).toBe(LICH_PREFIX);
   });
 
   it('with TEST_RUN_ID set, every name carries the test-<id>- infix', () => {
     process.env.TEST_RUN_ID = 'abc123';
-    expect(networkName(KEY)).toBe(`levelzero-${TEST_RUN_PREFIX}abc123-${KEY}`);
+    expect(networkName(KEY)).toBe(`lich-${TEST_RUN_PREFIX}abc123-${KEY}`);
     expect(containerName(KEY, 'postgres')).toBe(
-      `levelzero-${TEST_RUN_PREFIX}abc123-${KEY}-postgres`,
+      `lich-${TEST_RUN_PREFIX}abc123-${KEY}-postgres`,
     );
     expect(volumeName(KEY, 'postgres')).toBe(
-      `levelzero-${TEST_RUN_PREFIX}abc123-${KEY}-postgres-data`,
+      `lich-${TEST_RUN_PREFIX}abc123-${KEY}-postgres-data`,
     );
     expect(composeProjectName(KEY)).toBe(
-      `levelzero-${TEST_RUN_PREFIX}abc123-${KEY}`,
+      `lich-${TEST_RUN_PREFIX}abc123-${KEY}`,
     );
-    expect(activeNamingPrefix()).toBe(`levelzero-${TEST_RUN_PREFIX}abc123-`);
+    expect(activeNamingPrefix()).toBe(`lich-${TEST_RUN_PREFIX}abc123-`);
   });
 
-  it('names still start with LEVELZERO_PREFIX so global sweepers catch them', () => {
+  it('names still start with LICH_PREFIX so global sweepers catch them', () => {
     process.env.TEST_RUN_ID = 'xyz9';
-    expect(networkName(KEY).startsWith(LEVELZERO_PREFIX)).toBe(true);
-    expect(containerName(KEY, 'pg').startsWith(LEVELZERO_PREFIX)).toBe(true);
-    expect(volumeName(KEY, 'pg').startsWith(LEVELZERO_PREFIX)).toBe(true);
+    expect(networkName(KEY).startsWith(LICH_PREFIX)).toBe(true);
+    expect(containerName(KEY, 'pg').startsWith(LICH_PREFIX)).toBe(true);
+    expect(volumeName(KEY, 'pg').startsWith(LICH_PREFIX)).toBe(true);
   });
 
   it('rejects a malformed TEST_RUN_ID', () => {
@@ -110,6 +110,6 @@ describe('compose naming — TEST_RUN_ID prefix (LEV-202)', () => {
 
   it('treats empty TEST_RUN_ID as unset (no prefix added)', () => {
     process.env.TEST_RUN_ID = '';
-    expect(networkName(KEY)).toBe(`levelzero-${KEY}`);
+    expect(networkName(KEY)).toBe(`lich-${KEY}`);
   });
 });

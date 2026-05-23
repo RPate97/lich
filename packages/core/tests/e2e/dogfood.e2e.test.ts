@@ -9,9 +9,9 @@
  *
  *   1. Scaffolding into an OS tmpdir (NOT under `packages/`).
  *   2. Running a real `bun install` against `file:` overrides pointing at the
- *      workspace packages. After this step, `node_modules/.bin/levelzero`
+ *      workspace packages. After this step, `node_modules/.bin/lich`
  *      exists and the project tree looks like what a `bunx
- *      @levelzero/create-stack-v0 my-app && cd my-app && bun install` user
+ *      @lich/create-stack-v0 my-app && cd my-app && bun install` user
  *      would see.
  *   3. Exercising the CLI as a real subprocess from the scaffolded project,
  *      not by importing the bin module.
@@ -90,7 +90,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     sweepStaleTmpdirs('lz-e2e-dogfood-');
     // Scaffold into an OS tmpdir — explicitly NOT under `packages/`. This is
     // the whole point of LEV-198: if any code path relies on workspace
-    // symlinks for `@levelzero/*` resolution, it WILL fail here, and the
+    // symlinks for `@lich/*` resolution, it WILL fail here, and the
     // test should fail loudly so the underlying scaffold/install bug gets
     // fixed instead of getting papered over in CI.
     tmpdir = realpathSync(mkdtempSync(join(osTmpdir(), 'lz-e2e-dogfood-')));
@@ -164,7 +164,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   describe('phase 1: scaffold + install', () => {
     it('scaffolds the canonical v0 project tree into the OS tmpdir', () => {
       expect(projectDir.startsWith(realpathSync(osTmpdir()))).toBe(true);
-      expect(existsSync(join(projectDir, 'levelzero.config.ts'))).toBe(true);
+      expect(existsSync(join(projectDir, 'lich.config.ts'))).toBe(true);
       expect(existsSync(join(projectDir, 'package.json'))).toBe(true);
       expect(existsSync(join(projectDir, 'apps', 'api', 'package.json'))).toBe(true);
       expect(existsSync(join(projectDir, 'apps', 'web', 'package.json'))).toBe(true);
@@ -172,29 +172,29 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       // `name` substitution made it into both package.json and config.
       const pkg = readFileSync(join(projectDir, 'package.json'), 'utf8');
       expect(pkg).toContain(`"name": "${PROJECT_NAME}"`);
-      const cfg = readFileSync(join(projectDir, 'levelzero.config.ts'), 'utf8');
+      const cfg = readFileSync(join(projectDir, 'lich.config.ts'), 'utf8');
       expect(cfg).toContain(`name: '${PROJECT_NAME}'`);
     });
 
-    it('bun install populated node_modules with the levelzero bin', () => {
+    it('bun install populated node_modules with the lich bin', () => {
       // The install threw if it had failed, so this is a smoke / sentinel
-      // check that the `.bin/levelzero` discovery worked.
+      // check that the `.bin/lich` discovery worked.
       expect(
-        existsSync(join(projectDir, 'node_modules', '.bin', 'levelzero')),
+        existsSync(join(projectDir, 'node_modules', '.bin', 'lich')),
       ).toBe(true);
     });
 
     // LEV-205 regression — the template `package.json` MUST declare
-    // `@levelzero/core` as a direct dep so `bun install` materializes the
-    // `levelzero` bin under `node_modules/.bin/`. Without it, the
-    // documented first-time-user flow (`bunx @levelzero/create-stack-v0
-    // my-app && cd my-app && bun install && bun run levelzero --help`)
-    // fails with "Script not found 'levelzero'" because no top-level
+    // `@lich/core` as a direct dep so `bun install` materializes the
+    // `lich` bin under `node_modules/.bin/`. Without it, the
+    // documented first-time-user flow (`bunx @lich/create-stack-v0
+    // my-app && cd my-app && bun install && bun run lich --help`)
+    // fails with "Script not found 'lich'" because no top-level
     // package contributes the bin. Asserted against the SNAPSHOT taken
     // BEFORE the harness patches in workspace overrides, so this catches
     // a regression in the template itself, not the harness.
     it(
-      'LEV-205 regression: template package.json declares @levelzero/core as a direct dep',
+      'LEV-205 regression: template package.json declares @lich/core as a direct dep',
       () => {
         expect(scaffoldedRootPkgJson).not.toBeNull();
         const pkg = JSON.parse(scaffoldedRootPkgJson!) as {
@@ -202,8 +202,8 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
           devDependencies?: Record<string, string>;
         };
         const declared =
-          !!pkg.dependencies?.['@levelzero/core'] ||
-          !!pkg.devDependencies?.['@levelzero/core'];
+          !!pkg.dependencies?.['@lich/core'] ||
+          !!pkg.devDependencies?.['@lich/core'];
         expect(declared).toBe(true);
       },
     );
@@ -227,7 +227,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       ).toBe(true);
     });
 
-    it('bun run levelzero --help lists the canonical command set', () => {
+    it('bun run lich --help lists the canonical command set', () => {
       const res = runCli(projectDir, ['--help']);
       expect(res.exitCode, res.stderr).toBe(0);
       // Inline commands.
@@ -247,13 +247,13 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // Phase 2 — static checks (non-docker, always runs)
   // -------------------------------------------------------------------------
   describe('phase 2: static checks', () => {
-    it('levelzero doctor --json reports ok (or only docker-skipped)', () => {
+    it('lich doctor --json reports ok (or only docker-skipped)', () => {
       const { json } = runCliJson<{
         ok: boolean;
         checks: Array<{ id: string; status: string; message?: string }>;
       }>(projectDir, ['doctor', '--json']);
       // Either everything is green, OR the only non-ok rows are docker /
-      // skipped categories. The "registry warn" channel (stale levelzero
+      // skipped categories. The "registry warn" channel (stale lich
       // networks) is allowed too — it's a warning, not an error.
       const bad = json.checks.filter(
         (c) => c.status !== 'ok' && c.status !== 'warn' && c.status !== 'skipped',
@@ -262,7 +262,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       expect(json.ok).toBe(true);
     });
 
-    it('levelzero adapter list --json shows the v0 active impls', () => {
+    it('lich adapter list --json shows the v0 active impls', () => {
       const { json } = runCliJson<{
         adapters: Array<{ slot: string; name: string; active: boolean }>;
       }>(projectDir, ['adapter', 'list', '--json']);
@@ -275,7 +275,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       expect(byKey.get('browser:playwright')?.active).toBe(true);
     });
 
-    it('levelzero env list --json surfaces postgres/hono/next URL sources', () => {
+    it('lich env list --json surfaces postgres/hono/next URL sources', () => {
       const { json } = runCliJson<{
         entries: Array<{
           key: string;
@@ -295,7 +295,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
   // -------------------------------------------------------------------------
   describe.skipIf(!DOCKER)('phase 3: stack lifecycle', () => {
     it(
-      'levelzero dev --json brings up the stack detached within 90s',
+      'lich dev --json brings up the stack detached within 90s',
       { timeout: 180_000 },
       () => {
         const res = runCli(projectDir, ['dev', '--json'], { timeoutMs: 150_000 });
@@ -329,10 +329,10 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
         // so `out.containers` is `[]` by design — compose auto-names them).
         //
         // LEV-202 — vitest's globalSetup stamps `TEST_RUN_ID` so the project
-        // name carries a `test-<id>-` infix between the LEVELZERO_PREFIX and
+        // name carries a `test-<id>-` infix between the LICH_PREFIX and
         // the worktree key. The pattern allows either shape so this same
         // assertion holds for production code paths AND under-test runs.
-        expect(out.compose.projectName).toMatch(/^levelzero-(test-[a-z0-9-]+-)?[0-9a-f]{12}$/);
+        expect(out.compose.projectName).toMatch(/^lich-(test-[a-z0-9-]+-)?[0-9a-f]{12}$/);
       },
     );
 
@@ -345,9 +345,9 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       'LEV-200 regression: GET /api/health returns 200 on the allocated api port',
       { timeout: 30_000 },
       async () => {
-        // Read the allocated port from .levelzero/state/<key>/env/api.env —
+        // Read the allocated port from .lich/state/<key>/env/api.env —
         // the dev runner writes API_URL there with the host-context URL.
-        const stateDir = join(projectDir, '.levelzero', 'state');
+        const stateDir = join(projectDir, '.lich', 'state');
         const keyDirs = readdirSync(stateDir).filter((d) =>
           /^[0-9a-f]{12}$/.test(d),
         );
@@ -368,7 +368,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
       },
     );
 
-    // LEV-204 regression: `levelzero db migrate` used to fail in a fresh
+    // LEV-204 regression: `lich db migrate` used to fail in a fresh
     // scaffold because the template's `prisma.config.ts` imports from
     // `'prisma/config'` but the template `package.json` didn't declare
     // `prisma` as a direct devDep — so bun had no reason to materialize
@@ -408,7 +408,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     );
 
     it(
-      'levelzero gen --json exits 0',
+      'lich gen --json exits 0',
       { timeout: 90_000 },
       () => {
         const res = runCli(
@@ -430,7 +430,7 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
     );
 
     it(
-      'levelzero stop --json tears the stack down cleanly',
+      'lich stop --json tears the stack down cleanly',
       { timeout: 120_000 },
       () => {
         const res = runCli(projectDir, ['stop', '--json'], { timeoutMs: 90_000 });
@@ -528,9 +528,9 @@ describe('LEV-198 dogfood: scaffold → install → run → drive', () => {
         expect(dev.exitCode, dev.stderr).toBe(0);
 
         // Pull the WEB_URL from the api env file (next's URL). Could also
-        // come from `levelzero urls --json`, but the env file is simpler
+        // come from `lich urls --json`, but the env file is simpler
         // and the `dev` command guarantees it exists.
-        const stateDir = join(projectDir, '.levelzero', 'state');
+        const stateDir = join(projectDir, '.lich', 'state');
         const keyDirs = readdirSync(stateDir).filter((d) =>
           /^[0-9a-f]{12}$/.test(d),
         );

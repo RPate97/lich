@@ -33,7 +33,7 @@ export interface EnvListOptions {
 }
 
 /**
- * Build `levelzero env list`. Returns every named + bulk EnvSource the merged
+ * Build `lich env list`. Returns every named + bulk EnvSource the merged
  * plugin registry knows about, with the contributing plugin and (for named
  * sources) the declared protocol.
  *

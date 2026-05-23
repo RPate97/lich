@@ -6,7 +6,7 @@ import {
   makeRouteCoverageRule,
   routeCoverageRule as defaultRouteCoverageRule,
 } from '../../../src/check/rules/route-coverage';
-import { honoBackendAdapter } from '@levelzero/plugin-hono';
+import { honoBackendAdapter } from '@lich/plugin-hono';
 
 // After LEV-174 `route-coverage` is a factory rule — the bare exported rule
 // reports skip until a backend adapter is wired. Tests construct the

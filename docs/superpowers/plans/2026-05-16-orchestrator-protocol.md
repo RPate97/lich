@@ -1,4 +1,4 @@
-# levelzero Orchestrator Protocol
+# lich Orchestrator Protocol
 
 **Companion to:** [roadmap](2026-05-16-levelzero-roadmap.md) + [spec](../specs/2026-05-16-levelzero-design.md)
 
@@ -20,13 +20,13 @@ Reading order: this doc first, then the roadmap to see plan boundaries, then the
 
 ### Project structure
 
-- **Project:** `v0` (already exists — `https://linear.app/levelzero/project/v0-f4d26986476e/overview`).
-- **Team:** `Levelzero`.
+- **Project:** `v0` (already exists — `https://linear.app/lich/project/v0-f4d26986476e/overview`).
+- **Team:** `Lich`.
 - **Epic per plan.** One parent issue per plan in the roadmap (13 total). Body: the plan's goal + roadmap link.
 - **Task per implementation unit.** Children of the epic, one per task in that plan. Body: the full task spec lifted from the plan doc (so subagents don't need the plan file).
 - **Discovery tickets.** Anything found during implementation that isn't in a plan (a bug, a missing convention, a needed refactor) becomes its own ticket, parented to the most-relevant epic. Never smuggled into an in-flight task.
 
-### Statuses (mapped from Levelzero team defaults)
+### Statuses (mapped from Lich team defaults)
 
 | Linear status | Meaning in this project |
 |---|---|
@@ -138,7 +138,7 @@ Branch: lev-<ticket-key>-<slug>, based on master.
 <full task text from the Linear ticket — TDD steps with code blocks per the plan>
 
 ## Context
-- Project: levelzero (agent-native dev framework).
+- Project: lich (agent-native dev framework).
 - This task is part of [plan-XX: <plan name>] which produces [<plan outcome>].
 - Files you may read for context (but not modify outside your task):
   - docs/superpowers/specs/2026-05-16-levelzero-design.md (high-level design)
@@ -167,7 +167,7 @@ If the subagent asks questions before starting, I answer or revise the brief bef
 ## 5. Worktree and merge discipline
 
 - **One worktree per ticket.** Created from `master` at dispatch, deleted at merge.
-- **Naming:** `lev-<TICKET-KEY>-<short-slug>`. Stored under a sibling directory (`../levelzero-worktrees/`) to keep the main checkout uncluttered.
+- **Naming:** `lev-<TICKET-KEY>-<short-slug>`. Stored under a sibling directory (`../lich-worktrees/`) to keep the main checkout uncluttered.
 - **No long-lived branches.** Plans 02+ would otherwise tempt me into per-plan branches. They're not worth it: review happens per ticket, integration happens per ticket, and a merge commit per ticket is acceptable noise.
 - **Linear history preferred.** Try `--ff-only` first; fall back to merge commit. Never `git rebase` shared branches.
 - **The repo's `master` is always green.** If a merge introduces red, I revert immediately and reopen the ticket.

@@ -6,9 +6,9 @@ import { PNG } from 'pngjs';
 
 import { visualDiffCommand, makeVisualDiffCommand } from '../../src/commands/visual';
 import { CLIError } from '../../src/errors';
-import { playwrightAdapter } from '@levelzero/plugin-playwright';
+import { playwrightAdapter } from '@lich/plugin-playwright';
 
-// After LEV-174 core no longer imports `@levelzero/plugin-playwright`
+// After LEV-174 core no longer imports `@lich/plugin-playwright`
 // directly, so the default `visualDiffCommand` has no adapter wired. Tests
 // that exercise the real diff() path construct the command with the real
 // adapter explicitly — this mirrors how the CLI dispatcher wires the merged
@@ -40,7 +40,7 @@ beforeEach(() => {
   currentPath = join(projectDir, 'current.png');
 });
 
-describe('levelzero visual diff', () => {
+describe('lich visual diff', () => {
   it('exports a command named "visual.diff"', () => {
     expect(visualDiffCommand.name).toBe('visual.diff');
     expect(typeof visualDiffCommand.describe).toBe('string');

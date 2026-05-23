@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '@levelzero/core/registry';
-import { computeWorktreeKey } from '@levelzero/core/worktree';
-import { CLIError } from '@levelzero/core/errors';
-import { EnvSourceRegistry } from '@levelzero/core/env/registry';
+import { Registry } from '@lich/core/registry';
+import { computeWorktreeKey } from '@lich/core/worktree';
+import { CLIError } from '@lich/core/errors';
+import { EnvSourceRegistry } from '@lich/core/env/registry';
 import { makeDbResetCommand, dbResetCommand } from '../../src/commands/reset';
-import type { ORMAdapter, ORMContext, MigrationResult } from '@levelzero/core';
+import type { ORMAdapter, ORMContext, MigrationResult } from '@lich/core';
 
 /**
  * Configurable adapter stub. Each step's behavior can be overridden so a
@@ -52,12 +52,12 @@ function envSourceRegistryWithPostgres(): EnvSourceRegistry {
     namespace: 'postgres',
     name: 'url',
     fullKey: 'postgres.url',
-    pluginName: '@levelzero/plugin-postgres',
+    pluginName: '@lich/plugin-postgres',
     source: {
       protocol: 'postgres',
       host: ({ ports }) =>
-        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
-      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+        `postgres://lich:lich@localhost:${ports.postgres ?? ''}/lich`,
+      container: () => `postgres://lich:lich@postgres:5432/lich`,
     },
   });
   return reg;
@@ -76,7 +76,7 @@ async function seedRegistryEntry(): Promise<void> {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
@@ -84,17 +84,17 @@ async function seedRegistryEntry(): Promise<void> {
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-reset-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-reset-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
-describe('levelzero db reset', () => {
+describe('lich db reset', () => {
   it('exports a command named "db.reset"', () => {
     expect(dbResetCommand.name).toBe('db.reset');
     expect(typeof dbResetCommand.describe).toBe('string');
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-reset-outside-')));
     const adapter = stubAdapter();
     const cmd = makeDbResetCommand({
@@ -183,7 +183,7 @@ describe('levelzero db reset', () => {
     expect(adapter.seed).toHaveBeenCalledTimes(1);
 
     // Each step received the same EnvSource-resolved URL + project root.
-    const expectedUrl = `postgres://levelzero:levelzero@localhost:${POSTGRES_PORT}/levelzero`;
+    const expectedUrl = `postgres://lich:lich@localhost:${POSTGRES_PORT}/lich`;
     expect(captured.reset?.databaseUrl).toBe(expectedUrl);
     expect(captured.migrate?.databaseUrl).toBe(expectedUrl);
     expect(captured.seed?.databaseUrl).toBe(expectedUrl);

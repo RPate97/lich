@@ -31,9 +31,9 @@ export interface RouteCoverageRuleOptions {
   /**
    * Backend adapter used to extract the route manifest from the Hono app
    * entry. Wired by the dispatcher from the merged adapter registry
-   * (typically the `hono` impl contributed by `@levelzero/plugin-hono`).
+   * (typically the `hono` impl contributed by `@lich/plugin-hono`).
    * When omitted the rule returns `skip` so a project without a backend
-   * plugin doesn't see a hard failure on `levelzero check`.
+   * plugin doesn't see a hard failure on `lich check`.
    */
   backendAdapter?: BackendAdapter;
 }
@@ -41,7 +41,7 @@ export interface RouteCoverageRuleOptions {
 /**
  * Factory for the route-coverage rule. Accepting the backend adapter as an
  * option keeps the rule decoupled from any particular plugin package
- * (LEV-174) — core no longer imports `@levelzero/plugin-hono` directly.
+ * (LEV-174) — core no longer imports `@lich/plugin-hono` directly.
  * `getBuiltinRules` constructs the default no-op variant; the dispatcher
  * upgrades to a fully-wired variant when a backend adapter is available.
  */
@@ -59,7 +59,7 @@ export function makeRouteCoverageRule(opts?: RouteCoverageRuleOptions): Rule {
         return {
           status: 'skip',
           message:
-            'no backend adapter wired — load @levelzero/plugin-hono in your levelzero.config.ts',
+            'no backend adapter wired — load @lich/plugin-hono in your lich.config.ts',
         };
       }
 

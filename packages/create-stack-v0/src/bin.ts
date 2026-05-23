@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * `@levelzero/create-stack-v0` — the canonical entry point for starting a
- * fresh levelzero v0 project via `npx @levelzero/create-stack-v0 <name>`.
+ * `@lich/create-stack-v0` — the canonical entry point for starting a
+ * fresh lich v0 project via `npx @lich/create-stack-v0 <name>`.
  *
  * This is a thin wrapper: it resolves the bundled v0 template path from
- * `@levelzero/template-v0-stack`, then hands it to `copyTemplate` from
- * `@levelzero/core`. The same helper powers `levelzero init <name>` so both
+ * `@lich/template-v0-stack`, then hands it to `copyTemplate` from
+ * `@lich/core`. The same helper powers `lich init <name>` so both
  * entry points produce byte-identical output for the same `<name>`.
  *
  * Out of scope (deliberate, see LEV-159):
@@ -16,7 +16,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
-import { templateRoot } from '@levelzero/template-v0-stack';
+import { templateRoot } from '@lich/template-v0-stack';
 import { scaffoldStackV0 } from './index';
 
 /** Names must start with a letter and contain only letters, digits, hyphens. */
@@ -24,18 +24,18 @@ const NAME_RE = /^[a-z][a-z0-9-]*$/i;
 
 function printHelp(): void {
   process.stdout.write(
-    `Usage: npx @levelzero/create-stack-v0 <project-name> [--template-from <dir>]\n\n` +
-      `Scaffolds a new levelzero v0 stack (postgres + prisma + hono + next + better-auth\n` +
+    `Usage: npx @lich/create-stack-v0 <project-name> [--template-from <dir>]\n\n` +
+      `Scaffolds a new lich v0 stack (postgres + prisma + hono + next + better-auth\n` +
       `+ shadcn + playwright + vitest) into ./<project-name>/.\n\n` +
       `Examples:\n` +
-      `  npx @levelzero/create-stack-v0 my-app\n` +
-      `  npx @levelzero/create-stack-v0 /absolute/path/my-app\n\n` +
+      `  npx @lich/create-stack-v0 my-app\n` +
+      `  npx @lich/create-stack-v0 /absolute/path/my-app\n\n` +
       `Flags:\n` +
       `  --template-from <dir>  Override the bundled template root with an absolute\n` +
       `                         path. Intended for tests that need to pin the\n` +
       `                         template to a specific on-disk state (e.g.\n` +
       `                         worktree-local) rather than the node_modules-\n` +
-      `                         resolved \`@levelzero/template-v0-stack\`. Production\n` +
+      `                         resolved \`@lich/template-v0-stack\`. Production\n` +
       `                         users should not need this flag.\n`,
   );
 }
@@ -87,7 +87,7 @@ function printNextSteps(name: string, destDir: string): void {
       `Next steps:\n` +
       `  cd ${name}\n` +
       `  bun install\n` +
-      `  bun run levelzero dev\n`,
+      `  bun run lich dev\n`,
   );
 }
 
@@ -97,7 +97,7 @@ function printNextSteps(name: string, destDir: string): void {
  *
  * Why a flag and not env: tests spawn the bin and a flag is self-documenting
  * in failure output; env would be invisible. Production users never need
- * this; the bundled template via `@levelzero/template-v0-stack` is correct.
+ * this; the bundled template via `@lich/template-v0-stack` is correct.
  */
 function extractTemplateFrom(args: string[]): {
   templateFrom: string | null;
@@ -165,7 +165,7 @@ async function main(argv: string[]): Promise<number> {
 
   const destDir = isAbsolute(arg) ? arg : join(process.cwd(), arg);
   // LEV-210: `--template-from` lets tests pin the template root to an absolute
-  // worktree path, bypassing the node_modules-resolved `@levelzero/template-v0-stack`
+  // worktree path, bypassing the node_modules-resolved `@lich/template-v0-stack`
   // (which in a multi-worktree dev setup can route to a sibling worktree's
   // template). Absent the flag, behavior is unchanged: use the bundled root.
   const effectiveTemplateRoot = parsed.templateFrom ?? templateRoot;

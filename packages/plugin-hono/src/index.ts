@@ -1,4 +1,4 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { honoBackendAdapter } from './adapter';
 import { apiService } from './service';
 
@@ -16,7 +16,7 @@ export { apiService } from './service';
 export const honoAdapter = honoBackendAdapter;
 
 /**
- * Options for the `@levelzero/plugin-hono` factory. The `namespace` override
+ * Options for the `@lich/plugin-hono` factory. The `namespace` override
  * exists so multi-instance setups can co-exist.
  */
 export interface HonoOptions {
@@ -25,14 +25,14 @@ export interface HonoOptions {
 }
 
 /**
- * `@levelzero/plugin-hono` — extracts the Hono `BackendAdapter` impl out of
- * `@levelzero/core`.
+ * `@lich/plugin-hono` — extracts the Hono `BackendAdapter` impl out of
+ * `@lich/core`.
  *
  * Contributes:
  *
  *   - `hono` impl under the `backend` adapter slot (activated by default so
  *     existing consumers — route-coverage rule, the api-client generator
- *     dispatched by `levelzero gen`, etc. — keep observing the same
+ *     dispatched by `lich gen`, etc. — keep observing the same
  *     behavior they did before the extraction);
  *   - the `api` owned service (`apps/api`, `bun run dev`), promoted out of
  *     `packages/core/src/services/builtins.ts` so the plugin that provides
@@ -44,10 +44,10 @@ export interface HonoOptions {
  *     sees `http://api:3000` (compose DNS placeholder for any future
  *     sibling-service plumbing).
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import hono from '@levelzero/plugin-hono';
+ * import hono from '@lich/plugin-hono';
  *
  * export default {
  *   plugins: [hono()],
@@ -62,7 +62,7 @@ export default function hono(opts: HonoOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-hono',
+    name: '@lich/plugin-hono',
     namespace: (opts.namespace ?? 'hono') as 'hono',
     version: '0.1.0',
 

@@ -2,8 +2,8 @@
  * TestRunnerAdapter — pluggable interface for the test-runner slot.
  *
  * Hypothetical alternative implementations:
- *   - Vitest      (current default for unit/integration; ships in `@levelzero/plugin-vitest`)
- *   - Playwright  (current default for e2e; ships in `@levelzero/plugin-playwright`)
+ *   - Vitest      (current default for unit/integration; ships in `@lich/plugin-vitest`)
+ *   - Playwright  (current default for e2e; ships in `@lich/plugin-playwright`)
  *   - Jest        (long-standing test runner)
  *   - Bun test    (Bun's built-in runner)
  *   - Mocha + Chai (split-runner combo)

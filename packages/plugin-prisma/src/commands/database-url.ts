@@ -1,5 +1,5 @@
-import { CLIError } from '@levelzero/core/errors';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
+import { CLIError } from '@lich/core/errors';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
 
 /**
  * Inputs for {@link resolveDatabaseUrl}. Pulled from the current stack's
@@ -64,7 +64,7 @@ export async function resolveDatabaseUrl(input: ResolveDatabaseUrlInput): Promis
     throw new CLIError(
       'NO_PROJECT',
       'no postgres EnvSource active',
-      'add a postgres-protocol DB plugin to your `levelzero.config.ts` plugins list so a `<ns>.url` source with `protocol: "postgres"` is registered.',
+      'add a postgres-protocol DB plugin to your `lich.config.ts` plugins list so a `<ns>.url` source with `protocol: "postgres"` is registered.',
     );
   }
 

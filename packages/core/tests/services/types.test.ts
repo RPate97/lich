@@ -47,10 +47,10 @@ describe('service contract types', () => {
   it('RunningHandle carries the data needed for stop()', () => {
     const handle: RunningHandle = {
       serviceName: 'postgres',
-      containerName: 'levelzero-a3f8c1234567-postgres',
+      containerName: 'lich-a3f8c1234567-postgres',
       ports: { postgres: 54123 },
     };
-    expect(handle.containerName).toContain('levelzero-');
+    expect(handle.containerName).toContain('lich-');
   });
 
   it('Service discriminates on kind (compile-time check)', () => {

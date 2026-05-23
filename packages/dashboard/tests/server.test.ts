@@ -66,9 +66,9 @@ describe('dashboard server', () => {
   it('serves GET /api/stacks from the registry', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'srv-'));
     const wt = join(dir, 'wt');
-    await mkdir(join(wt, '.levelzero', 'state', 'abc', 'pids'), { recursive: true });
+    await mkdir(join(wt, '.lich', 'state', 'abc', 'pids'), { recursive: true });
     await writeFile(
-      join(wt, '.levelzero', 'state', 'abc', 'pids', 'api.pid'),
+      join(wt, '.lich', 'state', 'abc', 'pids', 'api.pid'),
       `${process.pid}\n`,
     );
     const registryPath = join(dir, 'registry.json');
@@ -78,7 +78,7 @@ describe('dashboard server', () => {
         stacks: {
           abc: {
             path: wt, branch: 'main', ports: {}, urls: {},
-            containers: [], network: 'n', logDir: '.levelzero/logs',
+            containers: [], network: 'n', logDir: '.lich/logs',
             createdAt: '2026-05-21T00:00:00.000Z',
           },
         },
@@ -170,7 +170,7 @@ describe('merged log stream endpoint', () => {
   it('streams events from every service and tags each with its service name', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'merged-'));
     const wt = join(dir, 'wt');
-    const logsDir = join(wt, '.levelzero', 'state', 'mystack', 'logs');
+    const logsDir = join(wt, '.lich', 'state', 'mystack', 'logs');
     await mkdir(logsDir, { recursive: true });
 
     // Write two service log files.
@@ -189,7 +189,7 @@ describe('merged log stream endpoint', () => {
             urls: {},
             containers: [],
             network: 'n',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-22T00:00:00.000Z',
           },
         },
@@ -222,7 +222,7 @@ describe('merged log stream endpoint', () => {
   it('reads from .jsonl when no .log file exists', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'merged-'));
     const wt = join(dir, 'wt');
-    const jsonlDir = join(wt, '.levelzero', 'logs');
+    const jsonlDir = join(wt, '.lich', 'logs');
     await mkdir(jsonlDir, { recursive: true });
 
     await writeFile(
@@ -242,7 +242,7 @@ describe('merged log stream endpoint', () => {
             urls: {},
             containers: [],
             network: 'n',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-22T00:00:00.000Z',
           },
         },
@@ -276,7 +276,7 @@ describe('merged log stream endpoint', () => {
             urls: {},
             containers: [],
             network: 'n',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-22T00:00:00.000Z',
           },
         },
@@ -363,7 +363,7 @@ describe('metrics endpoint', () => {
   it('returns 200 with cpuPct and memMB for a live pid', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'metrics-'));
     const wt = join(dir, 'wt');
-    const pidsDir = join(wt, '.levelzero', 'state', 'teststack', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'teststack', 'pids');
     await mkdir(pidsDir, { recursive: true });
     // Write the current process pid — guaranteed to be alive.
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
@@ -380,7 +380,7 @@ describe('metrics endpoint', () => {
             urls: {},
             containers: [],
             network: 'n',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-22T00:00:00.000Z',
           },
         },
@@ -417,7 +417,7 @@ describe('metrics endpoint', () => {
             urls: {},
             containers: [],
             network: 'n',
-            logDir: '.levelzero/logs',
+            logDir: '.lich/logs',
             createdAt: '2026-05-22T00:00:00.000Z',
           },
         },

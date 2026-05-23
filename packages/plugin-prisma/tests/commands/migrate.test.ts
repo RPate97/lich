@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Registry } from '@levelzero/core/registry';
-import { computeWorktreeKey } from '@levelzero/core/worktree';
-import { CLIError } from '@levelzero/core/errors';
-import { EnvSourceRegistry } from '@levelzero/core/env/registry';
+import { Registry } from '@lich/core/registry';
+import { computeWorktreeKey } from '@lich/core/worktree';
+import { CLIError } from '@lich/core/errors';
+import { EnvSourceRegistry } from '@lich/core/env/registry';
 import { makeDbMigrateCommand, dbMigrateCommand } from '../../src/commands/migrate';
-import type { ORMAdapter, ORMContext, MigrationResult } from '@levelzero/core';
+import type { ORMAdapter, ORMContext, MigrationResult } from '@lich/core';
 
 function stubAdapter(
   impl: (ctx: ORMContext) => Promise<MigrationResult>,
@@ -41,12 +41,12 @@ function envSourceRegistryWithPostgres(): EnvSourceRegistry {
     namespace: 'postgres',
     name: 'url',
     fullKey: 'postgres.url',
-    pluginName: '@levelzero/plugin-postgres',
+    pluginName: '@lich/plugin-postgres',
     source: {
       protocol: 'postgres',
       host: ({ ports }) =>
-        `postgres://levelzero:levelzero@localhost:${ports.postgres ?? ''}/levelzero`,
-      container: () => `postgres://levelzero:levelzero@postgres:5432/levelzero`,
+        `postgres://lich:lich@localhost:${ports.postgres ?? ''}/lich`,
+      container: () => `postgres://lich:lich@postgres:5432/lich`,
     },
   });
   return reg;
@@ -65,7 +65,7 @@ async function seedRegistryEntry(): Promise<void> {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 }
@@ -73,17 +73,17 @@ async function seedRegistryEntry(): Promise<void> {
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-migrate-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-migrate-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
-describe('levelzero db migrate', () => {
+describe('lich db migrate', () => {
   it('exports a command named "db.migrate"', () => {
     expect(dbMigrateCommand.name).toBe('db.migrate');
     expect(typeof dbMigrateCommand.describe).toBe('string');
   });
 
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-db-migrate-outside-')));
     const adapter = stubAdapter(async () => ({ applied: 0, names: [], output: '' }));
     const cmd = makeDbMigrateCommand({
@@ -172,7 +172,7 @@ describe('levelzero db migrate', () => {
     // The URL must match what the registered EnvSource's `host()` resolver
     // produces given the stack's allocated postgres port.
     expect(captured!.databaseUrl).toBe(
-      `postgres://levelzero:levelzero@localhost:${POSTGRES_PORT}/levelzero`,
+      `postgres://lich:lich@localhost:${POSTGRES_PORT}/lich`,
     );
     expect(result.ok).toBe(true);
     expect(result.applied).toBe(2);

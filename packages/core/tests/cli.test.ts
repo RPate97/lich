@@ -78,7 +78,7 @@ describe('runCli', () => {
       name: 'bad',
       describe: 'bad',
       run: async () => {
-        throw new CLIError('NO_PROJECT', 'not inside a levelzero project');
+        throw new CLIError('NO_PROJECT', 'not inside a lich project');
       },
     };
     const out = await runCli(['bad', '--json'], makeRegistry([bad]), { cwd: '/' });
@@ -87,13 +87,13 @@ describe('runCli', () => {
   });
 
   // Post-LEV-152: `curl` is no longer registered inline in `buildCommands` —
-  // it ships from `@levelzero/plugin-better-auth`. The bin-level smoke check
+  // it ships from `@lich/plugin-better-auth`. The bin-level smoke check
   // now verifies that `buildCommands` (the inline-only path) reports the
   // command as unknown; project-level dispatch via `buildDispatchRegistry`
   // wires it in when the plugin is loaded, which is covered by the plugin's
   // own tests.
   it('does not register curl in buildCommands (plugin-only after LEV-152)', async () => {
-    const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
+    const reg = buildCommands('/tmp/lich-bin-smoke-registry.json');
     const out = await runCli(['curl', '--json'], reg, { cwd: '/' });
     expect(out.exitCode).toBe(1);
     const parsed = JSON.parse(out.stderr);
@@ -108,7 +108,7 @@ describe('runCli', () => {
   // they're UNKNOWN_COMMAND, matching the curl pattern above. Project-level
   // dispatch is exercised by tests/bin.plan{07,09,10}.
   it('does not register screenshot/visual.diff/gen/test in buildCommands (plugin-only after LEV-165)', async () => {
-    const reg = buildCommands('/tmp/levelzero-bin-smoke-registry.json');
+    const reg = buildCommands('/tmp/lich-bin-smoke-registry.json');
     for (const argv of [
       ['screenshot', '--json'],
       ['visual', 'diff', '--json'],

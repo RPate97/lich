@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/plugin-prisma",
+  "name": "@lich/plugin-prisma",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",
@@ -35,7 +35,7 @@
     "prisma": "^7.0.0"
   },
   "devDependencies": {
-    "@levelzero/plugin-postgres": "workspace:*",
+    "@lich/plugin-postgres": "workspace:*",
     "@prisma/client": "^7.0.0",
     "@types/node": "^20.12.0",
     "@types/pg": "^8.11.0",

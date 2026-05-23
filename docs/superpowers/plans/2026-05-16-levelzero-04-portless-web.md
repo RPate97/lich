@@ -1,12 +1,12 @@
 # Plan 04 — portless integration for web
 
-**Goal:** Define a `PortlessAdapter` that registers per-worktree URLs like `https://<branch>.myapp.localhost` for the web service. Ship `levelzero urls` and integrate URL registration into `levelzero dev`. Gracefully degrade when portless isn't available.
+**Goal:** Define a `PortlessAdapter` that registers per-worktree URLs like `https://<branch>.myapp.localhost` for the web service. Ship `lich urls` and integrate URL registration into `lich dev`. Gracefully degrade when portless isn't available.
 
 **Architecture:**
 - `PortlessAdapter` interface: `register({ host, target }) → Promise<void>`, `unregister(host)`, `list() → URLEntry[]`, `available() → boolean`.
 - v0 implementation shells out to `portless` CLI; `available()` checks if `portless` is on PATH and responsive.
 - `dev` calls `portlessAdapter.register({ host, target })` for owned services that declare a `urlName` field. Stack registry stores `urls` per service.
-- `levelzero urls` prints the URL table for the current worktree (or all stacks with `--all`).
+- `lich urls` prints the URL table for the current worktree (or all stacks with `--all`).
 - If portless unavailable: log a warning, continue with plain `http://localhost:<port>` URLs.
 
 **Files:**
@@ -20,7 +20,7 @@ tools/cli/src/
   services/
     types.ts                    # extend OwnedService: add optional urlName
   commands/
-    urls.ts                     # levelzero urls
+    urls.ts                     # lich urls
     dev.ts                      # MODIFY: register URLs through adapter
 ```
 
@@ -31,7 +31,7 @@ tools/cli/src/
 | 04.1 | PortlessAdapter interface + types | 1 | `adapters/portless/types.ts` |
 | 04.2 | portless CLI impl + noop fallback | 2 | `adapters/portless/{portless,noop}.ts` |
 | 04.3 | Extend OwnedService.urlName + Stack URL persistence | 2 | `services/types.ts`, `registry.ts` |
-| 04.4 | `levelzero urls` command | 3 | `commands/urls.ts` |
+| 04.4 | `lich urls` command | 3 | `commands/urls.ts` |
 | 04.5 | Wire portless into `dev` + e2e | 4 | `commands/dev.ts`, tests |
 | 04.6 | Wire `urls` into bin + e2e | 5 | `bin.ts`, tests |
 
@@ -49,6 +49,6 @@ None — shell out to existing `portless` CLI when available; tests stub it.
 
 ## Verification
 
-- With portless installed: `levelzero dev` registers URLs; `levelzero urls` lists them; visiting URL hits the right worktree's web service.
-- Without portless: `levelzero dev` still works, logs warning, `levelzero urls` falls back to plain http://localhost:port table.
+- With portless installed: `lich dev` registers URLs; `lich urls` lists them; visiting URL hits the right worktree's web service.
+- Without portless: `lich dev` still works, logs warning, `lich urls` falls back to plain http://localhost:port table.
 - Full suite green; tsc clean.

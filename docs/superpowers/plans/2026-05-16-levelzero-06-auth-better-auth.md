@@ -1,6 +1,6 @@
 # Plan 06 — Auth + Better Auth adapter
 
-**Goal:** Define `AuthAdapter` interface and ship a Better Auth implementation. Library-level helpers only in plan 06: create-user, sign-session, inspect-session. The full `levelzero curl --as <user>` HTTP integration is deferred to plan 11 (it needs a running api).
+**Goal:** Define `AuthAdapter` interface and ship a Better Auth implementation. Library-level helpers only in plan 06: create-user, sign-session, inspect-session. The full `lich curl --as <user>` HTTP integration is deferred to plan 11 (it needs a running api).
 
 **Architecture:**
 - Better Auth is a library, not a service. The adapter wraps its primitives (user creation, session signing, session inspection) into a stable API the CLI and test harness can call.
@@ -36,7 +36,7 @@ Wave 1 has 2 parallel agents. Wave 2 is sequential.
 
 ## Out of scope for plan 06
 
-- `levelzero curl --as <user>` command — deferred to plan 11.
+- `lich curl --as <user>` command — deferred to plan 11.
 - Real api integration — deferred to plan 11.
 - OAuth providers, magic links, etc. — discovery follow-ons.
 

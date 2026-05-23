@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the `@levelzero/dashboard` SPA with the `sample-dashboard/` visual design, wired to the real backend.
+**Goal:** Replace the `@lich/dashboard` SPA with the `sample-dashboard/` visual design, wired to the real backend.
 
 **Architecture:** Tear out the shadcn/Tailwind layer; the package becomes a plain-CSS React app. Port the prototype's six `window`-global JSX files into typed ESM modules under `src/web/`, reusing the design's `styles.css` verbatim and wiring components to the real `/api/stacks` poll + SSE log stream. Frontend-only — `src/server/` is untouched.
 
@@ -682,11 +682,11 @@ Expected: PASS.
 - [ ] **Step 4: Repo-wide build**
 
 Run: `bun run build` (repo root)
-Expected: `@levelzero/dashboard` builds. (Pre-existing failures in unrelated packages — e.g. `@levelzero/plugin-redis` typecheck when `@levelzero/core` is unbuilt — are not introduced by this task; report them but do not fix them here.)
+Expected: `@lich/dashboard` builds. (Pre-existing failures in unrelated packages — e.g. `@lich/plugin-redis` typecheck when `@lich/core` is unbuilt — are not introduced by this task; report them but do not fix them here.)
 
 - [ ] **Step 5: Manual smoke test (human)**
 
-This step is for the human reviewer, not the implementer: `bun run levelzero dashboard` with a stack up — confirm the design renders (sidebar stack cards, main header, metric cards, live logs), the newest stack is auto-selected, and dark theme + Lich brand colors are correct.
+This step is for the human reviewer, not the implementer: `bun run lich dashboard` with a stack up — confirm the design renders (sidebar stack cards, main header, metric cards, live logs), the newest stack is auto-selected, and dark theme + Lich brand colors are correct.
 
 - [ ] **Step 6: Commit (if any verification touch-ups were needed)**
 

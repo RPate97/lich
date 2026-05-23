@@ -5,9 +5,9 @@ import type { Service } from './types';
  * provide one. Now empty — every previously built-in service has been moved
  * into a plugin:
  *
- *  - postgres → `@levelzero/plugin-postgres` (LEV-148)
- *  - web      → `@levelzero/plugin-next` (LEV-154)
- *  - api      → `@levelzero/plugin-hono` (LEV-187)
+ *  - postgres → `@lich/plugin-postgres` (LEV-148)
+ *  - web      → `@lich/plugin-next` (LEV-154)
+ *  - api      → `@lich/plugin-hono` (LEV-187)
  *
  * Consumers pick up these services via `getPluginOwnedServices()` /
  * `getPluginCompose()` rather than `getBuiltinServices()`. The function is

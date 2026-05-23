@@ -1,15 +1,15 @@
 import { defineConfig } from 'tsup';
 
 /**
- * tsup build for `@levelzero/core` (LEV-214).
+ * tsup build for `@lich/core` (LEV-214).
  *
  * Entries mirror the published `exports` map in package.json — every subpath
  * the map advertises must have a corresponding entry here, otherwise external
- * consumers that import `@levelzero/core/<subpath>` will fail after install.
+ * consumers that import `@lich/core/<subpath>` will fail after install.
  *
- * `bin.ts` is included so the published `levelzero` CLI binary points at a
+ * `bin.ts` is included so the published `lich` CLI binary points at a
  * built artifact instead of raw TS source. The source `#!/usr/bin/env bun`
- * shebang is intentionally preserved: the CLI loads project `levelzero.config.ts`
+ * shebang is intentionally preserved: the CLI loads project `lich.config.ts`
  * files via dynamic `import()`, which requires a runtime that imports TypeScript
  * natively (Bun). `onSuccess` only marks the built bin executable.
  *

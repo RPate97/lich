@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { buildComposeBundle, writeComposeFile } from '../../src/compose/stack';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { StackContext } from '../../src/services/types';
 
 // LEV-202 — vitest's globalSetup stamps TEST_RUN_ID for the whole
@@ -34,25 +34,25 @@ describe('buildComposeBundle', () => {
   it('produces project name, compose file path, containers, and substituted yaml', () => {
     const b = buildComposeBundle(ctx, [pgService], { postgres: 54123 });
 
-    expect(b.projectName).toBe('levelzero-abcdef012345');
+    expect(b.projectName).toBe('lich-abcdef012345');
     expect(b.composeFilePath).toBe(
-      '/tmp/lz-fake-worktree/.levelzero/abcdef012345/docker-compose.yml',
+      '/tmp/lz-fake-worktree/.lich/abcdef012345/docker-compose.yml',
     );
-    expect(b.containerNames).toEqual(['levelzero-abcdef012345-postgres']);
+    expect(b.containerNames).toEqual(['lich-abcdef012345-postgres']);
 
     const parsed = parseYaml(b.yaml) as {
       name: string;
       services: Record<string, { ports?: string[]; container_name?: string }>;
       volumes: Record<string, unknown>;
     };
-    expect(parsed.name).toBe('levelzero-abcdef012345');
+    expect(parsed.name).toBe('lich-abcdef012345');
     expect(parsed.services.postgres!.container_name).toBe(
-      'levelzero-abcdef012345-postgres',
+      'lich-abcdef012345-postgres',
     );
     expect(parsed.services.postgres!.ports).toEqual([
       '127.0.0.1:54123:5432',
     ]);
-    expect(parsed.volumes['levelzero-abcdef012345-postgres-data']).toBeDefined();
+    expect(parsed.volumes['lich-abcdef012345-postgres-data']).toBeDefined();
   });
 
   it('returns an empty bundle for zero docker services', () => {
@@ -64,7 +64,7 @@ describe('buildComposeBundle', () => {
       name: string;
       services: Record<string, unknown>;
     };
-    expect(parsed.name).toBe('levelzero-abcdef012345');
+    expect(parsed.name).toBe('lich-abcdef012345');
     expect(parsed.services).toEqual({});
   });
 
@@ -116,7 +116,7 @@ describe('buildComposeBundle', () => {
     expect(b.services.postgres!.environment).toEqual({ POSTGRES_USER: 'override' });
     // The plugin entry has no `container_name`, so containerNames only carries
     // the legacy DockerService's pinned name from the first pass.
-    expect(b.containerNames).toEqual(['levelzero-abcdef012345-postgres']);
+    expect(b.containerNames).toEqual(['lich-abcdef012345-postgres']);
   });
 
   // LEV-182 — `serviceEnv` parameter merges into each service's
@@ -161,7 +161,7 @@ describe('buildComposeBundle', () => {
         services: {
           postgres: {
             image: 'postgres:16-alpine',
-            environment: { DATABASE_URL: 'old', POSTGRES_USER: 'levelzero' },
+            environment: { DATABASE_URL: 'old', POSTGRES_USER: 'lich' },
           },
         },
         volumes: {},
@@ -175,7 +175,7 @@ describe('buildComposeBundle', () => {
     // Resolved entry wins; entries it doesn't touch pass through.
     expect(b.services.postgres!.environment).toEqual({
       DATABASE_URL: 'new',
-      POSTGRES_USER: 'levelzero',
+      POSTGRES_USER: 'lich',
     });
   });
 
@@ -234,7 +234,7 @@ describe('writeComposeFile', () => {
 
     const onDisk = readFileSync(b.composeFilePath, 'utf8');
     expect(onDisk).toBe(b.yaml);
-    expect(onDisk).toContain('container_name: levelzero-0123456789ab-postgres');
+    expect(onDisk).toContain('container_name: lich-0123456789ab-postgres');
     expect(onDisk).toContain('127.0.0.1:55001:5432');
   });
 });

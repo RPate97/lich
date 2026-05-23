@@ -1,4 +1,4 @@
-import type { Plugin, PluginAPI, PluginContext } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext } from '@lich/core';
 import { shadcnAdapter } from './adapter';
 import { makeUiAddCommand } from './commands/add';
 import { makeUiListCommand } from './commands/list';
@@ -10,7 +10,7 @@ export { makeUiListCommand, uiListCommand } from './commands/list';
 export type { UiListOptions } from './commands/list';
 
 /**
- * Options for the `@levelzero/plugin-shadcn` factory. The `namespace` override
+ * Options for the `@lich/plugin-shadcn` factory. The `namespace` override
  * exists so multi-instance setups can co-exist.
  */
 export interface ShadcnOptions {
@@ -19,8 +19,8 @@ export interface ShadcnOptions {
 }
 
 /**
- * `@levelzero/plugin-shadcn` — extracts the shadcn `UIAdapter` impl and its
- * `ui.add` / `ui.list` commands out of `@levelzero/core` (LEV-153).
+ * `@lich/plugin-shadcn` — extracts the shadcn `UIAdapter` impl and its
+ * `ui.add` / `ui.list` commands out of `@lich/core` (LEV-153).
  *
  * Contributes one impl under the `ui` adapter slot:
  *
@@ -31,13 +31,13 @@ export interface ShadcnOptions {
  * Activates `shadcn` by default so existing consumers that call
  * `registry.getActive('ui')` observe the same behavior they did before the
  * extraction. Also wires the `ui.add` and `ui.list` top-level commands, each
- * bound to the shadcn adapter so `levelzero ui add button` and
- * `levelzero ui list` keep working unchanged.
+ * bound to the shadcn adapter so `lich ui add button` and
+ * `lich ui list` keep working unchanged.
  *
- * Wire it into a project by adding it to `levelzero.config.ts`:
+ * Wire it into a project by adding it to `lich.config.ts`:
  *
  * ```ts
- * import shadcn from '@levelzero/plugin-shadcn';
+ * import shadcn from '@lich/plugin-shadcn';
  *
  * export default {
  *   plugins: [shadcn()],
@@ -52,7 +52,7 @@ export default function shadcn(opts: ShadcnOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-shadcn',
+    name: '@lich/plugin-shadcn',
     namespace: (opts.namespace ?? 'shadcn') as 'shadcn',
     version: '0.1.0',
 

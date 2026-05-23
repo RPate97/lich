@@ -1,6 +1,6 @@
 ---
 name: turbo
-description: Turborepo task pipeline reference for the levelzero stack
+description: Turborepo task pipeline reference for the lich stack
 applies-to: reference
 ---
 

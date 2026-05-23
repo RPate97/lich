@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { dockerServiceToCompose } from '../../src/compose/from-docker';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { DockerService, StackContext } from '../../src/services/types';
 
 const ctx: StackContext = {
@@ -28,27 +28,27 @@ describe('dockerServiceToCompose', () => {
 
     expect(c.serviceName).toBe('postgres');
     expect(c.serviceDef.image).toBe('postgres:16-alpine');
-    expect(c.serviceDef.container_name).toBe('levelzero-0123456789ab-postgres');
+    expect(c.serviceDef.container_name).toBe('lich-0123456789ab-postgres');
     expect(c.serviceDef.environment).toEqual({
-      POSTGRES_USER: 'levelzero',
-      POSTGRES_PASSWORD: 'levelzero',
-      POSTGRES_DB: 'levelzero',
+      POSTGRES_USER: 'lich',
+      POSTGRES_PASSWORD: 'lich',
+      POSTGRES_DB: 'lich',
     });
     expect(c.serviceDef.ports).toEqual([
       '127.0.0.1:${PORT_postgres}:5432',
     ]);
     expect(c.serviceDef.volumes).toEqual([
-      'levelzero-0123456789ab-postgres-data:/var/lib/postgresql/data',
+      'lich-0123456789ab-postgres-data:/var/lib/postgresql/data',
     ]);
-    expect(c.volumeName).toBe('levelzero-0123456789ab-postgres-data');
-    expect(c.volumeDef).toEqual({ name: 'levelzero-0123456789ab-postgres-data' });
+    expect(c.volumeName).toBe('lich-0123456789ab-postgres-data');
+    expect(c.volumeDef).toEqual({ name: 'lich-0123456789ab-postgres-data' });
     expect(c.serviceDef.healthcheck?.test).toEqual([
       'CMD',
       'pg_isready',
       '-U',
-      'levelzero',
+      'lich',
       '-d',
-      'levelzero',
+      'lich',
     ]);
   });
 

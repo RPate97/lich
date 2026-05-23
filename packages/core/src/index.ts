@@ -1,10 +1,10 @@
 /**
- * Package entrypoint for `@levelzero/core`.
+ * Package entrypoint for `@lich/core`.
  *
  * Re-exports the plugin contract (`Plugin`, `PluginAPI`, `PluginContext`,
  * compose contribution shapes, etc.) and a handful of adjacent types that
  * plugins commonly need to type their contributions (`Command`, `OwnedService`,
- * `Rule`, `LevelzeroConfig`, `AdapterSlot`).
+ * `Rule`, `LichConfig`, `AdapterSlot`).
  *
  * The full CLI surface (commands, registries, runners) still lives under deep
  * paths; this barrel intentionally exposes only the types a plugin author
@@ -23,7 +23,7 @@ export type {
 
 /**
  * Generator contract (LEV-124). Plugins contribute generators via
- * `api.addGenerator(...)`; the unified `levelzero gen` command drives every
+ * `api.addGenerator(...)`; the unified `lich gen` command drives every
  * registered generator through a single dispatch path.
  */
 export type { Generator, GeneratorContext, GeneratorResult } from './gen/types';
@@ -32,7 +32,7 @@ export type { Generator, GeneratorContext, GeneratorResult } from './gen/types';
  * EnvSource contract (Plan 16 / LEV-178). Plugins use these types to publish
  * values that the runtime injects as environment variables into services.
  * The registry itself is exported so downstream wiring (LEV-181/182) and
- * future `levelzero env` debug commands can consume it.
+ * future `lich env` debug commands can consume it.
  */
 export type {
   EnvSource,
@@ -68,7 +68,7 @@ export type { AdapterSlot, AdapterEntry } from './adapters/registry';
 export type { Command, CommandContext } from './commands/types';
 export type { OwnedService } from './services/types';
 export type { Rule } from './check/types';
-export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
+export type { LichConfig, AdaptersConfig, PluginEntry } from './config';
 
 /**
  * `defineConfig()` authoring-time helper + supporting types (Plan 16 / LEV-180).
@@ -77,7 +77,7 @@ export type { LevelzeroConfig, AdaptersConfig, PluginEntry } from './config';
  */
 export { defineConfig } from './define-config';
 export type {
-  TypedLevelzeroConfig,
+  TypedLichConfig,
   EnvInjectionConfig,
   EnvInjectionEntry,
   NamedSourceKeys,
@@ -90,7 +90,7 @@ export type {
  * AdapterRegistry access). Kept narrow on purpose — each export is part of the
  * published API surface, so additions here should be deliberate.
  *
- * Added for LEV-152 (`@levelzero/plugin-better-auth`) so the extracted `curl`
+ * Added for LEV-152 (`@lich/plugin-better-auth`) so the extracted `curl`
  * command can construct a `Registry`, throw `CLIError`, locate the surrounding
  * worktree, and (optionally) resolve auth adapters off the builtin registry —
  * all without reaching into core via deep paths.
@@ -107,7 +107,7 @@ export { AdapterRegistry, getBuiltinAdapters } from './adapters/registry';
  * Auth slot contract. Like the other slot interfaces (`BackendAdapter`,
  * `FrontendAdapter`, `TestRunnerAdapter`), the types stay in core even after
  * the concrete `betterAuthAdapter` impl was extracted into
- * `@levelzero/plugin-better-auth` — other core consumers (auth helpers in the
+ * `@lich/plugin-better-auth` — other core consumers (auth helpers in the
  * plugin, future test fixtures, out-of-tree auth adapters) still need them.
  */
 export type {
@@ -122,8 +122,8 @@ export type {
 /**
  * Adapter slot contracts. The slot interfaces stay in core because they are
  * part of the published API surface — even after the concrete impls were
- * extracted into separate plugin packages (`@levelzero/plugin-hono`,
- * `@levelzero/plugin-typed-client`, `@levelzero/plugin-vitest`, etc.),
+ * extracted into separate plugin packages (`@lich/plugin-hono`,
+ * `@lich/plugin-typed-client`, `@lich/plugin-vitest`, etc.),
  * multiple core paths still depend on these shapes, and out-of-tree adapter
  * implementations need them too.
  */
@@ -169,14 +169,14 @@ export type {
  * Runtime helper re-exported for plugins that contribute commands needing the
  * project root. CLIError + Registry + worktree helpers are already exported
  * above (added for LEV-152); resolveStackContext joins them here for
- * `@levelzero/plugin-shadcn` (LEV-153) and other command-extracting plugins.
+ * `@lich/plugin-shadcn` (LEV-153) and other command-extracting plugins.
  */
 export { resolveStackContext } from './services/context';
 
 /**
- * Scaffolder helper re-exported so the `@levelzero/create-stack-v0` npx wrapper
+ * Scaffolder helper re-exported so the `@lich/create-stack-v0` npx wrapper
  * (LEV-159) can materialize a template tree without reaching into a deep path.
- * The same helper powers `levelzero init <name>` internally — both entry points
+ * The same helper powers `lich init <name>` internally — both entry points
  * call into a single implementation to keep scaffolding behavior identical.
  */
 export { copyTemplate } from './scaffolder';

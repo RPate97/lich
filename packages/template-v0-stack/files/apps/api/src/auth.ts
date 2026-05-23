@@ -15,11 +15,11 @@
  *   - emailAndPassword.requireEmailVerification = false — Better Auth's
  *     default is to NOT require verification. We keep that default so the
  *     dogfood / quickstart flow doesn't depend on configuring a mailer.
- *   - secret — `LEVELZERO_AUTH_SECRET` from env, falling back to a literal
+ *   - secret — `LICH_AUTH_SECRET` from env, falling back to a literal
  *     dev secret so the template runs without configuration. The fallback
- *     is intentionally well-known so you notice it in `levelzero env list`
+ *     is intentionally well-known so you notice it in `lich env list`
  *     and rotate it before production.
- *   - baseURL — `API_URL` from env (injected by `@levelzero/plugin-hono` via
+ *   - baseURL — `API_URL` from env (injected by `@lich/plugin-hono` via
  *     the template's `envInjection`), falling back to the same hardcoded
  *     `http://localhost:3001` the rest of the api defaults to.
  *
@@ -36,11 +36,11 @@ import { prisma } from './prisma';
 
 const API_URL_FALLBACK = 'http://localhost:3001';
 // 32 chars minimum is Better Auth's requirement. Replace before deploying.
-const DEV_SECRET_FALLBACK = 'levelzero-dev-secret-rotate-in-prod-aaaa';
+const DEV_SECRET_FALLBACK = 'lich-dev-secret-rotate-in-prod-aaaa';
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: 'postgresql' }),
-  secret: process.env.LEVELZERO_AUTH_SECRET ?? DEV_SECRET_FALLBACK,
+  secret: process.env.LICH_AUTH_SECRET ?? DEV_SECRET_FALLBACK,
   baseURL: process.env.API_URL ?? API_URL_FALLBACK,
   emailAndPassword: {
     enabled: true,

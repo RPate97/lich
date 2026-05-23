@@ -74,7 +74,7 @@ export function makeLogsCommand(getRegistry: () => Registry): Command {
       const stackCtx = await resolveStackContext(ctx.cwd);
       const entry = await getRegistry().get(stackCtx.worktreeKey);
       if (!entry) {
-        const note = 'no stack running for this worktree (run `levelzero dev`)';
+        const note = 'no stack running for this worktree (run `lich dev`)';
         if (ctx.format === 'json') return { lines: [], note };
         return note + '\n';
       }
@@ -90,19 +90,19 @@ export function makeLogsCommand(getRegistry: () => Registry): Command {
 
       // LEV-194 / LEV-245 — log source dirs:
       //
-      // 1. `.levelzero/state/<key>/logs` (detached runner, LEV-245+): JSONL
+      // 1. `.lich/state/<key>/logs` (detached runner, LEV-245+): JSONL
       //    files written by `ServiceLogWriter` — one record per line with
       //    `{ts, service, stream, level, message}`.
-      // 2. `entry.logDir` (`.levelzero/logs`, `--live` runner): JSONL files
+      // 2. `entry.logDir` (`.lich/logs`, `--live` runner): JSONL files
       //    written by `ServiceLogWriter` in the foreground runner.
-      // 3. `.levelzero/state/<key>/logs` (legacy, pre-LEV-245): raw `.log`
+      // 3. `.lich/state/<key>/logs` (legacy, pre-LEV-245): raw `.log`
       //    files — chunks appended directly via an FD. Still present for
       //    stacks started before LEV-245.
       //
       // We read all three and merge, deduplicating by combining them.
       const stateLogDir = join(
         stackCtx.worktreePath,
-        '.levelzero',
+        '.lich',
         'state',
         stackCtx.worktreeKey,
         'logs',

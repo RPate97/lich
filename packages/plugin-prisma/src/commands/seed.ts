@@ -1,16 +1,16 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '@levelzero/core/errors';
-import { Registry } from '@levelzero/core/registry';
-import { resolveStackContext } from '@levelzero/core/services/context';
-import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import type { Command, ORMAdapter } from '@levelzero/core';
+import { CLIError } from '@lich/core/errors';
+import { Registry } from '@lich/core/registry';
+import { resolveStackContext } from '@lich/core/services/context';
+import type { AdapterRegistry } from '@lich/core/adapters/registry';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
+import type { Command, ORMAdapter } from '@lich/core';
 import { prismaAdapter } from '../adapter';
 import { resolveDatabaseUrl } from './database-url';
 
 export interface DbSeedOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /**
    * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
@@ -32,12 +32,12 @@ export interface DbSeedOptions {
 }
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 /**
- * Build `levelzero db seed`. Resolves the current worktree's stack, asks the
+ * Build `lich db seed`. Resolves the current worktree's stack, asks the
  * EnvSource registry for `DATABASE_URL` (via whichever DB plugin published
  * `<ns>.url` with `protocol: 'postgres'`), and invokes the ORM adapter's
  * seed implementation (which for prisma shells out to `prisma db seed`,
@@ -68,7 +68,7 @@ export function makeDbSeedCommand(opts?: DbSeedOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `levelzero dev` first to bring postgres up',
+          'run `lich dev` first to bring postgres up',
         );
       }
 

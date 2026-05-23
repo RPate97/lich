@@ -65,7 +65,7 @@ export interface DockerService {
 }
 
 /**
- * Service that levelzero spawns as a process (Hono api, Next web, project-added workers).
+ * Service that lich spawns as a process (Hono api, Next web, project-added workers).
  * Managed via concurrently; its command should be hot-reload-aware in dev.
  */
 export interface OwnedService {

@@ -5,7 +5,7 @@
  * existing `code` + `hint` formatting picks them up unchanged. Subclasses
  * narrow the `code` literal and persist extra structured fields
  * (`sourceKey`, `consumerService`, `loadedNamespaces`, `plugins`, …) for
- * programmatic consumers — tests, the future `levelzero env` debug commands
+ * programmatic consumers — tests, the future `lich env` debug commands
  * (LEV-184), and anyone serialising errors through `toJSON()`.
  *
  * Boot- and resolution-time validation throws these synchronously so a

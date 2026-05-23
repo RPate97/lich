@@ -18,7 +18,7 @@ import type { Command } from '../types';
 export interface EnvResolveOptions {
   /** Populated EnvSource registry from `bootPlugins`. Defaults to empty. */
   getEnvSourceRegistry?: () => EnvSourceRegistry;
-  /** `levelzero.config.ts`'s `envInjection` block. Defaults to `undefined`. */
+  /** `lich.config.ts`'s `envInjection` block. Defaults to `undefined`. */
   getEnvInjection?: () => EnvInjectionMap | undefined;
   /**
    * Resolves the per-service input that depends on stack state — ports +
@@ -41,7 +41,7 @@ export interface EnvResolveResult {
 }
 
 /**
- * Build `levelzero env resolve <service>`. Computes exactly the env map the
+ * Build `lich env resolve <service>`. Computes exactly the env map the
  * runtime would inject into `<service>` if `dev` were running now, against
  * the merged registry + the consumer's `envInjection` block.
  *
@@ -68,14 +68,14 @@ export function makeEnvResolveCommand(opts?: EnvResolveOptions): Command {
         throw new CLIError(
           'INTERNAL',
           'missing required argument: service',
-          'usage: levelzero env resolve <service> [--context host|container] [--json]',
+          'usage: lich env resolve <service> [--context host|container] [--json]',
         );
       }
       if (rest.length > 0) {
         throw new CLIError(
           'INTERNAL',
           `unexpected extra arguments: ${rest.join(' ')}`,
-          'usage: levelzero env resolve <service> [--context host|container] [--json]',
+          'usage: lich env resolve <service> [--context host|container] [--json]',
         );
       }
 

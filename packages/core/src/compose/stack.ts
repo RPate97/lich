@@ -11,9 +11,9 @@ import { emitCompose } from './emitter';
 import { composeProjectName } from './naming';
 
 export interface ComposeBundle {
-  /** Compose project name, e.g. `levelzero-<key>`. */
+  /** Compose project name, e.g. `lich-<key>`. */
   projectName: string;
-  /** Absolute path to the (would-be) compose file under `<worktree>/.levelzero/<key>/`. */
+  /** Absolute path to the (would-be) compose file under `<worktree>/.lich/<key>/`. */
   composeFilePath: string;
   /** Container names compose will create — preserves legacy naming for `entry.containers`. */
   containerNames: string[];
@@ -51,7 +51,7 @@ const EMPTY_PLUGIN_CONTRIBUTIONS: PluginComposeContributions = {
 
 /**
  * Build the compose bundle for the current stack: project name, on-disk file
- * path (under `.levelzero/<key>/`), container names, and the YAML text the
+ * path (under `.lich/<key>/`), container names, and the YAML text the
  * file should contain. **Pure** — no I/O. Use {@link writeComposeFile} to
  * persist `bundle.yaml`.
  *
@@ -127,7 +127,7 @@ export function buildComposeBundle(
   const projectName = composeProjectName(ctx.worktreeKey);
   const composeFilePath = join(
     ctx.worktreePath,
-    '.levelzero',
+    '.lich',
     ctx.worktreeKey,
     'docker-compose.yml',
   );

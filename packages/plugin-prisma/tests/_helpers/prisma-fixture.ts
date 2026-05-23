@@ -34,7 +34,7 @@ import { createRequire } from 'node:module';
  * class LEV-204 exposed: in a freshly scaffolded demo, the only `prisma`
  * reachable from the project root is whatever bun installed there — there's
  * no parent monorepo `node_modules/` to fall back on. (And worse, the
- * monorepo's HOISTED `prisma` is v5 because `@levelzero/core` declares
+ * monorepo's HOISTED `prisma` is v5 because `@lich/core` declares
  * `prisma: ^5.18.0`, while plugin-prisma declares `^7.0.0`. So even when
  * the old fixture's tmpdir happened to be under the monorepo, the resolver
  * found v5, which doesn't have the `config` subpath — and the integration
@@ -192,7 +192,7 @@ export default defineConfig({
  * `null` if no v7 install is reachable from this file's location.
  *
  * Why this matters: the monorepo currently has BOTH `prisma: ^5.18.0` (via
- * `@levelzero/core`) and `prisma: ^7.0.0` (via `@levelzero/plugin-prisma`)
+ * `@lich/core`) and `prisma: ^7.0.0` (via `@lich/plugin-prisma`)
  * in its dep graph. Bun deduplicates, and the version that lands at
  * `<repo>/node_modules/prisma` (hoisted) is v5 — the older major dominates
  * because of the wider range. We specifically need v7 here because the

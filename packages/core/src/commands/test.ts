@@ -8,7 +8,7 @@ import type { TestRunnerAdapter } from '../adapters/test-runner/types';
 import type { Command, CommandContext } from './types';
 
 export interface MakeTestCommandOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /** Vitest adapter for unit + integration runs. When omitted, looked up by name `vitest` under the `test-runner` slot via `getAdapterRegistry`. */
   vitestAdapter?: TestRunnerAdapter;
@@ -24,15 +24,15 @@ export interface MakeTestCommandOptions {
   getAdapterRegistry?: () => AdapterRegistry;
 }
 
-const USAGE_HINT = 'usage: levelzero test <unit|integration|e2e>';
+const USAGE_HINT = 'usage: lich test <unit|integration|e2e>';
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 /**
- * Build `levelzero test [unit|integration|e2e]`. Dispatches the requested
+ * Build `lich test [unit|integration|e2e]`. Dispatches the requested
  * subcommand to the appropriate `TestRunnerAdapter` with a per-subcommand env
  * map:
  *
@@ -47,7 +47,7 @@ function defaultRegistry(): Registry {
  * helper collapses to a single registry-aware lookup. `integration` and
  * `e2e` require a running stack (a registry entry for the current
  * worktree); `unit` skips the stack lookup entirely so unit tests stay
- * runnable without `levelzero dev`.
+ * runnable without `lich dev`.
  */
 export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
   const getRegistry = opts?.getRegistry ?? defaultRegistry;
@@ -62,7 +62,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
       throw new CLIError(
         'CONFIG_INVALID',
         `no ${name} test-runner adapter configured for \`test\``,
-        `load \`@levelzero/plugin-${name}\` in your levelzero.config.ts, or pass an explicit ${name}Adapter override`,
+        `load \`@lich/plugin-${name}\` in your lich.config.ts, or pass an explicit ${name}Adapter override`,
       );
     }
     try {
@@ -71,7 +71,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
       throw new CLIError(
         'CONFIG_INVALID',
         `no ${name} test-runner adapter configured for \`test\``,
-        `load \`@levelzero/plugin-${name}\` in your levelzero.config.ts`,
+        `load \`@lich/plugin-${name}\` in your lich.config.ts`,
       );
     }
   };
@@ -89,7 +89,7 @@ export function makeTestCommand(opts?: MakeTestCommandOptions): Command {
       if (sub === undefined) {
         throw new CLIError(
           'CONFIG_INVALID',
-          'levelzero test requires a subcommand',
+          'lich test requires a subcommand',
           USAGE_HINT,
         );
       }
@@ -165,7 +165,7 @@ interface ResolveNeeds {
  * Resolve the current worktree's stack entry and pull DATABASE_URL / API_URL /
  * WEB_URL via the same formulas the postgres / hono / next plugins publish
  * through their `addEnvSource('url', …)` registrations (LEV-187). Throws a
- * CLIError with a NO_PROJECT code when the worktree isn't a levelzero
+ * CLIError with a NO_PROJECT code when the worktree isn't a lich
  * project, when no stack is running, or when a required service is missing
  * from the running stack.
  */
@@ -180,7 +180,7 @@ async function resolveStackEnv(
     throw new CLIError(
       'NO_PROJECT',
       'no stack running for this worktree',
-      'run `levelzero dev` first to bring services up',
+      'run `lich dev` first to bring services up',
     );
   }
 
@@ -192,10 +192,10 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no postgres service',
-        'ensure postgres is part of the stack and `levelzero dev` has been run',
+        'ensure postgres is part of the stack and `lich dev` has been run',
       );
     }
-    result.databaseUrl = `postgres://levelzero:levelzero@localhost:${postgresPort}/levelzero`;
+    result.databaseUrl = `postgres://lich:lich@localhost:${postgresPort}/lich`;
   }
 
   if (needs.needApi) {
@@ -204,7 +204,7 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no api service',
-        'ensure the api service is part of the stack and `levelzero dev` has been run',
+        'ensure the api service is part of the stack and `lich dev` has been run',
       );
     }
     result.apiUrl = `http://localhost:${apiPort}`;
@@ -216,7 +216,7 @@ async function resolveStackEnv(
       throw new CLIError(
         'NO_PROJECT',
         'current stack has no web service',
-        'ensure the web service is part of the stack and `levelzero dev` has been run',
+        'ensure the web service is part of the stack and `lich dev` has been run',
       );
     }
     result.webUrl = `http://localhost:${webPort}`;

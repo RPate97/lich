@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access, mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { LEVELZERO_PREFIX } from '../compose/naming';
+import { LICH_PREFIX } from '../compose/naming';
 import { loadConfig } from '../config';
 import {
   MIN_NODE_VERSION,
@@ -23,11 +23,11 @@ interface Check {
 
 /**
  * LEV-120 — warn when the local Docker daemon is approaching pool exhaustion
- * from stale `levelzero-*` networks. Default address pools typically support
+ * from stale `lich-*` networks. Default address pools typically support
  * only ~30 subnets; once exhausted, every `docker compose up` fails with
  * "all predefined address pools have been fully subnetted". 20 is a
  * conservative high-water mark that gives the developer time to run
- * `levelzero stacks prune --all` before things actually break.
+ * `lich stacks prune --all` before things actually break.
  */
 const NETWORK_WARN_THRESHOLD = 20;
 
@@ -136,28 +136,28 @@ async function checkDockerCompose(): Promise<Check> {
 }
 
 /**
- * Count live `levelzero-*` networks on the daemon and warn if we're close to
+ * Count live `lich-*` networks on the daemon and warn if we're close to
  * exhausting the default address pool. Skips cleanly when docker isn't on
  * PATH (the docker-compose check above will have already surfaced that).
  * A non-zero exit from `docker network ls` (e.g. daemon down) is also
  * treated as `skipped` — we don't want to make this check a hard failure
  * when the underlying signal isn't available.
  */
-async function checkLevelzeroNetworks(): Promise<Check> {
+async function checkLichNetworks(): Promise<Check> {
   let r: SpawnResult;
   try {
     r = await runDocker([
       'network',
       'ls',
       '--filter',
-      `name=${LEVELZERO_PREFIX}`,
+      `name=${LICH_PREFIX}`,
       '--format',
       '{{.Name}}',
     ]);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     return {
-      id: 'levelzero-networks',
+      id: 'lich-networks',
       status: 'skipped',
       message:
         code === 'ENOENT'
@@ -168,7 +168,7 @@ async function checkLevelzeroNetworks(): Promise<Check> {
 
   if (r.exitCode !== 0) {
     return {
-      id: 'levelzero-networks',
+      id: 'lich-networks',
       status: 'skipped',
       message: `docker network ls failed: ${(r.stderr || r.stdout).trim() || `exit ${r.exitCode}`}`,
     };
@@ -177,17 +177,17 @@ async function checkLevelzeroNetworks(): Promise<Check> {
   const names = r.stdout
     .split('\n')
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && s.startsWith(LEVELZERO_PREFIX));
+    .filter((s) => s.length > 0 && s.startsWith(LICH_PREFIX));
   const count = names.length;
 
   if (count > NETWORK_WARN_THRESHOLD) {
     return {
-      id: 'levelzero-networks',
+      id: 'lich-networks',
       status: 'warn',
-      message: `${count} levelzero-* networks detected (>${NETWORK_WARN_THRESHOLD}); docker may exhaust its default address pool. Run \`levelzero stacks prune --all\` to reclaim subnets.`,
+      message: `${count} lich-* networks detected (>${NETWORK_WARN_THRESHOLD}); docker may exhaust its default address pool. Run \`lich stacks prune --all\` to reclaim subnets.`,
     };
   }
-  return { id: 'levelzero-networks', status: 'ok', message: `${count} network(s)` };
+  return { id: 'lich-networks', status: 'ok', message: `${count} network(s)` };
 }
 
 /**
@@ -392,7 +392,7 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
 
       // LEV-114 — Node version. In practice this won't ever fail inside `bin.ts`
       // because the startup gate would have exited the process already, but we
-      // surface it here too so `levelzero doctor` reports an explicit "node:
+      // surface it here too so `lich doctor` reports an explicit "node:
       // ok (20.20.2)" line alongside the other infra checks, and so anyone
       // invoking the `doctor` command programmatically (e.g. tests, embedded
       // runners) still gets a structured signal.
@@ -431,22 +431,22 @@ export function makeDoctorCommand(getRegistry: () => Registry): Command {
       // Docker Compose availability
       checks.push(await checkDockerCompose());
 
-      // LEV-120 — warn when stale levelzero-* networks are piling up. Pure
+      // LEV-120 — warn when stale lich-* networks are piling up. Pure
       // warning channel: never flips overall `ok` to false. The signal lets
       // a developer pre-empt the "all predefined address pools have been
       // fully subnetted" failure mode that hit Plan 14/15 era agent fleets.
-      checks.push(await checkLevelzeroNetworks());
+      checks.push(await checkLichNetworks());
 
       // LEV-202 — warn when docker's default-address-pools are sized for
       // the ~30-subnet default; that's where agent fleets hit pool
       // exhaustion before the stale-network sweep can keep up. Same warn
-      // channel as `levelzero-networks` — never blocks `doctor: ok`.
+      // channel as `lich-networks` — never blocks `doctor: ok`.
       checks.push(await checkDockerAddressPools());
 
       // Worktree presence
       const wt = await findWorktree(ctx.cwd);
       if (!wt) {
-        checks.push({ id: 'project', status: 'skipped', message: 'not inside a levelzero project' });
+        checks.push({ id: 'project', status: 'skipped', message: 'not inside a lich project' });
       } else {
         checks.push({ id: 'project', status: 'ok', message: wt.path });
         // Config loadable

@@ -5,7 +5,7 @@ import { RuleRegistry } from '../check/registry';
 import type { Command } from '../commands/types';
 import type { Rule } from '../check/types';
 import type { OwnedService } from '../services/types';
-import type { LevelzeroConfig, PluginEntry } from '../config';
+import type { LichConfig, PluginEntry } from '../config';
 import { promoteEnvContributions } from '../env/compat';
 import { EnvSourceRegistry } from '../env/registry';
 import { NamespaceCollisionError } from '../env/errors';
@@ -123,7 +123,7 @@ export interface BootResult {
  * already carry the entry's index).
  */
 export async function bootPlugins(
-  config: LevelzeroConfig,
+  config: LichConfig,
   projectRoot: string,
 ): Promise<BootResult> {
   const commands = new CommandRegistry();

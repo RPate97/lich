@@ -11,7 +11,7 @@
  *   - `db migration new`       — scaffold a migration file (LEV-204)
  *
  * All are docker-gated (the prisma adapter shells against the live
- * postgres). Pre-dev paths (running these without `levelzero dev`) live in
+ * postgres). Pre-dev paths (running these without `lich dev`) live in
  * `failure-surfaces.e2e.test.ts`.
  *
  * Failing tests carry the LEV-204 tag; when LEV-204 lands, the maintainer

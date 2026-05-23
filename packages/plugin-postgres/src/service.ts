@@ -3,7 +3,7 @@ import type { DockerService } from './types';
 /**
  * Legacy `DockerService` definition for postgres.
  *
- * Re-exported from `@levelzero/plugin-postgres` so callers that still drive the
+ * Re-exported from `@lich/plugin-postgres` so callers that still drive the
  * dev/stop/reset pipeline through the `Service` abstraction can continue to
  * import it during the LEV-148+ transition. New plugin authors should prefer
  * the compose contribution surface exposed via this plugin's `register()`.
@@ -24,12 +24,12 @@ export const pgService: DockerService = {
   portNames: ['postgres'],
   image: 'postgres:16-alpine',
   containerEnv: {
-    POSTGRES_USER: 'levelzero',
-    POSTGRES_PASSWORD: 'levelzero',
-    POSTGRES_DB: 'levelzero',
+    POSTGRES_USER: 'lich',
+    POSTGRES_PASSWORD: 'lich',
+    POSTGRES_DB: 'lich',
   },
   containerPortName: 'postgres',
   containerPortInContainer: 5432,
   volumeMountPath: '/var/lib/postgresql/data',
-  healthCommand: ['pg_isready', '-U', 'levelzero', '-d', 'levelzero'],
+  healthCommand: ['pg_isready', '-U', 'lich', '-d', 'lich'],
 };

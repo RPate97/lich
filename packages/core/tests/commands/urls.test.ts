@@ -16,12 +16,12 @@ beforeEach(() => {
   reg = new Registry(registryPath);
 });
 
-describe('levelzero urls', () => {
+describe('lich urls', () => {
   it('exports a Command named "urls"', () => {
     expect(urlsCommand.name).toBe('urls');
   });
 
-  it('errors NO_PROJECT when cwd is not inside a levelzero project', async () => {
+  it('errors NO_PROJECT when cwd is not inside a lich project', async () => {
     const cmd = makeUrlsCommand({ getRegistry: () => reg });
     await expect(
       cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} }),
@@ -29,7 +29,7 @@ describe('levelzero urls', () => {
   });
 
   it('returns urls from StackEntry.urls for the current worktree', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const key = computeWorktreeKey(tmp);
     await reg.upsert(key, {
       path: tmp,
@@ -38,7 +38,7 @@ describe('levelzero urls', () => {
       urls: { web: 'http://main.myapp.localhost', api: 'http://api.main.myapp.localhost' },
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-17T00:00:00Z',
     });
     const cmd = makeUrlsCommand({ getRegistry: () => reg });
@@ -55,7 +55,7 @@ describe('levelzero urls', () => {
   });
 
   it('falls back to plain http://localhost:<port> when urls map is empty', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const key = computeWorktreeKey(tmp);
     await reg.upsert(key, {
       path: tmp,
@@ -64,7 +64,7 @@ describe('levelzero urls', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-17T00:00:00Z',
     });
     const cmd = makeUrlsCommand({ getRegistry: () => reg });
@@ -81,7 +81,7 @@ describe('levelzero urls', () => {
   });
 
   it('returns an empty urls array when the current worktree has no registry entry', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const cmd = makeUrlsCommand({ getRegistry: () => reg });
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as {
       urls: unknown[];
@@ -128,7 +128,7 @@ describe('levelzero urls', () => {
     ]);
   });
 
-  it('--all does not require being inside a levelzero project', async () => {
+  it('--all does not require being inside a lich project', async () => {
     await reg.upsert('only', {
       path: '/x',
       branch: '',

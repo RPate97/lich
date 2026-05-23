@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/create-stack-v0",
+  "name": "@lich/create-stack-v0",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -31,12 +31,12 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*",
-    "@levelzero/template-v0-stack": "workspace:*"
+    "@lich/core": "workspace:*",
+    "@lich/template-v0-stack": "workspace:*"
   },
   "devDependencies": {
-    "@levelzero/core": "workspace:*",
-    "@levelzero/template-v0-stack": "workspace:*",
+    "@lich/core": "workspace:*",
+    "@lich/template-v0-stack": "workspace:*",
     "@types/node": "^20.12.0",
     "bun-types": "^1.2.0",
     "typescript": "^5.4.0",

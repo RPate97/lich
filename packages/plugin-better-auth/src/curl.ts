@@ -11,7 +11,7 @@ import {
   type Command,
   type CommandContext,
   type StackEntry,
-} from '@levelzero/core';
+} from '@lich/core';
 import { getOrCreateUser, loginAs } from './helpers';
 
 /**
@@ -33,7 +33,7 @@ export interface MakeCurlCommandOptions {
   /**
    * Auth adapter factory for `--as` mode. When omitted, the command resolves
    * the active impl from the AdapterRegistry returned by `getAdapterRegistry`
-   * (default `getBuiltinAdapters()`), so `levelzero adapter swap auth ...`
+   * (default `getBuiltinAdapters()`), so `lich adapter swap auth ...`
    * takes effect without changing this file. Existing tests still pass an
    * explicit factory to bypass the registry entirely.
    */
@@ -90,7 +90,7 @@ function parseRequest(ctx: CommandContext): ParsedRequest {
         throw new CLIError(
           'CONFIG_INVALID',
           `${a} requires a value`,
-          'usage: levelzero curl [-X METHOD] [-d body] [-H "Header: value"] <path>',
+          'usage: lich curl [-X METHOD] [-d body] [-H "Header: value"] <path>',
         );
       }
       method = next.toUpperCase();
@@ -101,7 +101,7 @@ function parseRequest(ctx: CommandContext): ParsedRequest {
         throw new CLIError(
           'CONFIG_INVALID',
           `${a} requires a value`,
-          'usage: levelzero curl [-d body] <path>',
+          'usage: lich curl [-d body] <path>',
         );
       }
       body = next;
@@ -112,7 +112,7 @@ function parseRequest(ctx: CommandContext): ParsedRequest {
         throw new CLIError(
           'CONFIG_INVALID',
           `${a} requires a value`,
-          'usage: levelzero curl [-H "Header: value"] <path>',
+          'usage: lich curl [-H "Header: value"] <path>',
         );
       }
       const colon = next.indexOf(':');
@@ -164,7 +164,7 @@ function parseRequest(ctx: CommandContext): ParsedRequest {
     throw new CLIError(
       'CONFIG_INVALID',
       'curl requires a path argument',
-      'usage: levelzero curl [--as <email>] [-X METHOD] [-d body] [-H "Header: value"] <path>',
+      'usage: lich curl [--as <email>] [-X METHOD] [-d body] [-H "Header: value"] <path>',
     );
   }
   // If multiple positional args slipped through, the path is the last one —
@@ -209,8 +209,8 @@ async function resolveBaseUrl(
   if (!wt) {
     throw new CLIError(
       'NO_PROJECT',
-      'not inside a levelzero project',
-      'run `levelzero init`, cd into a directory with levelzero.config.ts, or pass --url',
+      'not inside a lich project',
+      'run `lich init`, cd into a directory with lich.config.ts, or pass --url',
     );
   }
   const entry = await getRegistry().get(wt.key);
@@ -218,7 +218,7 @@ async function resolveBaseUrl(
     throw new CLIError(
       'NO_PROJECT',
       'no stack running for this worktree',
-      'run `levelzero dev` first to bring the api service up, or pass --url',
+      'run `lich dev` first to bring the api service up, or pass --url',
     );
   }
   const apiUrl = deriveApiUrl(entry);
@@ -226,7 +226,7 @@ async function resolveBaseUrl(
     throw new CLIError(
       'NO_PROJECT',
       'no api service URL could be derived from the current stack',
-      'ensure the api service is part of the stack and `levelzero dev` has been run, or pass --url',
+      'ensure the api service is part of the stack and `lich dev` has been run, or pass --url',
     );
   }
   return apiUrl.replace(/\/$/, '');
@@ -351,8 +351,8 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 }
 
 function defaultRegistryPath(): string {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return join(home, '.levelzero', 'registry.json');
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return join(home, '.lich', 'registry.json');
 }
 
 function defaultAuthCtx(): AuthContext {
@@ -363,13 +363,13 @@ function defaultAuthCtx(): AuthContext {
   // only as a fallback for callers that bypass the plugin's wiring.
   return {
     databaseUrl: 'sqlite::memory:',
-    secret: process.env['LEVELZERO_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa',
+    secret: process.env['LICH_AUTH_SECRET'] ?? 'test-secret-32-chars-min-length-aaaa',
   };
 }
 
 /**
  * Default `curlCommand` instance that resolves the registry path from
- * `LEVELZERO_HOME` on each invocation. Exported alongside the factory so
+ * `LICH_HOME` on each invocation. Exported alongside the factory so
  * imports that don't need DI get a working `Command` for free.
  */
 export const curlCommand: Command = makeCurlCommand({

@@ -1,10 +1,10 @@
-import type { Plugin, PluginAPI, PluginContext, ComposeServiceDef } from '@levelzero/core';
+import type { Plugin, PluginAPI, PluginContext, ComposeServiceDef } from '@lich/core';
 import { redisComposeService } from './compose';
 import { redisCacheAdapter } from './adapter';
 import { redisPingCommand } from './commands';
 
 /**
- * Options accepted by the `@levelzero/plugin-redis` factory.
+ * Options accepted by the `@lich/plugin-redis` factory.
  *
  *  - `image`     — Docker image tag, defaults to `redis:7-alpine`.
  *  - `password`  — optional auth password. When set, the compose service
@@ -22,11 +22,11 @@ export interface RedisOptions {
 }
 
 /**
- * `@levelzero/plugin-redis` — promoted from `examples/plugin-redis/` to a
+ * `@lich/plugin-redis` — promoted from `examples/plugin-redis/` to a
  * real workspace package (LEV-190).
  *
  * Authored as a **factory** (LEV-179): consumers call `redis()` (optionally
- * with options) and pass the result into `levelzero.config.ts#plugins`.
+ * with options) and pass the result into `lich.config.ts#plugins`.
  *
  * Contributions on each invocation:
  *
@@ -42,12 +42,12 @@ export interface RedisOptions {
  *   3. `addAdapter('portless', 'redis-cache', …)` + `setActiveAdapter` —
  *      portless escape hatch for the cache adapter contract. Preserved
  *      from the original example.
- *   4. `addCommand({ name: 'redis.ping' })` — `levelzero redis.ping`.
+ *   4. `addCommand({ name: 'redis.ping' })` — `lich redis.ping`.
  *
  * Wire it into a project:
  *
  * ```ts
- * import redis from '@levelzero/plugin-redis';
+ * import redis from '@lich/plugin-redis';
  *
  * export default {
  *   plugins: [redis()],
@@ -62,7 +62,7 @@ export default function redis(opts: RedisOptions = {}): Plugin<
   }
 > {
   return {
-    name: '@levelzero/plugin-redis',
+    name: '@lich/plugin-redis',
     namespace: (opts.namespace ?? 'redis') as 'redis',
     version: '0.1.0',
 

@@ -8,9 +8,9 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { OwnedService, Service } from '../../src/services/types';
-import type { PortlessAdapter } from '@levelzero/plugin-portless';
+import type { PortlessAdapter } from '@lich/plugin-portless';
 import type { ComposeRunner } from '../../src/compose/runner';
 
 // Tests inject `[pgService]` explicitly: the default `getBuiltinServices()`
@@ -68,7 +68,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
 });
 
@@ -94,8 +94,8 @@ afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describe('levelzero dev (unit, mocked compose)', () => {
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+describe('lich dev (unit, mocked compose)', () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-outside-')));
     const { factory } = makeMockComposeFactory();
     const cmd = makeDevCommand(() => registry, {
@@ -104,10 +104,10 @@ describe('levelzero dev (unit, mocked compose)', () => {
     });
     await expect(
       cmd.run({ cwd: outside, format: 'json', args: [], flags: {} }),
-    ).rejects.toThrow(/not inside a levelzero project/i);
+    ).rejects.toThrow(/not inside a lich project/i);
   });
 
-  it('emits a compose file under .levelzero/<key>/docker-compose.yml and calls up({detach,waitForHealthy})', async () => {
+  it('emits a compose file under .lich/<key>/docker-compose.yml and calls up({detach,waitForHealthy})', async () => {
     const { factory, constructed, calls } = makeMockComposeFactory();
     const cmd = makeDevCommand(() => registry, {
       getServices: onlyPostgres,
@@ -123,7 +123,7 @@ describe('levelzero dev (unit, mocked compose)', () => {
     // Compose file landed at the documented path.
     const expectedPath = join(
       projectDir,
-      '.levelzero',
+      '.lich',
       result.key,
       'docker-compose.yml',
     );
@@ -281,7 +281,7 @@ describe('levelzero dev (unit, mocked compose)', () => {
 
   it('appends getPluginOwnedServices entries onto the merged service list (post-LEV-154)', async () => {
     // Simulates how the dispatcher wires `bootPlugins().ownedServices`
-    // through to `dev` post-LEV-154 so plugins like `@levelzero/plugin-next`
+    // through to `dev` post-LEV-154 so plugins like `@lich/plugin-next`
     // contribute owned services that `dev` brings up alongside built-ins.
     const pluginOwned: OwnedService = {
       name: 'plugin-owned',
@@ -331,7 +331,7 @@ describe('levelzero dev (unit, mocked compose)', () => {
   });
 });
 
-describeIfDocker('levelzero dev (integration with real docker compose)', () => {
+describeIfDocker('lich dev (integration with real docker compose)', () => {
   it('first run brings up postgres via docker compose and persists registry', async () => {
     // LEV-202 — wrap the body in `withDockerStack` so the compose stack is
     // torn down in a `finally` even if the assertions throw, before
@@ -370,7 +370,7 @@ describeIfDocker('levelzero dev (integration with real docker compose)', () => {
 // registration path without requiring the daemon. We achieve this by injecting
 // `getServices` that returns only owned services (no DockerService entries),
 // which causes the docker loop in `dev` to be a no-op.
-describe('levelzero dev — portless integration', () => {
+describe('lich dev — portless integration', () => {
   function makeMockAdapter(opts: { available: boolean }): PortlessAdapter & {
     registerCalls: Array<{ host: string; target: string }>;
   } {
@@ -413,7 +413,7 @@ describe('levelzero dev — portless integration', () => {
   }
 
   it('registers URLs and persists StackEntry.urls when portless.available()=true', async () => {
-    writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default { name: "myapp" };');
+    writeFileSync(join(projectDir, 'lich.config.ts'), 'export default { name: "myapp" };');
     const adapter = makeMockAdapter({ available: true });
     const web = mkOwnedWeb(projectDir);
     const worker = mkOwnedWorker(projectDir);
@@ -452,7 +452,7 @@ describe('levelzero dev — portless integration', () => {
   }, 30_000);
 
   it('skips registration and leaves urls empty when portless.available()=false', async () => {
-    writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default { name: "myapp" };');
+    writeFileSync(join(projectDir, 'lich.config.ts'), 'export default { name: "myapp" };');
     const adapter = makeMockAdapter({ available: false });
     const web = mkOwnedWeb(projectDir);
     const getServices = (): Service[] => [web];
@@ -484,7 +484,7 @@ describe('levelzero dev — portless integration', () => {
   }, 30_000);
 
   it('services without urlName are unaffected (no registration, no urls entry)', async () => {
-    writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default { name: "myapp" };');
+    writeFileSync(join(projectDir, 'lich.config.ts'), 'export default { name: "myapp" };');
     const adapter = makeMockAdapter({ available: true });
     const worker = mkOwnedWorker(projectDir);
     const getServices = (): Service[] => [worker];

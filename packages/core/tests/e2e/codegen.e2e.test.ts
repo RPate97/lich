@@ -232,7 +232,7 @@ describe('LEV-198-extended codegen: gen command coverage', () => {
 //      class of bug (silent return of `undefined` from a failed request).
 //
 // Why docker-gated: the second + third tests need a running api. Bringing
-// up the api means `levelzero dev`, which means postgres in a container —
+// up the api means `lich dev`, which means postgres in a container —
 // docker is on the critical path.
 //
 // EMISSION SHAPE (read off `packages/plugin-typed-client/src/adapter.ts`,

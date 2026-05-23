@@ -1,14 +1,14 @@
 ---
 name: writing-plugins
-description: How to write a levelzero plugin (contribute adapters, commands, compose services, generators, rules)
+description: How to write a lich plugin (contribute adapters, commands, compose services, generators, rules)
 applies-to: reference
 ---
 
-# Writing a levelzero plugin
+# Writing a lich plugin
 
-A levelzero plugin is a module that contributes to the running CLI:
+A lich plugin is a module that contributes to the running CLI:
 adapters, commands, compose services, generators, rules, and skill
-directories. The CLI loads plugins listed in `.levelzero/config.ts` and
+directories. The CLI loads plugins listed in `.lich/config.ts` and
 calls each one's `register()` exactly once during bootstrap.
 
 The full contract lives in `packages/core/src/plugins/types.ts` — read that
@@ -38,17 +38,17 @@ the same name; compose the merged result downstream for everything else.
   for a slot (`auth`, `orm`, `backend`, `frontend`, `browser`).
 - `setActiveAdapter(slot, name)` — pick which adapter the stack uses
   for that slot.
-- `addCommand(cmd)` — contribute a `levelzero <cmd>` subcommand.
+- `addCommand(cmd)` — contribute a `lich <cmd>` subcommand.
 - `addOwnedService(service)` — register a long-running service the CLI
-  owns (lifecycle managed by `levelzero dev` / `stop`).
+  owns (lifecycle managed by `lich dev` / `stop`).
 - `addComposeService(name, def)` — contribute a Docker Compose v2
   service. Use `"${PORT}:<container>"` for ports so the runner can
   allocate per-worktree.
 - `addComposeVolume(name, def)` / `addComposeNetwork(name, def)` —
   named compose volumes and networks.
-- `addRule(rule)` — register a conformance rule run by `levelzero check`.
+- `addRule(rule)` — register a conformance rule run by `lich check`.
 - `addGenerator(gen)` — register a code generator surfaced via
-  `levelzero gen.<id>`.
+  `lich gen.<id>`.
 - `addSkillsDir(absPath)` — add a directory of skill markdown files;
   the indexer merges them into the generated CLAUDE.md.
 
@@ -56,7 +56,7 @@ the same name; compose the merged result downstream for everything else.
 
 ```ts
 // plugins/redis/index.ts
-import type { Plugin } from '@levelzero/core';
+import type { Plugin } from '@lich/core';
 
 export const redisPlugin: Plugin = {
   name: 'redis',
@@ -77,10 +77,10 @@ export const redisPlugin: Plugin = {
 
 ## Registering the plugin
 
-In `.levelzero/config.ts`:
+In `.lich/config.ts`:
 
 ```ts
-import { defineConfig } from '@levelzero/core';
+import { defineConfig } from '@lich/core';
 import { redisPlugin } from './plugins/redis';
 
 export default defineConfig({

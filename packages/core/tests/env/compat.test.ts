@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetWarnedPlugins, promoteEnvContributions } from '../../src/env/compat';
 import { bootPlugins } from '../../src/plugins/boot';
 import { EnvSourceRegistry } from '../../src/env/registry';
-import type { LevelzeroConfig } from '../../src/config';
+import type { LichConfig } from '../../src/config';
 import type { Plugin, PluginAPI } from '../../src/plugins/types';
 import type { EnvSourceContext } from '../../src/env/types';
 import type { DockerService, OwnedService } from '../../src/services/types';
@@ -79,7 +79,7 @@ describe('promoteEnvContributions — direct usage', () => {
 
   it('promotes each key from envContributions into a lowercased named source', () => {
     const registry = new EnvSourceRegistry();
-    const api = makeApi('postgres', '@levelzero/plugin-postgres', registry);
+    const api = makeApi('postgres', '@lich/plugin-postgres', registry);
     const svc: DockerService = {
       name: 'postgres',
       kind: 'docker',
@@ -91,7 +91,7 @@ describe('promoteEnvContributions — direct usage', () => {
       }),
     };
 
-    promoteEnvContributions(svc, api, '@levelzero/plugin-postgres');
+    promoteEnvContributions(svc, api, '@lich/plugin-postgres');
 
     const url = registry.getNamed('postgres.database_url');
     const direct = registry.getNamed('postgres.database_direct_url');
@@ -101,7 +101,7 @@ describe('promoteEnvContributions — direct usage', () => {
 
   it('host and container resolvers both forward to envContributions', async () => {
     const registry = new EnvSourceRegistry();
-    const api = makeApi('postgres', '@levelzero/plugin-postgres', registry);
+    const api = makeApi('postgres', '@lich/plugin-postgres', registry);
     const svc: DockerService = {
       name: 'postgres',
       kind: 'docker',
@@ -112,7 +112,7 @@ describe('promoteEnvContributions — direct usage', () => {
       }),
     };
 
-    promoteEnvContributions(svc, api, '@levelzero/plugin-postgres');
+    promoteEnvContributions(svc, api, '@lich/plugin-postgres');
 
     const entry = registry.getNamed('postgres.database_url');
     expect(entry).toBeDefined();
@@ -173,7 +173,7 @@ describe('promoteEnvContributions — direct usage', () => {
 
   it('silently skips a key the plugin already registered via addEnvSource', () => {
     const registry = new EnvSourceRegistry();
-    const api = makeApi('postgres', '@levelzero/plugin-postgres', registry);
+    const api = makeApi('postgres', '@lich/plugin-postgres', registry);
     // Plugin migrated this key already (LEV-187 case).
     api.addEnvSource('database_url', {
       host: () => 'explicit-host',
@@ -188,7 +188,7 @@ describe('promoteEnvContributions — direct usage', () => {
     };
 
     // Should NOT throw — the duplicate is interpreted as "already migrated".
-    expect(() => promoteEnvContributions(svc, api, '@levelzero/plugin-postgres')).not.toThrow();
+    expect(() => promoteEnvContributions(svc, api, '@lich/plugin-postgres')).not.toThrow();
 
     const entry = registry.getNamed('postgres.database_url');
     expect(entry).toBeDefined();
@@ -236,7 +236,7 @@ describe('promoteEnvContributions — wired through bootPlugins', () => {
 
   it('promotes envContributions on a legacy OwnedService at boot', async () => {
     const legacy: Plugin = {
-      name: '@levelzero/plugin-legacy',
+      name: '@lich/plugin-legacy',
       version: '0.0.1',
       register(api) {
         const svc: OwnedService = {
@@ -253,10 +253,10 @@ describe('promoteEnvContributions — wired through bootPlugins', () => {
       },
     };
 
-    const result = await bootPlugins({ plugins: [legacy] } as LevelzeroConfig, PROJECT_ROOT);
+    const result = await bootPlugins({ plugins: [legacy] } as LichConfig, PROJECT_ROOT);
     // Namespace auto-derives from the package name — the loader's
     // `deriveNamespace` strips the `@scope/plugin-` prefix from
-    // `@levelzero/plugin-legacy` to yield `legacy`.
+    // `@lich/plugin-legacy` to yield `legacy`.
     const entry = result.envSources.getNamed('legacy.web_url');
     expect(entry).toBeDefined();
     expect(entry!.source.host(makeCtx({ ports: { web: 8080 } }))).toBe(
@@ -267,7 +267,7 @@ describe('promoteEnvContributions — wired through bootPlugins', () => {
 
   it('lets an explicit addEnvSource win over the legacy auto-promotion', async () => {
     const mixed: Plugin<'mix'> = {
-      name: '@levelzero/plugin-mix',
+      name: '@lich/plugin-mix',
       namespace: 'mix',
       version: '0.0.1',
       register(api) {
@@ -290,7 +290,7 @@ describe('promoteEnvContributions — wired through bootPlugins', () => {
       },
     };
 
-    const result = await bootPlugins({ plugins: [mixed] } as LevelzeroConfig, PROJECT_ROOT);
+    const result = await bootPlugins({ plugins: [mixed] } as LichConfig, PROJECT_ROOT);
     const entry = result.envSources.getNamed('mix.url');
     expect(entry).toBeDefined();
     expect(entry!.source.host(makeCtx())).toBe('new-host');

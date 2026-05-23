@@ -37,12 +37,12 @@ async function initWithName(ctx: CommandContext, name: string): Promise<unknown>
     );
   }
 
-  // After LEV-174 core no longer imports `@levelzero/template-v0-stack`
+  // After LEV-174 core no longer imports `@lich/template-v0-stack`
   // directly — that cross-package dep was the last reason core had a
   // hard-coded knowledge of any template. Project scaffolding now goes
   // through `bunx create-stack-v0 <name>`, which owns the template root and
-  // delegates to `levelzero init <name> --template-dir <root>` under the
-  // hood. Running `levelzero init <name>` standalone (without a template
+  // delegates to `lich init <name> --template-dir <root>` under the
+  // hood. Running `lich init <name>` standalone (without a template
   // override) surfaces a clear error pointing users at the right entry
   // point.
   const templateDirFlag = ctx.flags['template-dir'];
@@ -96,24 +96,24 @@ async function initWithName(ctx: CommandContext, name: string): Promise<unknown>
 
 export const initCommand: Command = {
   name: 'init',
-  describe: 'Scaffold a levelzero.config.ts (or a full v0 project when given a name)',
+  describe: 'Scaffold a lich.config.ts (or a full v0 project when given a name)',
   async run(ctx) {
     const name = ctx.args[0];
     if (name !== undefined && name !== '') {
       return initWithName(ctx, name);
     }
 
-    const path = join(ctx.cwd, 'levelzero.config.ts');
+    const path = join(ctx.cwd, 'lich.config.ts');
     if ((await exists(path)) && !ctx.flags['force']) {
       throw new CLIError(
         'CONFIG_INVALID',
-        `levelzero.config.ts already exists at ${path}`,
+        `lich.config.ts already exists at ${path}`,
         'pass --force to overwrite',
       );
     }
     await writeFile(path, STUB, 'utf8');
     const result = { created: true as const, configPath: path };
     if (ctx.format === 'json') return result;
-    return `Wrote levelzero.config.ts at ${path}\n`;
+    return `Wrote lich.config.ts at ${path}\n`;
   },
 };

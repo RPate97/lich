@@ -8,7 +8,7 @@ import { Registry } from '../../src/registry';
 import { makeDevCommand } from '../../src/commands/dev';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, volumeName } from '../../src/compose/naming';
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 import type { OwnedService, Service } from '../../src/services/types';
 
 const status = dockerOrSkip();
@@ -21,7 +21,7 @@ let registry: Registry;
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-owned-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-owned-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
   await registry.upsert('dev-owned-reserved-base', {
     path: '/__dev_owned_reserved__',
@@ -73,7 +73,7 @@ describeIfDocker('dev with owned services (DI)', () => {
         cwd: projectDir,
         command: 'sh -c "echo DATABASE_URL=$DATABASE_URL; echo done-echoer"',
         envContributions: (ports) => ({
-          DATABASE_URL: `postgres://levelzero:levelzero@localhost:${ports.postgres}/levelzero`,
+          DATABASE_URL: `postgres://lich:lich@localhost:${ports.postgres}/lich`,
         }),
         dependsOn: ['postgres'],
       };
@@ -94,7 +94,7 @@ describeIfDocker('dev with owned services (DI)', () => {
       expect(result.owned).toBeDefined();
       expect(result.owned.exitCodes.echoer).toBe(0);
 
-      const logPath = join(projectDir, '.levelzero', 'logs', 'echoer.jsonl');
+      const logPath = join(projectDir, '.lich', 'logs', 'echoer.jsonl');
       expect(existsSync(logPath)).toBe(true);
       const lines = readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
       expect(lines.some((l: any) => l.message.includes('done-echoer'))).toBe(true);

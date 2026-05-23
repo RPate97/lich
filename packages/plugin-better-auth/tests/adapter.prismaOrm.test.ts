@@ -3,7 +3,7 @@ import {
   betterAuthAdapter,
   _resetBetterAuthCacheForTests,
 } from '../src/adapter';
-import { CLIError, type AuthContext, type ORMAdapter } from '@levelzero/core';
+import { CLIError, type AuthContext, type ORMAdapter } from '@lich/core';
 
 /**
  * LEV-173 — auth adapter consumes the active ORM (no hardcoded sqlite).

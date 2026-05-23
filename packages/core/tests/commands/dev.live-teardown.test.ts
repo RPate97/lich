@@ -85,7 +85,7 @@ let registry: Registry;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-lev203-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-lev203-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
   // Each test resets the shared signal-handler + registry-lock state so
   // cleanups from a prior test don't fan into this one's `__fireForTest`
@@ -374,7 +374,7 @@ describe('dev --live wiring (LEV-203)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const composeRunner = factory('levelzero-sig-key', '/tmp/compose.yml');
+    const composeRunner = factory('lich-sig-key', '/tmp/compose.yml');
     const state: LiveTeardownState = { promise: null };
 
     // Same shape as the registration in `dev.ts`.
@@ -403,7 +403,7 @@ describe('dev --live wiring (LEV-203)', () => {
     const downs = calls.filter((c) => c.op === 'down');
     expect(downs).toHaveLength(1);
     expect(downs[0]!.args[0]).toEqual({ volumes: false, removeOrphans: true });
-    expect(downs[0]!.projectName).toBe('levelzero-sig-key');
+    expect(downs[0]!.projectName).toBe('lich-sig-key');
     expect(await registry.get('sig-key')).toBeUndefined();
   });
 });

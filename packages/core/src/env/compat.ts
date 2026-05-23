@@ -121,7 +121,7 @@ export function promoteEnvContributions(
     warnedPlugins.add(pluginName);
     const promoted = sampleKeys.length;
     console.warn(
-      `[levelzero deprecation] Plugin "${pluginName}" uses Service.envContributions(ports) — please migrate to api.addEnvSource() per Plan 16. Auto-promoted ${promoted} key(s) for now.`,
+      `[lich deprecation] Plugin "${pluginName}" uses Service.envContributions(ports) — please migrate to api.addEnvSource() per Plan 16. Auto-promoted ${promoted} key(s) for now.`,
     );
   }
 }

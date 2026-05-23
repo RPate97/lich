@@ -8,12 +8,12 @@ Status: approved (brainstorm), pending implementation plan
 
 A polished visual design for the lich dashboard exists as a standalone prototype
 in `sample-dashboard/` (CDN React + Babel, plain CSS, mock data). The shipped
-`@levelzero/dashboard` package is a functional but plain shadcn/Tailwind app that
+`@lich/dashboard` package is a functional but plain shadcn/Tailwind app that
 does not match the design. Bring the design into the real package.
 
 ## Goal
 
-Replace the `@levelzero/dashboard` SPA with the `sample-dashboard/` design, wired
+Replace the `@lich/dashboard` SPA with the `sample-dashboard/` design, wired
 to the real backend, so the dashboard looks exactly like the design. Reuse the
 design's CSS rather than rebuilding it in shadcn/Tailwind.
 

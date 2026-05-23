@@ -2,7 +2,7 @@
  * UIAdapter — pluggable interface for the UI components slot.
  *
  * Hypothetical alternative implementations:
- *   - shadcn/ui    (current default; ships in `@levelzero/plugin-shadcn`)
+ *   - shadcn/ui    (current default; ships in `@lich/plugin-shadcn`)
  *   - Tremor       (chart-focused React components)
  *   - Park UI      (Ark UI + Panda CSS recipes)
  *   - Mantine      (component library via CLI installer)

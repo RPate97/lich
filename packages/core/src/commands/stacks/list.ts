@@ -13,7 +13,7 @@ interface StackListRow {
 export function makeStacksListCommand(getRegistry: () => Registry): Command {
   return {
     name: 'stacks.list',
-    describe: 'List every running levelzero stack on this machine',
+    describe: 'List every running lich stack on this machine',
     async run(ctx) {
       const entries = await getRegistry().list();
       const stacks: StackListRow[] = entries.map(({ key, entry }) => ({
@@ -34,7 +34,7 @@ export function makeStacksListCommand(getRegistry: () => Registry): Command {
  * Three-column `KEY  PATH  PORTS` table. Ports are serialized as
  * `name=value` pairs joined by commas so the column stays single-line; the
  * full URL list is omitted from the pretty form (callers who need it should
- * use `levelzero urls` or `--json`).
+ * use `lich urls` or `--json`).
  */
 export function renderStacksListPretty(stacks: StackListRow[]): string {
   if (stacks.length === 0) return 'no stacks running\n';

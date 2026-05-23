@@ -8,7 +8,7 @@ import type {
 /**
  * Result of converting a single `DockerService` into a compose contribution.
  *
- * `serviceName` is the compose service key (we use the levelzero service name
+ * `serviceName` is the compose service key (we use the lich service name
  * verbatim — short, stable, project-scoped via `name:` in the emitted file).
  *
  * `volumeName`/`volumeDef` are set when the source service declares a
@@ -33,9 +33,9 @@ export interface DockerComposeContribution {
  * plugin that calls `addComposeService` itself, the call sites here go away.
  *
  * Naming guarantees the adapter preserves:
- *   - `container_name` = `levelzero-<key>-<service>` (existing convention,
+ *   - `container_name` = `lich-<key>-<service>` (existing convention,
  *     consumed by `entry.containers`, `stacks stop --all`, log lookups).
- *   - Volume name = `levelzero-<key>-<service>-data` when `volumeMountPath`
+ *   - Volume name = `lich-<key>-<service>-data` when `volumeMountPath`
  *     is set; absent otherwise.
  *   - Host port uses the `${PORT_<containerPortName>}` placeholder so the
  *     emitter can substitute the allocator's choice.
@@ -69,7 +69,7 @@ export function dockerServiceToCompose(
     def.volumes = [`${vName}:${svc.volumeMountPath}`];
     // Pin `name:` so compose doesn't prefix it with the project name
     // (default behaviour for top-level named volumes). Keeps the legacy
-    // `levelzero-<key>-<service>-data` naming consumed by `db inspect`
+    // `lich-<key>-<service>-data` naming consumed by `db inspect`
     // and any operator running `docker volume ls`.
     vDef = { name: vName };
   }

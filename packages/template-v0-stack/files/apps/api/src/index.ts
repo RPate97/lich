@@ -11,8 +11,8 @@
  *   - DELETE /api/todos/:id           — delete
  *
  * The default export proxies both the Bun runtime contract (`{ fetch, port }`,
- * so `bun run --hot` binds to the allocated port — LEV-200) AND the levelzero
- * generator contract (a `routes` array, so `levelzero gen --only api-client`'s
+ * so `bun run --hot` binds to the allocated port — LEV-200) AND the lich
+ * generator contract (a `routes` array, so `lich gen --only api-client`'s
  * route extraction sees the registered handlers). Stripping either field
  * breaks one of those flows silently.
  */
@@ -61,7 +61,7 @@ app.get('/api/me', async (c) => {
 
 // Session guard for the todo CRUD surface. Stashes `userId` on the request
 // context so handlers don't repeat the session lookup. Pattern matches the
-// `.levelzero/skills/reference/better-auth.md` recommendation.
+// `.lich/skills/reference/better-auth.md` recommendation.
 const requireSession = async (c: Context<AppEnv>, next: Next): Promise<Response | void> => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) return c.json({ error: 'unauthenticated' }, 401);
@@ -117,14 +117,14 @@ app.delete('/api/todos/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// LEV-200 — bind to the host port `levelzero dev` allocated for this api
+// LEV-200 — bind to the host port `lich dev` allocated for this api
 // service (passed in via `envInjection: { API_PORT: 'hono.port' }`). Default
-// to 3001 (NOT 3000) so a bare `bun run dev` outside the levelzero harness
+// to 3001 (NOT 3000) so a bare `bun run dev` outside the lich harness
 // still works without colliding with `next dev`'s default of 3000.
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 3001);
 
 // Default export shape: Bun's runtime reads `{ fetch, port }` and serves
-// on the chosen port. `levelzero gen`'s hono route extractor reads `routes`
+// on the chosen port. `lich gen`'s hono route extractor reads `routes`
 // from the same default export. Both are required — dropping either breaks
 // a flow (Bun's port binding or the typed-client generator).
 export default {

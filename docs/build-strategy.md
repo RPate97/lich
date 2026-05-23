@@ -1,10 +1,10 @@
-# Build Strategy for `@levelzero/*` Packages
+# Build Strategy for `@lich/*` Packages
 
 ## Decision
 
-**Use `tsup` to bundle every published `@levelzero/*` package.** Each package
+**Use `tsup` to bundle every published `@lich/*` package.** Each package
 emits dual ESM + CJS entry points plus `.d.ts` declaration files, sourcemaps
-included. This applies first to `@levelzero/core` as the template, then to
+included. This applies first to `@lich/core` as the template, then to
 every plugin package.
 
 This decision rejects shipping raw `.ts` sources (option 2) and rejects plain
@@ -41,7 +41,7 @@ sub-second across all ~10 plugin packages.
 1. Add `tsup` to the root dev-dependency set in the workspace.
 2. Create a shared `tsup.config.base.ts` in the repo root that exports
    `{ entry: ['src/index.ts'], format: ['esm', 'cjs'], dts: true, sourcemap: true, clean: true, target: 'node20' }`.
-3. Wire `@levelzero/core` first: add `build: tsup` script, set
+3. Wire `@lich/core` first: add `build: tsup` script, set
    `"main"`, `"module"`, `"types"`, and `"exports"` fields, and verify the
    published tarball with `npm pack --dry-run`.
 4. Add a `turbo` / workspace `build` task so all packages build in parallel

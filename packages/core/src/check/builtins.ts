@@ -8,7 +8,7 @@ export interface BuiltinRulesOptions {
   /**
    * Backend adapter wired into the route-coverage rule (LEV-174). When
    * absent the rule registers in skip-only mode (still reports a clean
-   * `[SKIP] route-coverage` line under `levelzero check` rather than
+   * `[SKIP] route-coverage` line under `lich check` rather than
    * crashing). The CLI dispatcher passes the merged registry's active
    * `backend` impl when one is loaded.
    */

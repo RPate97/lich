@@ -8,7 +8,7 @@ import {
   type GeneratorContext,
   type ORMAdapter,
   type ORMContext,
-} from '@levelzero/core';
+} from '@lich/core';
 import { makePrismaGenerator } from '../src/generator';
 
 function stubAdapter(impl: (ctx: ORMContext) => Promise<void>): ORMAdapter {
@@ -98,7 +98,7 @@ describe('prismaGenerator (LEV-124)', () => {
         container: async () => 'postgres://u:p@postgres:5432/db',
         protocol: 'postgres',
       },
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
 
     const adapter = stubAdapter(async () => {});
@@ -126,7 +126,7 @@ describe('prismaGenerator (LEV-124)', () => {
         container: async () => 'unused',
         protocol: 'postgres',
       },
-      pluginName: '@levelzero/plugin-postgres',
+      pluginName: '@lich/plugin-postgres',
     });
 
     const adapter = stubAdapter(async () => {});

@@ -6,13 +6,13 @@
  *
  *   - `--help` / `help`        — discoverability and command listing
  *   - `doctor`                 — diagnose local env
- *   - `init`                   — scaffold a levelzero.config.ts in CWD
+ *   - `init`                   — scaffold a lich.config.ts in CWD
  *   - `init <name>`            — error path (template-dir required)
  *   - `stacks current`         — current worktree info
  *   - `stacks list`            — global registry
  *   - `stacks prune`           — registry sweep (no --all needed)
  *   - `stacks prune --all`     — docker-gated: prunes containers/networks
- *   - `stacks stop --all`      — docker-gated: kills every levelzero-* stack
+ *   - `stacks stop --all`      — docker-gated: kills every lich-* stack
  *   - `urls` (outside-project + inside-project pre-dev)
  *   - `compose`                — error path (compose file missing pre-dev)
  *   - `dev` / `stop`           — docker-gated lifecycle
@@ -130,11 +130,11 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
   });
 
   // -------------------------------------------------------------------------
-  // init — scaffold a levelzero.config.ts in CWD vs. init <name> errors
+  // init — scaffold a lich.config.ts in CWD vs. init <name> errors
   // -------------------------------------------------------------------------
   describe('init', () => {
     it('init --force --json overwrites the existing config and returns a result', () => {
-      // The scaffolded project already has a `levelzero.config.ts`, so the
+      // The scaffolded project already has a `lich.config.ts`, so the
       // bare `init` (no --force) path must error. We add `--force` to
       // exercise the success branch.
       const { json } = runCliJson<{ created: boolean; configPath: string }>(
@@ -143,7 +143,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       );
       expect(json.created).toBe(true);
       expect(json.configPath).toBe(
-        join(handle.projectDir, 'levelzero.config.ts'),
+        join(handle.projectDir, 'lich.config.ts'),
       );
       // The stub the init command writes is intentionally minimal — overwriting
       // here means the template's plugin list is GONE. We restore the
@@ -159,14 +159,14 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
         '..',
         'template-v0-stack',
         'files',
-        'levelzero.config.ts',
+        'lich.config.ts',
       );
       const restored = readFileSync(templateConfig, 'utf8').replace(
         '{{projectName}}',
         'demo',
       );
       writeFileSync(
-        join(handle.projectDir, 'levelzero.config.ts'),
+        join(handle.projectDir, 'lich.config.ts'),
         restored,
         'utf8',
       );
@@ -183,7 +183,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
     });
 
     it('init <name> without --template-dir errors with a hint', () => {
-      // Post-LEV-174 `levelzero init <name>` no longer ships with a
+      // Post-LEV-174 `lich init <name>` no longer ships with a
       // hardcoded template — the standalone path is reserved for
       // out-of-tree plugins / advanced flows. The error MUST point users
       // at `bunx create-stack-v0 <name>` so they don't dead-end.
@@ -213,7 +213,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       expect(json.key).toMatch(/^[0-9a-f]{12}$/);
       expect(json.path).toBe(handle.projectDir);
       expect(json.configPath).toBe(
-        join(handle.projectDir, 'levelzero.config.ts'),
+        join(handle.projectDir, 'lich.config.ts'),
       );
       // Pre-dev: not running.
       expect(json.running).toBe(false);
@@ -279,13 +279,13 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
   // -------------------------------------------------------------------------
   describe('compose', () => {
     it('compose ps before dev errors with NO_PROJECT and a hint', () => {
-      // Compose passthrough requires `.levelzero/docker-compose.yml`. Pre-dev
+      // Compose passthrough requires `.lich/docker-compose.yml`. Pre-dev
       // that file doesn't exist; the command should fail loudly with a hint
-      // pointing at `levelzero dev`.
+      // pointing at `lich dev`.
       const res = runCli(handle.projectDir, ['compose', 'ps', '--json']);
       expect(res.exitCode).not.toBe(0);
       const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-      expect(combined).toMatch(/no compose file|levelzero dev/);
+      expect(combined).toMatch(/no compose file|lich dev/);
     });
 
     it('compose with no subcommand errors with usage', () => {
@@ -370,8 +370,8 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
     // runtime registry entry `dev` writes (`entry.composeFile`), so the
     // passthrough always points at the same file `dev`/`stop` use regardless
     // of the on-disk subdir layout. Pre-fix the passthrough reconstructed
-    // `<worktree>/.levelzero/docker-compose.yml` and never found the
-    // per-worktree file under `<worktree>/.levelzero/<key>/…`.
+    // `<worktree>/.lich/docker-compose.yml` and never found the
+    // per-worktree file under `<worktree>/.lich/<key>/…`.
     it(
       'LEV-208 regression: compose ps --json succeeds while dev is up',
       { timeout: 30_000 },
@@ -431,7 +431,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
   // stacks stop --all — destructive global teardown (docker-gated)
   //
   // NOT run as part of the normal docker block because it would tear down
-  // every running levelzero stack on the host — including ones from other
+  // every running lich stack on the host — including ones from other
   // concurrent test files / agents. Tested behind a separate env flag so an
   // operator can opt in deliberately.
   // -------------------------------------------------------------------------

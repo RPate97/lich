@@ -2,25 +2,25 @@
 
 > **Status: complete** — every Tier ticket (LEV-178 through LEV-192) has shipped to `master`. The plan below remains as the architecture record. The implementation tickets:
 >
-> - Tier 1 (foundations): [LEV-178](https://linear.app/levelzero/issue/LEV-178), [LEV-179](https://linear.app/levelzero/issue/LEV-179), [LEV-180](https://linear.app/levelzero/issue/LEV-180)
-> - Tier 2 (resolution + injection): [LEV-181](https://linear.app/levelzero/issue/LEV-181), [LEV-182](https://linear.app/levelzero/issue/LEV-182), [LEV-183](https://linear.app/levelzero/issue/LEV-183), [LEV-184](https://linear.app/levelzero/issue/LEV-184)
-> - Tier 3 (backcompat + v0 plugin migration): [LEV-185](https://linear.app/levelzero/issue/LEV-185), [LEV-186](https://linear.app/levelzero/issue/LEV-186), [LEV-187](https://linear.app/levelzero/issue/LEV-187)
-> - Tier 4 (new plugins): [LEV-188](https://linear.app/levelzero/issue/LEV-188) dotenv, [LEV-189](https://linear.app/levelzero/issue/LEV-189) infisical, [LEV-190](https://linear.app/levelzero/issue/LEV-190) redis, [LEV-191](https://linear.app/levelzero/issue/LEV-191) kafka
-> - Tier 5 (docs): [LEV-192](https://linear.app/levelzero/issue/LEV-192) — the EnvSource chapter in `docs/plugin-author-guide.md` and reference updates in `docs/EXTENSION.md`
+> - Tier 1 (foundations): [LEV-178](https://linear.app/lich/issue/LEV-178), [LEV-179](https://linear.app/lich/issue/LEV-179), [LEV-180](https://linear.app/lich/issue/LEV-180)
+> - Tier 2 (resolution + injection): [LEV-181](https://linear.app/lich/issue/LEV-181), [LEV-182](https://linear.app/lich/issue/LEV-182), [LEV-183](https://linear.app/lich/issue/LEV-183), [LEV-184](https://linear.app/lich/issue/LEV-184)
+> - Tier 3 (backcompat + v0 plugin migration): [LEV-185](https://linear.app/lich/issue/LEV-185), [LEV-186](https://linear.app/lich/issue/LEV-186), [LEV-187](https://linear.app/lich/issue/LEV-187)
+> - Tier 4 (new plugins): [LEV-188](https://linear.app/lich/issue/LEV-188) dotenv, [LEV-189](https://linear.app/lich/issue/LEV-189) infisical, [LEV-190](https://linear.app/lich/issue/LEV-190) redis, [LEV-191](https://linear.app/lich/issue/LEV-191) kafka
+> - Tier 5 (docs): [LEV-192](https://linear.app/lich/issue/LEV-192) — the EnvSource chapter in `docs/plugin-author-guide.md` and reference updates in `docs/EXTENSION.md`
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement each Tier task-by-task. The Linear tickets (LEV-178 … LEV-192) carry the code-level detail; this doc captures architecture and decomposition.
 
 **Goal:** Replace the ad-hoc `envContributions(ports)` system with a declarative, explicit, fully-typed `EnvSource` mechanism that injects environment variables into both compose-managed services and host-spawned owned services, while supporting bulk-loader plugins for secrets (dotenv, Infisical) and arbitrary new protocols (Kafka, Redis, MQTT, …).
 
-**Architecture:** Plugins register either *named EnvSources* (one value addressable by name, e.g. `postgres.url`) or *bulk EnvSources* (a resolver returning many values at once, e.g. all Infisical secrets in a folder). The consumer's `levelzero.config.ts` declares an explicit `envInjection` map: `{ ENV_VAR_NAME: 'namespace.source' }` plus an `importAll: ['namespace', …]` array for bulk pass-through. TypeScript infers the available source keys from the plugin tuple, giving autocomplete and typo errors at the config level.
+**Architecture:** Plugins register either *named EnvSources* (one value addressable by name, e.g. `postgres.url`) or *bulk EnvSources* (a resolver returning many values at once, e.g. all Infisical secrets in a folder). The consumer's `lich.config.ts` declares an explicit `envInjection` map: `{ ENV_VAR_NAME: 'namespace.source' }` plus an `importAll: ['namespace', …]` array for bulk pass-through. TypeScript infers the available source keys from the plugin tuple, giving autocomplete and typo errors at the config level.
 
-**Tech Stack:** TypeScript (strict generics, template-literal types, factory functions), Bun/Turborepo workspace, Docker Compose for service env injection, existing `@levelzero/core` plugin loader.
+**Tech Stack:** TypeScript (strict generics, template-literal types, factory functions), Bun/Turborepo workspace, Docker Compose for service env injection, existing `@lich/core` plugin loader.
 
 ---
 
 ## Why now
 
-Plan 14 split levelzero into core + plugin packages along slot boundaries. The current env-injection surface was inherited unchanged from the pre-plugin era and has four real holes:
+Plan 14 split lich into core + plugin packages along slot boundaries. The current env-injection surface was inherited unchanged from the pre-plugin era and has four real holes:
 
 1. **Compose services don't get the merged env.** Only owned services (host-spawned, e.g. `next dev`) receive it. The `api` container running inside compose doesn't get `DATABASE_URL` — pre-existing bug.
 2. **Host-side URLs only.** Everything is `localhost:${port}`. Containers can't reach each other using the same env vars the host sees; they need `postgres:5432` (compose DNS) or the docker bridge IP.
@@ -72,7 +72,7 @@ export default function postgres(opts?: PostgresOptions): Plugin<'postgres', {
   bulk:  never;
 }> {
   return {
-    name:      '@levelzero/plugin-postgres',
+    name:      '@lich/plugin-postgres',
     namespace: 'postgres',
     version:   '0.1.0',
     register(api) {
@@ -89,9 +89,9 @@ export default function postgres(opts?: PostgresOptions): Plugin<'postgres', {
 A `defineConfig()` helper flows the plugin tuple types through to `envInjection` for autocomplete and typo errors:
 
 ```ts
-import { defineConfig } from '@levelzero/core';
-import postgres from '@levelzero/plugin-postgres';
-import infisical from '@levelzero/plugin-infisical';
+import { defineConfig } from '@lich/core';
+import postgres from '@lich/plugin-postgres';
+import infisical from '@lich/plugin-infisical';
 
 export default defineConfig({
   plugins: [postgres(), infisical({ environment: 'test', folder: '/proj/dev', tokenFromEnv: 'INFISICAL_TOKEN' })],
@@ -120,13 +120,13 @@ Bulk sources have no host/container distinction by default (a secret is the same
 
 ### Worktree safety
 
-Secret-source plugins (dotenv, Infisical, etc.) resolve from `ctx.projectRoot`, NOT the worktree path. This is consistent with how every other plugin reads config today: a `.env.local` in the main workspace is read by every worktree's `levelzero dev`; Infisical config (machine identity token, folder path) is the same across worktrees. Plugins that need worktree-scoped state (caches, runtime tokens) use `ctx.worktreeKey` to scope under `.levelzero/state/<worktreeKey>/`.
+Secret-source plugins (dotenv, Infisical, etc.) resolve from `ctx.projectRoot`, NOT the worktree path. This is consistent with how every other plugin reads config today: a `.env.local` in the main workspace is read by every worktree's `lich dev`; Infisical config (machine identity token, folder path) is the same across worktrees. Plugins that need worktree-scoped state (caches, runtime tokens) use `ctx.worktreeKey` to scope under `.lich/state/<worktreeKey>/`.
 
 ### Generated .env files
 
-For each running service the runtime writes a `.env.<service>` file to `.levelzero/state/<worktreeKey>/env/`. These are:
-- **Inspectable** — `cat .levelzero/state/.../env/api.env` shows exactly what the api service received.
-- **Debuggable** — `levelzero env resolve api` regenerates and prints the same content.
+For each running service the runtime writes a `.env.<service>` file to `.lich/state/<worktreeKey>/env/`. These are:
+- **Inspectable** — `cat .lich/state/.../env/api.env` shows exactly what the api service received.
+- **Debuggable** — `lich env resolve api` regenerates and prints the same content.
 - **Portable** — same contract that CI/staging/prod env loaders use; the file can be source'd by anything that reads `.env`.
 
 ### Scoping (deferred to Plan 17 or later)
@@ -137,7 +137,7 @@ Today every service gets every env var. For 90% of projects this is fine. Micros
 
 ## What lives where after the work
 
-### `@levelzero/core` adds
+### `@lich/core` adds
 
 - `packages/core/src/env/types.ts` — `EnvSource`, `BulkEnvSource`, `EnvSourceContext`, `EnvInjectionConfig`
 - `packages/core/src/env/registry.ts` — `EnvSourceRegistry`, namespace-scoped views
@@ -153,10 +153,10 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 
 ### New plugin packages
 
-- `@levelzero/plugin-dotenv` — bulk source from `.env.local` + optional `process.env` passthrough
-- `@levelzero/plugin-infisical` — bulk source from Infisical SDK (configurable environment, folder, token source)
-- `@levelzero/plugin-redis` — promoted from `examples/plugin-redis/` to a real workspace package; exercises non-HTTP/non-postgres protocol (Redis URL)
-- `@levelzero/plugin-kafka` — non-HTTP, non-URL connection-string protocol (bootstrap list); proves protocol opacity
+- `@lich/plugin-dotenv` — bulk source from `.env.local` + optional `process.env` passthrough
+- `@lich/plugin-infisical` — bulk source from Infisical SDK (configurable environment, folder, token source)
+- `@lich/plugin-redis` — promoted from `examples/plugin-redis/` to a real workspace package; exercises non-HTTP/non-postgres protocol (Redis URL)
+- `@lich/plugin-kafka` — non-HTTP, non-URL connection-string protocol (bootstrap list); proves protocol opacity
 
 ---
 
@@ -172,8 +172,8 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 
 - **LEV-181** Task 16.4 — Boot-time resolution (named + bulk), validation, collision detection
 - **LEV-182** Task 16.5 — Host vs container resolution + compose env injection (fixes existing bug)
-- **LEV-183** Task 16.6 — Generated `.env.<service>` files under `.levelzero/state/<worktree>/env/`
-- **LEV-184** Task 16.7 — `levelzero env list` + `env resolve <service>` debug commands
+- **LEV-183** Task 16.6 — Generated `.env.<service>` files under `.lich/state/<worktree>/env/`
+- **LEV-184** Task 16.7 — `lich env list` + `env resolve <service>` debug commands
 
 ### Tier 3 — Backwards compat + v0 plugin migration
 
@@ -183,10 +183,10 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 
 ### Tier 4 — New plugins exercising the design
 
-- **LEV-188** Task 16.11 — `@levelzero/plugin-dotenv` (bulk source from .env files + process.env)
-- **LEV-189** Task 16.12 — `@levelzero/plugin-infisical` (bulk source from Infisical SDK)
-- **LEV-190** Task 16.13 — `@levelzero/plugin-redis` (promote from examples/, non-postgres protocol)
-- **LEV-191** Task 16.14 — `@levelzero/plugin-kafka` (non-URL connection-string protocol)
+- **LEV-188** Task 16.11 — `@lich/plugin-dotenv` (bulk source from .env files + process.env)
+- **LEV-189** Task 16.12 — `@lich/plugin-infisical` (bulk source from Infisical SDK)
+- **LEV-190** Task 16.13 — `@lich/plugin-redis` (promote from examples/, non-postgres protocol)
+- **LEV-191** Task 16.14 — `@lich/plugin-kafka` (non-URL connection-string protocol)
 
 ### Tier 5 — Documentation
 
@@ -213,7 +213,7 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 
 - **Per-service env scoping** (`only`, `exclude` per service) — defer to Plan 17 if anyone hits the pain. Today's "every var to every service" default works for the v0 stack and any project under ~20 services.
 - **Refresh / TTL on bulk sources** — first version re-resolves at every boot. Long-running `dev` sessions won't pick up new Infisical values without a restart. Acceptable for dev tool.
-- **Encryption at rest** of generated `.env.<service>` files — they're in `.levelzero/state/` which we already document as gitignored. If someone needs sealed secrets in dev they have bigger problems.
+- **Encryption at rest** of generated `.env.<service>` files — they're in `.lich/state/` which we already document as gitignored. If someone needs sealed secrets in dev they have bigger problems.
 - **Custom resolution context** (e.g. "this env should resolve differently in CI vs local") — the host/container distinction covers the actual dev-tool need. CI parity comes for free because the generated `.env.<service>` files are portable.
 
 ---
@@ -223,7 +223,7 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 Each tier ends with verification that the previous behavior still works:
 
 - **Tier 1**: Types compile across all packages. No runtime change yet.
-- **Tier 2**: `levelzero dev` brings up the v0 stack with env injection into both compose AND owned services. Manual: `cat .levelzero/state/.../env/api.env` shows expected vars.
+- **Tier 2**: `lich dev` brings up the v0 stack with env injection into both compose AND owned services. Manual: `cat .lich/state/.../env/api.env` shows expected vars.
 - **Tier 3**: All existing plugin tests still pass. Backwards-compat shim emits deprecation warning on console for any plugin still using `envContributions(ports)`.
 - **Tier 4**: New plugins' own tests pass. End-to-end smoke: a project with `plugin-dotenv + plugin-infisical + plugin-postgres + plugin-prisma + plugin-hono` boots, fetches Infisical secrets, makes them available to the api service.
 - **Tier 5**: Docs link from the existing EXTENSION.md "Composability rule" callout to the new EnvSource chapter.

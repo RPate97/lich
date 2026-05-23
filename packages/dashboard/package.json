@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/dashboard",
+  "name": "@lich/dashboard",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/server/index.js",

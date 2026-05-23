@@ -1,6 +1,6 @@
 ---
 name: shadcn
-description: shadcn/ui component reference for the levelzero stack
+description: shadcn/ui component reference for the lich stack
 applies-to: reference
 ---
 
@@ -12,10 +12,10 @@ them like any other file.
 
 ## Adding a component
 
-- Run `levelzero ui add <component>` to vendor a component into
-  `apps/web/src/components/ui/`. Examples: `levelzero ui add button`,
-  `levelzero ui add dialog`, `levelzero ui add command`.
-- List the catalog of available components with `levelzero ui list`.
+- Run `lich ui add <component>` to vendor a component into
+  `apps/web/src/components/ui/`. Examples: `lich ui add button`,
+  `lich ui add dialog`, `lich ui add command`.
+- List the catalog of available components with `lich ui list`.
 - The command writes the source file, installs any new peer dependencies
   (Radix primitives, `cmdk`, etc.), and updates `components.json` so future
   installs use the right paths.
@@ -41,5 +41,5 @@ them like any other file.
 
 ## Pitfalls
 
-- Re-running `levelzero ui add <component>` overwrites your edits unless you
+- Re-running `lich ui add <component>` overwrites your edits unless you
   pass `--no-overwrite`. Commit before re-adding.

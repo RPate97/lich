@@ -21,9 +21,9 @@ function writeJsonl(service: string, records: Array<{ ts: string; stream: 'stdou
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-logs-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-logs-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
   registry = new Registry(join(homeDir, 'registry.json'));
-  logDir = join(projectDir, '.levelzero', 'logs');
+  logDir = join(projectDir, '.lich', 'logs');
   mkdirSync(logDir, { recursive: true });
   await registry.upsert(computeWorktreeKey(projectDir), {
     path: projectDir,
@@ -32,13 +32,13 @@ beforeEach(async () => {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
 });
 
-describe('levelzero logs', () => {
-  it('errors NO_PROJECT when cwd is outside a levelzero project', async () => {
+describe('lich logs', () => {
+  it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-logs-outside-')));
     const cmd = makeLogsCommand(() => registry);
     await expect(
@@ -48,7 +48,7 @@ describe('levelzero logs', () => {
 
   it('returns empty lines + note when stack is not running', async () => {
     const other = realpathSync(mkdtempSync(join(tmpdir(), 'lz-logs-other-')));
-    writeFileSync(join(other, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(other, 'lich.config.ts'), 'export default {};');
     const cmd = makeLogsCommand(() => registry);
     const result = (await cmd.run({ cwd: other, format: 'json', args: [], flags: {} })) as any;
     expect(result.lines).toEqual([]);

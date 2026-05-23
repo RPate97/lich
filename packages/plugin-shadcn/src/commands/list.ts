@@ -1,4 +1,4 @@
-import { resolveStackContext, type Command, type UIAdapter } from '@levelzero/core';
+import { resolveStackContext, type Command, type UIAdapter } from '@lich/core';
 import { shadcnAdapter } from '../adapter';
 
 export interface UiListOptions {
@@ -10,7 +10,7 @@ export interface UiListOptions {
 }
 
 /**
- * Build `levelzero ui list`. Asks the UI adapter (shadcn by default) for the
+ * Build `lich ui list`. Asks the UI adapter (shadcn by default) for the
  * set of installed components under the resolved app directory.
  */
 export function makeUiListCommand(opts?: UiListOptions): Command {

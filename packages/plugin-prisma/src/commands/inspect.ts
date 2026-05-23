@@ -1,16 +1,16 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '@levelzero/core/errors';
-import { Registry } from '@levelzero/core/registry';
-import { resolveStackContext } from '@levelzero/core/services/context';
-import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import type { Command, ORMAdapter } from '@levelzero/core';
+import { CLIError } from '@lich/core/errors';
+import { Registry } from '@lich/core/registry';
+import { resolveStackContext } from '@lich/core/services/context';
+import type { AdapterRegistry } from '@lich/core/adapters/registry';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
+import type { Command, ORMAdapter } from '@lich/core';
 import { prismaAdapter } from '../adapter';
 import { resolveDatabaseUrl } from './database-url';
 
 export interface DbInspectOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /**
    * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
@@ -35,8 +35,8 @@ export interface DbInspectOptions {
 const DEFAULT_ROW_LIMIT = 50;
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 function parseLimitFlag(value: string | boolean | undefined): number | undefined {
@@ -55,7 +55,7 @@ function parseLimitFlag(value: string | boolean | undefined): number | undefined
 }
 
 /**
- * Build `levelzero db inspect`. Two modes:
+ * Build `lich db inspect`. Two modes:
  *
  *   --schema           → JSON dump of tables + columns (via prismaAdapter.inspectSchema)
  *   --rows <table>     → JSON rows from a single table (via prismaAdapter.inspectTable)
@@ -97,7 +97,7 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
         throw new CLIError(
           'CONFIG_INVALID',
           'db inspect requires either --schema or --rows <table>',
-          'usage: levelzero db inspect --schema | --rows <table> [--limit N]',
+          'usage: lich db inspect --schema | --rows <table> [--limit N]',
         );
       }
 
@@ -108,7 +108,7 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
           throw new CLIError(
             'CONFIG_INVALID',
             '--rows requires a table name',
-            'usage: levelzero db inspect --rows <table> [--limit N]',
+            'usage: lich db inspect --rows <table> [--limit N]',
           );
         }
         table = rowsFlag;
@@ -121,7 +121,7 @@ export function makeDbInspectCommand(opts?: DbInspectOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `levelzero dev` first to bring postgres up',
+          'run `lich dev` first to bring postgres up',
         );
       }
 

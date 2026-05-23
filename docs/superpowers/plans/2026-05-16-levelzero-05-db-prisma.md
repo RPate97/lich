@@ -1,11 +1,11 @@
 # Plan 05 — Database commands + Prisma adapter
 
-**Goal:** Define `ORMAdapter` interface, implement Prisma adapter (shell-out to Prisma CLI against the auto-detected stack's `DATABASE_URL`), and ship `levelzero db migrate / db migration new / db seed / db inspect` commands.
+**Goal:** Define `ORMAdapter` interface, implement Prisma adapter (shell-out to Prisma CLI against the auto-detected stack's `DATABASE_URL`), and ship `lich db migrate / db migration new / db seed / db inspect` commands.
 
 **Architecture:**
 - ORMAdapter is capability-shaped — methods describe what the adapter does, not which tool. v0 only ships the Prisma implementation.
 - Commands resolve the stack via `resolveStackContext`, derive `DATABASE_URL` from the registry entry, invoke the adapter.
-- Test fixtures use a real Postgres started by plan-02's `levelzero dev` machinery.
+- Test fixtures use a real Postgres started by plan-02's `lich dev` machinery.
 
 **Files (cumulative):**
 ```
@@ -42,5 +42,5 @@ Wave 3 is fully parallel (4 agents). Wave 1 + 2 are sequential single agents.
 
 ## Verification
 
-- `levelzero dev` brings up postgres; `levelzero db migrate` runs migrations against it; `db inspect --schema` returns JSON schema; `db inspect --rows <table>` returns JSON rows.
+- `lich dev` brings up postgres; `lich db migrate` runs migrations against it; `db inspect --schema` returns JSON schema; `db inspect --rows <table>` returns JSON rows.
 - Full vitest suite green; tsc clean.

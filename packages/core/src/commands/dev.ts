@@ -51,7 +51,7 @@ export interface DevOptions {
   /**
    * Plugin-contributed compose services/volumes/networks (post-LEV-148). The
    * dispatcher fills this from `bootPlugins().compose` so plugins like
-   * `@levelzero/plugin-postgres` that call `api.addComposeService` land in the
+   * `@lich/plugin-postgres` that call `api.addComposeService` land in the
    * emitted compose file alongside any legacy `DockerService` entries.
    * Defaults to empty when omitted (tests not exercising the plugin path).
    */
@@ -59,7 +59,7 @@ export interface DevOptions {
   /**
    * Plugin-contributed `OwnedService` entries (post-LEV-154). The dispatcher
    * fills this from `bootPlugins().ownedServices` so plugins like
-   * `@levelzero/plugin-next` that call `api.addOwnedService` get their
+   * `@lich/plugin-next` that call `api.addOwnedService` get their
    * services merged into the dev/stop/reset service set alongside the
    * built-ins. Defaults to empty when omitted (tests that inject `getServices`
    * directly typically don't exercise this path).
@@ -80,7 +80,7 @@ export interface DevOptions {
    * Project config's `envInjection` map (Plan 16). Paired with
    * `getEnvSourceRegistry`: explicit `ENV_VAR -> sourceKey` entries plus
    * `importAll: [namespace, ...]` bulk pass-throughs. Loaded by the
-   * dispatcher from `LevelzeroConfig.envInjection`. Defaults to undefined
+   * dispatcher from `LichConfig.envInjection`. Defaults to undefined
    * (empty injection — every service receives no Plan-16 vars but the
    * legacy `envContributions` paths still run).
    */
@@ -195,8 +195,8 @@ function reservedPortsFromOtherStacks(
  * registry. Keeps `available()` returning false so the `dev` command skips
  * URL registration entirely instead of failing.
  *
- * Production wiring lives in `bin.ts`: when `@levelzero/plugin-portless` is
- * loaded via `levelzero.config.ts`, `bootPlugins()` registers a real
+ * Production wiring lives in `bin.ts`: when `@lich/plugin-portless` is
+ * loaded via `lich.config.ts`, `bootPlugins()` registers a real
  * `portless` adapter and a `noop` adapter under the `portless` slot. `bin.ts`
  * then injects a `getPortlessAdapter` that probes the real impl's
  * `available()` and falls back to the noop — the same selection logic that
@@ -221,7 +221,7 @@ const inlineNoopPortlessAdapter: PortlessAdapter = {
 /**
  * Resolve the project name used for portless host construction.
  *
- * Reads `LevelzeroConfig.name` from the worktree's config; if absent or the
+ * Reads `LichConfig.name` from the worktree's config; if absent or the
  * config can't be loaded, falls back to the basename of the worktree path so
  * registration still has a stable label rather than failing.
  */
@@ -239,7 +239,7 @@ async function resolveProjectName(worktreePath: string): Promise<string> {
 
 /**
  * Tear down a `--live` stack: `docker compose down --remove-orphans` (volumes
- * preserved — same default as `levelzero stop`) plus the registry entry
+ * preserved — same default as `lich stop`) plus the registry entry
  * removed. Idempotent: the FIRST call kicks off the work and parks the
  * resulting promise on `state.promise`; concurrent + later calls await that
  * same promise and never re-issue the underlying `docker compose down` or
@@ -417,13 +417,13 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
                   bulkCache,
                 });
                 // LEV-183 — drop a dotenv snapshot of the container-resolved env to
-                // `.levelzero/state/<wt>/env/<service>.env` so users can `cat` it
+                // `.lich/state/<wt>/env/<service>.env` so users can `cat` it
                 // to see exactly what each compose service received. Overwrites on
                 // every dev run.
                 await writeEnvFile(
                   join(
                     stackCtx.worktreePath,
-                    '.levelzero',
+                    '.lich',
                     'state',
                     stackCtx.worktreeKey,
                     'env',
@@ -479,10 +479,10 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           urls: existing?.urls ?? {},
           containers: bundle.containerNames,
           network: networkName(stackCtx.worktreeKey),
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: existing?.createdAt ?? new Date().toISOString(),
           // LEV-208 — record the absolute compose file path so passthrough
-          // commands (`levelzero compose ps`, etc.) can shell into the same
+          // commands (`lich compose ps`, etc.) can shell into the same
           // file `dev` wrote without reconstructing the per-worktree path.
           composeFile: bundle.composeFilePath,
           // LEV-241 — omit the field entirely when absent so the JSON stays
@@ -521,7 +521,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
             await adapter.register({ host, target });
             newUrls[svc.name] = `https://${host}`;
           }
-          // Persist URLs back into the registry so `levelzero urls` can read them.
+          // Persist URLs back into the registry so `lich urls` can read them.
           await reg.withLock(async () => {
             const cur = await reg.get(stackCtx.worktreeKey);
             if (!cur) return;
@@ -563,12 +563,12 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           });
           // LEV-183 — same snapshot as the compose path, but with the
           // host-resolved values. Sits in the same dir so `ls
-          // .levelzero/state/<wt>/env/` shows one file per running service
+          // .lich/state/<wt>/env/` shows one file per running service
           // regardless of compose vs owned kind.
           await writeEnvFile(
             join(
               stackCtx.worktreePath,
-              '.levelzero',
+              '.lich',
               'state',
               stackCtx.worktreeKey,
               'env',
@@ -689,19 +689,19 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
 
       // Default detached path — spawn each owned service via the detached
       // runner, write pid files, probe readiness, then return so the user
-      // gets their shell back. `levelzero stop` reads the pid files to
-      // tear things down later; `levelzero logs` reads the per-service
+      // gets their shell back. `lich stop` reads the pid files to
+      // tear things down later; `lich logs` reads the per-service
       // `.log` files under the state dir.
       const detachedLogDir = join(
         stackCtx.worktreePath,
-        '.levelzero',
+        '.lich',
         'state',
         stackCtx.worktreeKey,
         'logs',
       );
       const pidDir = join(
         stackCtx.worktreePath,
-        '.levelzero',
+        '.lich',
         'state',
         stackCtx.worktreeKey,
         'pids',
@@ -765,7 +765,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
           'INTERNAL',
           `owned service(s) failed to start: ${names}`,
           {
-            hint: `inspect full logs with: levelzero logs ${ownedFailed[0]!}`,
+            hint: `inspect full logs with: lich logs ${ownedFailed[0]!}`,
             details:
               ctx.format === 'json'
                 ? { failed: ownedFailed, owned: fullResult.owned }
@@ -825,7 +825,7 @@ function renderDevPretty(
       if (status === 'failed') {
         // LEV-219 — a crashed owned service: annotate the exit code +
         // wall-clock and dump the captured stderr/stdout tail so the user
-        // sees WHY without having to run `levelzero logs`.
+        // sees WHY without having to run `lich logs`.
         const code = ownedDetached.exitCodes[name];
         const afterMs = ownedDetached.exitedAfterMs[name];
         const detail =
@@ -844,8 +844,8 @@ function renderDevPretty(
         lines.push(`  ${name}  pid=${pid}  ${status}`);
       }
     }
-    lines.push('  logs:  levelzero logs <service> --follow');
-    lines.push('  stop:  levelzero stop');
+    lines.push('  logs:  lich logs <service> --follow');
+    lines.push('  stop:  lich stop');
   }
   return lines.join('\n') + '\n';
 }

@@ -12,7 +12,7 @@ beforeEach(() => {
   reg = new Registry(join(tmp, 'registry.json'));
 });
 
-describe('levelzero stacks list', () => {
+describe('lich stacks list', () => {
   it('returns an empty array when no stacks are registered', async () => {
     const cmd = makeStacksListCommand(() => reg);
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;

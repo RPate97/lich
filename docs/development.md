@@ -7,7 +7,7 @@ All workspace packages live under `packages/`.
 
 ```
 packages/
-  core/                 # @levelzero/core — CLI, runtime
+  core/                 # @lich/core — CLI, runtime
   plugin-*/             # plugin packages
   create-stack-v0/      # scaffolding CLI
   template-v0-stack/    # project template
@@ -41,18 +41,18 @@ bun run build        # build all packages
 
 ## Parallel agent development and stale workspace symlinks (LEV-220)
 
-> **TL;DR:** If `bun run levelzero` runs old code after a merge, run
+> **TL;DR:** If `bun run lich` runs old code after a merge, run
 > `bun run sync-workspace-symlinks` to fix it.
 
 ### What happens
 
 The Claude Code agent harness runs multiple agents in parallel, each in a
-temporary git worktree under `/tmp/levelzero-worktrees/agent-XXX/`.  To
+temporary git worktree under `/tmp/lich-worktrees/agent-XXX/`.  To
 avoid a full `bun install` per worktree, the setup hook creates a symlink:
 
 ```
-/tmp/levelzero-worktrees/agent-XXX/node_modules
-  -> /Users/<you>/programming/levelzero/node_modules   # main repo
+/tmp/lich-worktrees/agent-XXX/node_modules
+  -> /Users/<you>/programming/lich/node_modules   # main repo
 ```
 
 When Bun installs packages inside that worktree (for any reason — installing
@@ -61,8 +61,8 @@ the workspace glob `"packages/*"` relative to the **worktree's** directory
 and writes workspace symlinks like:
 
 ```
-node_modules/@levelzero/core
-  -> /tmp/levelzero-worktrees/agent-XXX/packages/core   # WORKTREE path
+node_modules/@lich/core
+  -> /tmp/lich-worktrees/agent-XXX/packages/core   # WORKTREE path
 ```
 
 Because the worktree's `node_modules` IS the main repo's `node_modules`,
@@ -70,13 +70,13 @@ those symlinks land in the main repo and affect every consumer — including
 your local terminal and every other agent.
 
 After the worktree is merged and discarded the symlinks still point at the
-now-stale (or deleted) worktree.  Running `bun run levelzero` then silently
+now-stale (or deleted) worktree.  Running `bun run lich` then silently
 executes whatever code was in that old worktree.
 
 ### How to reproduce
 
-1. Observe stale symlinks: `ls -la node_modules/@levelzero/`
-2. If any line shows a path containing `/tmp/levelzero-worktrees/agent-XXX/`,
+1. Observe stale symlinks: `ls -la node_modules/@lich/`
+2. If any line shows a path containing `/tmp/lich-worktrees/agent-XXX/`,
    the symlinks are stale.
 
 ### How to fix immediately
@@ -85,7 +85,7 @@ executes whatever code was in that old worktree.
 bun run sync-workspace-symlinks
 ```
 
-This re-anchors every `node_modules/@levelzero/*` symlink to the correct
+This re-anchors every `node_modules/@lich/*` symlink to the correct
 path inside the main repo's `packages/` directory.  It is safe to run at
 any time and is idempotent.
 
@@ -115,7 +115,7 @@ Two mechanisms prevent the problem from persisting:
 
 Bun does not provide a flag or config to suppress workspace package linking
 during `bun install`.  The workspace glob `"packages/*"` is what Bun uses to
-locate `@levelzero/*` packages; removing it would break all cross-package
+locate `@lich/*` packages; removing it would break all cross-package
 imports.  The root cause is an emergent interaction between:
 
 - Bun's workspace symlink behaviour (always re-links on install)

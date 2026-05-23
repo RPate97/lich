@@ -24,31 +24,31 @@ describe('bin: --help / -h / help / no-args', () => {
   // also verify they exit 0 and write to stdout (not stderr) — the previous
   // behavior was an UNKNOWN_COMMAND error on stderr with exit 1.
 
-  it('`levelzero --help` prints help to stdout, exit 0', () => {
-    const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
+  it('`lich --help` prints help to stdout, exit 0', () => {
+    const res = run(['--help'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
-    expect(res.stdout).toContain('levelzero — extensible dev environment orchestrator');
+    expect(res.stdout).toContain('lich — extensible dev environment orchestrator');
     expect(res.stdout).toContain('USAGE');
     expect(res.stdout).toContain('LOADED PLUGINS');
   });
 
-  it('`levelzero -h` prints help to stdout, exit 0', () => {
-    const res = run(['-h'], tmp, { LEVELZERO_HOME: tmp });
+  it('`lich -h` prints help to stdout, exit 0', () => {
+    const res = run(['-h'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
     expect(res.stdout).toContain('USAGE');
   });
 
-  it('`levelzero help` prints help to stdout, exit 0', () => {
-    const res = run(['help'], tmp, { LEVELZERO_HOME: tmp });
+  it('`lich help` prints help to stdout, exit 0', () => {
+    const res = run(['help'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
     expect(res.stdout).toContain('USAGE');
   });
 
-  it('`levelzero` (no args) prints help (replaces the old UNKNOWN_COMMAND error)', () => {
-    const res = run([], tmp, { LEVELZERO_HOME: tmp });
+  it('`lich` (no args) prints help (replaces the old UNKNOWN_COMMAND error)', () => {
+    const res = run([], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
     expect(res.stdout).toContain('USAGE');
@@ -56,7 +56,7 @@ describe('bin: --help / -h / help / no-args', () => {
   });
 
   it('lists every inline-registered built-in command', () => {
-    const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
+    const res = run(['--help'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     // Sample a few from each curated group — `buildCommands` is the source
     // of truth, and these are stable post-LEV-165 (Plan 14 Tier 7 cutover).
@@ -86,10 +86,10 @@ describe('bin: --help / -h / help / no-args', () => {
 
   it('does NOT list plugin-dependent commands outside a project (LEV-165 cutover)', () => {
     // Post-LEV-165 these commands are only registered by the dispatch path
-    // when a project's `levelzero.config.ts` declares the contributing
+    // when a project's `lich.config.ts` declares the contributing
     // plugins. Outside a project the inline-only `buildCommands` registry
     // omits them entirely — the rendered help must reflect that.
-    const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
+    const res = run(['--help'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     const out = res.stdout;
     expect(out).not.toContain('screenshot');
@@ -106,10 +106,10 @@ describe('bin: --help / -h / help / no-args', () => {
   });
 
   it('with no project config in cwd, LOADED PLUGINS shows the empty-state message', () => {
-    const res = run(['--help'], tmp, { LEVELZERO_HOME: tmp });
+    const res = run(['--help'], tmp, { LICH_HOME: tmp });
     expect(res.status).toBe(0);
     expect(res.stdout).toContain(
-      '(no project plugins loaded — declare them in levelzero.config.ts)',
+      '(no project plugins loaded — declare them in lich.config.ts)',
     );
   });
 });

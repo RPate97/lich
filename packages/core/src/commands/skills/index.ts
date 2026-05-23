@@ -11,17 +11,17 @@ export interface SkillsIndexOptions {
   scanSkills?: (rootDir: string) => Promise<Skill[]>;
 }
 
-const SKILLS_SUBPATH = join('.levelzero', 'skills');
+const SKILLS_SUBPATH = join('.lich', 'skills');
 const OUTPUT_FILENAME = 'CLAUDE.md';
 
 /**
- * Build `levelzero skills index`. Resolves the current worktree, scans
- * `.levelzero/skills/{workflow,reference}`, renders the CLAUDE.md skill index,
+ * Build `lich skills index`. Resolves the current worktree, scans
+ * `.lich/skills/{workflow,reference}`, renders the CLAUDE.md skill index,
  * and writes it to `CLAUDE.md` at the project root.
  *
  * Skill `filePath`s from the scanner are absolute; we rewrite them to paths
  * relative to the project root before rendering so the index links to the
- * checked-in `.levelzero/skills/...` location regardless of where the project
+ * checked-in `.lich/skills/...` location regardless of where the project
  * lives on disk.
  */
 export function makeSkillsIndexCommand(opts?: SkillsIndexOptions): Command {
@@ -29,7 +29,7 @@ export function makeSkillsIndexCommand(opts?: SkillsIndexOptions): Command {
 
   return {
     name: 'skills.index',
-    describe: "Scan .levelzero/skills and write the CLAUDE.md skill index at the project root",
+    describe: "Scan .lich/skills and write the CLAUDE.md skill index at the project root",
     async run(ctx) {
       const stackCtx = await resolveStackContext(ctx.cwd);
       const skillsDir = join(stackCtx.worktreePath, SKILLS_SUBPATH);

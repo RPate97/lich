@@ -49,7 +49,7 @@ function parseNumberFlag(value: string | boolean | undefined, name: string): num
 }
 
 /**
- * Build `levelzero visual diff`. Reads two PNGs from disk and runs them
+ * Build `lich visual diff`. Reads two PNGs from disk and runs them
  * through the active `browser` adapter's `diff()` method, optionally
  * thresholded.
  *
@@ -60,7 +60,7 @@ function parseNumberFlag(value: string | boolean | undefined, name: string): num
 export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
   const getAdapterRegistry = opts?.getAdapterRegistry;
   // See screenshot.ts for the rationale: after LEV-174 core no longer imports
-  // `@levelzero/plugin-playwright` directly. Callers must supply either an
+  // `@lich/plugin-playwright` directly. Callers must supply either an
   // explicit `adapter` (tests) or a `getAdapterRegistry` (CLI dispatch, where
   // `bin.ts` injects the merged plugin-aware registry).
   const resolveAdapter = (): BrowserAdapter => {
@@ -69,7 +69,7 @@ export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
     throw new CLIError(
       'CONFIG_INVALID',
       'no browser adapter configured for `visual diff`',
-      'load `@levelzero/plugin-playwright` (or another browser plugin) in your levelzero.config.ts',
+      'load `@lich/plugin-playwright` (or another browser plugin) in your lich.config.ts',
     );
   };
 
@@ -83,7 +83,7 @@ export function makeVisualDiffCommand(opts?: VisualDiffOptions): Command {
         throw new CLIError(
           'CONFIG_INVALID',
           'visual diff requires two PNG paths',
-          'usage: levelzero visual diff <baseline.png> <current.png> [--threshold N] [--alpha 0..1]',
+          'usage: lich visual diff <baseline.png> <current.png> [--threshold N] [--alpha 0..1]',
         );
       }
 

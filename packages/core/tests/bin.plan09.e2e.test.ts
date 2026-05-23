@@ -30,23 +30,23 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-home-')));
-  // The `backend/hono` adapter lives in `@levelzero/plugin-hono` after
+  // The `backend/hono` adapter lives in `@lich/plugin-hono` after
   // LEV-150; the `api-client` generator (LEV-124 — registered by
-  // `@levelzero/plugin-typed-client`) resolves it from the merged adapter
+  // `@lich/plugin-typed-client`) resolves it from the merged adapter
   // registry, so the project config must declare the plugin or the
   // generator skips.
   // After LEV-174 the typed-client codegen no longer ships an inline
-  // `@levelzero/plugin-typed-client` fallback either — both plugins must
+  // `@lich/plugin-typed-client` fallback either — both plugins must
   // be declared in the project config. We point at the workspace package
   // sources by absolute path rather than by bare specifier because Bun
-  // 1.2.23 segfaults when resolving two `@levelzero/plugin-*` bare
+  // 1.2.23 segfaults when resolving two `@lich/plugin-*` bare
   // specifiers from a tmp-dir project that has no `node_modules` (the
   // ancestor symlink to the workspace `node_modules` walks fine for one
   // bare specifier but not two — likely a Bun resolver bug). The
   // path-form `loadPlugin` branch bypasses `createRequire`/npm resolution
   // entirely.
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
+    join(projectDir, 'lich.config.ts'),
     `export default { plugins: [${JSON.stringify(HONO_PLUGIN)}, ${JSON.stringify(TYPED_CLIENT_PLUGIN)}] };`,
   );
 
@@ -68,7 +68,7 @@ beforeEach(() => {
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -121,7 +121,7 @@ describe('bin: plan-09 commands end-to-end', () => {
     // explicitly forbids.
     const emptyProj = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p09-empty-')));
     writeFileSync(
-      join(emptyProj, 'levelzero.config.ts'),
+      join(emptyProj, 'lich.config.ts'),
       `export default { plugins: [${JSON.stringify(HONO_PLUGIN)}, ${JSON.stringify(TYPED_CLIENT_PLUGIN)}] };`,
     );
     // No API entry at apps/api/src/index.ts — the generator should report a
@@ -129,7 +129,7 @@ describe('bin: plan-09 commands end-to-end', () => {
     // be UNKNOWN_COMMAND.
     const res = spawnSync('bun', [BIN, 'gen', '--json'], {
       cwd: emptyProj,
-      env: { ...process.env, LEVELZERO_HOME: homeDir },
+      env: { ...process.env, LICH_HOME: homeDir },
       encoding: 'utf8',
     });
     expect(res.status).toBe(1);

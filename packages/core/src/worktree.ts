@@ -8,7 +8,7 @@ export interface Worktree {
   key: string;
 }
 
-const CONFIG_FILENAME = 'levelzero.config.ts';
+const CONFIG_FILENAME = 'lich.config.ts';
 
 async function exists(p: string): Promise<boolean> {
   try {

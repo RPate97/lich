@@ -1,7 +1,7 @@
 /**
  * LEV-198-extended — `ui add` / `ui list` command coverage.
  *
- * These commands come from `@levelzero/plugin-shadcn`. Both run on the host
+ * These commands come from `@lich/plugin-shadcn`. Both run on the host
  * (no docker required). `ui add` invokes `npx shadcn@latest add <component>`
  * under the hood — we use `--dry-run` so we don't actually pull in shadcn
  * deps during the test.

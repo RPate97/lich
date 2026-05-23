@@ -2,7 +2,7 @@
  * BrowserAdapter — pluggable interface for the headless-browser slot.
  *
  * Hypothetical alternative implementations:
- *   - Playwright   (current default; ships in `@levelzero/plugin-playwright`)
+ *   - Playwright   (current default; ships in `@lich/plugin-playwright`)
  *   - Puppeteer    (Chromium-only headless driver)
  *   - WebDriverIO  (WebDriver protocol; supports many browsers + mobile)
  *   - Cypress      (in-browser runner; would need a shim for headless capture)

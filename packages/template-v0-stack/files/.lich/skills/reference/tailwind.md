@@ -1,6 +1,6 @@
 ---
 name: tailwind
-description: Tailwind CSS reference for the levelzero stack
+description: Tailwind CSS reference for the lich stack
 applies-to: reference
 ---
 

@@ -19,7 +19,7 @@ export interface StackEntry {
   createdAt: string;
   /**
    * Absolute path to the compose file `dev` wrote for this stack — verbatim, so
-   * passthrough commands (`levelzero compose ps`, `compose logs`, etc.) can
+   * passthrough commands (`lich compose ps`, `compose logs`, etc.) can
    * shell into the same file `dev`/`stop` use without reconstructing the path
    * from `worktreeKey` (which was the LEV-208 bug: the subdir was added but
    * the passthrough was never updated). Optional because legacy entries
@@ -51,7 +51,7 @@ export class Registry {
       // Default `urls` to `{}` for legacy entries written before the field existed.
       // Purely additive: no migration, just a default on the read path.
       // `composeFile` (LEV-208) is intentionally NOT defaulted — it's optional
-      // on the type, and callers (`levelzero compose <sub>`) treat `undefined`
+      // on the type, and callers (`lich compose <sub>`) treat `undefined`
       // as "no recorded path, re-run dev". A blank string would conflate
       // "stack pre-LEV-208" with "stack with no compose file recorded".
       for (const key of Object.keys(parsed.stacks)) {

@@ -16,11 +16,11 @@ export interface AdapterSwapOptions {
   getRegistry?: () => AdapterRegistry;
 }
 
-const ADAPTER_FILE_SUBPATH = join('.levelzero', 'adapter.json');
+const ADAPTER_FILE_SUBPATH = join('.lich', 'adapter.json');
 
 /**
- * Build `levelzero adapter swap <slot> <name>`. Persists the chosen impl for
- * a slot into `.levelzero/adapter.json` next to `levelzero.config.ts`.
+ * Build `lich adapter swap <slot> <name>`. Persists the chosen impl for
+ * a slot into `.lich/adapter.json` next to `lich.config.ts`.
  *
  * Storage format is a flat `{ [slot]: name }` object — one entry per slot,
  * with later swaps overwriting prior choices for the same slot but preserving
@@ -31,28 +31,28 @@ export function makeAdapterSwapCommand(opts?: AdapterSwapOptions): Command {
 
   return {
     name: 'adapter.swap',
-    describe: "Set the active adapter for a slot and persist it to .levelzero/adapter.json",
+    describe: "Set the active adapter for a slot and persist it to .lich/adapter.json",
     async run(ctx) {
       const [slot, name, ...rest] = ctx.args;
       if (!slot) {
         throw new CLIError(
           'INTERNAL',
           'missing required argument: slot',
-          'usage: levelzero adapter swap <slot> <name>',
+          'usage: lich adapter swap <slot> <name>',
         );
       }
       if (!name) {
         throw new CLIError(
           'INTERNAL',
           'missing required argument: adapter name',
-          'usage: levelzero adapter swap <slot> <name>',
+          'usage: lich adapter swap <slot> <name>',
         );
       }
       if (rest.length > 0) {
         throw new CLIError(
           'INTERNAL',
           `unexpected extra arguments: ${rest.join(' ')}`,
-          'usage: levelzero adapter swap <slot> <name>',
+          'usage: lich adapter swap <slot> <name>',
         );
       }
 
@@ -64,7 +64,7 @@ export function makeAdapterSwapCommand(opts?: AdapterSwapOptions): Command {
         throw new CLIError(
           'INTERNAL',
           `unknown adapter slot "${slot}"`,
-          'run `levelzero adapter list` to see available slots and impls',
+          'run `lich adapter list` to see available slots and impls',
         );
       }
       if (!slotEntries.some((e) => e.name === name)) {
@@ -72,7 +72,7 @@ export function makeAdapterSwapCommand(opts?: AdapterSwapOptions): Command {
           'INTERNAL',
           `no adapter "${name}" registered for slot "${slot}"`,
           {
-            hint: 'run `levelzero adapter list` to see registered impls',
+            hint: 'run `lich adapter list` to see registered impls',
             details: {
               slot,
               requested: name,
@@ -121,7 +121,7 @@ async function readExisting(path: string): Promise<Record<string, string>> {
       'CONFIG_INVALID',
       `failed to read existing ${ADAPTER_FILE_SUBPATH}`,
       {
-        hint: 'fix or delete the file and re-run `levelzero adapter swap`',
+        hint: 'fix or delete the file and re-run `lich adapter swap`',
         cause: err,
         details: { path, error: (err as Error).message },
       },

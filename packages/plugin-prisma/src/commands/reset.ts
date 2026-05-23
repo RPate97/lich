@@ -1,16 +1,16 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CLIError } from '@levelzero/core/errors';
-import { Registry } from '@levelzero/core/registry';
-import { resolveStackContext } from '@levelzero/core/services/context';
-import type { AdapterRegistry } from '@levelzero/core/adapters/registry';
-import type { EnvSourceRegistry } from '@levelzero/core/env/registry';
-import type { Command, ORMAdapter } from '@levelzero/core';
+import { CLIError } from '@lich/core/errors';
+import { Registry } from '@lich/core/registry';
+import { resolveStackContext } from '@lich/core/services/context';
+import type { AdapterRegistry } from '@lich/core/adapters/registry';
+import type { EnvSourceRegistry } from '@lich/core/env/registry';
+import type { Command, ORMAdapter } from '@lich/core';
 import { prismaAdapter } from '../adapter';
 import { resolveDatabaseUrl } from './database-url';
 
 export interface DbResetOptions {
-  /** Registry provider; defaults to a Registry under $LEVELZERO_HOME/.levelzero/registry.json. */
+  /** Registry provider; defaults to a Registry under $LICH_HOME/.lich/registry.json. */
   getRegistry?: () => Registry;
   /**
    * ORM adapter. When omitted (and no `getAdapterRegistry` is provided), the
@@ -32,12 +32,12 @@ export interface DbResetOptions {
 }
 
 function defaultRegistry(): Registry {
-  const home = process.env['LEVELZERO_HOME'] ?? homedir();
-  return new Registry(join(home, '.levelzero', 'registry.json'));
+  const home = process.env['LICH_HOME'] ?? homedir();
+  return new Registry(join(home, '.lich', 'registry.json'));
 }
 
 /**
- * Build `levelzero db reset`. Three-step pipeline executed in order against
+ * Build `lich db reset`. Three-step pipeline executed in order against
  * the active ORM adapter:
  *
  *   1. `orm.resetDatabase(ctx)`  — driver-agnostic teardown of user tables.
@@ -52,7 +52,7 @@ function defaultRegistry(): Registry {
  *
  *   { reset: true, migrated: true, seeded: boolean }
  *
- * Distinction from the top-level `levelzero reset` command: that one nukes
+ * Distinction from the top-level `lich reset` command: that one nukes
  * the entire stack (containers + volumes); `db reset` is data-only against
  * the *running* database. Much faster iteration when you just need a clean
  * schema + seed without restarting the container.
@@ -86,7 +86,7 @@ export function makeDbResetCommand(opts?: DbResetOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `levelzero dev` first to bring postgres up',
+          'run `lich dev` first to bring postgres up',
         );
       }
 

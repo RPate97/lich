@@ -14,8 +14,8 @@ let homeDir: string;
 beforeEach(async () => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p03-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p03-home-')));
-  writeFileSync(join(projectDir, 'levelzero.config.ts'), 'export default {};');
-  const reg = new Registry(join(homeDir, '.levelzero', 'registry.json'));
+  writeFileSync(join(projectDir, 'lich.config.ts'), 'export default {};');
+  const reg = new Registry(join(homeDir, '.lich', 'registry.json'));
   await reg.upsert(computeWorktreeKey(projectDir), {
     path: projectDir,
     branch: 'main',
@@ -23,10 +23,10 @@ beforeEach(async () => {
     urls: {},
     containers: [],
     network: '',
-    logDir: '.levelzero/logs',
+    logDir: '.lich/logs',
     createdAt: new Date().toISOString(),
   });
-  const logDir = join(projectDir, '.levelzero', 'logs');
+  const logDir = join(projectDir, '.lich', 'logs');
   mkdirSync(logDir, { recursive: true });
   const apiLines = [
     { ts: '2026-05-17T00:00:01Z', service: 'api', stream: 'stdout', level: 'info', message: 'GET /healthz 200' },
@@ -42,7 +42,7 @@ beforeEach(async () => {
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }

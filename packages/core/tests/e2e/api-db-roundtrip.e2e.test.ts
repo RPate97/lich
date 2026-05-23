@@ -85,7 +85,7 @@ describe.skipIf(!DOCKER)('LEV-213 api ↔ db roundtrip', () => {
 
     // Apply migrations via the canonical CLI flow. Post-LEV-215 the
     // template ships an initial migration at `prisma/migrations/0_init/`,
-    // so `levelzero db migrate` materializes the auth + Todo tables
+    // so `lich db migrate` materializes the auth + Todo tables
     // against the live postgres on the first run. Pre-LEV-215 this test
     // shelled out to `prisma db push --accept-data-loss` because the
     // template had no migration files; LEV-215 fixed that gap, so this
@@ -98,7 +98,7 @@ describe.skipIf(!DOCKER)('LEV-213 api ↔ db roundtrip', () => {
     });
     if (migrate.exitCode !== 0) {
       throw new Error(
-        `levelzero db migrate failed (exit ${migrate.exitCode}):\nstdout:\n${migrate.stdout}\nstderr:\n${migrate.stderr}`,
+        `lich db migrate failed (exit ${migrate.exitCode}):\nstdout:\n${migrate.stdout}\nstderr:\n${migrate.stderr}`,
       );
     }
 

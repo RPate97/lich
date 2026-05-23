@@ -205,7 +205,7 @@ describe('LEV-198-extended env / adapter / check', () => {
 
     it('swapping to the already-active adapter is a no-op success', () => {
       // The v0 scaffold has `orm:prisma` active. Swapping to itself should
-      // succeed and persist `.levelzero/adapter.json`.
+      // succeed and persist `.lich/adapter.json`.
       const res = runCli(
         handle.projectDir,
         ['adapter', 'swap', 'orm', 'prisma', '--json'],
@@ -218,12 +218,12 @@ describe('LEV-198-extended env / adapter / check', () => {
         return;
       }
       expect(
-        existsSync(join(handle.projectDir, '.levelzero', 'adapter.json')),
+        existsSync(join(handle.projectDir, '.lich', 'adapter.json')),
       ).toBe(true);
       // Clean up the override file so it doesn't bleed into other tests.
       try {
         writeFileSync(
-          join(handle.projectDir, '.levelzero', 'adapter.json'),
+          join(handle.projectDir, '.lich', 'adapter.json'),
           '{}',
           'utf8',
         );
@@ -283,7 +283,7 @@ describe('LEV-198-extended env / adapter / check', () => {
   describe('post-test cleanup', () => {
     it('the project config still exists and is parseable', () => {
       const cfg = readFileSync(
-        join(handle.projectDir, 'levelzero.config.ts'),
+        join(handle.projectDir, 'lich.config.ts'),
         'utf8',
       );
       // The substitution `create-stack-v0` did when scaffolding leaves the

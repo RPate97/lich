@@ -13,8 +13,8 @@ beforeEach(() => {
   registryPath = join(tmp, 'registry.json');
 });
 
-describe('levelzero stacks current', () => {
-  it('errors NO_PROJECT when cwd is not inside a levelzero project', async () => {
+describe('lich stacks current', () => {
+  it('errors NO_PROJECT when cwd is not inside a lich project', async () => {
     const cmd = makeStacksCurrentCommand(() => new Registry(registryPath));
     await expect(
       cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} }),
@@ -22,7 +22,7 @@ describe('levelzero stacks current', () => {
   });
 
   it('returns worktree info even with no registry entry', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const cmd = makeStacksCurrentCommand(() => new Registry(registryPath));
     const result = (await cmd.run({ cwd: tmp, format: 'json', args: [], flags: {} })) as any;
     expect(result.path).toBe(tmp);
@@ -32,7 +32,7 @@ describe('levelzero stacks current', () => {
   });
 
   it('returns the registry entry when one exists', async () => {
-    writeFileSync(join(tmp, 'levelzero.config.ts'), 'export default {};');
+    writeFileSync(join(tmp, 'lich.config.ts'), 'export default {};');
     const reg = new Registry(registryPath);
     const { computeWorktreeKey } = await import('../../src/worktree');
     const key = computeWorktreeKey(tmp);
@@ -43,7 +43,7 @@ describe('levelzero stacks current', () => {
       urls: {},
       containers: [],
       network: '',
-      logDir: '.levelzero/logs',
+      logDir: '.lich/logs',
       createdAt: '2026-05-16T00:00:00Z',
     });
     const cmd = makeStacksCurrentCommand(() => reg);

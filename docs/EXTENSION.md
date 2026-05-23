@@ -1,6 +1,6 @@
 # Extension Surface
 
-Levelzero is built around **plugins**. A plugin is the single unit of extension: it can contribute adapters, commands, owned services, compose services / volumes / networks, check rules, generators, and skills directories — all through one `register()` call during CLI bootstrap.
+Lich is built around **plugins**. A plugin is the single unit of extension: it can contribute adapters, commands, owned services, compose services / volumes / networks, check rules, generators, and skills directories — all through one `register()` call during CLI bootstrap.
 
 This page is the reference. For the actual interface, see [`packages/core/src/plugins/types.ts`](../packages/core/src/plugins/types.ts).
 
@@ -20,16 +20,16 @@ export interface Plugin {
 
 ## Plugin discovery
 
-Plugins are **opt-in** via the `plugins` array in `levelzero.config.ts`:
+Plugins are **opt-in** via the `plugins` array in `lich.config.ts`:
 
 ```ts
-import postgres from '@levelzero/plugin-postgres';
+import postgres from '@lich/plugin-postgres';
 
 export default {
   plugins: [
     postgres,                              // Plugin object
     './plugins/redis.ts',                  // string specifier (local path or npm package)
-    import('@levelzero/plugin-stripe'),    // Promise (typically a dynamic import)
+    import('@lich/plugin-stripe'),    // Promise (typically a dynamic import)
   ],
 };
 ```
@@ -51,11 +51,11 @@ There is no auto-discovery: a plugin not listed in `plugins[]` is not loaded.
 | `addAdapter(slot, name, impl)` | Register an adapter under a slot (`orm`, `auth`, `ui`, `browser`, `backend`, `frontend`, `test-runner`, `portless`). |
 | `setActiveAdapter(slot, name)` | Mark one registered adapter as the active impl for its slot. |
 | `addCommand(cmd)` | Register a CLI command for the dispatcher. |
-| `addOwnedService(service)` | Declare a service whose lifecycle Levelzero owns. |
+| `addOwnedService(service)` | Declare a service whose lifecycle Lich owns. |
 | `addComposeService(name, def)` | Contribute a compose v2 service to the merged stack. |
 | `addComposeVolume(name, def)` | Contribute a named compose volume. |
 | `addComposeNetwork(name, def)` | Contribute a named compose network. |
-| `addRule(rule)` | Register a check rule consumed by `levelzero check`. |
+| `addRule(rule)` | Register a check rule consumed by `lich check`. |
 | `addGenerator(gen)` | Register a code generator (typed clients, schemas, etc.). |
 | `addSkillsDir(absPath)` | Expose a directory of skills to the agent. |
 | `addEnvSource(name, source)` | Publish one named value (e.g. a URL, port, driver string) under the plugin's namespace. |
@@ -92,14 +92,14 @@ A `register()` that throws aborts boot; the error is rewrapped with the offendin
 
 ## Configuring env injection
 
-Plugins **publish** values via `addEnvSource` / `addBulkEnvSource`. Consumers **wire** those values to env-var names by adding an `envInjection` block to `levelzero.config.ts`:
+Plugins **publish** values via `addEnvSource` / `addBulkEnvSource`. Consumers **wire** those values to env-var names by adding an `envInjection` block to `lich.config.ts`:
 
 ```ts
-import { defineConfig } from '@levelzero/core';
-import postgres from '@levelzero/plugin-postgres';
-import redis    from '@levelzero/plugin-redis';
-import dotenv   from '@levelzero/plugin-dotenv';
-import infisical from '@levelzero/plugin-infisical';
+import { defineConfig } from '@lich/core';
+import postgres from '@lich/plugin-postgres';
+import redis    from '@lich/plugin-redis';
+import dotenv   from '@lich/plugin-dotenv';
+import infisical from '@lich/plugin-infisical';
 
 export default defineConfig({
   plugins: [
@@ -132,7 +132,7 @@ Each consumer service gets its own resolution pass:
 - **Host-spawned owned services** (e.g. `next dev`) — every named source resolves via its `host()` function. Values typically point at `localhost:${ports.<svc>}`.
 - **Compose-managed services** — every named source resolves via its `container()` function. Values typically point at the compose-DNS form (`postgres:5432`, `redis:6379`). Bulk-source secrets are the same either way unless the resolver branches on `ctx.consumerContext`.
 
-For inspection, every running service also has its merged env written to `.levelzero/state/<worktreeKey>/env/<service>.env`. `levelzero env list` and `levelzero env resolve <service>` print the same content from the CLI.
+For inspection, every running service also has its merged env written to `.lich/state/<worktreeKey>/env/<service>.env`. `lich env list` and `lich env resolve <service>` print the same content from the CLI.
 
 ## Composability rule (READ THIS)
 
@@ -149,7 +149,7 @@ Anti-patterns that fail review:
 
 ```ts
 // ❌  Cross-plugin import (couples plugin-prisma to plugin-postgres)
-import { pgService } from '@levelzero/plugin-postgres';
+import { pgService } from '@lich/plugin-postgres';
 const databaseUrl = pgService.envContributions(entry.ports).DATABASE_URL;
 
 // ✅  Capability lookup through the registry / context
@@ -168,10 +168,10 @@ await orm.resetDatabase(ctx);
 
 ```jsonc
 // ❌  Plugin package depends on a sibling stack plugin
-{ "dependencies": { "@levelzero/plugin-postgres": "workspace:*" } }
+{ "dependencies": { "@lich/plugin-postgres": "workspace:*" } }
 
-// ✅  Plugins depend only on @levelzero/core
-{ "peerDependencies": { "@levelzero/core": "*" } }
+// ✅  Plugins depend only on @lich/core
+{ "peerDependencies": { "@lich/core": "*" } }
 ```
 
 **The test for composability:** a combination we did not anticipate
@@ -185,7 +185,7 @@ Runs Redis in compose, registers a `portless` adapter against it, and adds a `re
 
 ```ts
 // plugins/redis.ts
-import type { Plugin } from '@levelzero/core';
+import type { Plugin } from '@lich/core';
 
 export default {
   name: 'redis',
@@ -208,7 +208,7 @@ export default {
 } satisfies Plugin;
 ```
 
-Wire it in `levelzero.config.ts`: `export default { plugins: ['./plugins/redis.ts'] };`
+Wire it in `lich.config.ts`: `export default { plugins: ['./plugins/redis.ts'] };`
 
 ## Command output: pretty by default, `--json` to opt in (LEV-168)
 
@@ -217,7 +217,7 @@ Every CLI command defaults to **pretty text** output. Pass `--json` on the invoc
 Inside a `Command.run(ctx)` implementation:
 
 ```ts
-import type { Command } from '@levelzero/core';
+import type { Command } from '@lich/core';
 
 export const myCommand: Command = {
   name: 'mything.list',
@@ -247,6 +247,6 @@ For a worked example see `packages/core/src/commands/env/list.ts` and the LEV-11
 
 ## Publishing a plugin
 
-External plugins ship as standalone npm packages. Versioning and changelog generation go through **changesets** (`.changeset/`). Build with **`tsup`** to emit dual ESM + CJS plus `.d.ts` declarations — the same template `@levelzero/core` uses. See [`docs/build-strategy.md`](./build-strategy.md) for the full decision and config template.
+External plugins ship as standalone npm packages. Versioning and changelog generation go through **changesets** (`.changeset/`). Build with **`tsup`** to emit dual ESM + CJS plus `.d.ts` declarations — the same template `@lich/core` uses. See [`docs/build-strategy.md`](./build-strategy.md) for the full decision and config template.
 
-Each PR that introduces or bumps a plugin must include a changeset, and the package's `"main"` / `"module"` / `"types"` / `"exports"` must point at the `tsup` output with `@levelzero/core` pinned as a peer dependency.
+Each PR that introduces or bumps a plugin must include a changeset, and the package's `"main"` / `"module"` / `"types"` / `"exports"` must point at the `tsup` output with `@lich/core` pinned as a peer dependency.

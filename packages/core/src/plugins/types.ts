@@ -32,7 +32,7 @@ export interface ComposeServiceDef {
   /**
    * Pin the container name (compose-v2 `container_name`). When unset, compose
    * generates `<project>-<service>-<idx>`. Used by `dev`/`stop`/`reset` to
-   * preserve the legacy `levelzero-<key>-<service>` naming so registry entries
+   * preserve the legacy `lich-<key>-<service>` naming so registry entries
    * keep working unchanged.
    */
   container_name?: string;
@@ -58,7 +58,7 @@ export interface ComposeVolumeDef {
   /**
    * Pin the on-disk volume name (compose-v2 `name:`). When unset, compose
    * synthesizes `<project>_<key>`. Used by the docker→compose interim
-   * adapter to keep legacy `levelzero-<key>-<service>-data` naming so
+   * adapter to keep legacy `lich-<key>-<service>-data` naming so
    * existing volumes carry over.
    */
   name?: string;
@@ -134,7 +134,7 @@ export interface PluginAPI<NS extends string = string> {
  */
 export interface PluginContext {
   projectRoot: string;
-  /** Typed once `LevelzeroConfig` is defined; `unknown` for now. */
+  /** Typed once `LichConfig` is defined; `unknown` for now. */
   config: unknown;
   /**
    * Returns the boot-scoped EnvSource registry. Stable identity across calls
@@ -177,7 +177,7 @@ export interface PluginContext {
  *
  *  - `namespace` is optional for backwards compatibility. LEV-179 teaches
  *    the loader to auto-derive a default by stripping the standard
- *    `@scope/plugin-` prefix from `name` (e.g. `@levelzero/plugin-postgres`
+ *    `@scope/plugin-` prefix from `name` (e.g. `@lich/plugin-postgres`
  *    → `'postgres'`). Explicit `namespace` always wins.
  *  - `__sources` is a phantom — never read at runtime, only typechecked so
  *    `defineConfig()` can infer source keys from the plugin tuple.

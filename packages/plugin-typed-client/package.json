@@ -1,5 +1,5 @@
 {
-  "name": "@levelzero/plugin-typed-client",
+  "name": "@lich/plugin-typed-client",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@levelzero/core": "workspace:*"
+    "@lich/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",

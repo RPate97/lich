@@ -14,7 +14,7 @@ async function makeWorktreeWithPids(
   pids: Record<string, number>,
 ): Promise<string> {
   const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-  const pidsDir = join(wt, '.levelzero', 'state', key, 'pids');
+  const pidsDir = join(wt, '.lich', 'state', key, 'pids');
   await mkdir(pidsDir, { recursive: true });
   for (const [name, pid] of Object.entries(pids)) {
     await writeFile(join(pidsDir, `${name}.pid`), `${pid}\n`);
@@ -33,7 +33,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -55,7 +55,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -79,7 +79,7 @@ describe('buildStackViews', () => {
           urls: { api: 'http://localhost:5402' },
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -105,7 +105,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -118,7 +118,7 @@ describe('buildStackViews', () => {
     // api: alive + probe fails after grace; web: alive + no URL
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 503 }));
     const wt = await mkdtemp(join(tmpdir(), 'wt-'));
-    const pidsDir = join(wt, '.levelzero', 'state', 'abc', 'pids');
+    const pidsDir = join(wt, '.lich', 'state', 'abc', 'pids');
     await mkdir(pidsDir, { recursive: true });
     await writeFile(join(pidsDir, 'api.pid'), `${process.pid}\n`);
     await writeFile(join(pidsDir, 'web.pid'), `${process.pid}\n`);
@@ -134,7 +134,7 @@ describe('buildStackViews', () => {
           urls: { api: 'http://localhost:9999' },
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z', // well past grace
         },
       },
@@ -158,7 +158,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
         },
       },
@@ -178,7 +178,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
           startedBy: 'wraith',
         },
@@ -198,7 +198,7 @@ describe('buildStackViews', () => {
           urls: {},
           containers: [],
           network: 'n',
-          logDir: '.levelzero/logs',
+          logDir: '.lich/logs',
           createdAt: '2026-05-21T00:00:00.000Z',
           // startedBy deliberately omitted — legacy / manual entry.
         },

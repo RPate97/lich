@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import type { BrowserAdapter, ScreenshotOptions, DiffOptions, DiffResult } from '@levelzero/core';
+import type { BrowserAdapter, ScreenshotOptions, DiffOptions, DiffResult } from '@lich/core';
 
 export const playwrightAdapter: BrowserAdapter = {
   name: 'playwright',

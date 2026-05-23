@@ -22,7 +22,7 @@ function openBrowser(url: string): void {
 }
 
 // Local type declarations for the dashboard server so core's typecheck does
-// not depend on `@levelzero/dashboard`'s built dist/ artifact existing.
+// not depend on `@lich/dashboard`'s built dist/ artifact existing.
 interface DashboardHandle {
   url: string;
   stop(): Promise<void>;
@@ -36,18 +36,18 @@ type StartDashboardServer = (opts: {
  * `lich dashboard` — start the local monitoring dashboard server and open it
  * in the browser. Runs in the foreground until Ctrl-C.
  *
- * The dashboard server lives in `@levelzero/dashboard` and is lazy-imported so
- * `@levelzero/core` carries no load-time dependency on it.
+ * The dashboard server lives in `@lich/dashboard` and is lazy-imported so
+ * `@lich/core` carries no load-time dependency on it.
  */
 export function makeDashboardCommand(getRegistryPath: () => string): Command {
   return {
     name: 'dashboard',
     describe: 'Start the lich monitoring dashboard (live view of all stacks)',
     async run(ctx) {
-      // `@levelzero/dashboard` is built lazily (its dist/ is produced by the
+      // `@lich/dashboard` is built lazily (its dist/ is produced by the
       // dashboard package's own build); type the dynamic import locally so
       // core's typecheck doesn't depend on that build artifact existing.
-      const specifier = '@levelzero/dashboard';
+      const specifier = '@lich/dashboard';
       const { startDashboardServer } = (await import(specifier)) as {
         startDashboardServer: StartDashboardServer;
       };

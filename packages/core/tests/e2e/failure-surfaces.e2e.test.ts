@@ -128,7 +128,7 @@ describe('LEV-198-extended failure surfaces', () => {
   //
   // Every db.* command requires a running stack (it pulls DATABASE_URL from
   // the registry entry). Pre-dev they MUST fail loudly with a NO_PROJECT
-  // CLIError pointing at `levelzero dev`.
+  // CLIError pointing at `lich dev`.
   // -------------------------------------------------------------------------
   describe('db.* without a running stack', () => {
     const subcommands = [
@@ -152,8 +152,8 @@ describe('LEV-198-extended failure surfaces', () => {
           expect(res.exitCode).not.toBe(0);
           const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
           // Either the canonical NO_PROJECT message OR a clear pointer to
-          // `levelzero dev`. Empty stderr is forbidden.
-          expect(combined).toMatch(/no stack|levelzero dev|no_project/);
+          // `lich dev`. Empty stderr is forbidden.
+          expect(combined).toMatch(/no stack|lich dev|no_project/);
         },
       );
     }
@@ -198,7 +198,7 @@ describe('LEV-198-extended failure surfaces', () => {
       const res = runCli(handle.projectDir, ['compose', 'ps', '--json']);
       expect(res.exitCode).not.toBe(0);
       const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-      expect(combined).toMatch(/no compose file|levelzero dev/);
+      expect(combined).toMatch(/no compose file|lich dev/);
     });
   });
 
@@ -250,20 +250,20 @@ describe('LEV-198-extended failure surfaces', () => {
   });
 
   // -------------------------------------------------------------------------
-  // urls — outside-project (no levelzero.config.ts) error
+  // urls — outside-project (no lich.config.ts) error
   // -------------------------------------------------------------------------
   describe('urls failures', () => {
     it(
-      'urls outside a levelzero project errors with NO_PROJECT',
+      'urls outside a lich project errors with NO_PROJECT',
       { timeout: 30_000 },
       () => {
-        // Run urls from the tmpdir parent, which has no levelzero.config.ts.
+        // Run urls from the tmpdir parent, which has no lich.config.ts.
         const res = runCli(handle.tmpdir, ['urls', '--json'], {
           timeoutMs: 15_000,
         });
         expect(res.exitCode).not.toBe(0);
         const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-        expect(combined).toMatch(/no_project|not inside|levelzero.config/);
+        expect(combined).toMatch(/no_project|not inside|lich.config/);
       },
     );
   });

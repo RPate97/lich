@@ -21,26 +21,26 @@ let homeDir: string;
 beforeEach(() => {
   projectDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p10-proj-')));
   homeDir = realpathSync(mkdtempSync(join(tmpdir(), 'lz-bin-p10-home-')));
-  // `ui add` / `ui list` live in `@levelzero/plugin-shadcn` after LEV-153;
+  // `ui add` / `ui list` live in `@lich/plugin-shadcn` after LEV-153;
   // the project config must declare the plugin or the commands aren't
   // registered against the dispatcher. After LEV-174 `screenshot` and
-  // `visual diff` no longer ship an inline `@levelzero/plugin-playwright`
+  // `visual diff` no longer ship an inline `@lich/plugin-playwright`
   // fallback either — the project config has to declare the playwright
   // plugin to wire a `browser` adapter.
   writeFileSync(
-    join(projectDir, 'levelzero.config.ts'),
+    join(projectDir, 'lich.config.ts'),
     // Plugin order matters here — Bun 1.2.23 segfaults at config evaluation
     // when shadcn is imported before playwright (likely a Bun bug; reversed
     // order works reliably). Both plugins must be present so the dispatcher
     // can resolve the `browser` adapter for `visual diff` and `screenshot`.
-    `export default { plugins: ['@levelzero/plugin-playwright', '@levelzero/plugin-shadcn'] };`,
+    `export default { plugins: ['@lich/plugin-playwright', '@lich/plugin-shadcn'] };`,
   );
 });
 
 function run(args: string[]) {
   return spawnSync('bun', [BIN, ...args], {
     cwd: projectDir,
-    env: { ...process.env, LEVELZERO_HOME: homeDir },
+    env: { ...process.env, LICH_HOME: homeDir },
     encoding: 'utf8',
   });
 }
@@ -54,7 +54,7 @@ function runAsync(args: string[]): Promise<{ status: number | null; stdout: stri
   return new Promise((resolve, reject) => {
     const child = spawn('bun', [BIN, ...args], {
       cwd: projectDir,
-      env: { ...process.env, LEVELZERO_HOME: homeDir },
+      env: { ...process.env, LICH_HOME: homeDir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
