@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 06 — Auth + Better Auth adapter
 
 **Goal:** Define `AuthAdapter` interface and ship a Better Auth implementation. Library-level helpers only in plan 06: create-user, sign-session, inspect-session. The full `lich curl --as <user>` HTTP integration is deferred to plan 11 (it needs a running api).

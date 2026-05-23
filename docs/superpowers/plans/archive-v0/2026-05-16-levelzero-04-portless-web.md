@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 04 — portless integration for web
 
 **Goal:** Define a `PortlessAdapter` that registers per-worktree URLs like `https://<branch>.myapp.localhost` for the web service. Ship `lich urls` and integrate URL registration into `lich up`. Gracefully degrade when portless isn't available.

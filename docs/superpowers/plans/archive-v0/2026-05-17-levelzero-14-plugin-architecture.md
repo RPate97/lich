@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 14 — Plugin architecture: core + plugin packages
 
 **Goal:** Split lich from a single-package monolith into a plugin-driven framework. Ship `@lich/core` (orchestration + plugin protocol), extract every stack-coupled adapter/command/service into its own plugin package, and replace the inline `docker run` orchestration with Docker Compose so plugins contribute compose fragments rather than running their own containers. Templates remain a separate concept — they scaffold projects that declare which plugins to use.

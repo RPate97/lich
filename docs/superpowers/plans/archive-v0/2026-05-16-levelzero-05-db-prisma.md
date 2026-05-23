@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 05 — Database commands + Prisma adapter
 
 **Goal:** Define `ORMAdapter` interface, implement Prisma adapter (shell-out to Prisma CLI against the auto-detected stack's `DATABASE_URL`), and ship `lich db migrate / db migration new / db seed / db inspect` commands.

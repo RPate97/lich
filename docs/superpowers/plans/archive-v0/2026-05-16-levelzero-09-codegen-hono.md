@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 09 — Codegen (api-client) + Hono adapter
 
 **Goal:** Define `FrontendAdapter` interface and `BackendAdapter` interface (Hono impl). Ship `lich gen client` to regenerate `packages/api-client` from the live Hono app's route manifest. Enable the real `route-coverage` check rule from plan 08.

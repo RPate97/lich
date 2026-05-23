@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 11 — Scaffolder (`init`) + the starter template
 
 **Goal:** Extend `lich init` (from plan 01, currently writes a stub `lich.config.ts`) into a full project generator. Output: a complete working monorepo with Hono api, Next web, Prisma schema, Better Auth wired, base e2e tests, CLAUDE.md, the full skill set. Adds `getBuiltinServices()` real definitions so `lich up` brings up `api` + `web` + `postgres`.

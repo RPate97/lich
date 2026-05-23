@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # lich Orchestrator Protocol
 
 **Companion to:** [roadmap](2026-05-16-levelzero-roadmap.md) + [spec](../specs/2026-05-16-levelzero-design.md)

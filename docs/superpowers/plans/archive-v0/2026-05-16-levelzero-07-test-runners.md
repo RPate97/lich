@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../../specs/2026-05-23-lich-v1-design.md` for the current spec and `../../plans/2026-05-23-lich-v1-plan-0-foundation.md` for the current plan. See `./README.md` in this directory for context.
+
+---
+
 # Plan 07 — Test runners + integration test harness
 
 **Goal:** Ship `lich test [unit|integration|e2e]` with auto-detected stack env injection. Define `TestRunnerAdapter` (Vitest impl, Playwright impl). Implement transactional-rollback integration test isolation via a small Prisma wrapper.
