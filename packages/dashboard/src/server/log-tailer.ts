@@ -7,21 +7,33 @@ const MAX_BACKLOG_LINES = 500;
 const POLL_INTERVAL_MS = 300;
 
 /**
- * Resolve the log file to tail for a service. Detached `dev` (the default)
- * writes a raw `<service>.log`; `--live` writes `<service>.jsonl`. Prefer the
- * raw `.log` if it exists, else the `.jsonl`. Returns `undefined` if neither
- * exists yet.
+ * Resolve the log file to tail for a service.
+ *
+ * LEV-245: detached `dev` (the default) now writes structured JSONL to
+ * `<state>/<key>/logs/<service>.jsonl` via `ServiceLogWriter`. The `--live`
+ * runner writes `<logDir>/<service>.jsonl` (typically `.levelzero/logs/`).
+ * We check the detached JSONL path first, then the live JSONL path. The old
+ * raw `.log` path is kept as a final fallback for stacks started before
+ * LEV-245 rolled out.
+ *
+ * Returns `undefined` if no file exists yet.
  */
 export async function resolveLogFile(
   worktreePath: string,
   worktreeKey: string,
   service: string,
 ): Promise<string | undefined> {
-  const rawLog = join(
+  // LEV-245: detached runner now writes JSONL here.
+  const detachedJsonl = join(
+    worktreePath, '.levelzero', 'state', worktreeKey, 'logs', `${service}.jsonl`,
+  );
+  // `--live` runner writes JSONL here.
+  const liveJsonl = join(worktreePath, '.levelzero', 'logs', `${service}.jsonl`);
+  // Legacy raw log from pre-LEV-245 detached runs.
+  const legacyRawLog = join(
     worktreePath, '.levelzero', 'state', worktreeKey, 'logs', `${service}.log`,
   );
-  const jsonl = join(worktreePath, '.levelzero', 'logs', `${service}.jsonl`);
-  for (const candidate of [rawLog, jsonl]) {
+  for (const candidate of [detachedJsonl, liveJsonl, legacyRawLog]) {
     try {
       await access(candidate);
       return candidate;

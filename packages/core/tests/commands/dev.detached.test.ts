@@ -1,14 +1,15 @@
 /**
  * LEV-194 — default detached `levelzero dev` path.
+ * LEV-245 — detached runner writes structured JSONL (not raw .log).
  *
  * Companion to dev.test.ts and dev.owned.test.ts. Where those exercise the
  * `--live` foreground runner (today's behavior), this file pins the detached
  * behavior: spawn unrefs the children, pid files land under
- * `.levelzero/state/<key>/pids/`, and the per-service `.log` file under
- * `.levelzero/state/<key>/logs/` accumulates whatever the children wrote.
+ * `.levelzero/state/<key>/pids/`, and the per-service `.jsonl` file under
+ * `.levelzero/state/<key>/logs/` accumulates structured JSONL records.
  *
  * Each test spawns a real `sh` child via `runOwnedServicesDetached` so the
- * detached / unref / FD-redirect semantics are exercised end-to-end. A mock
+ * detached / unref / pipe semantics are exercised end-to-end. A mock
  * compose runner keeps docker out of the loop.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -76,7 +77,7 @@ async function waitFor(
 }
 
 describe('levelzero dev (default detached, LEV-194)', () => {
-  it('writes a pid file and raw .log file for each owned service', async () => {
+  it('writes a pid file and structured JSONL log for each owned service (LEV-245)', async () => {
     const echoer: OwnedService = {
       name: 'echoer',
       kind: 'owned',
@@ -111,13 +112,14 @@ describe('levelzero dev (default detached, LEV-194)', () => {
       'pids',
       'echoer.pid',
     );
-    const logPath = join(
+    // LEV-245: detached runner now writes .jsonl, not .log.
+    const jsonlPath = join(
       projectDir,
       '.levelzero',
       'state',
       result.key,
       'logs',
-      'echoer.log',
+      'echoer.jsonl',
     );
 
     expect(existsSync(pidPath)).toBe(true);
@@ -126,20 +128,26 @@ describe('levelzero dev (default detached, LEV-194)', () => {
     expect(result.owned.pids.echoer).toBe(pid);
     expect(result.owned.readiness.echoer).toBe('skipped');
 
-    // The log file is created at spawn but the echo output is async. Wait
-    // briefly for the child to produce it.
+    // The JSONL file is written during the readiness window. Wait briefly
+    // for the child to produce it and the writer to flush.
     await waitFor(() => {
       try {
-        return readFileSync(logPath, 'utf8').includes('hello-detached');
+        const content = readFileSync(jsonlPath, 'utf8');
+        return content.includes('hello-detached');
       } catch {
         return false;
       }
     });
-    const log = readFileSync(logPath, 'utf8');
-    expect(log).toContain('hello-detached');
-    // The header marker also lands in the file so multiple dev cycles are
-    // visually separable.
-    expect(log).toMatch(/--- levelzero dev .+ ---/);
+    const jsonlContent = readFileSync(jsonlPath, 'utf8');
+    // Every line should be a valid JSON record with the expected shape.
+    const records = jsonlContent
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { ts: string; service: string; stream: string; level: string; message: string });
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.some((r) => r.message.includes('hello-detached') && r.stream === 'stdout' && r.level === 'info')).toBe(true);
+    // Records must have the service name set.
+    expect(records.every((r) => r.service === 'echoer')).toBe(true);
   });
 
   it('readiness reports timeout when port has no listener and ready when one binds', async () => {

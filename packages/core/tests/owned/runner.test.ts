@@ -113,6 +113,56 @@ describe('runOwnedServices', () => {
   }, 10_000);
 });
 
+describe('runOwnedServicesDetached — JSONL output (LEV-245)', () => {
+  let pidDir: string;
+
+  beforeEach(() => {
+    pidDir = join(tmp, 'pids');
+  });
+
+  it('writes structured JSONL records to <service>.jsonl (not .log)', async () => {
+    const svc: OwnedService = {
+      name: 'writer',
+      kind: 'owned',
+      portNames: [],
+      cwd: tmp,
+      command: 'sh -c "echo hello-jsonl; echo err-jsonl 1>&2"',
+      envContributions: () => ({}),
+    };
+    const handle = await runOwnedServicesDetached(
+      [svc],
+      ctx,
+      {},
+      {},
+      { logDir, pidDir, readinessTimeoutMs: 1000 },
+    );
+
+    // logPaths must point to .jsonl, not .log.
+    expect(handle.logPaths['writer']).toMatch(/\.jsonl$/);
+
+    const lines = readJsonl(join(logDir, 'writer.jsonl'));
+    expect(lines.length).toBeGreaterThan(0);
+    // Every record must have the required shape.
+    for (const rec of lines) {
+      expect(rec).toHaveProperty('ts');
+      expect(rec).toHaveProperty('service', 'writer');
+      expect(rec).toHaveProperty('stream');
+      expect(rec).toHaveProperty('level');
+      expect(rec).toHaveProperty('message');
+    }
+    // stdout line should be level=info.
+    const stdoutLine = lines.find((l) => l.message.includes('hello-jsonl'));
+    expect(stdoutLine).toBeDefined();
+    expect(stdoutLine?.stream).toBe('stdout');
+    expect(stdoutLine?.level).toBe('info');
+    // stderr line should be level=error.
+    const stderrLine = lines.find((l) => l.message.includes('err-jsonl'));
+    expect(stderrLine).toBeDefined();
+    expect(stderrLine?.stream).toBe('stderr');
+    expect(stderrLine?.level).toBe('error');
+  }, 10_000);
+});
+
 describe('runOwnedServicesDetached — failure surfacing (LEV-219)', () => {
   let pidDir: string;
 
@@ -143,7 +193,7 @@ describe('runOwnedServicesDetached — failure surfacing (LEV-219)', () => {
     expect(handle.readiness['crasher']).toBe('failed');
   }, 10_000);
 
-  it('captures the last lines of the crashed service log as lastLogTail', async () => {
+  it('captures the last lines of the crashed service log as lastLogTail (JSONL-parsed)', async () => {
     const crasher: OwnedService = {
       name: 'crasher',
       kind: 'owned',
@@ -162,7 +212,11 @@ describe('runOwnedServicesDetached — failure surfacing (LEV-219)', () => {
 
     expect(handle.statuses['crasher']).toBe('failed');
     expect(handle.exitCodes['crasher']).toBe(2);
+    // lastLogTail now extracts the `message` field from JSONL records.
     expect(handle.lastLogTail['crasher']).toContain('crash-reason-here');
+    // Confirm the JSONL file itself is structured correctly.
+    const lines = readJsonl(join(logDir, 'crasher.jsonl'));
+    expect(lines.some((l) => l.message.includes('crash-reason-here') && l.stream === 'stderr' && l.level === 'error')).toBe(true);
   }, 10_000);
 
   it('distinguishes timeout (still running, no probe) from failed (exited non-zero)', async () => {
