@@ -18,7 +18,9 @@ That problem already hurts solo developers. It becomes catastrophic the moment y
 
 It's a single binary that reads one YAML file describing your stack, then handles port allocation, env wiring, lifecycle, isolation, and supervision. It doesn't replace docker compose — it uses it. It doesn't replace your dev server — it runs it. It doesn't know what framework you use.
 
-The mental model: **lich is what you'd build on top of compose if you were going to keep doing this for the next five years**, plus host-process orchestration, plus worktree isolation, plus a dashboard.
+It's also **the standard CLI for interacting with your stack.** Users define their own commands in `lich.yaml` — wrappers around existing scripts that lich invokes with the right environment loaded (local stack creds, prod read-only creds via Infisical/1Password/whatever, staging tokens, etc.). What today is a folder of one-off `./scripts/*.sh` becomes a uniform `lich <command>` surface that humans and agents discover via `lich help`.
+
+The mental model: **lich is what you'd build on top of compose if you were going to keep doing this for the next five years**, plus host-process orchestration, plus worktree isolation, plus a dashboard, plus a place to wrap all the stack-aware scripts your team has accumulated.
 
 ### What lich is not
 
@@ -62,15 +64,17 @@ Even a one-service stack (one web app + one Postgres) hits port collisions the m
 
 ## 3. Core abstraction
 
-### The five primitives
+### The top-level primitives
 
-A `lich.yaml` describes a stack via five top-level sections:
+A `lich.yaml` describes a stack via these top-level sections:
 
 1. **`services`** — containers, using compose-spec YAML; run by any compose-compatible CLI
 2. **`owned`** — host processes lich starts and manages directly
 3. **`env`** — environment variables: literals, runtime interpolation, dotenv files, shell-out for secrets
-4. **`lifecycle`** — top-level hooks: `before_up`, `after_up`, `before_down`
-5. **`runtime`** — optional config: which compose CLI to use, daemon proxy port, etc.
+4. **`env_groups`** — named bundles of env-loading logic, selectable per command or lifecycle hook
+5. **`commands`** — user-defined CLI extensions; turn stack-aware scripts into first-class `lich <command>` invocations
+6. **`lifecycle`** — top-level hooks: `before_up`, `after_up`, `before_down`
+7. **`runtime`** — optional config: which compose CLI to use, daemon proxy port, etc.
 
 Implicit cross-cutting primitives:
 - **Ports** — declared per-service, allocated per-worktree, injected via env vars
@@ -185,10 +189,47 @@ env_from:
   - cmd: "infisical export --format=dotenv --env=dev"
     format: dotenv
 
+env_groups:
+  # 'stack' is built-in; auto-populated from the running stack. Not declared here.
+
+  infisical-prod:
+    env_from:
+      - cmd: infisical export --env=prod --format=dotenv
+    env:
+      ENVIRONMENT: production
+
+  supabase-readonly:
+    extends: infisical-prod
+    env_from:
+      - cmd: infisical export --env=prod --tag=supabase-readonly --format=dotenv
+    env:
+      SUPABASE_READONLY_MODE: "true"
+
 lifecycle:
   after_up:
     - cd apps/api && pnpm prisma migrate dev
     - cd apps/api && pnpm seed
+
+commands:
+  test:e2e:
+    cmd: pnpm test:e2e
+    cwd: apps/api
+    help: |
+      Run e2e tests against the local stack.
+      Extra args are forwarded: lich test:e2e --filter <pattern>
+
+  db:psql:
+    cmd: psql "$DATABASE_URL"
+    help: |
+      Open a psql shell connected to the worktree's local Postgres.
+
+  query:prod:
+    cmd: ./scripts/supabase-ro-query.sh
+    env_group: supabase-readonly
+    help: |
+      Query production Supabase in read-only mode.
+      Usage: lich query:prod "<SQL>"
+      Example: lich query:prod "SELECT count(*) FROM users"
 ```
 
 ### Section-by-section reference
@@ -272,7 +313,56 @@ Stack-wide hooks:
 - `after_up`: runs after all services are ready (use for stack-wide migrations, seeding, codegen)
 - `before_down`: runs before any teardown starts
 
-Each is a list of shell commands. Commands inherit the full resolved env, run with `cwd = project_root` (unless explicitly chained via `cd path && cmd`). A non-zero exit aborts the lifecycle phase and reports the failure.
+Each is a list of entries. The shorthand form is a plain shell command string (`- pnpm seed`); the long form is an object that lets you override the env group:
+
+```yaml
+lifecycle:
+  after_up:
+    - pnpm prisma migrate dev               # shorthand; uses 'stack' env group
+    - cmd: ./scripts/sync-prod-snapshot.sh  # long form
+      env_group: infisical-prod
+```
+
+Commands run with `cwd = project_root` (unless explicitly chained via `cd path && cmd`). A non-zero exit aborts the lifecycle phase and reports the failure.
+
+#### `env_groups`
+
+Named bundles of env-loading logic, usable by `commands`, `lich exec`, and lifecycle hooks. The `stack` group is **built-in** — auto-populated from the running stack's resolved env (everything in `env`, `env_files`, `env_from`, plus interpolated runtime values like allocated ports). It cannot be redeclared.
+
+Each user-defined group has:
+
+- `env_from`: list of shell-out env sources (same shape as the top-level `env_from`)
+- `env`: literal env vars to layer on top
+- `extends`: optional name of another group to inherit from
+- `process_env`: boolean (default `true`); whether the user's shell env passes through. Set to `false` for strict isolation (e.g., a group used for prod-affecting commands).
+
+Resolution order when a group is requested:
+1. (If `extends`) recursively resolve and merge the parent group first
+2. Apply `process.env` overlay (if `process_env: true`)
+3. Merge group's `env_from` results in declared order (later wins)
+4. Merge group's `env` literals
+5. (If invoked by a command) merge the command's inline `env:` overrides
+6. (If `--env-group=X` flag used) the requested group's resolution replaces the command's default
+
+Cycles in `extends` chains are caught by `lich validate`.
+
+User-defined groups do NOT silently include the `stack` group. If you want a group that combines stack env with extra creds, use `extends: stack` explicitly. This default-isolation prevents accidents like "I ran a prod command and my local DATABASE_URL leaked in."
+
+#### `commands`
+
+User-defined CLI extensions. Each command becomes invokable as `lich <command-name>`. Each command has:
+
+- `cmd`: shell command to execute. Extra argv from the invocation is appended (`lich test:e2e --filter foo` → `pnpm test:e2e --filter foo`). For explicit placement, use `"$@"` and quoting.
+- `cwd`: working directory (relative to project root); default project root
+- `env_group`: default env group (string; default `"stack"`)
+- `env`: per-command env overrides, merged on top of the resolved group
+- `help`: free-text help shown by `lich help <command>`. This is the agent-facing documentation — describe the command's purpose, arguments, and example invocations clearly enough that an agent can wrap it in a skill.
+
+Invocation:
+- `lich <command-name> [args...]` — runs with the command's default env group
+- `lich <command-name> --env-group=<other-group> [args...]` — overrides the env group at invocation time
+
+Built-in commands win on name collisions; `lich validate` refuses if a user command shadows a built-in. The recommended naming convention is `:` or `_` separators (`test:e2e`, `db:psql`, `rca_query`) — keeps user commands distinct from current and future short-verb built-ins (`up`, `down`, `logs`, etc.).
 
 ## 5. CLI surface
 
@@ -289,6 +379,10 @@ Each is a list of shell commands. Commands inherit the full resolved env, run wi
 | `lich nuke` | Kill everything on this machine; clean state directories |
 | `lich init` | Stamp out an annotated `lich.yaml` skeleton + `.gitignore` entry |
 | `lich validate [path]` | Validate a `lich.yaml` against the schema and reference graph |
+| `lich help [command]` | List all commands (built-in + user-defined), or show help for one |
+| `lich exec [--env-group=X] <cmd>` | Run an arbitrary shell command with an env group loaded |
+| `lich env <group>` | Print resolved env vars for a group, in dotenv format (for shell sourcing) |
+| `lich <user-command>` | Invoke a command defined in the `commands:` section of `lich.yaml` |
 
 ### Output design
 
@@ -319,7 +413,10 @@ Restart honors `depends_on` ordering. Affected services and downstream services 
 - Validates against the JSON Schema (correct keys, correct types, required fields present)
 - Resolves every `${...}` interpolation reference and flags any that target nonexistent services, ports, or captures
 - Validates `depends_on` references — flags depends targets that aren't declared
-- Verifies referenced files exist (`env_files` paths, `cwd` directories for owned services)
+- Validates `env_group` references — every `commands.X.env_group` and `lifecycle.*.env_group` must point at a declared group (or the built-in `stack`)
+- Walks `env_groups.X.extends` chains for cycles
+- Refuses user commands that shadow built-in command names (`up`, `down`, `logs`, etc.)
+- Verifies referenced files exist (`env_files` paths, `cwd` directories for owned services and commands)
 - Reports issues with `file:line:col` context for editor jumping
 - Exits 0 if valid, non-zero on any error
 - `--json` for structured output (used by the `lich:instrument` skill's edit/validate/fix loop)
@@ -327,6 +424,33 @@ Restart honors `depends_on` ordering. Affected services and downstream services 
 It deliberately does NOT execute anything — no docker shell-outs, no service starts. Pure static analysis. Cheap to run, safe in pre-commit hooks and CI gates.
 
 Editor integration is via JSON Schema (yaml-language-server picks it up from a `# yaml-language-server: $schema=` comment that `lich init` writes into the skeleton). `lich validate` is the runtime/CI equivalent of the editor's real-time checks.
+
+### User-defined commands
+
+User commands (declared in the `commands:` section of `lich.yaml`) become invokable as `lich <name>`. They share the top-level namespace with built-in commands; built-ins win on conflicts and `lich validate` refuses to accept a user command that shadows a built-in.
+
+Dispatch flow when the user runs `lich <something>`:
+
+1. Is `<something>` a built-in? If yes, run the built-in.
+2. Is `<something>` declared in `commands:`? If yes, resolve its env group, merge the resolved env, append extra argv, and exec the shell command.
+3. Otherwise, "unknown command — did you mean <closest-match>?" and exit non-zero.
+
+The `--env-group=<name>` flag is universal across user-defined commands and `lich exec`. It overrides whatever default the command declared.
+
+`lich help` is the discovery surface. Without arguments it lists all commands (built-in and user-defined) grouped by source, with one-line summaries. With a command name it shows the full help text. This is also the surface agents use to learn what's available — a well-written `help:` field in a user command IS the contract for agent invocation.
+
+### `lich exec` and `lich env`
+
+`lich exec [--env-group=<group>] <cmd...>` runs an arbitrary shell command (one not declared in `commands:`) with a group's env loaded. Default group is `stack`. Useful for one-off commands you don't want to permanently declare (e.g., `lich exec pnpm prisma studio`).
+
+`lich env <group>` resolves a group and prints its env vars as dotenv. Designed for shell sourcing:
+
+```bash
+source <(lich env stack)
+# now this shell session has the worktree's stack env loaded
+```
+
+Together these cover the "ad-hoc" cases that don't justify a permanent `commands:` entry.
 
 ## 6. Dashboard and daemon
 
@@ -402,11 +526,13 @@ A Claude Code (and equivalent) skill that ships in the lich repo as a markdown f
 The skill walks an agent through:
 
 1. Run `lich init` to produce the skeleton
-2. Read the project's relevant files: `package.json` / `Gemfile` / `requirements.txt` / `go.mod`, any compose files, `.env.example`, README, any existing dev scripts
+2. Read the project's relevant files: `package.json` / `Gemfile` / `requirements.txt` / `go.mod`, any compose files, `.env.example`, README, any existing dev scripts under `scripts/` or `bin/`
 3. Fill in the skeleton with appropriate `services`, `owned`, `env`, `lifecycle`, ready conditions, and dependencies
-4. Run `lich validate` and iterate until clean
-5. Run `lich up` and verify the stack actually comes up
-6. Show the user a diff and explanation
+4. **Look for stack-aware scripts** (anything that loads env then runs something — `with-X.sh` patterns, `bin/dev`-style wrappers, test scripts that source `.env`) and offer to wrap them as `commands:` entries with appropriate `env_groups`. The user's existing duct-tape becomes first-class lich CLI.
+5. Run `lich validate` and iterate until clean
+6. Run `lich up` and verify the stack actually comes up
+7. Run a representative user command (one of the ones the skill wrapped) to verify the env wiring works
+8. Show the user a diff and explanation
 
 The skill is intentionally generic — no framework dictionary, no "if Next then X" rules. It's a translation task ("here's what this project already has; express it as a lich.yaml"), not a knowledge task. Framework-specific intelligence lives in the agent's general knowledge, not in lich's code.
 
@@ -489,6 +615,8 @@ lich/
 │   │   │   ├── lifecycle/   # hook executor
 │   │   │   ├── ready/       # ready_when evaluators + capture
 │   │   │   ├── deps/        # dependency graph + startup ordering
+│   │   │   ├── groups/      # env_groups resolver with extends chain
+│   │   │   ├── commands/    # user-defined command dispatcher
 │   │   │   ├── state/       # on-disk state read/write
 │   │   │   └── output/      # CLI output formatting (phased, colored)
 │   │   └── bin/
@@ -534,6 +662,11 @@ lich/
 - Dependency graph + startup/shutdown ordering
 - `lich init` (dumb skeleton writer — single fixed template plus `.gitignore` handling)
 - `lich validate` (schema check + reference graph resolution + light filesystem checks; outputs `--json` for agent consumption)
+- `env_groups` resolver with `extends` chain support, cycle detection, and `process.env` overlay control
+- `commands` dispatcher: routes `lich <name>` to built-in OR user-defined, resolves the env group, appends extra argv, execs
+- `lich help` discovery surface — lists built-ins and user commands; renders per-command help text
+- `lich exec [--env-group=X] <cmd>` — arbitrary command runner with group env
+- `lich env <group>` — group resolver that prints dotenv to stdout
 - Daemon process (dashboard + proxy + watcher in one process)
 - Reverse proxy with `*.localhost` routing
 - Dashboard UI (adapted from current dashboard package, simplified for new state shape)
@@ -593,6 +726,8 @@ These need concrete choices during implementation, but don't change the spec's s
 - README walks a new user from zero to working stack in under 5 minutes (with the `examples/node-postgres/` example)
 - `lich init` produces a valid skeleton that passes `lich validate` and survives `lich up` cleanly (with "no services defined" messaging)
 - `lich:instrument` skill takes the `examples/node-postgres` repo (with its `lich.yaml` deleted) and reproduces a working configuration via agent loop, verified by `lich up` succeeding
+- `examples/node-postgres` defines at least one user `commands:` entry (e.g., `test:e2e`) and one env group; `lich help` lists it and `lich <command>` invokes it correctly with the right env
+- `lich exec pnpm prisma studio` runs against the running stack with `DATABASE_URL` correctly set from the worktree's allocated Postgres port
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
 - Friendly URLs work without any setup beyond installing lich
