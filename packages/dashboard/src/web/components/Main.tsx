@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { fmtRelative, summarizeHealth, formatPortRange } from '../lib/format';
 import { Logs } from './Logs';
+import { restartStack, stopStack } from '../api';
 import type { StackView, StackMetrics } from '../../types';
 
 interface MainProps {
@@ -21,6 +23,36 @@ function MainHeader({ stack, metrics }: { stack: StackView; metrics?: StackMetri
   const portRange = formatPortRange(stack.ports);
   const cpuValue = metrics?.cpuPct != null ? `${metrics.cpuPct.toFixed(0)}%` : '—';
   const memValue = metrics?.memMB != null ? `${Math.round(metrics.memMB)}mb` : '—';
+
+  const [restarting, setRestarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+
+  async function handleRestart() {
+    if (!confirm('Restart stack?')) return;
+    setRestarting(true);
+    try {
+      const result = await restartStack(stack.key);
+      if (!result.ok) {
+        alert(`Restart failed (exit ${result.exitCode}):\n${result.stderr || result.stdout}`);
+      }
+    } finally {
+      setRestarting(false);
+    }
+  }
+
+  async function handleStop() {
+    if (!confirm('Stop stack?')) return;
+    setStopping(true);
+    try {
+      const result = await stopStack(stack.key);
+      if (!result.ok) {
+        alert(`Stop failed (exit ${result.exitCode}):\n${result.stderr || result.stdout}`);
+      }
+    } finally {
+      setStopping(false);
+    }
+  }
+
   return (
     <header className="main-hd">
       <div className="main-hd-l">
@@ -44,17 +76,17 @@ function MainHeader({ stack, metrics }: { stack: StackView; metrics?: StackMetri
         </div>
       </div>
       <div className="main-hd-r">
-        <button className="btn" disabled title="not yet available">
+        <button className="btn" disabled={restarting || stopping} onClick={handleRestart}>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
             <path d="M4 4v8M4 4l3 4-3 4M12 4v8" />
           </svg>
-          Restart
+          {restarting ? 'Restart…' : 'Restart'}
         </button>
-        <button className="btn" disabled title="not yet available">
+        <button className="btn" disabled={stopping || restarting} onClick={handleStop}>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
             <rect x="5" y="5" width="6" height="6" />
           </svg>
-          Stop
+          {stopping ? 'Stop…' : 'Stop'}
         </button>
       </div>
     </header>

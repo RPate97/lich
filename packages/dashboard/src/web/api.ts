@@ -1,5 +1,13 @@
 import type { StacksResponse, LogEvent, StackMetrics } from '../types';
 
+/** Result of a stack action (restart/stop). Mirrors server's ActionResult. */
+export interface ActionResult {
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 /** Fetch the current stack list from the dashboard server. */
 export async function fetchStacks(): Promise<StacksResponse> {
   const res = await fetch('/api/stacks');
@@ -12,6 +20,22 @@ export async function fetchStackMetrics(key: string): Promise<StackMetrics> {
   const res = await fetch(`/api/stacks/${encodeURIComponent(key)}/metrics`);
   if (!res.ok) throw new Error(`/api/stacks/${key}/metrics responded ${res.status}`);
   return (await res.json()) as StackMetrics;
+}
+
+/** POST /api/stacks/:key/restart — returns the ActionResult from the CLI. */
+export async function restartStack(key: string): Promise<ActionResult> {
+  const res = await fetch(`/api/stacks/${encodeURIComponent(key)}/restart`, {
+    method: 'POST',
+  });
+  return (await res.json()) as ActionResult;
+}
+
+/** POST /api/stacks/:key/stop — returns the ActionResult from the CLI. */
+export async function stopStack(key: string): Promise<ActionResult> {
+  const res = await fetch(`/api/stacks/${encodeURIComponent(key)}/stop`, {
+    method: 'POST',
+  });
+  return (await res.json()) as ActionResult;
 }
 
 /**

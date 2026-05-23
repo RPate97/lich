@@ -289,6 +289,64 @@ describe('merged log stream endpoint', () => {
   });
 });
 
+// ── Action endpoint tests (restart / stop) ────────────────────────────────────
+
+describe('restart endpoint', () => {
+  it('returns 404 for an unknown stack key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'action-restart-'));
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(registryPath, JSON.stringify({ stacks: {} }));
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(
+      cfg,
+      new Request('http://h/api/stacks/unknown-stack/restart', { method: 'POST' }),
+    );
+    expect(res.status).toBe(404);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns 405 for non-POST requests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'action-restart-method-'));
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(registryPath, JSON.stringify({ stacks: {} }));
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(
+      cfg,
+      new Request('http://h/api/stacks/some-stack/restart', { method: 'GET' }),
+    );
+    expect(res.status).toBe(405);
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('stop endpoint', () => {
+  it('returns 404 for an unknown stack key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'action-stop-'));
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(registryPath, JSON.stringify({ stacks: {} }));
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(
+      cfg,
+      new Request('http://h/api/stacks/unknown-stack/stop', { method: 'POST' }),
+    );
+    expect(res.status).toBe(404);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns 405 for non-POST requests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'action-stop-method-'));
+    const registryPath = join(dir, 'registry.json');
+    await writeFile(registryPath, JSON.stringify({ stacks: {} }));
+    const cfg = { registryPath, webDir: dir };
+    const res = await routeRequest(
+      cfg,
+      new Request('http://h/api/stacks/some-stack/stop', { method: 'GET' }),
+    );
+    expect(res.status).toBe(405);
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
 // ── Metrics endpoint tests ────────────────────────────────────────────────────
 
 describe('metrics endpoint', () => {
