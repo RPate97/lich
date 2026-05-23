@@ -1,0 +1,8 @@
+node_modules/
+.next/
+dist/
+.lich/
+.env.local
+supabase/.branches/
+supabase/.temp/
+*.log
