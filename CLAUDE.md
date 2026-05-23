@@ -11,7 +11,7 @@ It's a single binary that wraps `docker compose` + host process supervision + an
 ## Current state (2026-05-23)
 
 - **v0 (`levelzero`)** was a multi-package plugin-based implementation. **It is fully archived** in `docs/archive-v0/`, `docs/superpowers/specs/archive-v0/`, and `docs/superpowers/plans/archive-v0/`. Do not follow its guidance.
-- **v1 (`lich`)** is the current direction. Design is complete. Implementation is structured as 7 sequential plans (Plan 0 written; Plans 1–6 written as we're ready to execute each).
+- **v1 (`lich`)** is the current direction. Design is complete. Implementation is structured as 7 plans (Plan 0 fully detailed with bite-sized tasks; Plans 1-6 written as high-level shells with task structure captured — refine each shell to bite-sized when ready to execute).
 - **Plan 0 (Foundation)** sets up the new `packages/lich/` skeleton, the `examples/dogfood-stack/` failing test case, and the `tests/e2e/` infrastructure. After Plan 0 runs, every e2e test fails (lich is a stub). Each subsequent plan turns tests green tier by tier.
 
 ## REQUIRED READING — read these files in order before starting any task
@@ -63,16 +63,17 @@ packages/create-stack-v0      # ← all v0 code. Read-only reference until Plan 
 6. **Don't read v0 docs.** Anything under any `archive-v0/` directory is stale guidance.
 7. **Follow the plan's testing/commit/verification structure exactly.** It exists to keep the feedback loop tight.
 
-## Roadmap (subsequent plans, written as we reach each)
+## Roadmap (all plans now exist as shells under `docs/superpowers/plans/`)
 
-- **Plan 1: Core engine** — config parsing + validate, worktree detection, port allocator, compose runner (CLI-agnostic), owned-service runner, env basics, basic ready_when, basic CLI surface
-- **Plan 2: Extension surfaces** — env_groups, user-defined commands, lich help/exec/env
-- **Plan 3: Profiles** — profile resolution, profile-scoped env, profile-scoped lifecycle
-- **Plan 4: Failure surfacing** — fail_when, ready timeout, capture, exit detection, failure UX
-- **Plan 5: Daemon + dashboard** — daemon process, dashboard backend, port the dashboard UI, reverse proxy, friendly URLs
-- **Plan 6: Onramp + cleanup** — lich:instrument skill, rewrite root README, delete all v0 packages
+- **Plan 0: Foundation** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md` (fully detailed)
+- **Plan 1: Core engine** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-1-core-engine.md` (shell). Config + validate, worktree detection, port allocator, compose runner, owned-service runner, env basics, basic ready_when, basic CLI surface.
+- **Plan 2: Extension surfaces** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-2-extension-surfaces.md` (shell). env_groups, user-defined commands, lich help/exec/env.
+- **Plan 3: Profiles** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-3-profiles.md` (shell). Profile resolution, profile-scoped env, profile-scoped lifecycle.
+- **Plan 4: Failure surfacing** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-4-failure-surfacing.md` (shell). fail_when, ready timeout, capture, exit detection, failure UX.
+- **Plan 5: Daemon + dashboard** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-5-daemon-dashboard.md` (shell). Daemon process, dashboard backend + UI port, reverse proxy, friendly URLs.
+- **Plan 6: Onramp + cleanup** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-6-onramp-cleanup.md` (shell). lich:instrument skill, rewrite root README, delete all v0 packages.
 
-When a new plan is written, add it to the required-reading list above and update the "current plan" pointer.
+Shell plans capture intent, task structure, dependencies, and acceptance criteria — but tasks are NOT yet broken into bite-sized step-by-step form. The shell exists so the full project is documented and Linear can hold the cross-plan dependency tree. When a shell plan is up next for execution, refine it to bite-sized form (Plan 0 is the model) before dispatching.
 
 ## Quick-start commands
 
