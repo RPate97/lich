@@ -1,3 +1,8 @@
+> **⚠ ARCHIVED v0 work — do NOT use for v1 implementation.**
+> See `../superpowers/specs/2026-05-23-lich-v1-design.md` (product spec), `../superpowers/specs/2026-05-23-lich-v1-testing-standards.md` (testing standards), and `../superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md` (current plan). See `./README.md` in this directory for context.
+
+---
+
 # Plugin Extraction Lessons
 
 A short field guide for moving a built-in adapter (or set of commands) out of `packages/core` and into a stand-alone `@lich/plugin-*` package. Distilled from the LEV-145 pilot that extracted `@lich/plugin-portless`, written ahead of Tier 5 (nine more plugin migrations).

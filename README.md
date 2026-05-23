@@ -1,5 +1,14 @@
 # lich
 
+> **⚠ This README describes the v0 design (now archived). The project is being rewritten as v1 with a fundamentally different shape: single binary, YAML config, no plugin runtime, no scaffolder. This README will be rewritten as part of Plan 6.**
+>
+> For the current direction:
+> - Product spec: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`
+> - Testing standards: `docs/superpowers/specs/2026-05-23-lich-v1-testing-standards.md`
+> - Current plan: `docs/superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md`
+
+---
+
 An open source and highly extensible development stack driver built for parallelized, agent-driven work.
 
 > `lich up`: Bring your stack up
