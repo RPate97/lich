@@ -1,5 +1,5 @@
 /** Status of a single service within a stack. */
-export type ServiceStatus = 'up' | 'down';
+export type ServiceStatus = 'healthy' | 'unhealthy' | 'starting' | 'down';
 
 /** A service line as the dashboard API reports it. */
 export interface ServiceView {

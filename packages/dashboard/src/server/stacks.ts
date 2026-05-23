@@ -14,27 +14,31 @@ async function pathExists(p: string): Promise<boolean> {
 
 /**
  * Derive the overall stack status from its service list.
- *   running — every service up
- *   down    — no service up (includes the no-services case)
- *   partial — at least one up and at least one down
+ *   running — every service healthy
+ *   down    — no service alive (all down, or no services at all)
+ *   partial — at least one alive service (healthy / unhealthy / starting)
+ *             mixed with anything else, or all alive but not all healthy
  */
 function deriveStatus(services: ServiceView[]): StackStatus {
-  const up = services.filter((s) => s.status === 'up').length;
-  if (up === 0) return 'down';
-  if (up === services.length) return 'running';
+  const alive = services.filter((s) => s.status !== 'down').length;
+  if (alive === 0) return 'down';
+  const healthy = services.filter((s) => s.status === 'healthy').length;
+  if (healthy === services.length) return 'running';
   return 'partial';
 }
 
 /**
  * Build the dashboard's `StackView[]` from a parsed registry. For each stack:
  *  - if its worktree path is gone, mark `worktreeMissing` + `down`, no probing
- *  - otherwise probe owned services (pid files) + compose services (docker)
+ *  - otherwise probe owned services (pid files + optional HTTP probe) +
+ *    compose services (docker inspect with Health.Status)
  *  - attach URLs straight from the registry entry
  *
  * Status is always computed here, never persisted — see the design doc.
  */
 export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
   const views: StackView[] = [];
+  const now = Date.now();
   for (const [key, entry] of Object.entries(reg.stacks)) {
     const exists = await pathExists(entry.path);
     if (!exists) {
@@ -53,8 +57,12 @@ export async function buildStackViews(reg: RegistryData): Promise<StackView[]> {
       continue;
     }
 
-    const owned = await readOwnedServices(entry.path, key);
-    const containerStatus = await readContainerLiveness(entry.containers);
+    const owned = await readOwnedServices(entry.path, key, {
+      urls: entry.urls,
+      createdAt: entry.createdAt,
+      now,
+    });
+    const containerStatus = await readContainerLiveness(entry.containers, { now });
 
     const services: ServiceView[] = [
       ...owned.map((s) => ({

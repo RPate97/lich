@@ -29,10 +29,16 @@ export interface HealthSummary {
   total: number;
 }
 
-/** Count service liveness for a stack. */
+/**
+ * Count service liveness for a stack.
+ *  - `up`   — any alive service: `healthy | starting | unhealthy`
+ *  - `down` — services with status `down`
+ *  - `total` — all services
+ */
 export function summarizeHealth(services: ServiceView[]): HealthSummary {
-  const up = services.filter((s) => s.status === 'up').length;
-  return { up, down: services.length - up, total: services.length };
+  const down = services.filter((s) => s.status === 'down').length;
+  const up = services.length - down;
+  return { up, down, total: services.length };
 }
 
 // Fixed palette — known service names get a stable hue; anything else falls

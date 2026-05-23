@@ -51,12 +51,17 @@ function BrandMark() {
 // ---------------------------------------------------------------------------
 
 function HealthPill({ stack }: { stack: StackView }) {
-  const { up, down, total } = summarizeHealth(stack.services);
-  const cls = down > 0 ? 'unhealthy' : 'healthy';
+  // "up" for the pill = healthy + starting (both are alive and considered running)
+  const aliveCount = stack.services.filter(
+    (s) => s.status === 'healthy' || s.status === 'starting',
+  ).length;
+  const total = stack.services.length;
+  const hasUnhealthy = stack.services.some((s) => s.status === 'unhealthy');
+  const cls = hasUnhealthy ? 'unhealthy' : 'healthy';
   return (
     <span className={`health ${cls}`}>
       <span className="health-dot" />
-      {up}/{total}
+      {aliveCount}/{total}
     </span>
   );
 }
