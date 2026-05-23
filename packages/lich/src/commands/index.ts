@@ -1,5 +1,10 @@
 import { runInitSync } from "./init.js";
 import { runValidate } from "./validate.js";
+import { runUp } from "./up.js";
+import { runLogs } from "./logs.js";
+import { runUrls } from "./urls.js";
+import { runStacks } from "./stacks.js";
+import { runNuke } from "./nuke.js";
 
 /**
  * The shape every command returns to the router.
@@ -56,18 +61,63 @@ const validateHandler: CommandHandler = async (ctx) => {
   const [path] = ctx.argv._;
   const json = Boolean(ctx.argv.json);
   const result = await runValidate({ path, json });
-  // runValidate already wrote to stdout/stderr; no extra message.
+  return { ok: result.exitCode === 0, message: "" };
+};
+
+const upHandler: CommandHandler = async (ctx) => {
+  const mode = ctx.argv.json
+    ? "json"
+    : ctx.argv.quiet
+      ? "quiet"
+      : "pretty";
+  const result = await runUp({ outputMode: mode as "pretty" | "json" | "quiet" });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
+// down wiring lands in a follow-up commit once LEV-291's down.ts is on master.
+const downHandler: CommandHandler = stub("down");
+
+const logsHandler: CommandHandler = async (ctx) => {
+  const [service] = ctx.argv._;
+  const follow = ctx.argv["no-follow"] ? false : true;
+  const tail =
+    typeof ctx.argv.tail === "number"
+      ? ctx.argv.tail
+      : typeof ctx.argv.tail === "string"
+        ? Number(ctx.argv.tail)
+        : follow
+          ? 50
+          : 200;
+  const result = runLogs({ service, follow, tail });
+  await result.done;
+  return { ok: result.exitCode === 0, message: "" };
+};
+
+const urlsHandler: CommandHandler = async () => {
+  const result = await runUrls({});
+  return { ok: result.exitCode === 0, message: "" };
+};
+
+const stacksHandler: CommandHandler = async (ctx) => {
+  const result = await runStacks({ json: Boolean(ctx.argv.json) });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
+const nukeHandler: CommandHandler = async (ctx) => {
+  const result = await runNuke({
+    yes: Boolean(ctx.argv.yes || ctx.argv.y),
+  });
   return { ok: result.exitCode === 0, message: "" };
 };
 
 export const COMMANDS: Record<string, CommandHandler> = {
-  up: stub("up"),
-  down: stub("down"),
-  logs: stub("logs"),
-  urls: stub("urls"),
-  stacks: stub("stacks"),
+  up: upHandler,
+  down: downHandler,
+  logs: logsHandler,
+  urls: urlsHandler,
+  stacks: stacksHandler,
   restart: stub("restart"),
-  nuke: stub("nuke"),
+  nuke: nukeHandler,
   init: initHandler,
   validate: validateHandler,
   help: stub("help"),

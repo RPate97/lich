@@ -67,6 +67,10 @@ import {
 } from "../owned/supervisor.js";
 import { waitForHttpReady } from "../ready/http-get.js";
 import { waitForTcpReady } from "../ready/tcp.js";
+import {
+  interpolateString,
+  type InterpolationContext,
+} from "../config/interpolation.js";
 import { waitForLogMatch } from "../ready/log-match.js";
 import { buildGraph, validateGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
@@ -660,6 +664,28 @@ async function waitReady(
 
   const { name, worktree, signal } = input;
 
+  // Build interpolation context for any ${...} refs inside ready_when fields.
+  // The dogfood-stack uses this e.g. ready_when: { tcp: "localhost:${owned.supabase.ports.api}" }.
+  const interpCtx: InterpolationContext = {
+    worktree: {
+      name: worktree.name,
+      id: worktree.id,
+      path: worktree.path,
+    },
+    services: Object.fromEntries(
+      Object.entries(input.allocatedPorts.compose).map(([svc, ports]) => [
+        svc,
+        { host_port: Object.values(ports)[0] },
+      ]),
+    ),
+    owned: Object.fromEntries(
+      Object.entries(input.allocatedPorts.owned).map(([svc, entry]) => [
+        svc,
+        { port: entry.port, ports: entry.ports },
+      ]),
+    ),
+  };
+
   if (typeof ready.log_match === "string" && ready.log_match.length > 0) {
     // Compile the regex up front; validate has already done this but we
     // can't carry the compiled form across the parse boundary cheaply, so
@@ -674,13 +700,22 @@ async function waitReady(
   }
 
   if (typeof ready.http_get === "string" && ready.http_get.length > 0) {
-    const url = buildHttpUrl(ready.http_get, def, input);
+    const resolved = interpolateString(
+      ready.http_get,
+      interpCtx,
+      `${name}.ready_when.http_get`,
+    );
+    const url = buildHttpUrl(resolved, def, input);
     await waitForHttpReady({ url, signal });
     return;
   }
 
   if (typeof ready.tcp === "string" && ready.tcp.length > 0) {
-    const target = ready.tcp;
+    const target = interpolateString(
+      ready.tcp,
+      interpCtx,
+      `${name}.ready_when.tcp`,
+    );
     await waitForTcpReady({ target, signal });
     return;
   }

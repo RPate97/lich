@@ -34,8 +34,17 @@ describe("smoke", () => {
 
   it("every unimplemented command stub returns not-yet-implemented", async () => {
     // Commands implemented in Plan 1 are excluded from the stub sweep;
-    // their own tests cover behavior.
-    const implemented = new Set<string>(["init", "validate"]);
+    // their own tests cover behavior. restart/help/exec/env land in later plans.
+    const implemented = new Set<string>([
+      "init",
+      "validate",
+      "up",
+      "logs",
+      "urls",
+      "stacks",
+      "nuke",
+    ]);
+    // down lands in a follow-up commit once LEV-291's down.ts is on master.
     for (const [name, fn] of Object.entries(COMMANDS)) {
       if (implemented.has(name)) continue;
       const result = await fn({ argv: { _: [] } });
