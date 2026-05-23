@@ -111,13 +111,6 @@ export function Sidebar({ stacks, selectedKey, onSelect, newestKey, arrivedKeys 
         <div className="brand">
           <span className="brand-name"><em>lich</em></span>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <button className="btn ghost icon-btn" title="New stack" aria-label="New stack">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-              <path d="M8 3v10M3 8h10" />
-            </svg>
-          </button>
-        </div>
       </div>
 
       <div className="sidebar-sub">
