@@ -70,11 +70,12 @@ A `lich.yaml` describes a stack via these top-level sections:
 
 1. **`services`** — containers, using compose-spec YAML; run by any compose-compatible CLI
 2. **`owned`** — host processes lich starts and manages directly
-3. **`env`** — environment variables: literals, runtime interpolation, dotenv files, shell-out for secrets
-4. **`env_groups`** — named bundles of env-loading logic, selectable per command or lifecycle hook
-5. **`commands`** — user-defined CLI extensions; turn stack-aware scripts into first-class `lich <command>` invocations
-6. **`lifecycle`** — top-level hooks: `before_up`, `after_up`, `before_down`
-7. **`runtime`** — optional config: which compose CLI to use, daemon proxy port, etc.
+3. **`profiles`** — named slices of the stack; each profile lists which services and owned processes start when it's active
+4. **`env`** — environment variables: literals, runtime interpolation, dotenv files, shell-out for secrets
+5. **`env_groups`** — named bundles of env-loading logic, selectable per command or lifecycle hook
+6. **`commands`** — user-defined CLI extensions; turn stack-aware scripts into first-class `lich <command>` invocations
+7. **`lifecycle`** — top-level hooks: `before_up`, `after_up`, `before_down`
+8. **`runtime`** — optional config: which compose CLI to use, daemon proxy port, etc.
 
 Implicit cross-cutting primitives:
 - **Ports** — declared per-service, allocated per-worktree, injected via env vars
@@ -205,6 +206,20 @@ env_groups:
     env:
       SUPABASE_READONLY_MODE: "true"
 
+profiles:
+  dev:
+    default: true
+    services: [postgres]
+    owned: [api, web]
+
+  dev:with-tunnel:
+    extends: dev
+    owned: [api_tunnel]
+
+  dev:with-aws:
+    extends: dev
+    services: [localstack]
+
 lifecycle:
   after_up:
     - cd apps/api && pnpm prisma migrate dev
@@ -278,6 +293,27 @@ Lich starts and supervises these directly. Each owned service:
 - `env`: per-service env overrides (merged on top of global `env`)
 - `env_files`: per-service dotenv files (merged on top of global)
 - `env_from`: per-service shell-out env sources (merged on top of global)
+
+#### `profiles`
+
+Named slices of the stack. Each profile explicitly lists which services and owned processes start when it's active. `lich up <profile>` activates a profile; `lich up` with no argument activates the default.
+
+Each profile has:
+
+- `services`: list of compose service names included in this profile
+- `owned`: list of owned service names included in this profile
+- `extends`: optional profile name (or list of names) to inherit from; the child's services/owned are appended to the parent's
+- `default`: optional boolean; exactly zero or one profile may set this to `true`. The default profile is what `lich up` (no argument) activates.
+
+**Resolution.** When `lich up <profile>` runs, lich resolves the profile by recursively walking `extends` and computing the union of all listed services and owned processes. The resolved set is what starts. Anything not in the resolved set does not start.
+
+**Services and owned not in any profile.** They never start. `lich validate` issues a warning ("service `worker_payments` is defined but not referenced by any profile — it will never start") so unused declarations don't silently rot.
+
+**Always-on services.** Define a base profile (e.g. `dev` above) and have other profiles `extends: dev`. There is no implicit "always-on" rule — every service has to be explicitly included in some profile to ever start. This forces every profile to be self-documenting: you look at one place and see exactly what runs.
+
+**Switching profiles while a stack is up.** Refused. `lich up <other>` while a stack is running prints an error and exits non-zero. Run `lich down` first, then `lich up <other>`. Smart-diffing between profiles is a v1.x feature.
+
+**Dashboard surface.** The dashboard's stack detail page shows the active profile name and the resolved set of services. Switching profiles via the dashboard is not supported in v1 (would require teardown + restart confirmation flow).
 
 #### `env`
 
@@ -455,7 +491,7 @@ Built-in commands win on name collisions; `lich validate` refuses if a user comm
 
 | Command | Purpose |
 |---|---|
-| `lich up` | Bring the current worktree's stack up |
+| `lich up [profile]` | Bring the current worktree's stack up (default profile if no arg) |
 | `lich down` | Tear it down |
 | `lich logs [service]` | Tail aggregated logs, or per-service logs |
 | `lich urls [--raw]` | Print friendly URLs (or raw `localhost:port` URLs) |
@@ -501,6 +537,10 @@ Restart honors `depends_on` ordering. Affected services and downstream services 
 - Validates `env_group` references — every `commands.X.env_group` and `lifecycle.*.env_group` must point at a declared group (or the built-in `stack`)
 - Walks `env_groups.X.extends` chains for cycles
 - Refuses user commands that shadow built-in command names (`up`, `down`, `logs`, etc.)
+- Validates `profiles.X.services` and `profiles.X.owned` — every name must reference a declared service or owned process
+- Walks `profiles.X.extends` chains for cycles
+- Enforces at most one `default: true` profile
+- Warns (does not fail) on services or owned processes defined but not referenced by any profile — they will never start
 - Verifies referenced files exist (`env_files` paths, `cwd` directories for owned services and commands)
 - Reports issues with `file:line:col` context for editor jumping
 - Exits 0 if valid, non-zero on any error
@@ -700,6 +740,7 @@ lich/
 │   │   │   ├── lifecycle/   # hook executor
 │   │   │   ├── ready/       # ready_when evaluators + capture
 │   │   │   ├── deps/        # dependency graph + startup ordering
+│   │   │   ├── profiles/    # profile resolver with extends chain + start-set computation
 │   │   │   ├── groups/      # env_groups resolver with extends chain
 │   │   │   ├── commands/    # user-defined command dispatcher
 │   │   │   ├── state/       # on-disk state read/write
@@ -747,6 +788,7 @@ lich/
 - Dependency graph + startup/shutdown ordering
 - `lich init` (dumb skeleton writer — single fixed template plus `.gitignore` handling)
 - `lich validate` (schema check + reference graph resolution + light filesystem checks; outputs `--json` for agent consumption)
+- `profiles` resolver with `extends` chain support, cycle detection, default-profile enforcement, and start-set computation
 - `env_groups` resolver with `extends` chain support, cycle detection, and `process.env` overlay control
 - `commands` dispatcher: routes `lich <name>` to built-in OR user-defined, resolves the env group, appends extra argv, execs
 - `lich help` discovery surface — lists built-ins and user commands; renders per-command help text
@@ -813,6 +855,7 @@ These need concrete choices during implementation, but don't change the spec's s
 - `lich:instrument` skill takes the `examples/node-postgres` repo (with its `lich.yaml` deleted) and reproduces a working configuration via agent loop, verified by `lich up` succeeding
 - `examples/node-postgres` defines at least one user `commands:` entry (e.g., `test:e2e`) and one env group; `lich help` lists it and `lich <command>` invokes it correctly with the right env
 - `lich exec pnpm prisma studio` runs against the running stack with `DATABASE_URL` correctly set from the worktree's allocated Postgres port
+- `examples/node-postgres` defines at least two profiles (e.g., `dev` and `dev:with-extras`); `lich up dev` and `lich up dev:with-extras` produce the expected resolved service sets, and the dashboard shows the active profile
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
 - Friendly URLs work without any setup beyond installing lich
