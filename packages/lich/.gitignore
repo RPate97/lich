@@ -2,3 +2,6 @@ dist/
 node_modules/
 .lich/
 *.log
+# Intermediate artifact left behind by `bun build --compile` in the package
+# directory; safe to ignore (the produced binary lives under dist/).
+*.bun-build
