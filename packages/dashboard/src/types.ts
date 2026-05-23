@@ -45,6 +45,14 @@ export interface LogEvent {
   service?: string;
 }
 
+/** Per-stack CPU + memory metrics sampled on demand (LEV-242). */
+export interface StackMetrics {
+  /** Aggregate %CPU across the stack's processes + containers, 0–100*N (N cores). */
+  cpuPct?: number;
+  /** Aggregate resident memory in MB. */
+  memMB?: number;
+}
+
 /** A log line as the Logs UI holds it — a LogEvent plus a render key + service. */
 export interface LogLine {
   id: string;

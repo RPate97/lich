@@ -1,9 +1,10 @@
 import { fmtRelative, summarizeHealth, formatPortRange } from '../lib/format';
 import { Logs } from './Logs';
-import type { StackView } from '../../types';
+import type { StackView, StackMetrics } from '../../types';
 
 interface MainProps {
   stack: StackView;
+  metrics?: StackMetrics;
 }
 
 function MetaItem({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
@@ -15,9 +16,11 @@ function MetaItem({ label, value, mono = true }: { label: string; value: string;
   );
 }
 
-function MainHeader({ stack }: { stack: StackView }) {
+function MainHeader({ stack, metrics }: { stack: StackView; metrics?: StackMetrics }) {
   const ageMs = Date.now() - new Date(stack.createdAt).getTime();
   const portRange = formatPortRange(stack.ports);
+  const cpuValue = metrics?.cpuPct != null ? `${metrics.cpuPct.toFixed(0)}%` : '—';
+  const memValue = metrics?.memMB != null ? `${Math.round(metrics.memMB)}mb` : '—';
   return (
     <header className="main-hd">
       <div className="main-hd-l">
@@ -35,9 +38,9 @@ function MainHeader({ stack }: { stack: StackView }) {
           <span className="sep" />
           <MetaItem label="up" value={fmtRelative(ageMs)} />
           <span className="sep" />
-          <MetaItem label="cpu" value="—" />
+          <MetaItem label="cpu" value={cpuValue} />
           <span className="sep" />
-          <MetaItem label="mem" value="—" />
+          <MetaItem label="mem" value={memValue} />
         </div>
       </div>
       <div className="main-hd-r">
@@ -107,10 +110,10 @@ function Metrics({ stack }: { stack: StackView }) {
   );
 }
 
-export function Main({ stack }: MainProps) {
+export function Main({ stack, metrics }: MainProps) {
   return (
     <main className="main">
-      <MainHeader stack={stack} />
+      <MainHeader stack={stack} metrics={metrics} />
       <Metrics stack={stack} />
       <Logs stack={stack} />
     </main>

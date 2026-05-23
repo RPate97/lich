@@ -3,6 +3,7 @@ import { join, normalize } from 'node:path';
 import { readRegistry } from './registry-reader';
 import { buildStackViews } from './stacks';
 import { LogTailer, resolveLogFile } from './log-tailer';
+import { sampleStackMetrics } from './metrics';
 import type { StacksResponse, LogEvent } from '../types';
 import type { StackEntry } from './registry-reader';
 
@@ -32,6 +33,19 @@ async function handleStacks(cfg: ServerConfig): Promise<Response> {
   const stacks = await buildStackViews(reg);
   const body: StacksResponse = { stacks };
   return Response.json(body);
+}
+
+/**
+ * GET /api/stacks/:key/metrics — sample CPU + memory for the stack on demand.
+ * Returns 200 with a (possibly empty) StackMetrics JSON object; never throws.
+ * Returns 404 if the stack key is not in the registry.
+ */
+async function handleMetrics(cfg: ServerConfig, key: string): Promise<Response> {
+  const reg = await readRegistry(cfg.registryPath);
+  const entry = reg.stacks[key];
+  if (!entry) return new Response('unknown stack', { status: 404 });
+  const metrics = await sampleStackMetrics(entry.path, key, entry.containers);
+  return Response.json(metrics);
 }
 
 /**
@@ -194,6 +208,12 @@ export async function routeRequest(cfg: ServerConfig, req: Request): Promise<Res
   const { pathname } = url;
 
   if (pathname === '/api/stacks') return handleStacks(cfg);
+
+  // Metrics: GET /api/stacks/:key/metrics
+  const metricsMatch = pathname.match(/^\/api\/stacks\/([^/]+)\/metrics$/);
+  if (metricsMatch) {
+    return handleMetrics(cfg, decodeURIComponent(metricsMatch[1]!));
+  }
 
   // Merged multi-service stream: GET /api/stacks/:key/logs
   const mergedLogMatch = pathname.match(/^\/api\/stacks\/([^/]+)\/logs$/);
