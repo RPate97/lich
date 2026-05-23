@@ -83,9 +83,9 @@ function StackCard({ stack, selected, isNew, justArrived, onSelect }: StackCardP
         {isNew && <span className="new-badge">new</span>}
       </div>
       <div className="stack-row2">
-        {/* agent: always render "manual" — the agent feature is LEV-241 */}
+        {/* agent: "manual" fallback when startedBy is absent (LEV-241) */}
         <span style={{ color: 'var(--subtle-foreground)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-          manual
+          {stack.startedBy ?? 'manual'}
         </span>
         <span className="dot" />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
