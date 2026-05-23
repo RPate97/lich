@@ -33,7 +33,11 @@ describe("smoke", () => {
   });
 
   it("every command stub returns not-yet-implemented", () => {
+    // Commands that have a real implementation are excluded from the
+    // stub-shape check; their own tests cover behavior.
+    const implemented = new Set<string>(["init"]);
     for (const [name, fn] of Object.entries(COMMANDS)) {
+      if (implemented.has(name)) continue;
       const result = fn();
       expect(result.ok).toBe(false);
       expect(result.message).toContain(name);
