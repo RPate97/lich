@@ -14,3 +14,7 @@ packages/*/.turbo/
 # can be left behind — ignore it so it never gets committed by accident.
 packages/.lz-plan14-smoke-*
 packages/.lz-plan14-home-*
+node_modules
+.claude/
+.vite/
+demo/
