@@ -46,8 +46,13 @@ function LogStream({ logs, query }: { logs: LogLine[]; query: string }) {
   return (
     <div className="log-stream">
       {logs.map((line) => (
-        <div key={line.id} className="log-line" data-level={line.level}>
-          <span className="ts">{line.ts ? fmtClock(line.ts) : ''}</span>
+        <div
+          key={line.id}
+          className="log-line"
+          data-level={line.level}
+          data-no-ts={line.ts ? undefined : '1'}
+        >
+          {line.ts ? <span className="ts">{fmtClock(line.ts)}</span> : null}
           <span className="svc" style={{ color: serviceColor(line.service) }}>{line.service}</span>
           <span className="msg">
             <LogLevel level={line.level} />

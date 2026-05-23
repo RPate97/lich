@@ -656,6 +656,11 @@ button {
   border-left: 2px solid transparent;
   transition: background .08s ease;
 }
+/* Raw .log lines carry no timestamp — drop the ts column so the message
+   doesn't get a giant left gutter. */
+.log-line[data-no-ts="1"] {
+  grid-template-columns: 130px 1fr;
+}
 .log-line:hover { background: rgba(255, 255, 255, 0.025); }
 .log-line .ts {
   color: var(--subtle-foreground);
