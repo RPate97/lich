@@ -39,6 +39,8 @@ export interface LogEvent {
   ts?: string;
   level?: 'info' | 'error';
   stream?: 'stdout' | 'stderr';
+  /** Present in events from the merged multi-service endpoint (LEV-244). */
+  service?: string;
 }
 
 /** A log line as the Logs UI holds it — a LogEvent plus a render key + service. */

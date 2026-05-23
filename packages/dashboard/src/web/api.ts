@@ -27,3 +27,23 @@ export function openLogStream(
   };
   return () => es.close();
 }
+
+/**
+ * Open the merged multi-service log stream for a stack. Each event carries a
+ * `service` field. Returns an unsubscribe function that closes the EventSource.
+ */
+export function openMergedLogStream(
+  key: string,
+  onEvent: (e: LogEvent) => void,
+): () => void {
+  const url = `/api/stacks/${encodeURIComponent(key)}/logs`;
+  const es = new EventSource(url);
+  es.onmessage = (msg) => {
+    try {
+      onEvent(JSON.parse(msg.data) as LogEvent);
+    } catch {
+      /* ignore malformed frame */
+    }
+  };
+  return () => es.close();
+}
