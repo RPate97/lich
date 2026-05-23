@@ -755,6 +755,18 @@ CI runs the same harness on every PR. A PR can't merge if the harness fails.
 
 If using lich to test lich feels awkward, the design has problems. If it feels natural, the design is probably right. Treating the meta-harness as a first-class concern surfaces design pain early instead of after launch.
 
+### Testing standards
+
+The discipline that turns the meta-harness from "test fixtures exist" into "every feature is verified" is documented separately at **`docs/superpowers/specs/2026-05-23-lich-v1-testing-standards.md`**. That doc is required reading for every implementer and defines:
+
+- The two-tier requirement (unit + e2e) for every feature
+- What every CLI command's e2e tests MUST verify (correct services started, healthy, right order, right stack, parallel-safe, worktree-aware, etc.)
+- The required parallel-stack sentinel test
+- Test recipes, cleanup contracts, anti-patterns
+- Required reading order for subagents
+
+The product spec (this document) defines what lich does. The testing standards doc defines how we prove it does it. Plans reference both; subagents must follow both.
+
 ## 9. Implementation
 
 ### Language and runtime

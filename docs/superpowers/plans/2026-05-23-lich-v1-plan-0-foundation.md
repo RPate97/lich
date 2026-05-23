@@ -4,6 +4,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-23-lich-v1-design.md`
 
+**Required reading (for every subagent on every task):** `docs/superpowers/specs/2026-05-23-lich-v1-testing-standards.md` — defines how we test lich v1. Specifically: every feature needs BOTH unit tests AND e2e tests that spawn the real binary and assert observable behavior against the dogfood stack. The standards doc is not optional; read it before starting any task in this plan or any subsequent plan.
+
 **Goal:** Lay the foundation for lich v1 implementation: the `packages/lich/` skeleton, the `examples/dogfood-stack/` failing test case (Next + Express + Supabase + migrations + seed), and the `tests/e2e/` infrastructure that drives lich against the stack. After this plan, every e2e test fails (lich is a stub), and subsequent plans add functionality to turn tests green tier by tier.
 
 **Architecture:** Single TypeScript package (`packages/lich/`) compiled to a single binary via `bun build --compile`. A real full-stack example app at `examples/dogfood-stack/` works end-to-end via bash today (no lich involved). The `lich.yaml` committed alongside it describes what we want lich to handle — the failing test target. E2e tests at `tests/e2e/` copy the example to a tmpdir, build and spawn the lich binary, and assert behavior. All tests fail at end of this plan; subsequent plans turn them green.
