@@ -5,7 +5,7 @@ import { COMMANDS, isCommand } from "../commands/index.js";
 
 const argv = mri(process.argv.slice(2), {
   alias: { v: "version", h: "help" },
-  boolean: ["version", "help"],
+  boolean: ["version", "help", "json"],
 });
 
 if (argv.version) {
@@ -28,6 +28,12 @@ if (!isCommand(commandName)) {
   process.exit(2);
 }
 
-const result = COMMANDS[commandName]();
-console.log(result.message);
+const handler = COMMANDS[commandName];
+const result = await handler({
+  argv: { ...argv, _: rest },
+});
+
+if (result.message) {
+  console.log(result.message);
+}
 process.exit(result.ok ? 0 : 1);
