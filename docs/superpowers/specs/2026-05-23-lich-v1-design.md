@@ -287,7 +287,8 @@ Each is a list of shell commands. Commands inherit the full resolved env, run wi
 | `lich stacks` | List every stack running on this machine |
 | `lich restart [services...]` | Restart everything, or specific services, or `--owned`, or `--compose` |
 | `lich nuke` | Kill everything on this machine; clean state directories |
-| `lich init [--detect]` | Stamp out a `lich.yaml` skeleton (with optional auto-detection) |
+| `lich init` | Stamp out an annotated `lich.yaml` skeleton + `.gitignore` entry |
+| `lich validate [path]` | Validate a `lich.yaml` against the schema and reference graph |
 
 ### Output design
 
@@ -310,6 +311,22 @@ CLI output is treated as a first-class feature, not polish.
 - `lich restart --compose` — restart all compose services (rare; usually for env changes)
 
 Restart honors `depends_on` ordering. Affected services and downstream services restart in dependency order.
+
+### Validation
+
+`lich validate [path]` is a static analysis pass over a `lich.yaml`. It:
+
+- Validates against the JSON Schema (correct keys, correct types, required fields present)
+- Resolves every `${...}` interpolation reference and flags any that target nonexistent services, ports, or captures
+- Validates `depends_on` references — flags depends targets that aren't declared
+- Verifies referenced files exist (`env_files` paths, `cwd` directories for owned services)
+- Reports issues with `file:line:col` context for editor jumping
+- Exits 0 if valid, non-zero on any error
+- `--json` for structured output (used by the `lich:instrument` skill's edit/validate/fix loop)
+
+It deliberately does NOT execute anything — no docker shell-outs, no service starts. Pure static analysis. Cheap to run, safe in pre-commit hooks and CI gates.
+
+Editor integration is via JSON Schema (yaml-language-server picks it up from a `# yaml-language-server: $schema=` comment that `lich init` writes into the skeleton). `lich validate` is the runtime/CI equivalent of the editor's real-time checks.
 
 ## 6. Dashboard and daemon
 
@@ -360,35 +377,44 @@ The `:3300` port in the URL is mildly ugly. The way to eliminate it is binding t
 
 ## 7. Onramp
 
-### `lich init`
+### Two pieces, clean split
 
-Two modes:
+The onramp is deliberately split into a dumb file-writer and a smart fill-in-the-blanks agent skill. Neither tries to do the other's job.
 
-**Dumb (`lich init`):** stamps out a heavily-commented `lich.yaml` skeleton in the current directory and adds `.lich/` to `.gitignore`. User fills it in.
+### `lich init` — dumb skeleton writer
 
-**Detect (`lich init --detect`):** scans the directory for known shapes and pre-fills what it can confidently fill:
-- If `compose.yml` or `docker-compose.yml` exists, references it and lists its services
-- If `package.json` has a `dev` script, adds a default `owned` service running it
-- If `.env.example` exists, adds matching `env_files` entries
+A small command that writes three things and exits:
 
-`--detect` deliberately does NOT guess env wiring, lifecycle hooks, or ready-when conditions — wrong guesses are worse than blank spots. Those need human or agent judgment.
+1. A `lich.yaml` skeleton in the current directory
+2. A `.gitignore` entry for `.lich/` (creating or appending to existing)
+3. (If absent) a comment-only `lich.yaml` schema reference for editor integration
 
-### `lich:instrument` agent skill
+The skeleton itself is minimal-but-valid: heavily commented, with each top-level section present as a commented-out example. A user can run `lich validate` against a freshly-`init`ed skeleton and get "ok, no services defined" — not an error. A user can run `lich up` against it and get "no services to start" — not a crash.
 
-A Claude Code (and equivalent) skill that ships in the lich repo as a markdown file. The skill walks an agent through:
+`lich init` does NOT detect frameworks, scan for compose files, guess at services, or read `package.json`. It writes the skeleton, period. This makes it trivial to test (one input, one fixed output), trivial to maintain (no framework-version drift), and predictable for users (the same skeleton every time).
 
-1. Run `lich init --detect` to produce a skeleton
-2. Read the repo's `package.json` (or Gemfile, requirements.txt, etc.), `compose.yml`, `.env.example`, README
-3. Fill in: env mappings, `ready_when` conditions, lifecycle hooks for migrations / seed / codegen, dependencies
-4. Run `lich up` to verify
-5. Iterate on any failures
-6. Show the user a diff of what was added
+The skeleton starts with a `# yaml-language-server: $schema=https://...` comment so editors with the YAML extension immediately get autocomplete and validation against the lich schema.
 
-The skill is intentionally generic — no framework dictionary, no "if Next then X" rules. It's a translation task, not a knowledge task. The agent reads the user's existing setup and writes lich.yaml that wraps it.
+### `lich:instrument` — agent skill for filling it in
+
+A Claude Code (and equivalent) skill that ships in the lich repo as a markdown file. This is THE intended path for taking an existing project from zero to working `lich.yaml`. Brownfield users — which is most users — should be pointed at this skill.
+
+The skill walks an agent through:
+
+1. Run `lich init` to produce the skeleton
+2. Read the project's relevant files: `package.json` / `Gemfile` / `requirements.txt` / `go.mod`, any compose files, `.env.example`, README, any existing dev scripts
+3. Fill in the skeleton with appropriate `services`, `owned`, `env`, `lifecycle`, ready conditions, and dependencies
+4. Run `lich validate` and iterate until clean
+5. Run `lich up` and verify the stack actually comes up
+6. Show the user a diff and explanation
+
+The skill is intentionally generic — no framework dictionary, no "if Next then X" rules. It's a translation task ("here's what this project already has; express it as a lich.yaml"), not a knowledge task. Framework-specific intelligence lives in the agent's general knowledge, not in lich's code.
+
+The validate/edit/fix loop is the inner cycle that makes this reliable. `lich validate --json` gives the agent machine-readable errors; the agent edits the yaml; the agent re-validates. The skill doesn't ship to `lich up` until validate is clean.
 
 ### Greenfield vs brownfield
 
-Same path for both. Greenfield users clone any starter they like (`create-next-app`, etc.), then run `lich init` (or the agent skill) to add lich.yaml. Brownfield users do the same on their existing repo. There is no `create-lich-app` scaffolder — the demo lives in `examples/` inside the lich repo itself.
+Same path for both. Greenfield users clone any starter they like (`create-next-app`, a Rails generator, a Django cookiecutter, etc.), then either run `lich init` and edit by hand, or invoke the `lich:instrument` skill to do it for them. Brownfield users do the same on their existing repo. There is no `create-lich-app` scaffolder — the demo lives in `examples/` inside the lich repo itself, available for cloning or copy-pasting the yaml from.
 
 ## 8. Meta-harness (dogfooding)
 
@@ -416,6 +442,8 @@ Integration tests that:
 - Run a second `lich up` in a different tmpdir worktree, verify both coexist
 
 Tests assert observable behavior at the CLI boundary, not internal logic. Failures emit specific diagnostics ("postgres healthcheck timeout after 30s; logs at <path>"), not generic test framework output.
+
+`lich validate` gets its own focused test suite separate from the e2e suite: a corpus of known-good and known-bad yaml fixtures with expected validation outputs. Fast, hermetic, no real services involved — these tests run in seconds and gate every PR.
 
 ### `bin/dev-harness`
 
@@ -504,7 +532,8 @@ lich/
 - `ready_when` evaluators including `log_match` + `capture`
 - Lifecycle hook executor (top-level and per-service)
 - Dependency graph + startup/shutdown ordering
-- `lich init` and `--detect` logic
+- `lich init` (dumb skeleton writer — single fixed template plus `.gitignore` handling)
+- `lich validate` (schema check + reference graph resolution + light filesystem checks; outputs `--json` for agent consumption)
 - Daemon process (dashboard + proxy + watcher in one process)
 - Reverse proxy with `*.localhost` routing
 - Dashboard UI (adapted from current dashboard package, simplified for new state shape)
@@ -562,7 +591,8 @@ These need concrete choices during implementation, but don't change the spec's s
 - One binary, downloadable from GitHub Releases for Mac (arm64+x86) and Linux (arm64+x86)
 - `npm install -g lich` works for the Node crowd
 - README walks a new user from zero to working stack in under 5 minutes (with the `examples/node-postgres/` example)
-- `lich init --detect` produces a workable starting yaml for at least one common shape (Node + Postgres in a compose file)
+- `lich init` produces a valid skeleton that passes `lich validate` and survives `lich up` cleanly (with "no services defined" messaging)
+- `lich:instrument` skill takes the `examples/node-postgres` repo (with its `lich.yaml` deleted) and reproduces a working configuration via agent loop, verified by `lich up` succeeding
 - `lich:instrument` skill ships in the repo and works in Claude Code
 - Dashboard is auto-started and auto-opens browser on first `lich up`
 - Friendly URLs work without any setup beyond installing lich
