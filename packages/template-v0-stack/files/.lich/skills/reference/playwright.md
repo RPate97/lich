@@ -9,7 +9,7 @@ applies-to: reference
 Playwright drives every end-to-end test in the stack. The config lives at
 `apps/web/playwright.config.ts` and tests live under `apps/web/e2e/`. Run
 the suite with `lich test e2e`, which first boots the stack
-(`lich dev`) and waits for the URLs from `lich urls` to respond.
+(`lich up`) and waits for the URLs from `lich urls` to respond.
 
 ## Test layout
 

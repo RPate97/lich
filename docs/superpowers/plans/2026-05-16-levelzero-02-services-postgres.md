@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Introduce the `Service` interface, the port allocator, the worktree-namespaced Docker resource scheme, and Postgres as the first service implementation. Add `lich dev`, `stop`, `reset`, and `stacks stop --all` so a real stack can be brought up and torn down per worktree, in parallel with other worktrees, with no port or container-name collisions.
+**Goal:** Introduce the `Service` interface, the port allocator, the worktree-namespaced Docker resource scheme, and Postgres as the first service implementation. Add `lich up`, `lich down`, `lich reset`, and `lich nuke` so a real stack can be brought up and torn down per worktree, in parallel with other worktrees, with no port or container-name collisions.
 
 **Architecture:**
 - `Service` is a discriminated union; plan 02 ships the `DockerService` variant (owned-process services land in plan 03 with concurrently).
@@ -30,11 +30,11 @@ tools/cli/src/
     naming.ts                      # container/network/volume name helpers
     compose.ts                     # write per-stack docker-compose.yml, shell to docker compose
   commands/
-    dev.ts                         # lich dev
-    stop.ts                        # lich stop
+    up.ts                          # lich up
+    down.ts                        # lich down
     reset.ts                       # lich reset
     stacks/
-      stop-all.ts                  # lich stacks stop --all
+      stop-all.ts                  # lich nuke
 tools/cli/tests/
   (mirrored layout)
 ```
@@ -53,10 +53,10 @@ Each module has one responsibility. Integration tests that need real Docker live
 | 02.4 | Registry file lock | 1 | (plan 01) |
 | 02.5 | Postgres `DockerService` definition | 2 | 02.1, 02.2, 02.3 |
 | 02.6 | Generic Service runner + `getBuiltinServices` | 2 | 02.3, 02.5 |
-| 02.7 | `lich dev` (single-worktree) | 3 | 02.4, 02.6 |
-| 02.8 | `lich stop` | 3 | 02.6, 02.7 |
+| 02.7 | `lich up` (single-worktree) | 3 | 02.4, 02.6 |
+| 02.8 | `lich down` | 3 | 02.6, 02.7 |
 | 02.9 | `lich reset` | 3 | 02.7, 02.8 |
-| 02.10 | `lich stacks stop --all` | 4 | 02.8 |
+| 02.10 | `lich nuke` | 4 | 02.8 |
 | 02.11 | Wire all commands into `bin.ts`; full integration test | 4 | 02.7-02.10 |
 
 Wave 1 is fully parallel (4 agents). Wave 2 is two-agent parallel. Wave 3 is sequential (dev → stop → reset all touch overlapping conceptual surfaces). Wave 4 is two-agent parallel.
@@ -87,10 +87,10 @@ Wave 1 is fully parallel (4 agents). Wave 2 is two-agent parallel. Wave 3 is seq
 - `cd tools/cli && bunx vitest run` green (~50+ tests).
 - `cd tools/cli && bun tsc --noEmit` clean.
 - From a scratch dir with `lich.config.ts`:
-  1. `lich dev` brings up Postgres in a container named `lich-<key>-postgres`, prints the allocated port and `DATABASE_URL`.
+  1. `lich up` brings up Postgres in a container named `lich-<key>-postgres`, prints the allocated port and `DATABASE_URL`.
   2. `lich stacks current` reports `running: true` with the port and container.
   3. `psql "$DATABASE_URL" -c 'select 1'` succeeds from outside the container.
   4. In a second worktree (`git worktree add ...`), repeat — a second Postgres container comes up on a different port; both run concurrently.
-  5. `lich stop` in worktree A tears it down cleanly; B keeps running.
-  6. `lich stacks stop --all` from anywhere tears down both.
+  5. `lich down` in worktree A tears it down cleanly; B keeps running.
+  6. `lich nuke` from anywhere tears down both.
   7. `lich reset` from a fresh worktree (re-running step 1 first) wipes the volume and brings up an empty DB.

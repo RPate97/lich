@@ -64,8 +64,8 @@ describe('bin: --help / -h / help / no-args', () => {
     // here doubles as a check that the inline registration was actually
     // removed.
     const out = res.stdout;
-    expect(out).toContain('dev');
-    expect(out).toContain('stop');
+    expect(out).toContain('up');
+    expect(out).toContain('down');
     expect(out).toContain('reset');
     expect(out).toContain('init');
     expect(out).toContain('doctor');

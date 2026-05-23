@@ -18,11 +18,11 @@ import { makeDoctorCommand } from './commands/doctor';
 import { makeStacksCurrentCommand } from './commands/stacks/current';
 import { makeStacksListCommand } from './commands/stacks/list';
 import { makeStacksPruneCommand } from './commands/stacks/prune';
-import { makeDevCommand } from './commands/dev';
-import { makeStopCommand } from './commands/stop';
+import { makeUpCommand } from './commands/up';
+import { makeDownCommand } from './commands/down';
 import { makeResetCommand } from './commands/reset';
 import { makeRestartCommand } from './commands/restart';
-import { makeStacksStopAllCommand } from './commands/stacks/stop-all';
+import { makeNukeCommand } from './commands/nuke';
 import { makeLogsCommand } from './commands/logs';
 import { makeDashboardCommand } from './commands/dashboard';
 import { impactCommand } from './commands/impact';
@@ -71,10 +71,10 @@ function defaultRegistryPath(): string {
  * for `curl`, `db.*`, and `ui.*` in earlier tiers.
  *
  * What stays here: infrastructure / framework commands (`init`, `doctor`,
- * `dev`, `stop`, `reset`, `stacks.*`, `logs`, `impact`, `coverage`, `check`,
+ * `up`, `down`, `nuke`, `reset`, `stacks.*`, `logs`, `impact`, `coverage`, `check`,
  * `urls`, `compose`, `adapter.list`, `adapter.swap`, `env.list`,
  * `env.resolve`, `skills.index`). Several of these are RE-REGISTERED by
- * `buildDispatchRegistry` with plugin-aware closures (e.g. `dev`/`stop`/
+ * `buildDispatchRegistry` with plugin-aware closures (e.g. `up`/`down`/
  * `reset` pick up `addComposeService`/`addOwnedService` contributions, and
  * `check` rebinds against the active backend adapter for route coverage).
  */
@@ -83,14 +83,14 @@ export function buildCommands(registryPath: string): CommandRegistry {
   const getReg = () => new Registry(registryPath);
   reg.register(initCommand);
   reg.register(makeDoctorCommand(getReg));
-  reg.register(makeDevCommand(getReg));
-  reg.register(makeStopCommand(getReg));
+  reg.register(makeUpCommand(getReg));
+  reg.register(makeDownCommand(getReg));
   reg.register(makeResetCommand(getReg));
   reg.register(makeRestartCommand(getReg));
   reg.register(makeStacksCurrentCommand(getReg));
   reg.register(makeStacksListCommand(getReg));
   reg.register(makeStacksPruneCommand(getReg));
-  reg.register(makeStacksStopAllCommand(getReg));
+  reg.register(makeNukeCommand(getReg));
   reg.register(makeLogsCommand(getReg));
   reg.register(makeDashboardCommand(() => registryPath));
   reg.register(impactCommand);
@@ -173,7 +173,7 @@ export async function buildDispatchRegistry(
     loadedPlugins.push(p);
   }
 
-  // Re-register dev/stop/reset with the plugin compose + owned-service
+  // Re-register up/down/reset with the plugin compose + owned-service
   // contributions piped in (post-LEV-148, post-LEV-154). Without this,
   // services declared via `addComposeService` (e.g. `postgres` from
   // `@lich/plugin-postgres`) would not reach the emitted compose file,
@@ -245,8 +245,8 @@ export async function buildDispatchRegistry(
     getEnvInjection,
     getResolvedBulkSources,
   };
-  cli.register(makeDevCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
-  cli.register(makeStopCommand(getReg, sharedOpts));
+  cli.register(makeUpCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
+  cli.register(makeDownCommand(getReg, sharedOpts));
   cli.register(makeResetCommand(getReg, { ...sharedOpts, getPortlessAdapter }));
   cli.register(makeRestartCommand(getReg, sharedOpts));
 

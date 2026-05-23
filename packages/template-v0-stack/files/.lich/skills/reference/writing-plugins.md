@@ -40,7 +40,7 @@ the same name; compose the merged result downstream for everything else.
   for that slot.
 - `addCommand(cmd)` — contribute a `lich <cmd>` subcommand.
 - `addOwnedService(service)` — register a long-running service the CLI
-  owns (lifecycle managed by `lich dev` / `stop`).
+  owns (lifecycle managed by `lich up` / `lich down`).
 - `addComposeService(name, def)` — contribute a Docker Compose v2
   service. Use `"${PORT}:<container>"` for ports so the runner can
   allocate per-worktree.

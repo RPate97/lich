@@ -174,7 +174,7 @@ another.
 ### v1 cut
 
 The tailer follows the **active** log file only. The detached `.log` accumulates
-across `dev` runs (separated by `--- lich dev <ts> ---` markers), so history
+across `dev` runs (separated by `--- lich up <ts> ---` markers), so history
 is preserved without live-merging the `.log` and `.jsonl` sources.
 
 ## Frontend / UI
@@ -256,7 +256,7 @@ tool quickly. v1.1 deliberately relaxes it for exactly two mutating actions:
 
 ### Rationale
 
-`lich restart` (LEV-249) and `lich stop` are the two most common operations a
+`lich restart` (LEV-249) and `lich down` are the two most common operations a
 developer wants to perform immediately after viewing the dashboard. Without
 buttons, the only path is to leave the browser, find the right terminal, and
 run the CLI manually — defeating the "single pane" goal.

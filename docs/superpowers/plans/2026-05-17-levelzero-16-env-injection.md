@@ -120,7 +120,7 @@ Bulk sources have no host/container distinction by default (a secret is the same
 
 ### Worktree safety
 
-Secret-source plugins (dotenv, Infisical, etc.) resolve from `ctx.projectRoot`, NOT the worktree path. This is consistent with how every other plugin reads config today: a `.env.local` in the main workspace is read by every worktree's `lich dev`; Infisical config (machine identity token, folder path) is the same across worktrees. Plugins that need worktree-scoped state (caches, runtime tokens) use `ctx.worktreeKey` to scope under `.lich/state/<worktreeKey>/`.
+Secret-source plugins (dotenv, Infisical, etc.) resolve from `ctx.projectRoot`, NOT the worktree path. This is consistent with how every other plugin reads config today: a `.env.local` in the main workspace is read by every worktree's `lich up`; Infisical config (machine identity token, folder path) is the same across worktrees. Plugins that need worktree-scoped state (caches, runtime tokens) use `ctx.worktreeKey` to scope under `.lich/state/<worktreeKey>/`.
 
 ### Generated .env files
 
@@ -223,7 +223,7 @@ Each v0 plugin (`postgres`, `prisma`, `hono`, `typed-client`, `better-auth`, `sh
 Each tier ends with verification that the previous behavior still works:
 
 - **Tier 1**: Types compile across all packages. No runtime change yet.
-- **Tier 2**: `lich dev` brings up the v0 stack with env injection into both compose AND owned services. Manual: `cat .lich/state/.../env/api.env` shows expected vars.
+- **Tier 2**: `lich up` brings up the v0 stack with env injection into both compose AND owned services. Manual: `cat .lich/state/.../env/api.env` shows expected vars.
 - **Tier 3**: All existing plugin tests still pass. Backwards-compat shim emits deprecation warning on console for any plugin still using `envContributions(ports)`.
 - **Tier 4**: New plugins' own tests pass. End-to-end smoke: a project with `plugin-dotenv + plugin-infisical + plugin-postgres + plugin-prisma + plugin-hono` boots, fetches Infisical secrets, makes them available to the api service.
 - **Tier 5**: Docs link from the existing EXTENSION.md "Composability rule" callout to the new EnvSource chapter.

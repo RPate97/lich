@@ -239,7 +239,7 @@ async function resolveProjectName(worktreePath: string): Promise<string> {
 
 /**
  * Tear down a `--live` stack: `docker compose down --remove-orphans` (volumes
- * preserved — same default as `lich stop`) plus the registry entry
+ * preserved — same default as `lich down`) plus the registry entry
  * removed. Idempotent: the FIRST call kicks off the work and parks the
  * resulting promise on `state.promise`; concurrent + later calls await that
  * same promise and never re-issue the underlying `docker compose down` or
@@ -298,7 +298,9 @@ export function teardownLiveStack(deps: LiveTeardownDeps): Promise<void> {
   return work;
 }
 
-export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): Command {
+export { makeUpCommand as makeDevCommand };
+
+export function makeUpCommand(getRegistry: () => Registry, opts?: DevOptions): Command {
   const getServices = opts?.getServices ?? getBuiltinServices;
   const getPortlessAdapter = opts?.getPortlessAdapter;
   const composeRunnerFactory = opts?.composeRunnerFactory ?? makeComposeRunner;
@@ -310,7 +312,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
   const readinessTimeoutMs = opts?.readinessTimeoutMs;
 
   return {
-    name: 'dev',
+    name: 'up',
     describe:
       'Bring up every service for the current worktree (idempotent). Detached by default; pass --live to stream logs to the foreground.',
     async run(ctx) {
@@ -689,7 +691,7 @@ export function makeDevCommand(getRegistry: () => Registry, opts?: DevOptions): 
 
       // Default detached path — spawn each owned service via the detached
       // runner, write pid files, probe readiness, then return so the user
-      // gets their shell back. `lich stop` reads the pid files to
+      // gets their shell back. `lich down` reads the pid files to
       // tear things down later; `lich logs` reads the per-service
       // `.log` files under the state dir.
       const detachedLogDir = join(
@@ -845,7 +847,7 @@ function renderDevPretty(
       }
     }
     lines.push('  logs:  lich logs <service> --follow');
-    lines.push('  stop:  lich stop');
+    lines.push('  stop:  lich down');
   }
   return lines.join('\n') + '\n';
 }

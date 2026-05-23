@@ -43,11 +43,11 @@ describe('groupCommands', () => {
     const groups = groupCommands([
       cmd('stacks.list'),
       cmd('stacks.current'),
-      cmd('dev'),
+      cmd('up'),
       cmd('init'),
     ]);
     expect(Object.keys(groups).sort()).toEqual(['core', 'stacks']);
-    expect(groups['core']!.map((c) => c.name)).toEqual(['dev', 'init']);
+    expect(groups['core']!.map((c) => c.name)).toEqual(['init', 'up']);
     expect(groups['stacks']!.map((c) => c.name)).toEqual(['stacks.current', 'stacks.list']);
   });
 });

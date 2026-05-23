@@ -266,7 +266,7 @@ Implications when writing a resolver:
 
 Two paths matter, and they are not the same:
 
-- `ctx.projectRoot` — the absolute path to the consumer's **main repository root**. The same value regardless of which worktree the user invoked from. Secret-source plugins (dotenv, Infisical, Vault) read config from here so a `.env.local` in the main workspace is read by every worktree's `lich dev` without copying.
+- `ctx.projectRoot` — the absolute path to the consumer's **main repository root**. The same value regardless of which worktree the user invoked from. Secret-source plugins (dotenv, Infisical, Vault) read config from here so a `.env.local` in the main workspace is read by every worktree's `lich up` without copying.
 - `ctx.worktreeKey` — a stable short identifier of the **active worktree**. Plugins that need worktree-scoped state (per-worktree caches, ephemeral tokens) scope it under `.lich/state/<worktreeKey>/`.
 
 Default to `projectRoot` for anything config-shaped (paths to look up secrets, paths to a schema file). Reach for `worktreeKey` only when the state is genuinely worktree-local — usually that means it's regenerated cheaply if it disappears.

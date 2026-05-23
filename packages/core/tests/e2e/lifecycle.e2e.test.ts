@@ -92,7 +92,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       // entire string (a trailing newline / minor formatting drift would
       // false-fail) but every command from the canonical surface MUST appear
       // in both.
-      for (const needle of ['dev', 'stop', 'doctor', 'gen', 'env list']) {
+      for (const needle of ['up', 'down', 'doctor', 'gen', 'env list']) {
         expect(a.stdout).toContain(needle);
         expect(b.stdout).toContain(needle);
       }
@@ -285,7 +285,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       const res = runCli(handle.projectDir, ['compose', 'ps', '--json']);
       expect(res.exitCode).not.toBe(0);
       const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-      expect(combined).toMatch(/no compose file|lich dev/);
+      expect(combined).toMatch(/no compose file|lich up/);
     });
 
     it('compose with no subcommand errors with usage', () => {
@@ -329,7 +329,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       'dev --json brings up the stack',
       { timeout: 240_000 },
       () => {
-        const dev = runCli(handle.projectDir, ['dev', '--json'], {
+        const dev = runCli(handle.projectDir, ['up', '--json'], {
           timeoutMs: 180_000,
         });
         expect(dev.exitCode, dev.stderr).toBe(0);
@@ -387,7 +387,7 @@ describe('LEV-198-extended lifecycle: per-command coverage', () => {
       'stop --json tears the stack down cleanly',
       { timeout: 120_000 },
       () => {
-        const stop = runCli(handle.projectDir, ['stop', '--json'], {
+        const stop = runCli(handle.projectDir, ['down', '--json'], {
           timeoutMs: 90_000,
         });
         expect(stop.exitCode, stop.stderr).toBe(0);

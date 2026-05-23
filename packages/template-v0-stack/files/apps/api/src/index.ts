@@ -117,7 +117,7 @@ app.delete('/api/todos/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// LEV-200 — bind to the host port `lich dev` allocated for this api
+// LEV-200 — bind to the host port `lich up` allocated for this api
 // service (passed in via `envInjection: { API_PORT: 'hono.port' }`). Default
 // to 3001 (NOT 3000) so a bare `bun run dev` outside the lich harness
 // still works without colliding with `next dev`'s default of 3000.

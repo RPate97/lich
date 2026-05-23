@@ -95,7 +95,7 @@ export function makeDbMigrationNewCommand(opts?: DbMigrationNewOptions): Command
         throw new CLIError(
           'NO_PROJECT',
           'no stack running for this worktree',
-          'run `lich dev` first to bring postgres up',
+          'run `lich up` first to bring postgres up',
         );
       }
 

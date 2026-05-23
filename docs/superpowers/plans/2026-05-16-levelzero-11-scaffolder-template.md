@@ -1,6 +1,6 @@
 # Plan 11 — Scaffolder (`init`) + the starter template
 
-**Goal:** Extend `lich init` (from plan 01, currently writes a stub `lich.config.ts`) into a full project generator. Output: a complete working monorepo with Hono api, Next web, Prisma schema, Better Auth wired, base e2e tests, CLAUDE.md, the full skill set. Adds `getBuiltinServices()` real definitions so `lich dev` brings up `api` + `web` + `postgres`.
+**Goal:** Extend `lich init` (from plan 01, currently writes a stub `lich.config.ts`) into a full project generator. Output: a complete working monorepo with Hono api, Next web, Prisma schema, Better Auth wired, base e2e tests, CLAUDE.md, the full skill set. Adds `getBuiltinServices()` real definitions so `lich up` brings up `api` + `web` + `postgres`.
 
 **Architecture:**
 - Template lives in `tools/cli/templates/v0-stack/` as a tree of static files (with `__placeholder__` markers swapped at copy time).
@@ -77,7 +77,7 @@ Wave 2 is parallel pair. Wave 3 single. Wave 4 is parallel pair.
 ## Verification
 
 - `lich init demo` produces a working `./demo/` directory.
-- `cd demo && lich dev` brings up postgres + api + web.
+- `cd demo && lich up` brings up postgres + api + web.
 - `lich curl --as alice@example.com /api/me` returns alice's session JSON.
 - `lich db migrate && lich db seed` work in the scaffolded project.
 - `lich ui add button` succeeds in `apps/web`.

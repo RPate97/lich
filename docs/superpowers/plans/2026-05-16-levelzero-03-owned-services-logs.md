@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add the `kind: 'owned'` Service variant (managed processes — Hono api, Next web, project-added workers), wire it into `lich dev` via the `concurrently` library, tee each owned service's stdout+stderr to `.lich/logs/<service>.jsonl`, and add the `lich logs` query command. Plan 03 ships the machinery; the real api/web service definitions and apps land in plan 11 (scaffolder).
+**Goal:** Add the `kind: 'owned'` Service variant (managed processes — Hono api, Next web, project-added workers), wire it into `lich up` via the `concurrently` library, tee each owned service's stdout+stderr to `.lich/logs/<service>.jsonl`, and add the `lich logs` query command. Plan 03 ships the machinery; the real api/web service definitions and apps land in plan 11 (scaffolder).
 
 **Architecture:**
 - `OwnedService` extends the discriminated union alongside `DockerService` (plan 02's placeholder gets replaced with the real shape: `cwd`, `command`, `dependsOn`, `envContributions`).
@@ -19,7 +19,7 @@
 - Does NOT add api/web service definitions to `getBuiltinServices()`. Those land in plan 11's scaffolder alongside the actual `apps/api` and `apps/web` code. Plan 03's tests use inline mock owned services (tiny shell scripts in tmpdirs) to verify the machinery.
 - Does NOT implement `--follow` for live log tailing. Deferred to a discovery follow-on.
 - Does NOT integrate portless. That's plan 04.
-- Does NOT modify `stop` / `reset` / `stacks stop --all` beyond what's strictly needed — they already tear down docker services, and owned services are children of the `dev` foreground process so they die when `dev` exits or is killed.
+- Does NOT modify `stop` / `reset` / `nuke` beyond what's strictly needed — they already tear down docker services, and owned services are children of the `dev` foreground process so they die when `dev` exits or is killed.
 
 ---
 

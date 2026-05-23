@@ -36,10 +36,10 @@
       "import": "./dist/services/types.js",
       "require": "./dist/services/types.cjs"
     },
-    "./commands/dev": {
-      "types": "./dist/commands/dev.d.ts",
-      "import": "./dist/commands/dev.js",
-      "require": "./dist/commands/dev.cjs"
+    "./commands/up": {
+      "types": "./dist/commands/up.d.ts",
+      "import": "./dist/commands/up.js",
+      "require": "./dist/commands/up.cjs"
     },
     "./compose/naming": {
       "types": "./dist/compose/naming.d.ts",

@@ -2104,7 +2104,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Manual smoke test**
 
-With at least one stack up (`bun run lich dev` in a project), run `bun run lich dashboard`. Expected: a URL is printed, the browser opens, the stack appears with correct status, UI links work, and expanding a service's logs streams live output. Ctrl-C prints `dashboard stopped`.
+With at least one stack up (`bun run lich up` in a project), run `bun run lich dashboard`. Expected: a URL is printed, the browser opens, the stack appears with correct status, UI links work, and expanding a service's logs streams live output. Ctrl-C prints `dashboard stopped`.
 
 - [ ] **Step 7: Commit**
 

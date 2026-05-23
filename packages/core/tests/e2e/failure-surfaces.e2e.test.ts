@@ -153,7 +153,7 @@ describe('LEV-198-extended failure surfaces', () => {
           const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
           // Either the canonical NO_PROJECT message OR a clear pointer to
           // `lich dev`. Empty stderr is forbidden.
-          expect(combined).toMatch(/no stack|lich dev|no_project/);
+          expect(combined).toMatch(/no stack|lich up|no_project/);
         },
       );
     }
@@ -198,7 +198,7 @@ describe('LEV-198-extended failure surfaces', () => {
       const res = runCli(handle.projectDir, ['compose', 'ps', '--json']);
       expect(res.exitCode).not.toBe(0);
       const combined = `${res.stderr}\n${res.stdout}`.toLowerCase();
-      expect(combined).toMatch(/no compose file|lich dev/);
+      expect(combined).toMatch(/no compose file|lich up/);
     });
   });
 

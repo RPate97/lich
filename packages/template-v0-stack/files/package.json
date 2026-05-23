@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "lich dev",
+    "dev": "lich up",
     "build": "bun run --filter '*' build",
     "test": "bun run --filter '*' test",
     "lint": "bun run --filter '*' lint",

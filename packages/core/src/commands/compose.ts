@@ -103,7 +103,7 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           `no running stack for ${wt.key}`,
-          'run `lich dev` to bring the stack up — that generates the compose file this command shells into',
+          'run `lich up` to bring the stack up — that generates the compose file this command shells into',
         );
       }
 
@@ -112,7 +112,7 @@ export function makeComposeCommand(opts: MakeComposeCommandOptions): Command {
         throw new CLIError(
           'NO_PROJECT',
           `no compose file at ${composeFile}`,
-          'run `lich dev` to regenerate the compose file — it was removed since the stack came up',
+          'run `lich up` to regenerate the compose file — it was removed since the stack came up',
         );
       }
 

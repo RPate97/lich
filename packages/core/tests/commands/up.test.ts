@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { dockerOrSkip, withDockerStack } from '../_helpers/docker';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { computeWorktreeKey } from '../../src/worktree';
 import { containerName, composeProjectName, networkName, volumeName } from '../../src/compose/naming';
 import { pgService } from '@lich/plugin-postgres';
@@ -94,11 +94,11 @@ afterEach(() => {
   if (projectDir) cleanup(computeWorktreeKey(projectDir));
 });
 
-describe('lich dev (unit, mocked compose)', () => {
+describe('lich up (unit, mocked compose)', () => {
   it('errors NO_PROJECT when cwd is outside a lich project', async () => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), 'lz-dev-outside-')));
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -109,7 +109,7 @@ describe('lich dev (unit, mocked compose)', () => {
 
   it('emits a compose file under .lich/<key>/docker-compose.yml and calls up({detach,waitForHealthy})', async () => {
     const { factory, constructed, calls } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -159,7 +159,7 @@ describe('lich dev (unit, mocked compose)', () => {
 
   it('persists ports + containers in the registry under the worktree key', async () => {
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -177,7 +177,7 @@ describe('lich dev (unit, mocked compose)', () => {
 
   it('second run reuses ports and calls up again (idempotent)', async () => {
     const { factory, calls } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -203,7 +203,7 @@ describe('lich dev (unit, mocked compose)', () => {
   it('skips up() when there are no docker services to start', async () => {
     const ownedOnly = (): Service[] => [];
     const { factory, calls } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: ownedOnly,
       composeRunnerFactory: factory,
     });
@@ -215,7 +215,7 @@ describe('lich dev (unit, mocked compose)', () => {
     // Arrange: set the env var before the run.
     process.env['LICH_STARTED_BY'] = 'claude-code';
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -238,7 +238,7 @@ describe('lich dev (unit, mocked compose)', () => {
     // Ensure the var is absent for this test.
     delete process.env['LICH_STARTED_BY'];
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -257,7 +257,7 @@ describe('lich dev (unit, mocked compose)', () => {
     // First run with the env var set.
     process.env['LICH_STARTED_BY'] = 'cursor';
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: onlyPostgres,
       composeRunnerFactory: factory,
     });
@@ -297,7 +297,7 @@ describe('lich dev (unit, mocked compose)', () => {
       }),
     };
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       // No built-in docker services for this test — keep the focus on the
       // owned-merge path.
       getServices: () => [],
@@ -331,7 +331,7 @@ describe('lich dev (unit, mocked compose)', () => {
   });
 });
 
-describeIfDocker('lich dev (integration with real docker compose)', () => {
+describeIfDocker('lich up (integration with real docker compose)', () => {
   it('first run brings up postgres via docker compose and persists registry', async () => {
     // LEV-202 — wrap the body in `withDockerStack` so the compose stack is
     // torn down in a `finally` even if the assertions throw, before
@@ -340,7 +340,7 @@ describeIfDocker('lich dev (integration with real docker compose)', () => {
     // bypass per-test hooks (timeouts, unhandled rejections).
     const wtKey = computeWorktreeKey(projectDir);
     await withDockerStack({ projectName: composeProjectName(wtKey) }, async () => {
-      const cmd = makeDevCommand(() => registry, { getServices: onlyPostgres });
+      const cmd = makeUpCommand(() => registry, { getServices: onlyPostgres });
       const result = (await cmd.run({
         cwd: projectDir,
         format: 'json',
@@ -370,7 +370,7 @@ describeIfDocker('lich dev (integration with real docker compose)', () => {
 // registration path without requiring the daemon. We achieve this by injecting
 // `getServices` that returns only owned services (no DockerService entries),
 // which causes the docker loop in `dev` to be a no-op.
-describe('lich dev — portless integration', () => {
+describe('lich up — portless integration', () => {
   function makeMockAdapter(opts: { available: boolean }): PortlessAdapter & {
     registerCalls: Array<{ host: string; target: string }>;
   } {
@@ -420,7 +420,7 @@ describe('lich dev — portless integration', () => {
     const getServices = (): Service[] => [web, worker];
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,
@@ -458,7 +458,7 @@ describe('lich dev — portless integration', () => {
     const getServices = (): Service[] => [web];
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,
@@ -490,7 +490,7 @@ describe('lich dev — portless integration', () => {
     const getServices = (): Service[] => [worker];
 
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices,
       getPortlessAdapter: () => adapter,
       composeRunnerFactory: factory,

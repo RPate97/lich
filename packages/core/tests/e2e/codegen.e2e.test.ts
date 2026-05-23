@@ -275,7 +275,7 @@ describe.skipIf(!DOCKER)(
       });
       // Bring the stack up so the api is reachable. `dev --json` returns the
       // allocated port map; we read `api-http` for the consumer's baseUrl.
-      const dev = runCli(h.projectDir, ['dev', '--json'], {
+      const dev = runCli(h.projectDir, ['up', '--json'], {
         timeoutMs: 180_000,
       });
       if (dev.exitCode !== 0) {

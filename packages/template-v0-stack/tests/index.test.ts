@@ -29,7 +29,7 @@ describe('@lich/template-v0-stack', () => {
       // and into a sibling `prisma.config.ts`. Both files must ship.
       'prisma.config.ts',
       // LEV-195: the v0 template ships a basic landing page so the very
-      // first request to the web URL after `lich dev` renders a real
+      // first request to the web URL after `lich up` renders a real
       // page instead of a 404.
       'apps/web/src/app/page.tsx',
       'apps/web/src/app/layout.tsx',
@@ -41,7 +41,7 @@ describe('@lich/template-v0-stack', () => {
   });
 
   it('ships a landing page that checks api health and points at next steps (LEV-195)', () => {
-    // Without this page, the first thing a user sees after `lich dev` is
+    // Without this page, the first thing a user sees after `lich up` is
     // Next.js's default 404 on a black background — looks broken. The landing
     // page must (a) be a server component that fetches the api's `/api/health`
     // route, (b) reference the editable file path so users know where to go,
@@ -157,7 +157,7 @@ describe('@lich/template-v0-stack', () => {
     );
     expect(
       apiIndex.includes('API_PORT'),
-      'apps/api/src/index.ts must read API_PORT from process.env so lich dev can bind it',
+      'apps/api/src/index.ts must read API_PORT from process.env so lich up can bind it',
     ).toBe(true);
     expect(
       /port\s*:/.test(apiIndex) || /port\s*,/.test(apiIndex),
@@ -510,7 +510,7 @@ describe('@lich/template-v0-stack', () => {
     // Turbo then walked the ancestor tree, found the parent workspace, and
     // refused the sub-workspace config with "No 'extends' key found." More
     // fundamentally: `turbo run dev` skips compose + port allocation + env
-    // injection — the whole point of `lich dev`. The first command users
+    // injection — the whole point of `lich up`. The first command users
     // run after install MUST bring the full stack up via the CLI.
     const pkg = JSON.parse(
       readFileSync(join(templateRoot, 'package.json'), 'utf8'),
@@ -520,8 +520,8 @@ describe('@lich/template-v0-stack', () => {
     };
     expect(
       pkg.scripts?.dev,
-      'root dev script must be `lich dev` so the first run brings up compose + api + web with port allocation',
-    ).toBe('lich dev');
+      'root dev script must be `lich up` so the first run brings up compose + api + web with port allocation',
+    ).toBe('lich up');
     // Turbo MUST be gone — the template no longer orchestrates anything via
     // turbo, and leaving a stale dep would silently re-add a `turbo.json`
     // expectation on `bun install` if a user added back a `turbo run *`

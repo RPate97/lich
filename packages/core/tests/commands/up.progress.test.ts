@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../../src/registry';
-import { makeDevCommand } from '../../src/commands/dev';
+import { makeUpCommand } from '../../src/commands/up';
 import { pgService } from '@lich/plugin-postgres';
 import type { ComposeRunner } from '../../src/compose/runner';
 import type { OwnedService, Service } from '../../src/services/types';
@@ -111,7 +111,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
   it('reports "Bringing up containers" when docker services are present', async () => {
     const { reporter, groups } = makeRecordingReporter();
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [pgService],
       composeRunnerFactory: factory,
     });
@@ -145,7 +145,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
     };
     const { reporter, groups } = makeRecordingReporter();
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [echoer],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -177,7 +177,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
     };
     const { reporter, groups } = makeRecordingReporter();
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [echoer],
       composeRunnerFactory: factory,
       readinessTimeoutMs: 100,
@@ -217,7 +217,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
     });
 
     const { reporter, groups } = makeRecordingReporter();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [pgService],
       composeRunnerFactory: flakyFactory,
     });
@@ -241,7 +241,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
     // reporter. The dev command must not crash on `ctx.reporter` being
     // undefined.
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [pgService],
       composeRunnerFactory: factory,
     });
@@ -258,7 +258,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
   it('preserves the structured result shape — progress is purely additive', async () => {
     const { reporter } = makeRecordingReporter();
     const { factory } = makeMockComposeFactory();
-    const cmd = makeDevCommand(() => registry, {
+    const cmd = makeUpCommand(() => registry, {
       getServices: (): Service[] => [pgService],
       composeRunnerFactory: factory,
     });
@@ -273,7 +273,7 @@ describe('dev — per-phase progress narration (LEV-217)', () => {
 
     // Wipe + recreate registry so the second run starts clean.
     registry = new Registry(join(homeDir, 'registry2.json'));
-    const cmd2 = makeDevCommand(() => registry, {
+    const cmd2 = makeUpCommand(() => registry, {
       getServices: (): Service[] => [pgService],
       composeRunnerFactory: factory,
     });

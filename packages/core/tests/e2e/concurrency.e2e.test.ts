@@ -130,7 +130,7 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
       // is cleanly attributable.
       const resA = runCliJson<DevJson>(
         handleA.projectDir,
-        ['dev', '--json'],
+        ['up', '--json'],
         { timeoutMs: 180_000 },
       );
       devA = resA.json;
@@ -138,7 +138,7 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
 
       const resB = runCliJson<DevJson>(
         handleB.projectDir,
-        ['dev', '--json'],
+        ['up', '--json'],
         { timeoutMs: 180_000 },
       );
       devB = resB.json;
@@ -302,7 +302,7 @@ describe.skipIf(!DOCKER)('LEV-211 multi-stack concurrency (docker)', () => {
       // `lich-`) this would tear down B too; post-LEV-202 the
       // `lich-test-<run>-<keyA>` prefix is specific enough to
       // exclude `lich-test-<run>-<keyB>`.
-      const stopA = runCli(handleA.projectDir, ['stop', '--json'], {
+      const stopA = runCli(handleA.projectDir, ['down', '--json'], {
         timeoutMs: 90_000,
       });
       expect(stopA.exitCode, stopA.stderr).toBe(0);

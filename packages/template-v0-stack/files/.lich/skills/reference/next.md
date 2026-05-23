@@ -7,7 +7,7 @@ applies-to: reference
 # Next.js
 
 The web app lives at `apps/web` and uses the Next 14 App Router. The dev
-server is started by `lich dev`; visit URLs printed by `lich urls`.
+server is started by `lich up`; visit URLs printed by `lich urls`.
 Take a screenshot of any rendered page with `lich screenshot <path>`.
 
 ## Routing conventions

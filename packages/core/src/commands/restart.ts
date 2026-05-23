@@ -118,7 +118,7 @@ export function makeRestartCommand(
       if (!entry) {
         throw new CLIError(
           'INTERNAL',
-          `no stack running for ${stackCtx.worktreeKey} — run 'lich dev' first`,
+          `no stack running for ${stackCtx.worktreeKey} — run 'lich up' first`,
         );
       }
 
@@ -290,7 +290,7 @@ function renderRestartPretty(
       }
     }
     lines.push('  logs:  lich logs <service> --follow');
-    lines.push('  stop:  lich stop');
+    lines.push('  stop:  lich down');
   } else {
     lines.push('started: (no owned services configured)');
   }

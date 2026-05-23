@@ -195,14 +195,14 @@ async function handleRestart(cfg: ServerConfig, key: string): Promise<Response> 
 }
 
 /**
- * POST /api/stacks/:key/stop — shell into `lich stop` for the given
+ * POST /api/stacks/:key/stop — shell into `lich down` for the given
  * stack's worktree. Returns 404 if the stack is not in the registry.
  */
 async function handleStop(cfg: ServerConfig, key: string): Promise<Response> {
   const reg = await readRegistry(cfg.registryPath);
   const entry = reg.stacks[key];
   if (!entry) return new Response('unknown stack', { status: 404 });
-  const result = await runLichAction(entry.path, 'stop');
+  const result = await runLichAction(entry.path, 'down');
   return Response.json(result);
 }
 

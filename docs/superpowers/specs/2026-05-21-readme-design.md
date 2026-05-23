@@ -85,8 +85,8 @@ through debug commands is wall-clock waste — overhead measured in API
 spend per agent, multiplied by every agent you're running.
 
 Lich takes a different posture. Every worktree gets its own isolated
-stack — own ports, own state, own logs. `lich dev` brings it up.
-`lich stop` tears it down. `lich logs api` shows the api logs *for this
+stack — own ports, own state, own logs. `lich up` brings it up.
+`lich down` tears it down. `lich logs api` shows the api logs *for this
 worktree*. Switch worktrees and the CLI's context switches with you.
 The stack itself (postgres, redis, the api framework, the ORM) is
 plugin-based and composable.
@@ -99,7 +99,7 @@ That's a hardware problem, not a lich problem.
 
 **Notes:**
 - ¶2 closes with the agent-efficiency angle: "every minute an agent burns hunting for log files… is wall-clock waste — overhead measured in API spend per agent, multiplied by every agent you're running." Makes the cost concrete in dollars rather than vibes.
-- ¶3 uses the one-liner cadence (`lich dev` / `lich stop` / `lich logs api`) to demonstrate simplicity.
+- ¶3 uses the one-liner cadence (`lich up` / `lich down` / `lich logs api`) to demonstrate simplicity.
 - ¶4 is the flippant scaling close. "Fans giving you stink-eye" + "your laptop will just say no" + the deadpan "That's a hardware problem, not a lich problem" is the personality moment landing.
 
 ### §3 — Quick start
@@ -112,10 +112,10 @@ That's a hardware problem, not a lich problem.
 bunx @lich/create-stack-v0 my-app
 cd my-app
 bun install
-bun run lich dev
+bun run lich up
 ```
 
-That's it. `lich dev` allocates ports, brings up postgres, runs your api
+That's it. `lich up` allocates ports, brings up postgres, runs your api
 and web in parallel, and prints the URLs to open.
 ````
 
@@ -129,13 +129,13 @@ and web in parallel, and prints the URLs to open.
 ````markdown
 ## Parallel stacks, one CLI
 
-Open a new git worktree and run `lich dev` again:
+Open a new git worktree and run `lich up` again:
 
 ```bash
 git worktree add ../my-app-feature-x feature-x
 cd ../my-app-feature-x
 bun install
-bun run lich dev
+bun run lich up
 ```
 
 You now have **two stacks running** in parallel. They picked different
@@ -155,12 +155,12 @@ web    http://localhost:54011
 ```
 
 `lich logs api` in either directory shows *that* worktree's api logs.
-`lich stop` in either directory tears down only *that* worktree's stack.
+`lich down` in either directory tears down only *that* worktree's stack.
 The CLI tracks which stack belongs to which worktree so you don't have to.
 
 Repeat for every parallel feature you (or your agents) are working on.
 
-Lost track of who started what? `lich stacks stop --all` is the escape
+Lost track of who started what? `lich nuke` is the escape
 hatch — tears down every lich stack on the machine, no matter which
 worktree spawned it. (Inevitable when an agent spins up a stack at 3am
 and forgets about it.)
@@ -170,7 +170,7 @@ and forgets about it.)
 - This is the load-bearing section of the entire README. Everything else supports it.
 - "**two stacks running**" is bold deliberately — the moment the differentiator lands.
 - Real-looking ports (54002/54005, 54010/54011), not placeholders — feels visceral.
-- The `lich stacks stop --all` escape hatch gets its own paragraph for visual weight. Parenthetical close ("Inevitable when an agent spins up a stack at 3am…") carries the personality.
+- The `lich nuke` escape hatch gets its own paragraph for visual weight. Parenthetical close ("Inevitable when an agent spins up a stack at 3am…") carries the personality.
 
 ### §5 — What's in the v0 stack
 

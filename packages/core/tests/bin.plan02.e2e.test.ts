@@ -66,7 +66,7 @@ function run(args: string[]) {
 describeIfDocker('bin: plan-02 commands end-to-end', () => {
   // LEV-168 — pretty is now the default; tests parsing stdout pass `--json` explicitly.
   it('dev brings up postgres; stacks current reports running; stop tears it down', () => {
-    const dev = run(['dev', '--json']);
+    const dev = run(['up', '--json']);
     expect(dev.status, dev.stderr).toBe(0);
     const devJson = JSON.parse(dev.stdout);
     expect(devJson.ports.postgres).toBeGreaterThanOrEqual(54000);
@@ -84,7 +84,7 @@ describeIfDocker('bin: plan-02 commands end-to-end', () => {
     ], { encoding: 'utf8' });
     expect(psql.status).toBe(0);
 
-    const stop = run(['stop', '--json']);
+    const stop = run(['down', '--json']);
     expect(stop.status).toBe(0);
     const stopJson = JSON.parse(stop.stdout);
     expect(stopJson.stopped).toBe(true);
@@ -95,10 +95,10 @@ describeIfDocker('bin: plan-02 commands end-to-end', () => {
   }, 180_000);
 
   it('stacks stop --all clears every running stack', () => {
-    const dev = run(['dev', '--json']);
+    const dev = run(['up', '--json']);
     expect(dev.status).toBe(0);
 
-    const stopAll = run(['stacks', 'stop', '--all', '--json']);
+    const stopAll = run(['nuke', '--json']);
     expect(stopAll.status).toBe(0);
     const out = JSON.parse(stopAll.stdout);
     expect(Array.isArray(out.stoppedFromRegistry)).toBe(true);

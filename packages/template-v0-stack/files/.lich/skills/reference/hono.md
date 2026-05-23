@@ -7,7 +7,7 @@ applies-to: reference
 # Hono
 
 The API lives at `apps/api`. The entrypoint is `apps/api/src/index.ts` and the
-dev server is launched by `lich dev` (which boots the database, then
+dev server is launched by `lich up` (which boots the database, then
 api, then web). Logs stream via `lich logs api`.
 
 ## Route patterns

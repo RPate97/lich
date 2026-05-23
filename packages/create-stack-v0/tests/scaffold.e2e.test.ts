@@ -108,11 +108,11 @@ describe('LEV-210 create-stack-v0 scaffold e2e', () => {
   // stdout, but having the check fire here too protects against the
   // case where the unit test's stdout capture drifts from what users
   // actually see when invoking `bunx @lich/create-stack-v0`.
-  it("next-steps message recommends 'bun run lich dev' (LEV-216)", () => {
+  it("next-steps message recommends 'bun run lich up' (LEV-216)", () => {
     const projectName = 'lev210-output-probe';
     const r = runBin(projectName, tmp);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain('bun run lich dev');
+    expect(r.stdout).toContain('bun run lich up');
     // The bare `bun run dev` (without the `lich` token) must not be
     // recommended as its own next-step line — that's the exact UX bug
     // LEV-216 closed and we don't want it sneaking back in.

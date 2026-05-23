@@ -146,7 +146,7 @@ export default {
 No `node_modules` scanning. No auto-discovery. Plugins load in declared order; later plugins can override earlier ones (e.g., `setActiveAdapter` is last-write-wins).
 
 ### Docker Compose orchestration
-Plugins contribute compose fragments. At `lich dev`:
+Plugins contribute compose fragments. At `lich up`:
 1. Walk all registered compose services/volumes/networks.
 2. Emit `<worktree>/.lich/docker-compose.yml`.
 3. Run `docker compose -p lich-<key> up -d`.
@@ -323,10 +323,10 @@ No new runtime deps for the framework itself; plugins each carry their own.
 
 ## Verification
 
-- `npx @lich/create-stack-v0 demo && cd demo && bun install && lich dev` brings up postgres + api + web via docker compose, with all expected ports and containers.
+- `npx @lich/create-stack-v0 demo && cd demo && bun install && lich up` brings up postgres + api + web via docker compose, with all expected ports and containers.
 - `docker compose -p lich-<key> ps` from anywhere shows the running stack — operator tooling works transparently.
-- Adding a project-local plugin (e.g., `./local-plugins/redis.ts`) and re-running `lich dev` brings up Redis alongside the rest.
+- Adding a project-local plugin (e.g., `./local-plugins/redis.ts`) and re-running `lich up` brings up Redis alongside the rest.
 - `lich adapter list` reflects only the adapters from active plugins (no phantom slots).
 - `lich --help` (when LEV-117 lands) lists exactly the commands the active plugins contributed.
 - `changeset version` → produces per-package version bumps; `changeset publish` produces npm-ready packages.
-- Two worktrees can each run `lich dev` simultaneously with no compose-project collision (verified at the worktree-key level).
+- Two worktrees can each run `lich up` simultaneously with no compose-project collision (verified at the worktree-key level).

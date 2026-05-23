@@ -150,7 +150,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
     // have leaked compose resources we have to sweep ourselves.
     try {
       if (projectDir) {
-        runCli(projectDir, ['stop', '--json'], {
+        runCli(projectDir, ['down', '--json'], {
           timeoutMs: 30_000,
           env: spawnEnv(),
         });
@@ -200,7 +200,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
     // and finds nothing — no docker invocation. The acquire path is what
     // we care about: it must reclaim the stale lock, do its work, and
     // release cleanly.
-    const res = runCli(projectDir, ['stop', '--json'], {
+    const res = runCli(projectDir, ['down', '--json'], {
       timeoutMs: 30_000,
       env: spawnEnv(),
     });
@@ -238,7 +238,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
   // several seconds — plenty of time to poll, observe, and SIGINT.
   // ---------------------------------------------------------------------------
   it.skipIf(!DOCKER)(
-    'LEV-199 regression: SIGINT during dev releases the registry lock',
+    'LEV-199 regression: SIGINT during up releases the registry lock',
     { timeout: 120_000 },
     async () => {
       // Wipe any leftover state from test 1 so we're starting from a
@@ -251,7 +251,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
         /* fine */
       }
 
-      const spawned = spawnCli(projectDir, ['dev', '--json'], {
+      const spawned = spawnCli(projectDir, ['up', '--json'], {
         env: spawnEnv(),
       });
 
@@ -355,7 +355,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
       // the registry entry / port allocation / docker network state is
       // pristine.
       try {
-        runCli(projectDir, ['stop', '--json'], {
+        runCli(projectDir, ['down', '--json'], {
           timeoutMs: 60_000,
           env: spawnEnv(),
         });
@@ -369,7 +369,7 @@ describe('LEV-209 real-SIGINT end-to-end', () => {
         /* fine */
       }
 
-      const spawned = spawnCli(projectDir, ['dev', '--live', '--json'], {
+      const spawned = spawnCli(projectDir, ['up', '--live', '--json'], {
         env: spawnEnv(),
       });
 

@@ -35,6 +35,6 @@ unwinding the change later.
 
 ## 4. Boot it locally
 
-- Start everything with `lich dev` and visit the URLs printed by
+- Start everything with `lich up` and visit the URLs printed by
   `lich urls`. Seeing the app render once is the cheapest way to
   confirm your local setup is real before you start changing things.
