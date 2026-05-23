@@ -1,5 +1,5 @@
 /**
- * Owned-service supervisor — single-process spawn primitive (Plan 1 Task 9).
+ * Owned-service supervisor — single-process spawn primitive (Plan 1 Tasks 9/10).
  *
  * Spawns ONE owned host process (the user's `cmd:` from `lich.yaml`) with the
  * resolved env, tees its stdout+stderr to a per-service log file, and returns
@@ -7,10 +7,21 @@
  * gracefully.
  *
  * Scope:
- *   - **Single-port shape only.** If `portEnvVar` is set, the allocated `port`
- *     is injected into the env as `<portEnvVar>=<port>`. The multi-port shape
- *     (`ports: { ... }`), `oneshot: true`, and custom `stop_cmd:` are
- *     deferred to Task 10 (LEV-277).
+ *   - **Single-port AND multi-port** shapes. If `portEnvVar` is set the
+ *     allocated `port` is injected as `<portEnvVar>=<port>`. If `ports` is
+ *     set, every entry `{name: {envVar, port}}` is injected as
+ *     `<envVar>=<port>`. The two shapes are mutually exclusive — setting
+ *     both is a config error.
+ *   - **`oneshot: true`** for cmds that do setup and exit (e.g. `supabase
+ *     start`, seed scripts). The supervisor still returns an `OwnedHandle`
+ *     so the higher-level orchestrator can `await handle.exited`; the
+ *     convenience `runOneshot` wrapper turns that into a throw-on-nonzero
+ *     promise for callers that just want "ran successfully or not."
+ *   - **`stopCmd`** — when present, `stop()` runs the provided shell command
+ *     instead of sending SIGTERM/SIGKILL. Used by self-managing tools (e.g.
+ *     supabase CLI's `supabase stop`) whose teardown does more than killing
+ *     the parent pid. The original child PID may have already exited (the
+ *     oneshot case) — `stopCmd` runs anyway with the same cwd+env.
  *   - **One service at a time.** Higher-level orchestration (start all owned
  *     services, respect `depends_on`) is Task 23 (the `lich up` integration).
  *     This module is intentionally focused so the spawn/exit/stop primitive
@@ -59,6 +70,8 @@ export interface OwnedServiceSpec {
    * as. Together with `port`, the supervisor sets `<portEnvVar>=<port>` in
    * the spawned env. Either both are set or neither — a port without an env
    * name to bind it to would be silently dropped.
+   *
+   * Mutually exclusive with `ports`.
    */
   portEnvVar?: string;
   /**
@@ -66,6 +79,42 @@ export interface OwnedServiceSpec {
    * env under `portEnvVar` if both are present.
    */
   port?: number;
+  /**
+   * Multi-port shape: a map of logical port name → `{envVar, port}`. Each
+   * entry is injected into the spawned env as `<envVar>=<port>`. Used by
+   * services that need more than one allocated host port (e.g. the supabase
+   * CLI exposes api/db/studio/pooler/etc. on separate ports).
+   *
+   * Mutually exclusive with `portEnvVar`/`port` — setting both throws.
+   */
+  ports?: Record<string, { envVar: string; port: number }>;
+  /**
+   * Oneshot mode: the command is expected to do setup and exit on its own
+   * (e.g. `supabase start`, a migrations runner). The supervisor still
+   * spawns it and returns a handle the same way as a long-lived service;
+   * the difference is semantic — the orchestrator should `await
+   * handle.exited` before considering the service "started," and treat a
+   * non-zero exit as a startup failure. `runOneshot` is the convenience
+   * wrapper for that pattern.
+   *
+   * The supervisor itself doesn't gate behavior on this flag — it's a hint
+   * for the caller. We expose it on the spec so the runtime can later
+   * decide e.g. whether to keep the service in the supervised set (no, for
+   * oneshots: once they exit they're done) without re-plumbing the config.
+   */
+  oneshot?: boolean;
+  /**
+   * Custom teardown command. When set, `stop()` runs this shell command
+   * instead of sending SIGTERM→SIGKILL to the original child PID. The
+   * command is spawned via `/bin/sh -c` with the same `cwd` and `env` as
+   * the original spawn (port injections and all), so the teardown can
+   * reach the same per-stack resources the start did.
+   *
+   * Used by self-managing tools whose teardown is more involved than
+   * killing a parent pid. Example: `supabase stop` shuts down the
+   * background Docker containers `supabase start` spawned.
+   */
+  stopCmd?: string;
   /**
    * Absolute path to the per-service log file. Sourced from
    * `state.serviceLogPath(stackId, name)`. The supervisor opens it for
@@ -112,6 +161,20 @@ export interface OwnedHandle {
 const DEFAULT_GRACE_MS = 5_000;
 
 /**
+ * Cap on how long we'll wait for a `stop_cmd` to do its thing. Supabase's
+ * `supabase stop` can take >10s on a cold cache; 30s is generous enough
+ * for the realistic cases while bounding pathological stalls.
+ */
+const STOP_CMD_TIMEOUT_MS = 30_000;
+
+/**
+ * How many bytes of the oneshot's combined output to include in the
+ * thrown error on failure. Enough to capture a typical stack trace or
+ * shell error line; not so much that the message becomes useless.
+ */
+const ONESHOT_TAIL_BYTES = 2_048;
+
+/**
  * Spawn one owned service.
  *
  * Throws synchronously only for argument-validation issues (which currently
@@ -124,15 +187,32 @@ const DEFAULT_GRACE_MS = 5_000;
 export async function startOwnedService(
   spec: OwnedServiceSpec,
 ): Promise<OwnedHandle> {
-  // Layer the port injection on top of the caller's env. The caller's env
-  // already represents the full resolved env pipeline; we only add the
-  // port binding here because it's the one piece the supervisor owns.
-  const env: NodeJS.ProcessEnv = {
-    ...spec.env,
-    ...(spec.portEnvVar && spec.port !== undefined
-      ? { [spec.portEnvVar]: String(spec.port) }
-      : {}),
-  };
+  // Multi-port and single-port are mutually exclusive. Catching this here
+  // (rather than at config-validate time) belt-and-braces the runtime —
+  // even if a future code path constructs a spec programmatically, the
+  // supervisor refuses to silently pick one over the other.
+  if (
+    spec.ports !== undefined &&
+    (spec.portEnvVar !== undefined || spec.port !== undefined)
+  ) {
+    throw new Error(
+      `owned service "${spec.name}": cannot set both single-port (portEnvVar/port) and multi-port (ports) on the same service`,
+    );
+  }
+
+  // Layer the port injection(s) on top of the caller's env. The caller's
+  // env already represents the full resolved env pipeline; we only add the
+  // port binding(s) here because it's the one piece the supervisor owns.
+  const portEnv: NodeJS.ProcessEnv = {};
+  if (spec.portEnvVar && spec.port !== undefined) {
+    portEnv[spec.portEnvVar] = String(spec.port);
+  }
+  if (spec.ports) {
+    for (const { envVar, port } of Object.values(spec.ports)) {
+      portEnv[envVar] = String(port);
+    }
+  }
+  const env: NodeJS.ProcessEnv = { ...spec.env, ...portEnv };
 
   const child: ChildProcess = spawn("/bin/sh", ["-c", spec.cmd], {
     cwd: spec.cwd,
@@ -210,7 +290,12 @@ export async function startOwnedService(
       pid: Number.NaN,
       exited,
       stop: async () => {
-        // No pid to signal; just wait for the synthetic exit to land.
+        // No pid to signal — but a stopCmd may still need to run (e.g. the
+        // child failed to spawn but the service had a teardown side-effect
+        // from a prior run). Best-effort; ignore failures.
+        if (spec.stopCmd) {
+          await runStopCmd(spec, STOP_CMD_TIMEOUT_MS).catch(() => {});
+        }
         await exited;
       },
     };
@@ -219,6 +304,47 @@ export async function startOwnedService(
   const pid = child.pid;
 
   const stop = async (graceMs: number = DEFAULT_GRACE_MS): Promise<void> => {
+    // Custom teardown path: run the user-provided shell command instead of
+    // signaling the child. This is the supabase pattern — `supabase start`
+    // launches Docker containers and exits (oneshot), so SIGTERM to the
+    // already-dead CLI process does nothing useful; `supabase stop` is the
+    // actual teardown.
+    //
+    // We still try to send SIGTERM to the original child first if it's
+    // alive — some stop_cmd-using services *do* keep a parent process
+    // around (e.g. a custom dev script that wraps another tool), and
+    // leaking that PID across a stop() call would be a bug. The signal
+    // failing (ESRCH) is fine and expected for oneshots.
+    if (spec.stopCmd) {
+      if (exitResult === null) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // Already gone — that's the oneshot case, no problem.
+        }
+      }
+      await runStopCmd(spec, STOP_CMD_TIMEOUT_MS);
+      // If the original child was still alive, give it a brief moment to
+      // notice (it may be a wrapper that watches the same resources the
+      // stop_cmd just tore down). If it hasn't exited within the grace
+      // window, escalate to SIGKILL so we don't hang forever.
+      if (exitResult === null) {
+        const graceful = await Promise.race([
+          exited.then(() => "exited" as const),
+          new Promise<"timeout">((r) => setTimeout(() => r("timeout"), graceMs)),
+        ]);
+        if (graceful === "timeout") {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            /* already gone */
+          }
+          await exited;
+        }
+      }
+      return;
+    }
+
     // Idempotent: already exited → nothing to do.
     if (exitResult !== null) return;
 
@@ -258,4 +384,147 @@ export async function startOwnedService(
     exited,
     stop,
   };
+}
+
+/**
+ * Spawn the spec's `stopCmd` via `/bin/sh -c` with the same cwd+env as the
+ * original child, tee its output to the same log file, and resolve once it
+ * exits (regardless of exit code) or the timeout fires.
+ *
+ * Non-zero exits are not thrown — the supervisor has no logger to surface
+ * a warning through, and the orchestrator's source of truth for "is the
+ * service still running?" is the child's `exited` promise plus any
+ * higher-level health check, not the stop command's exit code. If the
+ * stop_cmd genuinely failed to tear something down, the next `lich up`
+ * will surface the leak (port still in use, container still running).
+ *
+ * The timeout exists to bound pathological hangs (network-attached
+ * teardown that's lost connectivity, etc.). When it fires we SIGKILL the
+ * stop_cmd's own process and move on.
+ */
+async function runStopCmd(
+  spec: OwnedServiceSpec,
+  timeoutMs: number,
+): Promise<void> {
+  if (!spec.stopCmd) return;
+
+  // Recompute the port-injected env so the stop_cmd sees the same ports as
+  // the start cmd did. Cheaper to rebuild than to thread the value through.
+  const portEnv: NodeJS.ProcessEnv = {};
+  if (spec.portEnvVar && spec.port !== undefined) {
+    portEnv[spec.portEnvVar] = String(spec.port);
+  }
+  if (spec.ports) {
+    for (const { envVar, port } of Object.values(spec.ports)) {
+      portEnv[envVar] = String(port);
+    }
+  }
+  const env: NodeJS.ProcessEnv = { ...spec.env, ...portEnv };
+
+  const child = spawn("/bin/sh", ["-c", spec.stopCmd], {
+    cwd: spec.cwd,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  // Append to the same log file — the teardown's output is part of the
+  // service's story, and keeping it inline with the start-time logs makes
+  // post-mortems easier.
+  const logStream = createWriteStream(spec.logPath, { flags: "a" });
+  logStream.on("error", () => {
+    /* best-effort */
+  });
+  if (child.stdout) {
+    child.stdout.pipe(logStream, { end: false });
+    child.stdout.on("error", () => {
+      /* best-effort */
+    });
+  }
+  if (child.stderr) {
+    child.stderr.pipe(logStream, { end: false });
+    child.stderr.on("error", () => {
+      /* best-effort */
+    });
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      logStream.end();
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      // Stop_cmd is taking too long. Hard-kill it and move on. The
+      // service's state-of-the-world (containers running, ports bound)
+      // is whatever it is; we don't pretend otherwise.
+      if (typeof child.pid === "number") {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      finish();
+    }, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      finish();
+    });
+    child.once("error", () => {
+      clearTimeout(timer);
+      finish();
+    });
+  });
+}
+
+/**
+ * Run a oneshot owned service to completion and throw if it exits non-zero.
+ *
+ * This is the convenience wrapper around `startOwnedService` for callers
+ * that want "did this setup step succeed?" semantics — no long-lived
+ * handle to track, no separate exit-await step. Use it for things like
+ * `supabase start`, seed scripts, one-time fetches, or any cmd marked
+ * `oneshot: true` in the user's yaml.
+ *
+ * On non-zero exit, the rejection message includes:
+ *   - the service name
+ *   - the exit code (or signal name if signal-killed)
+ *   - the tail of the service's log file (up to ONESHOT_TAIL_BYTES)
+ *
+ * The log-tail inclusion is important: callers won't necessarily look at
+ * the log file themselves before re-throwing, and an error message that
+ * just says "exit 7" is almost useless for debugging. The tail surfaces
+ * the actual stderr/stdout that caused the failure.
+ */
+export async function runOneshot(spec: OwnedServiceSpec): Promise<void> {
+  const handle = await startOwnedService(spec);
+  const result = await handle.exited;
+  if (result.code === 0) return;
+
+  // Read the log tail for the error message. Best-effort: if the log
+  // file is missing (write failed, etc.) we still throw a useful error
+  // with the exit code, just without context.
+  let tail = "";
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const contents = await readFile(spec.logPath, "utf8");
+    tail =
+      contents.length > ONESHOT_TAIL_BYTES
+        ? `...${contents.slice(-ONESHOT_TAIL_BYTES)}`
+        : contents;
+  } catch {
+    /* best-effort */
+  }
+
+  const exitDesc =
+    result.code !== null
+      ? `exit code ${result.code}`
+      : `signal ${result.signal ?? "unknown"}`;
+  const tailSection = tail.trim() ? `\n--- output tail ---\n${tail}` : "";
+  throw new Error(
+    `oneshot "${spec.name}" failed: ${exitDesc}${tailSection}`,
+  );
 }
