@@ -956,4 +956,63 @@ describe("runValidate", () => {
     );
     expect(profileRefErrs).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-384 (Plan 3 Task 10): profiles extends cycle detection
+  // -------------------------------------------------------------------------
+
+  it("detects a 2-node profile extends cycle", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  a:\n    extends: b\n    owned: [api]\n` +
+        `  b:\n    extends: a\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const cycErr = res.report.errors!.find(
+      (e) => e.kind === "cycle" && e.message.includes("profiles extends"),
+    );
+    expect(cycErr).toBeDefined();
+    // Closed-walk format mirrors depends_on / env_groups cycles
+    // (start node repeated).
+    expect(cycErr!.message).toMatch(/a → b → a|b → a → b/);
+  });
+
+  it("detects a self-loop in profile extends", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  loop:\n    extends: loop\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const cycErr = res.report.errors!.find(
+      (e) => e.kind === "cycle" && e.message.includes("profiles extends"),
+    );
+    expect(cycErr).toBeDefined();
+    expect(cycErr!.message).toContain("loop → loop");
+  });
+
+  it("accepts profile extends chains that terminate", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  root:\n    owned: [api]\n` +
+        `  base:\n    extends: root\n    owned: [api]\n` +
+        `  dev:\n    extends: base\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const cycErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "cycle",
+    );
+    expect(cycErrs).toEqual([]);
+  });
 });

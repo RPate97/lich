@@ -37,6 +37,8 @@ import { topoLevels, CycleError } from "../deps/sort.js";
 import type { EnvMap, LichConfig } from "../config/types.js";
 import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 import { detectExtendsCycle } from "../groups/validate-extends.js";
+// LEV-384 (Plan 3 Task 10): cycle detection for `profiles.<name>.extends`.
+import { detectProfileExtendsCycle } from "../profiles/validate-extends.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -144,6 +146,13 @@ export async function runValidate(
       // LEV-383 (Plan 3 Task 9): every profile.services / profile.owned
       // entry must reference a declared compose / owned service.
       checkProfiles(config, resolvedPath, errors);
+      // LEV-384 (Plan 3 Task 10): cycle detection in profile extends.
+      // MUST run before any future "extends reference resolution" check
+      // (Plan 3 Task 11) — a cycle would otherwise misreport there as
+      // "extends X not found" once the resolver walks past the duplicate
+      // node, which is a misleading diagnostic. Same pattern as the
+      // env_groups cycle-vs-reference ordering above.
+      checkProfileExtendsCycles(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
@@ -901,6 +910,44 @@ function checkProfiles(
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// LEV-384 — profiles extends cycle detection (Plan 3 Task 10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect cycles in the `profiles.<name>.extends` graph and surface them as
+ * `cycle` validation errors. Delegates to {@link detectProfileExtendsCycle}
+ * from `profiles/validate-extends.ts` (LEV-378 / Plan 3 Task 4) so the cycle
+ * algorithm lives in one place and the validator just owns message wrapping.
+ *
+ * Message shape mirrors `checkDependsOnAndCycles` (`cycle in depends_on: …`)
+ * and `checkEnvGroupExtendsCycles` (`cycle in env_groups extends: …`) so
+ * readers see one consistent format across all three cycle categories.
+ *
+ * This check MUST run BEFORE any future "extends reference resolution" check
+ * (Plan 3 Task 11): a cycle would otherwise surface there as
+ * "extends X not found" when the parent walk re-enters a duplicate node,
+ * which is a misleading diagnostic. Wired into `runValidate` in the correct
+ * order above.
+ */
+function checkProfileExtendsCycles(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const profiles = config.profiles;
+  if (!profiles) return;
+
+  const result = detectProfileExtendsCycle(profiles);
+  if (!result) return;
+
+  errors.push({
+    kind: "cycle",
+    location: path,
+    message: `cycle in profiles extends: ${result.cycle.join(" → ")}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
