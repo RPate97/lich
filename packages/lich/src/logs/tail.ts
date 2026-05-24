@@ -30,18 +30,26 @@
  * primitive does. The supervisor writes; LogTail reads; the kernel keeps
  * them coherent without any in-process coordination.
  *
- * ### Skeleton scope (Task 1)
+ * ### Task 2 scope (this file's current state)
  *
- * This file ships the class shape only:
- *   - constructor accepts `logPath`, optional `intervalMs`, optional `signal`
- *   - `start()` / `stop()` are idempotent lifecycle methods (no-op body for now)
- *   - `onLine(cb)` returns an unsubscribe function (registration shape only)
- *   - `buffer` getter returns "" (real accumulator wired in Task 2)
+ * Skeleton (Task 1) + poll loop + line fan-out + buffer accumulator.
  *
- * The poll loop + line emission lands in Task 2; AbortSignal-driven shutdown
- * in Task 3. Splitting the skeleton from the runtime behavior makes the API
- * surface independently reviewable and gives downstream tasks (4-7) a stable
- * import target while their own code is being written in parallel.
+ *   - `start()` schedules a `setInterval` that polls `stat(logPath)` at
+ *     `intervalMs`. On size growth, opens the file, reads new bytes from
+ *     the prior offset, closes, splits on `/\r?\n/`, and emits each
+ *     complete line to every registered subscriber.
+ *   - Trailing partial lines (no terminating newline) carry across ticks
+ *     via an internal `pending` buffer so subscribers only ever see complete
+ *     lines.
+ *   - The `buffer` getter exposes ALL bytes read since `start()` was
+ *     called — used by capture (Task 6) for retroactive regex matching.
+ *   - File-doesn't-exist is silently tolerated (matches `log-match.ts`).
+ *   - Truncation is treated as "no new bytes" (rotation is out of scope,
+ *     same as `log-match.ts`).
+ *   - `stop()` clears the interval, closes any open fd, and flips the
+ *     `stopped` flag so an in-flight poll cannot emit after teardown.
+ *
+ * AbortSignal-driven shutdown lands in Task 3.
  *
  * ### Design notes for future tasks
  *
@@ -63,10 +71,32 @@
  *   poll cadence. Faster than http/tcp readiness probes because filesystem
  *   `stat` is cheap; fast enough that the perceived latency between a
  *   service emitting `ready_when.log_match` and lich noticing is sub-perceptible.
+ *
+ * - We deliberately avoid `fs.watch`. Its cross-platform semantics are
+ *   inconsistent: macOS fires once per write coalescing, Linux fires per
+ *   chunk, Windows is its own world. Polling at 100ms is fast enough for
+ *   our use cases and predictable everywhere.
  */
+
+import { open, stat } from "node:fs/promises";
 
 /** Default poll cadence for the file `stat` loop. Matches `ready/log-match.ts`. */
 const DEFAULT_INTERVAL_MS = 100;
+
+/**
+ * Cap on the in-memory `buffer` accumulator. A pathological service that
+ * logs forever should not OOM lich; once we cross this cap, we drop the
+ * oldest half of the buffer. Real services emit well under this before
+ * becoming ready (typical: a few KB). 1 MiB is intentionally generous so
+ * normal usage never trips the cap — but bounded enough that a tight log
+ * loop can't run away.
+ *
+ * The cap applies ONLY to the retroactive `buffer` getter. Per-line
+ * emission is unaffected — every line is still delivered to subscribers,
+ * regardless of buffer state, because line delivery is a streaming
+ * concern and the buffer is a retrospective one.
+ */
+const BUFFER_MAX_BYTES = 1024 * 1024;
 
 /** Constructor options for `LogTail`. */
 export interface LogTailOptions {
@@ -90,8 +120,8 @@ export interface LogTailOptions {
    * user hits Ctrl-C, every LogTail teardown happens via this one signal
    * rather than N explicit `stop()` calls.
    *
-   * Wired in Task 3. The Task 1 skeleton accepts and stores the option but
-   * does not yet react to abort events.
+   * Wired in Task 3. Task 2 accepts and stores the option but does not yet
+   * react to abort events.
    */
   signal?: AbortSignal;
 }
@@ -124,19 +154,19 @@ export type Unsubscribe = () => void;
  *   4. Call `stop()` (or trip the constructor's `signal`) to tear down.
  *      Idempotent. Safe to call before `start()`.
  *
- * The skeleton (Task 1) implements the API shape; the poll loop (Task 2)
- * and AbortSignal wiring (Task 3) fill in the behavior.
+ * Skeleton (Task 1) + poll loop (Task 2). AbortSignal wiring lands in Task 3.
  */
 export class LogTail {
-  /** Stored verbatim from the constructor; read by the poll loop in Task 2. */
+  /** Stored verbatim from the constructor; read by the poll loop. */
   private readonly logPath: string;
   /** Effective poll interval (caller's override or {@link DEFAULT_INTERVAL_MS}). */
   private readonly intervalMs: number;
   /**
    * Optional external cancellation signal. Stored for the AbortSignal wiring
-   * Task 3 will add; the Task 1 skeleton accepts the option for API stability
-   * but does not yet attach an `abort` listener.
+   * Task 3 will add; Task 2 accepts the option for API stability but does
+   * not yet attach an `abort` listener.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private readonly signal: AbortSignal | undefined;
 
   /**
@@ -146,7 +176,7 @@ export class LogTail {
    * the `max listeners` machinery we don't need at our subscriber count.
    *
    * Mutated by `onLine()` and the unsubscribe closure it returns. Iterated
-   * by the poll loop in Task 2 on each new line.
+   * by the poll loop on each new line.
    */
   private readonly subscribers: Set<LogLineCallback> = new Set();
 
@@ -159,10 +189,49 @@ export class LogTail {
   /**
    * Lifecycle flag: has `stop()` been called (or the AbortSignal fired)?
    * Once true, the LogTail is dead — subsequent `start()` calls are no-ops
-   * and the poll loop (Task 2) must check this before scheduling its next
-   * tick.
+   * and the poll loop must check this before scheduling its next tick.
    */
   private stopped = false;
+
+  /**
+   * Byte offset of the next read. Advances by `bytesRead` each tick.
+   * Matches the offset-tracking approach in `ready/log-match.ts`.
+   */
+  private offset = 0;
+
+  /**
+   * Trailing partial-line buffer: bytes read on the previous tick that
+   * did not end with a newline. Held until the next tick can finish the
+   * line, ensuring subscribers only see complete lines.
+   */
+  private pending = "";
+
+  /**
+   * Accumulated content read since `start()` was called. Exposed via the
+   * `buffer` getter for retrospective regex matching (capture in Task 6).
+   *
+   * Capped at {@link BUFFER_MAX_BYTES} — once exceeded, the oldest half
+   * is dropped to bound memory. The cap is generous enough that normal
+   * usage never trips it but bounded enough that a tight log loop on a
+   * hung service won't OOM lich.
+   */
+  private bufferContent = "";
+
+  /**
+   * Handle for the active `setInterval` poll loop. `null` when the loop
+   * is not scheduled (before `start()` or after `stop()`). Stored so
+   * `stop()` can `clearInterval` it.
+   */
+  private timer: NodeJS.Timeout | null = null;
+
+  /**
+   * Guard against reentrant polls. A single poll may take longer than
+   * `intervalMs` (especially on slow filesystems or large reads). Without
+   * a guard, `setInterval` would fire the next tick while the previous is
+   * still running and we'd read overlapping byte ranges. The flag is set
+   * before each tick's I/O begins and cleared in `finally`.
+   */
+  private polling = false;
 
   constructor(opts: LogTailOptions) {
     this.logPath = opts.logPath;
@@ -178,10 +247,10 @@ export class LogTail {
    * on an already-started tail is a no-op and returns the same resolved
    * promise shape.
    *
-   * The read fd is opened lazily on the first poll that finds a non-empty
-   * file (Task 2), not in `start()` itself — this lets callers construct
-   * and `start()` a LogTail before the supervisor has spawned the service
-   * that will create the log file.
+   * The read fd is opened lazily on each poll tick that finds growth, not
+   * in `start()` itself — this lets callers construct and `start()` a
+   * LogTail before the supervisor has spawned the service that will create
+   * the log file.
    *
    * Calling `start()` after `stop()` is also a no-op. Once stopped, a
    * LogTail is permanently dead; consumers that want to "restart" tailing
@@ -192,8 +261,15 @@ export class LogTail {
     if (this.stopped) return;
     if (this.started) return;
     this.started = true;
-    // Poll-loop scheduling lands in Task 2. The skeleton just flips the
-    // flag so the idempotency contract is observable from tests.
+
+    // Schedule the poll loop. We don't `await` the first tick — `start()`
+    // returns immediately and the loop runs in the background. Each tick
+    // catches its own errors so a transient I/O failure doesn't kill the
+    // loop. The reentrancy guard (`polling`) prevents overlapping ticks
+    // when a slow read drags past `intervalMs`.
+    this.timer = setInterval(() => {
+      void this.poll();
+    }, this.intervalMs);
   }
 
   /**
@@ -203,17 +279,22 @@ export class LogTail {
    * `start()`, is safe and a no-op after the first call. Once stopped,
    * subscribers stop receiving lines even if the poll loop had a tick
    * in flight; the loop checks `this.stopped` before emitting.
-   *
-   * The Task 2 implementation will close the read fd and clear the
-   * internal `setInterval` timer here. The Task 1 skeleton just flips
-   * the flag.
    */
   // eslint-disable-next-line @typescript-eslint/require-await
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    // fd close + interval clear land in Task 2. The skeleton just flips
-    // the flag so idempotency and post-stop start() are observable.
+
+    // Clear the interval so no further ticks fire. The currently-in-flight
+    // tick (if any) checks `this.stopped` before emitting to subscribers,
+    // so even a tick that's already past its I/O won't deliver lines after
+    // stop. The interval handle is the only OS resource we own — file
+    // handles are opened-and-closed per tick, never held between ticks,
+    // so there's nothing else to release here.
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
   }
 
   /**
@@ -232,20 +313,15 @@ export class LogTail {
    *
    * Subscribers are invoked synchronously inside the poll loop, in
    * registration order. A throwing subscriber must NOT prevent later
-   * subscribers from being invoked — the Task 2 loop wraps each invocation
+   * subscribers from being invoked — the poll loop wraps each invocation
    * in a try/catch and swallows the error. (Logging the error usefully
    * requires an output channel we don't have here; consumers that need
    * to know about subscriber failures should wrap their own callback.)
-   *
-   * The Task 1 skeleton registers the callback but never invokes it (the
-   * poll loop lands in Task 2). The returned unsubscribe still works.
    */
   onLine(cb: LogLineCallback): Unsubscribe {
     this.subscribers.add(cb);
     // Closure over `cb` and `this.subscribers`. Repeated calls are safe
-    // because `Set.delete` is itself idempotent. We don't null out `cb`
-    // after delete because the closure is single-use from the consumer's
-    // perspective — leaks here are bounded by the subscriber's lifetime.
+    // because `Set.delete` is itself idempotent.
     return () => {
       this.subscribers.delete(cb);
     };
@@ -260,17 +336,203 @@ export class LogTail {
    * only care about new lines should ignore this getter and use
    * `onLine()` instead.
    *
-   * Task 2 will replace the empty-string body with a real accumulator
-   * that grows as the poll loop reads new bytes. To bound memory in
-   * pathological cases (a service that emits log lines in a tight loop
-   * forever) Task 2 will cap the buffer at ~1MB and drop the oldest
-   * half when it overflows.
-   *
-   * Returning "" from the skeleton is deliberate: it makes the API
-   * shape observable without committing the test suite to behavior the
-   * skeleton doesn't yet implement.
+   * Bounded by {@link BUFFER_MAX_BYTES}: once exceeded, the oldest half
+   * is dropped. This caps memory use in pathological cases (a service
+   * that logs forever) while leaving normal usage entirely unaffected.
+   * The cap applies only to this getter; per-line emission via `onLine`
+   * is unaffected — every line is delivered as it's read.
    */
   get buffer(): string {
-    return "";
+    return this.bufferContent;
+  }
+
+  /**
+   * One tick of the poll loop. Stat the file, if it grew read the new
+   * bytes, split into lines, deliver each complete line to every
+   * subscriber. Carries the trailing partial line across ticks via
+   * `this.pending`.
+   *
+   * Mirrors the polling shape from `ready/log-match.ts` lines 50-142.
+   * That code has been battle-tested through Plan 1; we keep the same
+   * structure so any future bug found in either place can be fixed in
+   * both with confidence.
+   *
+   * Errors during stat/read are silently swallowed (matches log-match.ts).
+   * ENOENT before the supervisor spawns the service is the common case;
+   * other transient I/O errors are also non-fatal and recoverable on the
+   * next tick.
+   */
+  private async poll(): Promise<void> {
+    // Stop-check up front: a tick may have been scheduled before stop()
+    // fired. Bail without I/O so we don't waste a stat() on a dead tail.
+    if (this.stopped) return;
+
+    // Reentrancy guard: setInterval can fire a new tick while the previous
+    // is still awaiting I/O. Skip overlapping ticks — the next interval
+    // will catch up. This is exactly the behavior we want for a polling
+    // loop where each tick is expected to be cheap.
+    if (this.polling) return;
+    this.polling = true;
+
+    try {
+      let size: number | null = null;
+      try {
+        const st = await stat(this.logPath);
+        size = st.size;
+      } catch {
+        // ENOENT is expected before the service starts writing. Any other
+        // error (permission denied, broken filesystem) is also non-fatal —
+        // we just keep polling. If the user genuinely misconfigured the
+        // path, ready_when.timeout (Task 5) will surface that as a
+        // ReadyTimeoutError eventually.
+      }
+
+      // Stop-check after I/O: if stop() fired while we were awaiting
+      // stat, abandon the tick before any emission.
+      if (this.stopped) return;
+
+      if (size === null) return;
+
+      if (size > this.offset) {
+        // File grew. Read the new bytes.
+        await this.readNewBytes(size);
+      }
+      // If size < this.offset, the file was truncated (rotation, manual
+      // deletion). We don't try to handle it: the supervisor doesn't
+      // rotate, and re-reading a rotated file would deliver lines twice.
+      // Conservative behavior: leave offset alone; if the file grows back
+      // past offset, we'll resume. Same policy as log-match.ts.
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  /**
+   * Read the bytes in [`this.offset`, `size`) from the log file, split
+   * them into lines, and emit each complete line to subscribers.
+   *
+   * Opens an O_RDONLY fd, reads, closes. We do not hold the fd between
+   * ticks because the supervisor writes through its own dup'd fd (via
+   * `stdio: ["ignore", logFd, logFd]`) and re-opening per tick guarantees
+   * we see the current file content even across unlink/rename (which the
+   * supervisor doesn't do, but it's a cheap correctness property).
+   */
+  private async readNewBytes(size: number): Promise<void> {
+    const length = size - this.offset;
+    const buf = Buffer.allocUnsafe(length);
+
+    let handle;
+    try {
+      handle = await open(this.logPath, "r");
+    } catch {
+      // File vanished between stat and open. Rare; ignore and try next tick.
+      return;
+    }
+
+    let bytesRead = 0;
+    try {
+      const r = await handle.read(buf, 0, length, this.offset);
+      bytesRead = r.bytesRead;
+    } catch {
+      // Transient read failure. Don't advance offset; next tick will retry.
+      return;
+    } finally {
+      try {
+        await handle.close();
+      } catch {
+        // Already closed or fd reclaimed — harmless.
+      }
+    }
+
+    if (bytesRead <= 0) return;
+    this.offset += bytesRead;
+
+    // Stop-check after I/O completes but before emitting: a stop() that
+    // fired mid-read MUST prevent the emission. The poll-loop spec says
+    // "stop() halts emission even if a poll is in flight" — this is the
+    // line that enforces it.
+    if (this.stopped) return;
+
+    const chunk = buf.slice(0, bytesRead).toString("utf8");
+
+    // Accumulate into the retrospective buffer first. The buffer reflects
+    // ALL bytes read, regardless of whether they form complete lines —
+    // capture (Task 6) runs its regex against the raw byte stream, not
+    // line-by-line, so partial lines at the end of the buffer are fine.
+    this.appendToBuffer(chunk);
+
+    // Now line-split for subscriber emission. Carry the partial trailing
+    // line via this.pending so subscribers only see complete lines.
+    this.pending += chunk;
+
+    const lastNewline = this.pending.lastIndexOf("\n");
+    if (lastNewline < 0) {
+      // No complete line in this chunk — keep pending and wait for the
+      // next tick to finish it.
+      return;
+    }
+
+    const complete = this.pending.slice(0, lastNewline);
+    this.pending = this.pending.slice(lastNewline + 1);
+
+    // Split on `\r?\n` so CRLF logs don't leak a stray `\r` into the line
+    // content. Same regex as log-match.ts.
+    const lines = complete.split(/\r?\n/);
+    for (const line of lines) {
+      // Stop-check inside the line loop: a long burst of lines should
+      // abort cleanly if stop() fires mid-iteration. Subscribers that
+      // already got their line before stop are NOT taken back, but new
+      // emissions cease immediately.
+      if (this.stopped) return;
+      this.emitLine(line);
+    }
+  }
+
+  /**
+   * Deliver one line to every registered subscriber.
+   *
+   * Subscribers are invoked synchronously, in registration order. A
+   * subscriber that throws does NOT prevent later subscribers from
+   * receiving the line — we wrap each invocation in try/catch and swallow
+   * the error. There's no useful place to log it from here: the LogTail
+   * has no output channel of its own, and the caller registered the
+   * callback so the caller's responsibility is to handle its own errors.
+   *
+   * We snapshot `Array.from(subscribers)` before iterating so that a
+   * subscriber unsubscribing during emission (e.g. fail_when fires and
+   * removes itself) doesn't perturb the loop. ES `Set` iteration is
+   * "live" — modifying the set during iteration would otherwise skip or
+   * double-visit entries depending on the modification.
+   */
+  private emitLine(line: string): void {
+    const snapshot = Array.from(this.subscribers);
+    for (const cb of snapshot) {
+      try {
+        cb(line);
+      } catch {
+        // Subscriber threw; ignore and continue.
+      }
+    }
+  }
+
+  /**
+   * Append `chunk` to the retrospective `bufferContent`. If the result
+   * exceeds {@link BUFFER_MAX_BYTES}, drop the oldest half so memory
+   * stays bounded. We measure in JavaScript string length (UTF-16 code
+   * units) rather than UTF-8 byte count — close enough at this scale,
+   * and avoids the cost of re-encoding for the size check.
+   */
+  private appendToBuffer(chunk: string): void {
+    this.bufferContent += chunk;
+    if (this.bufferContent.length > BUFFER_MAX_BYTES) {
+      // Drop the oldest half. Slicing at `length / 2` rather than
+      // `length - BUFFER_MAX_BYTES` is a deliberate choice: we want to
+      // amortize the cost of trimming across many writes, so we trim in
+      // big chunks rather than every poll once over the limit. This
+      // keeps the average buffer size around ~0.5x to ~1x of the cap.
+      this.bufferContent = this.bufferContent.slice(
+        Math.floor(this.bufferContent.length / 2),
+      );
+    }
   }
 }
