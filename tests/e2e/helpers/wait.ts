@@ -18,12 +18,6 @@ const DEFAULT_INTERVAL = 250;
  * take as long as it needs; the outer deadline catches actually-dead
  * servers.
  *
- * `localhost` is rewritten to `127.0.0.1` before fetching. Docker for Mac's
- * userspace network proxy can hijack IPv6 localhost routing once 25+
- * containers are running — TCP accepts succeed but HTTP responses are
- * dropped. macOS resolves `localhost` to `::1` first, dropping any
- * unmodified probe straight into this hole. Forcing IPv4 bypasses it.
- * Empirically verified against the dogfood-stack parallel-stack scenario.
  */
 export async function waitForHttp200(
   url: string,
@@ -33,14 +27,10 @@ export async function waitForHttp200(
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL;
   const deadline = Date.now() + timeout;
   const outerSignal = AbortSignal.timeout(timeout);
-  const effectiveUrl = url.replace(
-    /^(https?:\/\/)localhost(:|\/|$)/,
-    "$1127.0.0.1$2",
-  );
 
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(effectiveUrl, { signal: outerSignal });
+      const res = await fetch(url, { signal: outerSignal });
       if (res.status >= 200 && res.status < 300) return;
     } catch {
       // ignore; will retry until outer deadline

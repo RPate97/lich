@@ -48,6 +48,7 @@ import {
 } from "../state/snapshot.js";
 import { stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
+import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
   down as composeDown,
   _exec as composeExec,
@@ -482,27 +483,34 @@ async function stopOwnedService(
   if (typeof pid !== "number") return { warnings };
   if (!isAlive(pid)) return { warnings };
 
+  // SIGTERM the leader's process group. The supervisor spawns owned
+  // services with detached:true, so pid == pgid and every grandchild
+  // shares the group — `kill(-pid, SIGTERM)` delivers atomically to
+  // the whole tree (`bun run dev` → `bun --hot src` for the api,
+  // `bun run dev` → `node next dev` → `next-server` for the web).
   try {
-    process.kill(pid, "SIGTERM");
+    signalGroup(pid, "SIGTERM");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") return { warnings };
     throw err;
   }
 
-  // Poll for graceful exit. Most processes exit within a few hundred ms.
-  // If the caller's cancellation signal fires mid-grace, break out and
-  // jump straight to SIGKILL.
+  // Poll for graceful exit of the whole group. Most processes exit within
+  // a few hundred ms. If the caller's cancellation signal fires mid-grace,
+  // break out and jump straight to SIGKILL.
   const startMs = Date.now();
   while (Date.now() - startMs < SIGTERM_GRACE_MS) {
-    if (!isAlive(pid)) return { warnings };
+    if (!isAlive(pid) && survivors(pid).length === 0) {
+      return { warnings };
+    }
     if (signal?.aborted) break;
     await sleep(POLL_INTERVAL_MS);
   }
 
   // Still alive after the grace window (or cancellation cut us short).
-  // Escalate.
+  // Escalate to SIGKILL across the group.
   try {
-    process.kill(pid, "SIGKILL");
+    signalGroup(pid, "SIGKILL");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") return { warnings };
     throw err;
@@ -512,16 +520,20 @@ async function stopOwnedService(
   // to confirm so the caller doesn't race.
   const killStartMs = Date.now();
   while (Date.now() - killStartMs < 1_000) {
-    if (!isAlive(pid)) return { warnings };
+    if (!isAlive(pid) && survivors(pid).length === 0) {
+      return { warnings };
+    }
     await sleep(POLL_INTERVAL_MS);
   }
-  // LEV-312: if it's STILL alive after the SIGKILL grace, surface a
-  // warning. Pathological — pid in D-state, zombie, or container/pid
-  // mismatch — but the user's "lich said it killed it" contract
-  // requires us to say so rather than silently pretend success.
-  if (isAlive(pid)) {
+  // LEV-312: if anything in the group is STILL alive after SIGKILL +
+  // grace, surface a warning. Pathological — pid in D-state, zombie,
+  // or container/pid mismatch — but the user's "lich said it killed
+  // it" contract requires us to say so rather than silently pretend
+  // success.
+  const lingering = survivors(pid);
+  if (lingering.length > 0) {
     warnings.push(
-      `pid ${pid} still alive after SIGKILL + 1s grace; service "${name}" may still be running`,
+      `pid(s) ${lingering.join(", ")} still alive after SIGKILL + 1s grace; service "${name}" may still be running`,
     );
   }
   return { warnings };

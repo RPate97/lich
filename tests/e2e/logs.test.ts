@@ -176,43 +176,6 @@ describe("lich logs filtering", () => {
     /* timeout */ 180_000,
   );
 
-  afterAll(async () => {
-    // Always run nuke against THIS test's LICH_HOME, so we tear down only
-    // what this test created — never the user's other stacks. `nuke --yes`
-    // is idempotent and best-effort; ignore its exit code.
-    if (lichHome) {
-      try {
-        spawnSync(LICH_BINARY, ["nuke", "--yes"], {
-          cwd: projectPath ?? process.cwd(),
-          env: { ...process.env, LICH_HOME: lichHome },
-          timeout: 90_000,
-          encoding: "utf8",
-        });
-      } catch {
-        /* best-effort */
-      }
-    }
-
-    if (projectCleanup) {
-      try {
-        projectCleanup();
-      } catch {
-        /* best-effort */
-      }
-    }
-    if (lichHome && existsSync(lichHome)) {
-      try {
-        rmSync(lichHome, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    }
-
-    projectPath = null;
-    projectCleanup = null;
-    lichHome = null;
-    apiPort = null;
-  });
 
   // -------------------------------------------------------------------------
   // The tests themselves
@@ -345,5 +308,54 @@ describe("lich logs filtering", () => {
       // what they could have typed. The dogfood-stack has api, web, supabase.
       expect(combined).toMatch(/api|web|supabase/);
     },
+  );
+
+  // Teardown lives in a regular `it` rather than `afterAll` because Bun's
+  // `afterAll` doesn't accept a per-hook timeout — its built-in 5s default
+  // is too tight for the nuke-against-the-dogfood-stack path (`supabase
+  // stop` shells out to docker, ~10-15s, plus killTree's per-service
+  // SIGTERM-grace-SIGKILL-verify cycles). Tests run in declaration order,
+  // so putting this last gives it the same lifecycle position as afterAll
+  // with a real timeout we can set.
+  it(
+    "(teardown) nuke + remove tmpdirs",
+    async () => {
+      // Always run nuke against THIS test's LICH_HOME, so we tear down only
+      // what this test created — never the user's other stacks. `nuke --yes`
+      // is idempotent and best-effort; ignore its exit code.
+      if (lichHome) {
+        try {
+          spawnSync(LICH_BINARY, ["nuke", "--yes"], {
+            cwd: projectPath ?? process.cwd(),
+            env: { ...process.env, LICH_HOME: lichHome },
+            timeout: 90_000,
+            encoding: "utf8",
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      if (projectCleanup) {
+        try {
+          projectCleanup();
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (lichHome && existsSync(lichHome)) {
+        try {
+          rmSync(lichHome, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      projectPath = null;
+      projectCleanup = null;
+      lichHome = null;
+      apiPort = null;
+    },
+    /* timeout */ 120_000,
   );
 });

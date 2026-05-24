@@ -54,20 +54,13 @@ owned:
 
 env:
   # Supabase wiring (used by the API to talk to Supabase)
-  # 127.0.0.1 instead of localhost: macOS resolves localhost to ::1 first,
-  # and Docker for Mac's userspace network proxy can hijack IPv6 localhost
-  # routing once many containers are running — TCP connects via ::1 succeed
-  # but HTTP responses get dropped. Forcing IPv4 bypasses the issue.
-  # Affects any process making fetch() calls to localhost — particularly
-  # Next.js server components and api → supabase calls.
-  NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:${owned.supabase.ports.api}"
+  NEXT_PUBLIC_SUPABASE_URL: "http://localhost:${owned.supabase.ports.api}"
   # Local anon key — Supabase generates a deterministic one per project_id, so
   # pasting once from Task 9 step 4 is fine for dev.
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
 
   # API wiring (used by the web app to call the API)
-  # 127.0.0.1 — same reason as NEXT_PUBLIC_SUPABASE_URL above.
-  API_URL: "http://127.0.0.1:${owned.api.port}"
+  API_URL: "http://localhost:${owned.api.port}"
 
   # Postgres connection (for migrate/seed via psql)
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"

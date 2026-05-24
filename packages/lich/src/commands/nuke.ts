@@ -48,6 +48,7 @@ import { parseConfig } from "../config/parse.js";
 import type { LichConfig } from "../config/types.js";
 import { resolveEnvForService } from "../env/resolve.js";
 import { release } from "../ports/allocator.js";
+import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
   listStacks,
   removeStackDir,
@@ -544,28 +545,27 @@ async function killOwned(svc: ServiceSnapshot): Promise<string | null> {
 
   if (!isAlive(pid)) return null; // already gone — nothing to do
 
-  // SIGTERM gives the process a chance to clean up.
+  // SIGTERM the leader's process group. With detached:true at spawn,
+  // pid == pgid and every grandchild inherits the group, so this one
+  // syscall reaches the whole tree (`bun run dev` → `bun --hot src`,
+  // `bun run dev` → next-server, etc).
   try {
-    process.kill(pid, "SIGTERM");
+    signalGroup(pid, "SIGTERM");
   } catch (err) {
-    // ESRCH = process died between our isAlive check and the kill.
-    // Anything else (EPERM) is a genuine warning.
     if ((err as NodeJS.ErrnoException).code === "ESRCH") return null;
     throw err;
   }
 
-  // Poll for exit. 2s total, polling every 50ms (~40 polls). Cheaper
-  // than setTimeout-then-blindly-SIGKILL because most processes exit
-  // within a few hundred ms of SIGTERM.
+  // Poll for the group to drain. 2s total, polling every 50ms.
   const startMs = Date.now();
   while (Date.now() - startMs < 2_000) {
-    if (!isAlive(pid)) return null;
+    if (!isAlive(pid) && survivors(pid).length === 0) return null;
     await sleep(50);
   }
 
-  // Still alive after the grace window. Escalate.
+  // Still alive after the grace window. Escalate across the group.
   try {
-    process.kill(pid, "SIGKILL");
+    signalGroup(pid, "SIGKILL");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") return null;
     throw err;
@@ -574,14 +574,15 @@ async function killOwned(svc: ServiceSnapshot): Promise<string | null> {
   // SIGKILL is uncatchable; the kernel will reap shortly. One brief
   // poll is enough to confirm so callers don't race.
   for (let i = 0; i < 20; i++) {
-    if (!isAlive(pid)) return null;
+    if (!isAlive(pid) && survivors(pid).length === 0) return null;
     await sleep(50);
   }
   // LEV-312: still alive after SIGKILL + 1s grace. Pathological (D-state,
   // zombie, container/pid mismatch) but the user's "lich said it killed
   // the thing" contract requires us to say so rather than silently
   // claim success.
-  return `pid ${pid} still alive after SIGKILL + 1s grace; service "${svc.name}" may still be running`;
+  const lingering = survivors(pid);
+  return `pid(s) ${lingering.join(", ")} still alive after SIGKILL + 1s grace; service "${svc.name}" may still be running`;
 }
 
 /** Liveness probe via signal 0. */
@@ -925,9 +926,10 @@ async function rescuePid(
     return { kind: "pid", label, status: "ok", detail: "already dead" };
   }
 
-  // SIGTERM first.
+  // SIGTERM the leader's process group. Owned services are spawned with
+  // detached:true (pid == pgid), so this reaches the whole tree atomically.
   try {
-    process.kill(entry.pid, "SIGTERM");
+    signalGroup(entry.pid, "SIGTERM");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") {
       return { kind: "pid", label, status: "ok", detail: "already dead" };
@@ -940,18 +942,18 @@ async function rescuePid(
     };
   }
 
-  // Wait up to grace for graceful exit.
+  // Wait up to grace for the group to drain.
   const startMs = Date.now();
   while (Date.now() - startMs < RESCUE_SIGTERM_GRACE_MS) {
-    if (!isAlive(entry.pid)) {
+    if (!isAlive(entry.pid) && survivors(entry.pid).length === 0) {
       return { kind: "pid", label, status: "ok", detail: "SIGTERM" };
     }
     await sleep(50);
   }
 
-  // Escalate.
+  // Escalate across the group.
   try {
-    process.kill(entry.pid, "SIGKILL");
+    signalGroup(entry.pid, "SIGKILL");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") {
       return {
@@ -971,16 +973,17 @@ async function rescuePid(
 
   // Brief verify so we don't report success on a still-alive pid.
   for (let i = 0; i < 20; i++) {
-    if (!isAlive(entry.pid)) {
+    if (!isAlive(entry.pid) && survivors(entry.pid).length === 0) {
       return { kind: "pid", label, status: "ok", detail: "SIGKILL" };
     }
     await sleep(50);
   }
+  const lingering = survivors(entry.pid);
   return {
     kind: "pid",
     label,
     status: "warn",
-    detail: "still alive after SIGKILL — manual cleanup needed",
+    detail: `pid(s) ${lingering.join(", ")} still alive after SIGKILL — manual cleanup needed`,
   };
 }
 

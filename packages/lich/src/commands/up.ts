@@ -735,6 +735,20 @@ async function startOwned(
   const handle = await startOwnedService(spec);
   state.ownedHandles.set(name, handle);
 
+  // Record the spawned pid into the service snapshot so `lich down` can find
+  // it. Without this, the snapshot ends up with no pid for the service,
+  // `down.ts`'s `stopOwnedService` sees `pid === undefined` and short-
+  // circuits without signaling anything — services leak past teardown.
+  // (`appendStarted` already writes the pid to started.log for rescue
+  // teardown, but the snapshot is the canonical path for normal `lich
+  // down`.) The pid is captured BEFORE the early-exit check so that if the
+  // child died in the first 100ms, the snapshot still has the pid for
+  // whatever rescue path might want it.
+  const snap = state.services.get(name);
+  if (snap && typeof handle.pid === "number" && Number.isFinite(handle.pid)) {
+    snap.pid = handle.pid;
+  }
+
   // If the process exited within the first few ms (e.g. `cmd: exit 1`),
   // surface that as a startup failure rather than waiting on `ready_when`
   // (which would never resolve). Race the exited promise against a short
@@ -908,20 +922,11 @@ async function waitReady(
  * Build the HTTP URL for a ready probe.
  *
  * Plan 1 supports two shapes (per spec section 4 examples + dogfood-stack):
- *   - A relative path like `/health`: prefixed with `http://127.0.0.1:<port>`
+ *   - A relative path like `/health`: prefixed with `http://localhost:<port>`
  *     where <port> is the service's primary allocated port.
  *   - An absolute URL: used verbatim. (Plan 1's interpolation pipeline does
  *     NOT touch ready_when fields — they're consumed raw from the parsed
  *     config — so an absolute URL must already be a literal address.)
- *
- * Why 127.0.0.1 instead of localhost: Docker for Mac's userspace network
- * proxy can hijack IPv6 localhost routing once 25+ containers are running
- * (TCP accepts succeed but HTTP responses get dropped). macOS resolves
- * `localhost` to `::1` first, putting any probe via `localhost` straight
- * into this hole. Using 127.0.0.1 bypasses it entirely. Verified
- * empirically against the dogfood-stack parallel-stack scenario: 26
- * supabase containers running, IPv4 probes return in <50ms, IPv6 probes
- * time out without a single byte received.
  */
 function buildHttpUrl(
   pathOrUrl: string,
@@ -943,7 +948,7 @@ function buildHttpUrl(
     );
   }
   const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
-  return `http://127.0.0.1:${port}${path}`;
+  return `http://localhost:${port}${path}`;
 }
 
 // ---------------------------------------------------------------------------
