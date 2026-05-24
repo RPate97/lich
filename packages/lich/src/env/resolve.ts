@@ -29,11 +29,16 @@
  * After merging, every value goes through {@link interpolateRecord} once
  * against an {@link InterpolationContext} built from the worktree info
  * and the allocated-ports map. This is the single point where `${...}`
- * references in env values are resolved (Plan 3 Task 7 will verify that
- * eager interpolation is correctly lazy-per-key for env values: a key whose
- * value is overridden by a later layer never sees the earlier layer's
+ * references in env values are resolved. Plan 3 Task 7 (LEV-381) verified
+ * that eager interpolation IS correctly lazy-per-key for env values: a key
+ * whose value is overridden by a later layer never sees the earlier layer's
  * interpolation, because the earlier layer's string was already replaced
- * before interpolation ran).
+ * by `Object.assign` (in {@link layerBundle}) before {@link interpolateRecord}
+ * ran. Concretely: a top-level `DATABASE_URL` that references
+ * `${owned.supabase.ports.db}` is safe when a profile layer overrides
+ * `DATABASE_URL` with a literal string — the unresolved reference never
+ * reaches the interpolation engine. See the `lazy-per-key` test block in
+ * `tests/unit/env/resolve.test.ts` for the pinned semantics.
  *
  * Profiles (precedence steps 6-8 above) layer between top-level and
  * per-service. When `input.profile` is undefined, the profile layer is

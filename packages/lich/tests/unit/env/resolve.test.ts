@@ -681,3 +681,215 @@ describe("resolveTopLevelEnv — profile layer", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan-3 Task 7 (LEV-381): lazy-per-key interpolation semantics
+//
+// The "lazy per-key" requirement from the spec turns out to be naturally
+// satisfied by the existing eager interpolation pass: `layerBundle`'s
+// `Object.assign` overwrites earlier layers' values key-by-key BEFORE
+// `interpolateRecord` runs, so a value that has been replaced never reaches
+// the interpolation engine. These tests pin that semantics so a future
+// refactor (e.g. moving interpolation earlier in the pipeline) can't
+// silently regress the contract — interpolation of a "lost" value would
+// surface immediately as a test failure.
+// ---------------------------------------------------------------------------
+
+describe("resolveEnvForService — lazy-per-key interpolation", () => {
+  it("does NOT interpolate a top-level value that a profile layer overrides", async () => {
+    // Top-level value references owned.supabase, which is absent from the
+    // allocated-ports map. Eager interpolation of the top-level value would
+    // throw — but the profile layer replaces DATABASE_URL with a literal
+    // string before interpolation runs, so the failing reference is gone
+    // from the merged map.
+    const env = await resolveEnvForService(
+      baseInput({
+        config: {
+          version: "1",
+          env: {
+            DATABASE_URL:
+              "postgresql://localhost:${owned.supabase.ports.db}/x",
+          },
+        },
+        profile: makeProfile({
+          env: { DATABASE_URL: "postgresql://hosted.example.com:5432/x" },
+        }),
+        // No owned.supabase in the ports map.
+        allocatedPorts: { compose: {}, owned: {} },
+      }),
+    );
+    expect(env.DATABASE_URL).toBe(
+      "postgresql://hosted.example.com:5432/x",
+    );
+  });
+
+  it("DOES interpolate (and throws) the same top-level value when nothing overrides it", async () => {
+    // The symmetric case: drop the profile override and the top-level
+    // value DOES survive to interpolation, which then surfaces the
+    // unresolved reference. Confirms the override case isn't just a
+    // suppression bug — when the value reaches the engine, the engine
+    // still raises.
+    await expect(
+      resolveEnvForService(
+        baseInput({
+          config: {
+            version: "1",
+            env: {
+              DATABASE_URL:
+                "postgresql://localhost:${owned.supabase.ports.db}/x",
+            },
+          },
+          allocatedPorts: { compose: {}, owned: {} },
+        }),
+      ),
+    ).rejects.toThrow(
+      /supabase|no owned service named "supabase"|owned.*supabase.*ports/i,
+    );
+  });
+
+  it("per-service env override prevents interpolation of overridden top-level value", async () => {
+    // Same shape as the profile case, but using the per-service layer
+    // instead of the profile layer. Confirms the "lost value isn't
+    // interpolated" property is a function of the layering itself,
+    // not of any particular layer.
+    const env = await resolveEnvForService(
+      baseInput({
+        config: {
+          version: "1",
+          env: {
+            DATABASE_URL:
+              "postgresql://localhost:${owned.supabase.ports.db}/x",
+          },
+          owned: {
+            api: {
+              cmd: "echo",
+              env: { DATABASE_URL: "postgresql://override.example.com/x" },
+            },
+          },
+        },
+        allocatedPorts: { compose: {}, owned: {} },
+      }),
+    );
+    expect(env.DATABASE_URL).toBe("postgresql://override.example.com/x");
+  });
+
+  it("profile-layer override of an env_files value also short-circuits interpolation", async () => {
+    // An env_files file declares a value with a `${owned.X.port}` reference
+    // to an absent service; the profile literal layer overrides it. The
+    // file value is loaded but never reaches the interpolation engine.
+    write(
+      ".env",
+      "DATABASE_URL=postgres://localhost:${owned.supabase.ports.db}/x\n",
+    );
+    const env = await resolveEnvForService(
+      baseInput({
+        config: { version: "1", env_files: [".env"] },
+        profile: makeProfile({
+          env: { DATABASE_URL: "postgresql://hosted.example.com:5432/x" },
+        }),
+        allocatedPorts: { compose: {}, owned: {} },
+      }),
+    );
+    expect(env.DATABASE_URL).toBe(
+      "postgresql://hosted.example.com:5432/x",
+    );
+  });
+
+  it("a profile-layer reference to a service IN the profile is resolved normally", async () => {
+    // Positive case to balance the suppression tests: when the profile's
+    // overriding value itself contains a `${...}` reference to a service
+    // present in the runtime context, interpolation runs against the
+    // surviving value as expected.
+    const env = await resolveEnvForService(
+      baseInput({
+        config: {
+          version: "1",
+          env: { DATABASE_URL: "should-be-overridden" },
+        },
+        profile: makeProfile({
+          env: {
+            DATABASE_URL: "postgres://localhost:${owned.api.port}/x",
+          },
+        }),
+        allocatedPorts: {
+          compose: {},
+          owned: { api: { port: 12345 } },
+        },
+      }),
+    );
+    expect(env.DATABASE_URL).toBe("postgres://localhost:12345/x");
+  });
+
+  it("a value with multiple ${...} refs throws when ANY of them is unresolvable", async () => {
+    // The surviving merged value contains two references; one resolves,
+    // the other doesn't. Interpolation runs the whole string and throws
+    // on the unresolved ref. Lazy-per-key doesn't help here because the
+    // value WAS preserved into the final map — laziness skips overridden
+    // values, not partial-failure values. Documenting this edge so the
+    // contract is unambiguous.
+    await expect(
+      resolveEnvForService(
+        baseInput({
+          config: {
+            version: "1",
+            env: {
+              MIXED:
+                "api=${owned.api.port};missing=${owned.supabase.ports.db}",
+            },
+          },
+          allocatedPorts: {
+            compose: {},
+            owned: { api: { port: 7000 } },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/supabase|owned.*supabase.*ports/i);
+  });
+});
+
+describe("resolveTopLevelEnv — lazy-per-key interpolation", () => {
+  it("does NOT interpolate a top-level value that a profile layer overrides", async () => {
+    // Mirror of the per-service test for resolveTopLevelEnv — lifecycle
+    // hooks and `lich exec` consume this path, so the property must hold
+    // for them too.
+    const env = await resolveTopLevelEnv({
+      config: {
+        version: "1",
+        env: {
+          DATABASE_URL:
+            "postgresql://localhost:${owned.supabase.ports.db}/x",
+        },
+      },
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+      profile: makeProfile({
+        env: { DATABASE_URL: "postgresql://hosted.example.com:5432/x" },
+      }),
+    });
+    expect(env.DATABASE_URL).toBe(
+      "postgresql://hosted.example.com:5432/x",
+    );
+  });
+
+  it("DOES interpolate (and throws) the top-level value when no profile override exists", async () => {
+    await expect(
+      resolveTopLevelEnv({
+        config: {
+          version: "1",
+          env: {
+            DATABASE_URL:
+              "postgresql://localhost:${owned.supabase.ports.db}/x",
+          },
+        },
+        worktree,
+        allocatedPorts: { compose: {}, owned: {} },
+        processEnv: {},
+        projectRoot: tmp,
+      }),
+    ).rejects.toThrow(
+      /supabase|no owned service named "supabase"|owned.*supabase.*ports/i,
+    );
+  });
+});
