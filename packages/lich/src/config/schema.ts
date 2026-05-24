@@ -125,18 +125,24 @@ const perServiceLifecycleSchema = {
  *
  * Per the task scope "logical-name → optional fixed host port" we also
  * allow an integer shortcut for pinning a specific host port.
+ *
+ * `container` is meaningful for compose services (where lich emits a
+ * `<hostPort>:<containerPort>` binding in the compose override). It's
+ * accepted on the object form for both compose and owned ports — owned
+ * services just ignore it.
  */
 const portDescriptorSchema = {
   oneOf: [
     // Pinned host port (e.g. `db: 5432`).
     { type: "integer", minimum: 1, maximum: 65535 },
-    // Object form — at minimum one of { env, host_port } should be present
-    // but we don't force it; future plans may add more keys.
+    // Object form — at minimum one of { env, host_port, container } should
+    // be present but we don't force it; future plans may add more keys.
     {
       type: "object",
       properties: {
         env: { type: "string" },
         host_port: { type: "integer", minimum: 1, maximum: 65535 },
+        container: { type: "integer", minimum: 1, maximum: 65535 },
       },
       additionalProperties: false,
     },
@@ -269,7 +275,8 @@ const runtimeSchema = {
   type: "object",
   properties: {
     compose_cli: { type: "string", enum: ["auto", "docker", "podman", "nerdctl"] },
-    // Alias used in the spec example — same semantics.
+    // Deprecated alias for `compose_cli` — kept for back-compat with
+    // earlier design-spec drafts that wrote it as `runtime.compose`.
     compose: { type: "string", enum: ["auto", "docker", "podman", "nerdctl"] },
     proxy_port: { type: "integer", minimum: 1, maximum: 65535 },
     port_range: {

@@ -80,13 +80,20 @@ export interface PerServiceLifecycle {
 
 /**
  * Logical port descriptor. Either a pinned host port integer or an object
- * with `env` and/or `host_port`.
+ * with `env`, `host_port`, and/or `container`.
+ *
+ * `container` is only meaningful for compose services (where lich emits a
+ * `<hostPort>:<containerPort>` binding in the compose override). Owned
+ * services don't expose a container port — only `env` / `host_port` apply
+ * there. The field is permitted on the union for shape symmetry; the
+ * override generator and validate command read it where it makes sense.
  */
 export type PortDescriptor =
   | number
   | {
       env?: string;
       host_port?: number;
+      container?: number;
     };
 
 // ---------------------------------------------------------------------------
@@ -166,8 +173,18 @@ export interface OwnedService {
 // ---------------------------------------------------------------------------
 
 export interface Runtime {
+  /**
+   * Which compose CLI to shell out to. `auto` (default) probes for
+   * `docker compose`, then `podman compose`, then `nerdctl compose`
+   * in that order. See `src/compose/detect.ts`.
+   *
+   * The canonical name is `compose_cli`. The `compose` alias is
+   * preserved (with identical semantics) for back-compat with earlier
+   * design-spec drafts that wrote it as `runtime.compose`; new configs
+   * should use `compose_cli`.
+   */
   compose_cli?: "auto" | "docker" | "podman" | "nerdctl";
-  /** Alias for compose_cli used in the spec example — same semantics. */
+  /** Deprecated alias for `compose_cli` — same semantics. */
   compose?: "auto" | "docker" | "podman" | "nerdctl";
   proxy_port?: number;
   port_range?: [number, number];

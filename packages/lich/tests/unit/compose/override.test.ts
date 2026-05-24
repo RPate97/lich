@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
-import type { LichConfig } from "../../../src/config/types.js";
+import type { LichConfig, PortDescriptor } from "../../../src/config/types.js";
 import {
   generateComposeOverride,
   writeComposeOverride,
@@ -211,6 +211,52 @@ describe("generateComposeOverride", () => {
     };
     const parsed = yamlParse(generateComposeOverride(input));
     expect(parsed.services.api.ports).toEqual(["5000:3000"]);
+  });
+
+  it("accepts a strongly-typed PortDescriptor with `container` (LEV-305 regression)", () => {
+    // Before LEV-305, `container` was read structurally via an `unknown`
+    // cast inside the override generator because `PortDescriptor` didn't
+    // include the field. After LEV-305, the object form of
+    // `PortDescriptor` carries `container?: number` as a typed field and
+    // the generator consumes it directly. This test pins both halves:
+    //  - the type accepts `container` (compile-time)
+    //  - the generator still emits the right binding (runtime)
+    const httpPort: PortDescriptor = { container: 3000, env: "PORT" };
+    const input: OverrideInput = {
+      config: makeConfig({
+        api: {
+          image: "node:20",
+          ports: { http: httpPort },
+        },
+      }),
+      allocatedPorts: { compose: { api: { http: 4242 } } },
+      resolvedEnv: { api: {} },
+      stackId: "stack-typed-port",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.api.ports).toEqual(["4242:3000"]);
+  });
+
+  it("skips a typed PortDescriptor with no `container` field", () => {
+    // An object-form descriptor without `container` (e.g. an owned-style
+    // `{ env }`) gives the override generator nothing to bind. Use case:
+    // a port descriptor authored before its container side was decided.
+    const noContainer: PortDescriptor = { env: "PORT" };
+    const input: OverrideInput = {
+      config: makeConfig({
+        api: {
+          image: "node:20",
+          ports: { http: noContainer },
+        },
+      }),
+      allocatedPorts: { compose: { api: { http: 4242 } } },
+      resolvedEnv: { api: { FOO: "bar" } },
+      stackId: "stack-typed-port-no-container",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    // No ports to bind — the env block is still emitted.
+    expect(parsed.services.api.ports).toBeUndefined();
+    expect(parsed.services.api.environment).toEqual({ FOO: "bar" });
   });
 
   it("produces deterministic output regardless of key insertion order", () => {

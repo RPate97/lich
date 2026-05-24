@@ -110,8 +110,10 @@ The daemon auto-starts on the first `lich up` and auto-stops when the last stack
 
 ```yaml
 # lich.yaml
+version: "1"
+
 runtime:
-  compose: auto   # auto | docker | podman | nerdctl
+  compose_cli: auto   # auto | docker | podman | nerdctl
   proxy_port: 3300
 
 services:
@@ -264,11 +266,22 @@ commands:
 
 ### Section-by-section reference
 
+#### `version`
+
+**Required top-level string field.** Identifies which lich.yaml schema version this file targets.
+
+- Accepted values for v1: `"1"`. Quote it so YAML parses it as a string, not a number (`version: 1` would type-coerce to an integer and is rejected by the schema).
+- `lich validate` (and every command that loads `lich.yaml`) refuses to load a file that omits this field, or whose value isn't one of the accepted strings.
+
+**Versioning policy.** The v1 schema is frozen once it ships: additive fields may appear in `v1.x` releases (new optional keys), but existing field semantics will not change under `version: "1"`. Breaking changes (renamed fields, removed sections, changed default behavior) ship under `version: "2"` and trigger an explicit migration path. Lich will support reading both `"1"` and `"2"` configs during any deprecation window so users can migrate at their own pace.
+
+When in doubt, look at `docs/superpowers/specs/2026-05-23-lich-v1-design.md` (this document) for the v1 schema and `packages/lich/src/config/schema.ts` for the JSON Schema lich validates against.
+
 #### `runtime`
 
 Optional. Configures the lich runtime itself.
 
-- `compose`: which compose CLI to shell out to. `auto` (default) detects `docker compose`, `podman compose`, then `nerdctl compose` in order.
+- `compose_cli`: which compose CLI to shell out to. `auto` (default) detects `docker compose`, `podman compose`, then `nerdctl compose` in order. (Earlier drafts of this spec called the field `runtime.compose`; that name is accepted as a back-compat alias but new configs should use `compose_cli`.)
 - `proxy_port`: TCP port for the friendly-URL reverse proxy. Default `3300`. The proxy is a single per-machine process (part of the daemon).
 
 #### `services` (compose-spec containers)
@@ -343,8 +356,8 @@ Environment variables available to owned services and (filtered) injected into c
 
 - Values are strings or YAML-typed primitives (numbers/booleans coerced to strings before injection)
 - **Interpolation:** `${...}` resolves at runtime against a known context:
-  - `${services.<name>.host_port}` — allocated host port for a compose service's primary port (or `${services.<name>.host_port:<container_port>}` for non-primary ports)
-  - `${owned.<name>.port}` or `${owned.<name>.ports.<name>}` — owned service ports
+  - `${services.<name>.host_port}` — allocated host port for the compose service's **first declared port** (insertion order of the service's `ports:` block). For services with a single port this is unambiguous; for services with multiple ports this is the lich-shorthand for "the primary one". For explicit selection when a service has multiple ports, use `${services.<name>.ports.<key>}` with the logical port name (`ports: { http: { container: 3000, env: PORT }, admin: { container: 3001 } }` → `${services.web.ports.admin}`).
+  - `${owned.<name>.port}` (single-port owned service) or `${owned.<name>.ports.<key>}` (multi-port owned service) — owned service host ports
   - `${owned.<name>.captured.<key>}` — values captured from log streams
   - `${worktree.name}` — the worktree name (derived from directory name)
   - `${worktree.path}` — absolute path to worktree

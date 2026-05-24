@@ -41,7 +41,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { stringify } from "yaml";
-import type { ComposeService, LichConfig } from "../config/types.js";
+import type {
+  ComposeService,
+  LichConfig,
+  PortDescriptor,
+} from "../config/types.js";
 import { stackDir } from "../state/directory.js";
 
 export interface OverrideInput {
@@ -83,26 +87,24 @@ interface OverrideServiceBlock {
 /**
  * Pull the container port out of one entry of a service's `ports`
  * declaration. Returns `undefined` when the entry has no container
- * port we can bind to (e.g. a bare host-port pin in the Record form).
+ * port we can bind to (e.g. a bare host-port pin in the Record form,
+ * or an object form without a `container` field).
  *
- * We accept the descriptor permissively — the type union in
- * `config/types.ts` doesn't include `container` on the object form of
- * `PortDescriptor`, but the dogfood-style yaml (and the spec example
- * for `services.<name>.ports`) routinely use `{ container, env }`.
- * Rather than tighten the type here (out of scope for Task 8), we read
- * the field structurally.
+ * `PortDescriptor` (see `config/types.ts`) is either a bare number
+ * (pinned host port — no container side) or an object that may carry
+ * `env`, `host_port`, and/or `container`. We only need `container`
+ * here; everything else is the env-resolver's concern.
  */
 function containerPortFor(
-  descriptor: unknown,
+  descriptor: PortDescriptor | undefined,
 ): number | undefined {
   if (descriptor == null) return undefined;
   // Bare-number form means "pin this host port" — no container side
   // is declared, so we can't synthesize a host:container binding.
   if (typeof descriptor === "number") return undefined;
-  if (typeof descriptor !== "object") return undefined;
-  const obj = descriptor as { container?: unknown };
-  if (typeof obj.container === "number" && Number.isFinite(obj.container)) {
-    return obj.container;
+  if (typeof descriptor.container === "number" &&
+      Number.isFinite(descriptor.container)) {
+    return descriptor.container;
   }
   return undefined;
 }

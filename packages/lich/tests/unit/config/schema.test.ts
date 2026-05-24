@@ -242,6 +242,73 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
+  it("accepts a compose service whose Record-form port carries `container`", () => {
+    // `container` is the field the override generator uses to emit
+    // `<hostPort>:<containerPort>` bindings. Per LEV-305 it must be a
+    // first-class field in the object form of PortDescriptor.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        api: {
+          image: "node:20",
+          ports: {
+            http: { container: 3000, env: "PORT" },
+          },
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("accepts a compose service whose Record-form port carries container + host_port + env", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        postgres: {
+          image: "postgres:16",
+          ports: {
+            db: { container: 5432, env: "POSTGRES_HOST_PORT", host_port: 5544 },
+          },
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("rejects an unknown key inside a Record-form port descriptor", () => {
+    // additionalProperties is still false on the object form. Adding
+    // `container` doesn't open the gate to arbitrary fields.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        api: {
+          ports: {
+            http: { container: 3000, not_a_real_field: "oops" },
+          },
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("rejects an out-of-range `container` value", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        api: {
+          ports: {
+            http: { container: 99999, env: "PORT" },
+          },
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
   it("accepts a top-level lifecycle block with shorthand and long-form entries", () => {
     const validate = compile();
     const ok = validate({
