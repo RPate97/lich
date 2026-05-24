@@ -43,7 +43,6 @@
  */
 
 import {
-  afterAll,
   beforeAll,
   describe,
   expect,
@@ -98,80 +97,49 @@ interface Fixture {
 
 let fixture: Fixture | null = null;
 
-beforeAll(async () => {
-  // install: true — apps/web runs `next dev`, which needs `next` in
-  // node_modules/.bin. Same prerequisite as basic-up.test.ts (see LEV-313).
-  const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
-  const home = mkdtempSync(join(tmpdir(), "lich-e2e-env-groups-iso-home-"));
-  fixture = {
-    stackPath: stack.path,
-    stackCleanup: stack.cleanup,
-    lichHome: home,
-  };
-
-  // Bring the stack up — required for the two tests that resolve the
-  // `stack` group (or extend it). The third test (process_env isolation on
-  // `isolated-tools`) doesn't reference allocated ports, but running all
-  // three against the same live stack keeps the suite simple.
-  //
-  // Generous timeout on the inner runLich call: cold supabase image pull
-  // can take a couple of minutes. The bun-test hook timeout itself is
-  // governed at the test-runner level (cd tests/e2e && bun test passes
-  // generous defaults; see vitest.config.ts's hookTimeout for the vitest
-  // path). We don't pass a timeout arg to beforeAll here because bun's
-  // signature treats the second arg as the function (not a number).
-  const upResult = runLich(["up"], {
-    cwd: fixture.stackPath,
-    env: { LICH_HOME: fixture.lichHome },
-    timeout: 240_000,
-  });
-  if (upResult.exitCode !== 0) {
-    // eslint-disable-next-line no-console
-    console.error("lich up stdout:", upResult.stdout);
-    // eslint-disable-next-line no-console
-    console.error("lich up stderr:", upResult.stderr);
-    throw new Error(
-      `lich up failed (exit ${upResult.exitCode}); cannot proceed with env_group tests`,
-    );
-  }
-});
-
-afterAll(() => {
-  if (!fixture) return;
-  // `lich nuke --yes` is the catch-all: it stops and cleans up regardless of
-  // whether the stack is still up or already partially torn down. Failures
-  // are swallowed; the tmpdir/home removal below disposes of state files
-  // either way.
-  try {
-    runLich(["nuke", "--yes"], {
-      cwd: fixture.stackPath,
-      env: { LICH_HOME: fixture.lichHome },
-      timeout: 120_000,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("afterAll lich nuke failed:", err);
-  }
-  try {
-    fixture.stackCleanup();
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("afterAll tmpdir cleanup failed:", err);
-  }
-  try {
-    rmSync(fixture.lichHome, { recursive: true, force: true });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("afterAll LICH_HOME cleanup failed:", err);
-  }
-  fixture = null;
-});
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+//
+// Setup and teardown live in `it()` blocks rather than beforeAll/afterAll
+// because Bun's hook timeout default (5s) is too tight for the supabase
+// up/down dance, and Bun doesn't accept a per-hook timeout argument the way
+// vitest does. Putting them in `it()` blocks lets us pass a real timeout
+// per step. Tests run in declaration order, so (setup) → real assertions →
+// (teardown) is preserved. Same pattern as tests/e2e/logs.test.ts.
 
 describe("env_groups isolation (Plan 2 Task 22)", () => {
+  it(
+    "(setup) brings the dogfood-stack up under a per-test LICH_HOME",
+    async () => {
+      // install: true — apps/web runs `next dev`, which needs `next` in
+      // node_modules/.bin. Same prerequisite as basic-up.test.ts (see LEV-313).
+      const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
+      const home = mkdtempSync(join(tmpdir(), "lich-e2e-env-groups-iso-home-"));
+      fixture = {
+        stackPath: stack.path,
+        stackCleanup: stack.cleanup,
+        lichHome: home,
+      };
+
+      const upResult = runLich(["up"], {
+        cwd: fixture.stackPath,
+        env: { LICH_HOME: fixture.lichHome },
+        timeout: 240_000,
+      });
+      if (upResult.exitCode !== 0) {
+        // eslint-disable-next-line no-console
+        console.error("lich up stdout:", upResult.stdout);
+        // eslint-disable-next-line no-console
+        console.error("lich up stderr:", upResult.stderr);
+        throw new Error(
+          `lich up failed (exit ${upResult.exitCode}); cannot proceed with env_group tests`,
+        );
+      }
+    },
+    /* timeout */ 300_000,
+  );
+
   it("process_env: false blocks shell env passthrough", () => {
     const fix = fixture!;
     const result = runLich(["env", "isolated-tools"], {
@@ -242,4 +210,35 @@ describe("env_groups isolation (Plan 2 Task 22)", () => {
     // output (not an empty file that would also pass the negative checks).
     expect(result.stdout).toMatch(/^TOOL_MODE=standalone$/m);
   });
+
+  it(
+    "(teardown) nuke + remove tmpdirs",
+    () => {
+      if (!fixture) return;
+      try {
+        runLich(["nuke", "--yes"], {
+          cwd: fixture.stackPath,
+          env: { LICH_HOME: fixture.lichHome },
+          timeout: 120_000,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("teardown lich nuke failed:", err);
+      }
+      try {
+        fixture.stackCleanup();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("teardown tmpdir cleanup failed:", err);
+      }
+      try {
+        rmSync(fixture.lichHome, { recursive: true, force: true });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("teardown LICH_HOME cleanup failed:", err);
+      }
+      fixture = null;
+    },
+    /* timeout */ 180_000,
+  );
 });
