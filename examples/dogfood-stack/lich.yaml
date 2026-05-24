@@ -65,6 +65,25 @@ env:
   # Postgres connection (for migrate/seed via psql)
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
 
+env_groups:
+  # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
+  # (top-level env + ports + interpolated values) and layers an extra literal
+  # on top. Useful for integration tests that need stack wiring plus an extra
+  # flag.
+  stack-plus-test:
+    extends: stack
+    env:
+      TEST_MODE: "integration"
+
+  # Pattern B — "isolated standalone group." NO extends, so stack env does not
+  # leak in. `process_env: false` also blocks the user's shell env, giving a
+  # hermetic resolution. Exercised by the `tools:env-check` command below so
+  # e2e tests can prove the isolation guarantee.
+  isolated-tools:
+    process_env: false
+    env:
+      TOOL_MODE: "standalone"
+
 profiles:
   dev:
     default: true
@@ -85,3 +104,13 @@ commands:
     cmd: psql "$DATABASE_URL"
     help: |
       Open a psql shell against the local Supabase Postgres.
+
+  tools:env-check:
+    cmd: printenv TOOL_MODE TEST_MODE LICH_WORKTREE
+    env_group: isolated-tools
+    help: |
+      Diagnostic: print the env vars that should be visible under the
+      `isolated-tools` env_group. Used by e2e tests to verify env_group
+      resolution end-to-end — because `isolated-tools` does NOT extend
+      `stack`, only TOOL_MODE should be set; TEST_MODE and DATABASE_URL
+      should be absent.
