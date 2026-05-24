@@ -186,12 +186,25 @@ const readyWhenSchema = {
 } as const;
 
 /**
- * `fail_when` is fully owned by Plan 4 but appears in the dogfood yaml.
- * Accept-as-opaque so the dogfood validates today.
+ * `fail_when` block (Plan 4 Task 7 — first tightening).
+ *
+ * v1 surface: a single optional `log_match` field (string-form regex).
+ * The runtime watcher lives in `failure/fail-when.ts`; the validate-time
+ * regex compile lives in `commands/validate.ts` (`checkRegexes`).
+ *
+ * `additionalProperties: false` catches typos (`log_matc`) and not-yet-
+ * supported fields (`exit_code`, `oom_score`, etc.) at validate time
+ * rather than silently ignoring them at runtime. Future plans may add
+ * more keys here (`exit_code` is a plausible Plan-4-followup); when
+ * they do, both this schema and `FailWhen` in `./types.ts` must move
+ * together.
  */
 const failWhenSchema = {
   type: "object",
-  additionalProperties: true,
+  properties: {
+    log_match: { type: "string" },
+  },
+  additionalProperties: false,
 } as const;
 
 // ---------------------------------------------------------------------------

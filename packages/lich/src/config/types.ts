@@ -131,8 +131,29 @@ export interface ReadyWhen {
   capture?: Record<string, string>;
 }
 
-/** `fail_when` is fully owned by Plan 4; accept-as-opaque here. */
-export type FailWhen = Record<string, unknown>;
+/**
+ * `fail_when` block (Plan 4 Task 7 — initial tightening to `log_match` only).
+ *
+ * The block currently exposes a single field:
+ *   - `log_match`: a regex (string form) tested against each complete log
+ *     line emitted by the service. The first match aborts the service's
+ *     startup. See `failure/fail-when.ts` for the watcher; see
+ *     `commands/validate.ts` for the `lich validate` compile-check.
+ *
+ * Locked down with `additionalProperties: false` in the schema so typos
+ * (`fail_when: { log_matc: "..." }`) and not-yet-supported keys
+ * (`exit_code`, `oom_score`, etc.) are caught at `lich validate` time.
+ * Future plans may add more fields here; this is the v1 surface.
+ */
+export interface FailWhen {
+  /**
+   * Regex (string form) tested against each complete log line. First
+   * match fires the watcher and aborts service startup. Pattern compile
+   * happens at validate time (see `commands/validate.ts`'s
+   * `checkRegexes`); the runtime watcher gets a pre-compiled `RegExp`.
+   */
+  log_match?: string;
+}
 
 // ---------------------------------------------------------------------------
 // services (compose-backed)
