@@ -262,113 +262,139 @@ describe.skipIf(!PREREQS_OK)("lich logs filtering", () => {
   // The tests themselves
   // -------------------------------------------------------------------------
 
-  it("aggregates all services and prefixes each line with [service]", () => {
-    const result = runLich(["logs", "--tail", "50", "--no-follow"], {
-      cwd: projectPath!,
-      env: { LICH_HOME: lichHome! },
-      timeout: 30_000,
-    });
-    expect(result.exitCode).toBe(0);
-
-    // Each emitted line is `[<service>] <content>`. Every service known to
-    // the snapshot should contribute at least one line, except perhaps a
-    // service that hasn't logged anything yet (we tolerate that). The
-    // dogfood-stack runs supabase + api + web; api and web both log on
-    // startup, supabase's start log may have flushed to its log too.
-    expect(result.stdout).toContain("[api]");
-    expect(result.stdout).toContain("[web]");
-    // supabase logs are tooling output; even if the format changes, there
-    // should be SOMETHING. We require ANY one of the multi-line patterns.
-    expect(result.stdout).toMatch(/\[supabase\]/);
-  });
-
-  it("filters to a single service and omits the [service] prefix", () => {
-    const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
-      cwd: projectPath!,
-      env: { LICH_HOME: lichHome! },
-      timeout: 30_000,
-    });
-    expect(result.exitCode).toBe(0);
-    // Some content must exist for the api — at minimum the startup banner.
-    expect(result.stdout.trim().length).toBeGreaterThan(0);
-    // No `[<svc>]` prefix appears when filtering to a single service. The
-    // api's own log lines may include literal `[api]` text in their bodies
-    // (the dogfood api logs `[api] listening on ...`); that's fine — what
-    // we're checking is that lich didn't ALSO prepend its own prefix, so
-    // no line starts with `[web]` or `[supabase]`.
-    expect(result.stdout).not.toMatch(/^\[web\] /m);
-    expect(result.stdout).not.toMatch(/^\[supabase\] /m);
-  });
-
-  it("limits initial output via --tail N", () => {
-    const result = runLich(["logs", "api", "--tail", "1", "--no-follow"], {
-      cwd: projectPath!,
-      env: { LICH_HOME: lichHome! },
-      timeout: 30_000,
-    });
-    expect(result.exitCode).toBe(0);
-    // tailLines returns at most N lines per service; for a single-service
-    // filter that's an upper bound of N total lines. Empty trailing line is
-    // expected from the trailing `\n` of the last `out.write`.
-    const lines = result.stdout.split("\n").filter((l) => l.length > 0);
-    expect(lines.length).toBeLessThanOrEqual(1);
-  });
-
-  it("--no-follow exits promptly after printing existing content", () => {
-    const start = Date.now();
-    const result = runLich(["logs", "--tail", "10", "--no-follow"], {
-      cwd: projectPath!,
-      env: { LICH_HOME: lichHome! },
-      // If --no-follow were broken (still polling), this would hit the
-      // timeout — that's exactly what makes the assertion meaningful.
-      timeout: 15_000,
-    });
-    const elapsed = Date.now() - start;
-
-    expect(result.exitCode).toBe(0);
-    // Should be near-instant. 10s is huge headroom for cold caches /
-    // first-spawn binary unpack; the real expected value is <1s.
-    expect(elapsed).toBeLessThan(10_000);
-  });
-
-  it("contains api content after the api has handled a request", () => {
-    // After the suite-level beforeAll hit /health a few times, the api's
-    // log file should have content. The dogfood api doesn't log per-request
-    // lines, so the strongest assertion we can make portably is that the
-    // log file is non-empty AND contains the startup banner (which proves
-    // the file was actually populated by the api, not by some other path).
-    const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
-      cwd: projectPath!,
-      env: { LICH_HOME: lichHome! },
-      timeout: 30_000,
-    });
-    expect(result.exitCode).toBe(0);
-    // The startup banner from apps/api/src/index.ts:
-    //   console.log(`[api] listening on http://localhost:${port}`);
-    // is the deterministic line we can pin. If the dogfood api ever gains
-    // request logging, this assertion stays true; if it loses the banner,
-    // the test fails loudly and points us at the change.
-    expect(result.stdout).toMatch(/listening on http:\/\/localhost:/);
-  });
-
-  it("exits non-zero and lists available services for an unknown name", () => {
-    const result = runLich(
-      ["logs", "definitely-not-a-real-service", "--no-follow"],
-      {
+  it(
+    "aggregates all services and prefixes each line with [service]",
+    () => {
+      const result = runLich(["logs", "--tail", "50", "--no-follow"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
-        timeout: 15_000,
-      },
-    );
+        timeout: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
 
-    expect(result.exitCode).not.toBe(0);
-    // Both stdout and stderr are valid sinks for the error in the current
-    // implementation (runLogs writes to its `out` sink). Combine them so
-    // the assertion doesn't break if the wiring moves.
-    const combined = result.stdout + result.stderr;
-    expect(combined.toLowerCase()).toContain("definitely-not-a-real-service");
-    // The error should name at least one real service so the user knows
-    // what they could have typed. The dogfood-stack has api, web, supabase.
-    expect(combined).toMatch(/api|web|supabase/);
-  });
+      // Each emitted line is `[<service>] <content>`. Every service known to
+      // the snapshot should contribute at least one line, except perhaps a
+      // service that hasn't logged anything yet (we tolerate that). The
+      // dogfood-stack runs supabase + api + web; api and web both log on
+      // startup, supabase's start log may have flushed to its log too.
+      expect(result.stdout).toContain("[api]");
+      expect(result.stdout).toContain("[web]");
+      // supabase logs are tooling output; even if the format changes, there
+      // should be SOMETHING. We require ANY one of the multi-line patterns.
+      expect(result.stdout).toMatch(/\[supabase\]/);
+    },
+    // Bun's default per-it() timeout is 5s — too tight for tests that spawn
+    // the lich binary and slurp per-service log files. See LEV-313.
+    30_000,
+  );
+
+  it(
+    "filters to a single service and omits the [service] prefix",
+    () => {
+      const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
+        cwd: projectPath!,
+        env: { LICH_HOME: lichHome! },
+        timeout: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      // Some content must exist for the api — at minimum the startup banner.
+      expect(result.stdout.trim().length).toBeGreaterThan(0);
+      // No `[<svc>]` prefix appears when filtering to a single service. The
+      // api's own log lines may include literal `[api]` text in their bodies
+      // (the dogfood api logs `[api] listening on ...`); that's fine — what
+      // we're checking is that lich didn't ALSO prepend its own prefix, so
+      // no line starts with `[web]` or `[supabase]`.
+      expect(result.stdout).not.toMatch(/^\[web\] /m);
+      expect(result.stdout).not.toMatch(/^\[supabase\] /m);
+    },
+    30_000,
+  );
+
+  it(
+    "limits initial output via --tail N",
+    () => {
+      const result = runLich(["logs", "api", "--tail", "1", "--no-follow"], {
+        cwd: projectPath!,
+        env: { LICH_HOME: lichHome! },
+        timeout: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      // tailLines returns at most N lines per service; for a single-service
+      // filter that's an upper bound of N total lines. Empty trailing line is
+      // expected from the trailing `\n` of the last `out.write`.
+      const lines = result.stdout.split("\n").filter((l) => l.length > 0);
+      expect(lines.length).toBeLessThanOrEqual(1);
+    },
+    30_000,
+  );
+
+  it(
+    "--no-follow exits promptly after printing existing content",
+    () => {
+      const start = Date.now();
+      const result = runLich(["logs", "--tail", "10", "--no-follow"], {
+        cwd: projectPath!,
+        env: { LICH_HOME: lichHome! },
+        // If --no-follow were broken (still polling), this would hit the
+        // timeout — that's exactly what makes the assertion meaningful.
+        timeout: 15_000,
+      });
+      const elapsed = Date.now() - start;
+
+      expect(result.exitCode).toBe(0);
+      // Should be near-instant. 10s is huge headroom for cold caches /
+      // first-spawn binary unpack; the real expected value is <1s.
+      expect(elapsed).toBeLessThan(10_000);
+    },
+    30_000,
+  );
+
+  it(
+    "contains api content after the api has handled a request",
+    () => {
+      // After the suite-level beforeAll hit /health a few times, the api's
+      // log file should have content. The dogfood api doesn't log per-request
+      // lines, so the strongest assertion we can make portably is that the
+      // log file is non-empty AND contains the startup banner (which proves
+      // the file was actually populated by the api, not by some other path).
+      const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
+        cwd: projectPath!,
+        env: { LICH_HOME: lichHome! },
+        timeout: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      // The startup banner from apps/api/src/index.ts:
+      //   console.log(`[api] listening on http://localhost:${port}`);
+      // is the deterministic line we can pin. If the dogfood api ever gains
+      // request logging, this assertion stays true; if it loses the banner,
+      // the test fails loudly and points us at the change.
+      expect(result.stdout).toMatch(/listening on http:\/\/localhost:/);
+    },
+    30_000,
+  );
+
+  it(
+    "exits non-zero and lists available services for an unknown name",
+    () => {
+      const result = runLich(
+        ["logs", "definitely-not-a-real-service", "--no-follow"],
+        {
+          cwd: projectPath!,
+          env: { LICH_HOME: lichHome! },
+          timeout: 15_000,
+        },
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      // Both stdout and stderr are valid sinks for the error in the current
+      // implementation (runLogs writes to its `out` sink). Combine them so
+      // the assertion doesn't break if the wiring moves.
+      const combined = result.stdout + result.stderr;
+      expect(combined.toLowerCase()).toContain("definitely-not-a-real-service");
+      // The error should name at least one real service so the user knows
+      // what they could have typed. The dogfood-stack has api, web, supabase.
+      expect(combined).toMatch(/api|web|supabase/);
+    },
+    30_000,
+  );
 });

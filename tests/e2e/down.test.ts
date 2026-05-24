@@ -272,7 +272,11 @@ describeOrSkip(
       "down removes containers, kills pids, releases ports, marks status:stopped, and is idempotent",
       async () => {
         // ---- ARRANGE ---------------------------------------------------
-        const fixture = copyExampleToTmpdir("dogfood-stack");
+        // install: true — apps/web runs `next dev`, which needs `next` in
+        // node_modules/.bin. Without it the web owned service exits 127
+        // immediately and `lich up` fails before any state.json is written.
+        // See LEV-313.
+        const fixture = copyExampleToTmpdir("dogfood-stack", { install: true });
         tmpPath = fixture.path;
         cleanup = fixture.cleanup;
 

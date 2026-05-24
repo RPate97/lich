@@ -257,11 +257,17 @@ beforeAll(() => {
 
   // Two copies with explicitly different basenames so the slugged worktree
   // names visually differ (`dogfood-stack-a-...` vs `dogfood-stack-b-...`).
+  //
+  // install: true — apps/web runs `next dev`, which needs `next` in
+  // node_modules/.bin. Without it the web owned service exits 127 immediately
+  // and `lich up` fails before any state.json is written. See LEV-313.
   stackA = copyExampleToTmpdir("dogfood-stack", {
     prefix: "lich-e2e-dogfood-stack-a-",
+    install: true,
   });
   stackB = copyExampleToTmpdir("dogfood-stack", {
     prefix: "lich-e2e-dogfood-stack-b-",
+    install: true,
   });
 });
 

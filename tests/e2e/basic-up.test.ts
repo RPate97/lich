@@ -148,7 +148,10 @@ interface Fixture {
 let fixture: Fixture | null = null;
 
 function makeFixture(): Fixture {
-  const stack = copyExampleToTmpdir("dogfood-stack");
+  // install: true — apps/web runs `next dev`, which needs `next` in
+  // node_modules/.bin. Without it the web owned service exits 127 immediately
+  // and the up test fails before any state.json is written. See LEV-313.
+  const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
   const home = mkdtempSync(join(tmpdir(), "lich-e2e-basic-up-home-"));
   return {
     stackPath: stack.path,

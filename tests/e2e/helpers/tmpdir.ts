@@ -1,4 +1,5 @@
 import { mkdtempSync, cpSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,10 +15,17 @@ import { join, resolve } from "node:path";
  * from the tmpdir basename by lich) needs to be controlled — e.g. the
  * parallel-stacks sentinel wants two copies named distinctly so the two
  * stacks get visibly different `stack_id`s.
+ *
+ * The optional `install` flag (default false) runs `bun install` in the
+ * tmpdir after the copy completes. Required for stacks whose owned services
+ * depend on locally-installed binaries (e.g. dogfood-stack's `apps/web` runs
+ * `next dev`, which needs `next` in `node_modules/.bin`). The default stays
+ * opt-in so cheap tests (validate-only, config parsing) don't pay the
+ * install cost. Throws with captured stderr if install exits non-zero.
  */
 export function copyExampleToTmpdir(
   exampleName: string,
-  opts: { prefix?: string } = {},
+  opts: { prefix?: string; install?: boolean } = {},
 ): {
   path: string;
   cleanup: () => void;
@@ -34,6 +42,27 @@ export function copyExampleToTmpdir(
       return !/\/(node_modules|\.next|dist|\.lich|\.tmp)(\/|$)/.test(src);
     },
   });
+
+  if (opts.install) {
+    const result = spawnSync("bun", ["install"], {
+      cwd: tmp,
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+    if (result.status !== 0) {
+      // Clean up the tmpdir before throwing so failures don't leak space.
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+      throw new Error(
+        `bun install failed in ${tmp} (exit ${result.status})\n` +
+          `--- stdout ---\n${result.stdout ?? ""}\n` +
+          `--- stderr ---\n${result.stderr ?? ""}`,
+      );
+    }
+  }
 
   const cleanup = () => {
     rmSync(tmp, { recursive: true, force: true });
