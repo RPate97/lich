@@ -795,4 +795,165 @@ describe("runValidate", () => {
     expect(flagged).toContain('"ghostC"');
     expect(flagged).toContain('"ghostD"');
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-383 (Plan 3 Task 9): profile services/owned reference checks
+  // -------------------------------------------------------------------------
+
+  it("refuses profiles.X.services entry pointing at undeclared compose service", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n  postgres:\n    image: postgres:16\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [postgres, redis]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"redis"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("unknown compose service");
+    expect(refErr!.location).toContain("/profiles/dev/services/1");
+  });
+
+  it("refuses profiles.X.owned entry pointing at undeclared owned service", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    owned: [api, ghost]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"ghost"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("unknown owned service");
+    expect(refErr!.location).toContain("/profiles/dev/owned/1");
+  });
+
+  it("suggests close-match owned service name on typo", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    owned: [supabse, api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"supabse"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("did you mean");
+    expect(refErr!.message).toContain('"supabase"');
+    expect(refErr!.location).toContain("/profiles/dev/owned/0");
+  });
+
+  it("accepts profiles.X with services and owned entries that all resolve", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n` +
+        `  postgres:\n    image: postgres:16\n` +
+        `  redis:\n    image: redis:7\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  web:\n    cmd: echo web\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [postgres, redis]\n` +
+        `    owned: [api, web]\n` +
+        `  lite:\n` +
+        `    services: [postgres]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const profileRefErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "ref" &&
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/"),
+    );
+    expect(profileRefErrs).toEqual([]);
+  });
+
+  it("flags undeclared compose service reference under a profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [ghost-compose]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"ghost-compose"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("unknown compose service");
+    expect(refErr!.location).toContain("/profiles/dev/services/0");
+  });
+
+  it("reports every unresolved profile reference across multiple profiles", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n  postgres:\n    image: postgres:16\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [bogusA]\n` +
+        `    owned: [bogusB]\n` +
+        `  test:\n` +
+        `    services: [bogusC]\n` +
+        `    owned: [bogusD]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const profileRefErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "ref" &&
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/"),
+    );
+    expect(profileRefErrs.length).toBe(4);
+    const flagged = profileRefErrs.map((e) => e.message).join(" | ");
+    expect(flagged).toContain('"bogusA"');
+    expect(flagged).toContain('"bogusB"');
+    expect(flagged).toContain('"bogusC"');
+    expect(flagged).toContain('"bogusD"');
+  });
+
+  it("emits no profile ref errors when profiles section is absent", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\nowned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const profileRefErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "ref" &&
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/"),
+    );
+    expect(profileRefErrs).toEqual([]);
+  });
 });

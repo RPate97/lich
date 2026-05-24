@@ -141,6 +141,9 @@ export async function runValidate(
       checkEnvGroupExtendsCycles(config, resolvedPath, errors);
       // LEV-336 (Plan 2 Task 16): every env_group reference must resolve.
       checkEnvGroupReferences(config, resolvedPath, errors);
+      // LEV-383 (Plan 3 Task 9): every profile.services / profile.owned
+      // entry must reference a declared compose / owned service.
+      checkProfiles(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
@@ -817,6 +820,85 @@ function checkEnvGroupReferences(
         group.extends,
         `${path} (/env_groups/${groupName}/extends)`,
       );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LEV-383 — Profile reference checks (Plan 3 Task 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse `profiles.<name>.services` entries that don't reference a declared
+ * compose service (key under top-level `services:`), and
+ * `profiles.<name>.owned` entries that don't reference a declared owned
+ * service (key under top-level `owned:`).
+ *
+ * A profile is a named slice of the stack: a list of services + owned that
+ * start under that profile. A reference to an undeclared name is dead config
+ * — `lich up <profile>` would either fail at runtime or silently skip the
+ * unresolved entry, both of which are worse than a clean validate-time
+ * error.
+ *
+ * Each offending name pushes a `ref` validation error with a Levenshtein
+ * "did you mean" hint when a close match exists among the declared services
+ * of the same kind.
+ *
+ * Location format mirrors `checkDependsOnAndCycles`:
+ *   `<file> (/profiles/<name>/services/<i>)`
+ *   `<file> (/profiles/<name>/owned/<i>)`
+ *
+ * Schema validation runs before this check, so `config.profiles` (when
+ * present) is shaped per `ProfileDef`. We still defensively coerce the
+ * services/owned lists because the Plan-3 schema tightening (Task 2) hasn't
+ * landed yet — today's schema accepts `profiles` as an opaque object.
+ */
+function checkProfiles(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const profiles = config.profiles;
+  if (!profiles) return;
+
+  const composeNames = Object.keys(config.services ?? {});
+  const ownedNames = Object.keys(config.owned ?? {});
+  const composeSet = new Set(composeNames);
+  const ownedSet = new Set(ownedNames);
+
+  for (const [profileName, profile] of Object.entries(profiles)) {
+    if (!profile) continue;
+
+    const services = profile.services;
+    if (Array.isArray(services)) {
+      for (let i = 0; i < services.length; i++) {
+        const target = services[i];
+        if (typeof target !== "string") continue;
+        if (composeSet.has(target)) continue;
+        const suggestion = suggest(target, composeNames);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "ref",
+          location: `${path} (/profiles/${profileName}/services/${i})`,
+          message: `references unknown compose service "${target}"${hint}`,
+        });
+      }
+    }
+
+    const owned = profile.owned;
+    if (Array.isArray(owned)) {
+      for (let i = 0; i < owned.length; i++) {
+        const target = owned[i];
+        if (typeof target !== "string") continue;
+        if (ownedSet.has(target)) continue;
+        const suggestion = suggest(target, ownedNames);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "ref",
+          location: `${path} (/profiles/${profileName}/owned/${i})`,
+          message: `references unknown owned service "${target}"${hint}`,
+        });
+      }
     }
   }
 }
