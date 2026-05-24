@@ -1029,15 +1029,30 @@ async function startOneService(input: StartOneInput): Promise<void> {
     await waitReady(input, isOwned ? ownedDef! : composeDef!, isOwned);
 
     // ---- after_ready ---------------------------------------------------
+    // Plan 4 Task 17: race the after_ready lifecycle against the per-service
+    // ProcessExitWatcher. Without this race, a service that exits between
+    // becoming "ready" and finishing its post-ready hooks would let the
+    // lifecycle run to completion (against a dead process) and we'd mark
+    // the service `ready` anyway — `lich up` would falsely succeed. The
+    // watcher's `wait()` rejects with a structured `Error.cause:
+    // ProcessExitFailure` payload that `classifyFailure` in the catch
+    // below recognizes and turns into a `kind: "exit"` failure block.
+    //
+    // Compose services don't have an exit watcher; `raceWithExitWatcher`
+    // returns the bare promise unchanged in that case.
     if (lifecycle?.after_ready && lifecycle.after_ready.length > 0) {
-      await runPerServiceLifecycle({
-        serviceName: name,
-        phase: "after_ready",
-        entries: lifecycle.after_ready,
-        cwd: input.worktree.path,
-        env: input.topLevelEnv,
-        resolveEnvGroup: input.resolveEnvGroup,
-      });
+      await raceWithExitWatcher(
+        runPerServiceLifecycle({
+          serviceName: name,
+          phase: "after_ready",
+          entries: lifecycle.after_ready,
+          cwd: input.worktree.path,
+          env: input.topLevelEnv,
+          resolveEnvGroup: input.resolveEnvGroup,
+        }),
+        name,
+        isOwned ? state.exitWatchers.get(name) : undefined,
+      );
     }
 
     snap.state = "ready" satisfies ServiceState;
@@ -1350,39 +1365,36 @@ async function startOwned(
   // circuits without signaling anything — services leak past teardown.
   // (`appendStarted` already writes the pid to started.log for rescue
   // teardown, but the snapshot is the canonical path for normal `lich
-  // down`.) The pid is captured BEFORE the early-exit check so that if the
-  // child died in the first 100ms, the snapshot still has the pid for
-  // whatever rescue path might want it.
+  // down`.) Captured here so even if the child exits before becoming
+  // ready — the `ProcessExitWatcher` registered above catches it inside
+  // `waitReady` (Task 17) — the snapshot still has the pid for whatever
+  // rescue path might want it.
   const snap = state.services.get(name);
   if (snap && typeof handle.pid === "number" && Number.isFinite(handle.pid)) {
     snap.pid = handle.pid;
   }
 
-  // If the process exited within the first few ms (e.g. `cmd: exit 1`),
-  // surface that as a startup failure rather than waiting on `ready_when`
-  // (which would never resolve). Race the exited promise against a short
-  // sentinel to detect immediate exits without blocking long-running cmds.
+  // Plan 4 Task 17: the legacy 100ms `sentinelMs` early-exit race used to
+  // live here as the only safety net for services that exited before the
+  // ready evaluator could observe them. It has been removed — the
+  // `ProcessExitWatcher` registered above is now the canonical source of
+  // exit detection and runs across the entire `up` window, not just the
+  // first 100ms after spawn.
   //
-  // Plan 4 Task 17 (deferred) will replace this 100ms sentinel with a
-  // pure-ProcessExitWatcher race that covers services without a
-  // `ready_when` AND post-ready exits. For Task 14 (this task) we keep
-  // the sentinel as a defensive backstop — `waitReady` races the watcher
-  // for the with-`ready_when` case; without it, the sentinel catches the
-  // immediate-exit case for services that have no `ready_when` configured.
-  const sentinelMs = 100;
-  const earlyExit = await Promise.race([
-    handle.exited.then((r) => ({ kind: "exited" as const, result: r })),
-    new Promise<{ kind: "alive" }>((r) =>
-      setTimeout(() => r({ kind: "alive" }), sentinelMs),
-    ),
-  ]);
-  if (earlyExit.kind === "exited") {
-    const r = earlyExit.result;
-    const exitDesc = r.code !== null ? `exit ${r.code}` : `signal ${r.signal}`;
-    throw new Error(
-      `owned service "${name}" exited immediately (${exitDesc}) — check ${spec.logPath}`,
-    );
-  }
+  // The watcher is raced inside `waitReady` against the ready evaluator
+  // (when one is configured) AND via a "did the process already exit?"
+  // probe when `ready_when` is omitted — see the "Plan 4 Task 17" block
+  // at the top of `waitReady`. An immediate `cmd: exit 1` therefore still
+  // aborts `lich up` without us having to poll for it. The watcher is
+  // also raced around the per-service `after_ready` lifecycle in
+  // `startOneService` via `raceWithExitWatcher`, so a service that
+  // crashes between becoming ready and finishing its post-ready hooks
+  // still fails the up.
+  //
+  // After `lich up` returns successfully, the watcher continues to live
+  // in `state.exitWatchers` alongside its `LogTail` (per Task 15) — a
+  // future dashboard tick (Plan 5) will surface post-up exits without
+  // the user needing to be watching the terminal.
 
   // LEV-311: log the successful long-lived start. We emit TWO entries:
   //
@@ -1463,9 +1475,39 @@ async function waitReady(
   isOwned: boolean,
 ): Promise<void> {
   const ready = (def as OwnedService).ready_when;
-  if (!ready) return;
-
   const { name, worktree, signal, state } = input;
+
+  // Plan 4 Task 17: when an owned service has NO `ready_when`, the
+  // orchestrator used to early-return here. That left a window where
+  // `cmd: exit 1` would slip past the 100ms `sentinelMs` race (since
+  // removed) and `lich up` would mark the service "ready" anyway. We now
+  // give every owned service a brief exit-watcher probe even without a
+  // ready_when, so an immediate exit still aborts the up. A long-lived
+  // service that's still running stays alive and we proceed to the
+  // post-ready stages as before. Compose services don't have an
+  // `OwnedHandle`, so the exit-watcher path is owned-only — they keep
+  // the original early-return behavior.
+  if (!ready) {
+    const exitWatcher = isOwned ? state.exitWatchers.get(name) : undefined;
+    if (exitWatcher !== undefined) {
+      const failure = await checkExitedNow(exitWatcher);
+      if (failure !== null) {
+        const err = new Error(
+          `owned service "${name}" exited before becoming ready`,
+        );
+        (err as Error & { cause?: unknown }).cause = failure;
+        throw err;
+      }
+    }
+    // Stage stays at `during_startup` until we flip it here — there's no
+    // ready evaluator to transition through. Setting it to `after_ready`
+    // ensures any post-ready exit (e.g. during after_ready hooks) gets
+    // labeled correctly by the watcher.
+    if (state.stageRefs.has(name)) {
+      state.stageRefs.set(name, "after_ready");
+    }
+    return;
+  }
 
   // Build interpolation context for any ${...} refs inside ready_when fields.
   // The dogfood-stack uses this e.g. ready_when: { tcp: "localhost:${owned.supabase.ports.api}" }.
@@ -1630,6 +1672,86 @@ async function waitReady(
   if (state.stageRefs.has(name)) {
     state.stageRefs.set(name, "after_ready");
   }
+}
+
+/**
+ * Plan 4 Task 17: check whether an owned service has exited within a brief
+ * detection window, without blocking on a long-running process.
+ *
+ * `ProcessExitWatcher.wait()` resolves once (and is cached thereafter) when
+ * the underlying `handle.exited` resolves. For a still-running service,
+ * `wait()` is pending indefinitely — so we can't just `await` it without
+ * potentially hanging the orchestrator. Instead, we race the watcher
+ * against a short timeout: if the watcher settles within the window we
+ * observe the exit; otherwise we conclude "still alive" and continue.
+ *
+ * The window matches the legacy 100ms `sentinelMs` race this helper
+ * replaces — see the "Plan 4 Task 17" comment block in `startOwned`. 100ms
+ * is long enough for `cmd: exit 1` (and its sibling immediate-failure
+ * patterns: `ENOENT` on a missing binary, `exit 127` from the shell, the
+ * `error` event from a pre-fork failure) to propagate through the
+ * supervisor's `child.once("exit", ...)` handler into the watcher's
+ * cached promise. A healthy long-lived service stays alive past 100ms by
+ * construction, so `lich up`'s perceived per-service overhead is unchanged.
+ *
+ * Returns the watcher's failure payload if the service has exited; null
+ * if it's still alive (or exited cleanly with code 0).
+ */
+async function checkExitedNow(
+  watcher: ProcessExitWatcher,
+): Promise<Awaited<ReturnType<ProcessExitWatcher["wait"]>>> {
+  const sentinel = Symbol("alive");
+  const result = await Promise.race([
+    watcher.wait(),
+    // 100ms matches the legacy `sentinelMs` window — see the Plan 4
+    // Task 17 doc-comment above and the corresponding block in
+    // `startOwned`. Long enough for the supervisor's exit handler to
+    // settle the cached `wait()` promise for an immediate-exit cmd;
+    // short enough to be invisible in the overall up latency.
+    new Promise<typeof sentinel>((r) => setTimeout(() => r(sentinel), 100)),
+  ]);
+  if (result === sentinel) return null;
+  return result;
+}
+
+/**
+ * Plan 4 Task 17: race a promise against an owned service's
+ * `ProcessExitWatcher`. If the watcher fires (non-zero exit) before the
+ * promise settles, reject with the same `Error.cause: ProcessExitFailure`
+ * shape `waitReady`'s race produces — `classifyFailure` in `startOneService`'s
+ * catch recognizes the cause and renders a proper `kind: "exit"` failure block.
+ *
+ * Used to wrap the per-service `after_ready` lifecycle promise so a service
+ * that crashes during its post-ready hooks still fails `lich up`. Without
+ * this race, the lifecycle hook would either run against a freshly-dead
+ * service (e.g. seeding a DB that just crashed) or report a confusing
+ * "hook failed" instead of "service died."
+ *
+ * Compose services (and any owned service without a registered watcher —
+ * defensive fallback) get the bare promise back without instrumentation.
+ */
+function raceWithExitWatcher<T>(
+  promise: Promise<T>,
+  serviceName: string,
+  watcher: ProcessExitWatcher | undefined,
+): Promise<T> {
+  if (watcher === undefined) return promise;
+  return Promise.race([
+    promise,
+    watcher.wait().then((failure) => {
+      if (failure === null) {
+        // Clean exit during the post-ready window — refuse to resolve so
+        // the lifecycle promise's outcome wins. Mirrors the `null →
+        // never-resolving` semantic in `waitReady`.
+        return new Promise<never>(() => {});
+      }
+      const err = new Error(
+        `owned service "${serviceName}" exited after becoming ready`,
+      );
+      (err as Error & { cause?: unknown }).cause = failure;
+      throw err;
+    }),
+  ]);
 }
 
 /**

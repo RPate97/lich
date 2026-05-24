@@ -492,3 +492,167 @@ owned:
     }
   }, 15_000);
 });
+
+// ---------------------------------------------------------------------------
+// 5. Plan 4 Task 17 — always-on post-ready exit detection
+//
+// These tests cover the orchestrator behavior the 100ms `sentinelMs` race
+// used to provide (immediate-exit detection without a `ready_when`) AND
+// the new behavior that race never had (catching exits between ready and
+// `lich up` returning successfully).
+// ---------------------------------------------------------------------------
+
+describe("up wiring — post-ready exit detection (Task 17)", () => {
+  it("fails immediately on a service that exits before becoming ready", async () => {
+    // Covers the case the old 100ms `sentinelMs` race covered: a service
+    // with NO `ready_when` that exits non-zero shortly after spawn. The
+    // new `ProcessExitWatcher` race in `waitReady`'s no-ready_when branch
+    // (`checkExitedNow`) must surface this as a failure instead of
+    // silently marking the service "ready" because there's nothing to
+    // wait for.
+    //
+    // The cmd intentionally has NO `ready_when` — that's the load-bearing
+    // configuration. With a `ready_when`, the existing exit-watcher race
+    // inside `waitReady` would have already covered this. The Task 17
+    // change is the bare-minimum config still trips on immediate exit.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19740, 19790]
+owned:
+  exiter:
+    cmd: 'exit 1'
+`);
+
+    const start = Date.now();
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    const elapsed = Date.now() - start;
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // The failure should arrive promptly — no `ready_when` means no
+    // ready-evaluator deadline; the detection budget is `checkExitedNow`'s
+    // ~100ms window. We give a generous 5s ceiling so slow CI doesn't
+    // flake on this assertion, while still proving the orchestrator
+    // didn't hang waiting on nothing.
+    expect(elapsed).toBeLessThan(5_000);
+
+    const snap = await loadSnapshot(result.stackId!);
+    const svc = snap.services.find((s) => s.name === "exiter");
+    expect(svc?.state).toBe("failed");
+    // The exit-watcher's failure label should mention the exit code or
+    // the structured "exited" wording somewhere in the persisted reason.
+    // We don't pin the exact prose (owned by the formatter) but assert
+    // the load-bearing token is present.
+    expect(svc?.failure_reason).toBeDefined();
+    expect(svc?.failure_reason!.toLowerCase()).toMatch(/exit|exited/);
+  }, 10_000);
+
+  it("fails the up when a service exits after ready but before up returns", async () => {
+    // The new behavior the Task 17 watcher unlocks: a service that
+    // becomes ready (emits "READY" so `ready_when.log_match` fires), then
+    // exits non-zero a beat later. The `raceWithExitWatcher` wrapper
+    // around the per-service `after_ready` lifecycle catches this and
+    // turns it into a `kind: "exit"` failure, instead of `lich up`
+    // returning success against a dead process.
+    //
+    // The `after_ready` hook sleeps for 1s — long enough for the
+    // service's own exit (at 200ms after READY) to settle. Without the
+    // Task 17 race, the lifecycle would complete and we'd mark the
+    // service `ready` then exit success.
+    const marker = join(projectDir, "after-ready-marker.txt");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19800, 19850]
+owned:
+  crasher:
+    cmd: 'echo "READY"; sleep 0.2; exit 1'
+    ready_when:
+      log_match: "READY"
+    lifecycle:
+      after_ready:
+        - cmd: 'sleep 1; touch ${marker}'
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    // Load-bearing: `lich up` returned a non-zero exit code, NOT 0.
+    // Without the Task 17 race around after_ready, this would be 0
+    // because the lifecycle promise would complete (touching the marker)
+    // before anyone noticed the cmd died.
+    expect(result.exitCode).toBe(1);
+
+    const snap = await loadSnapshot(result.stackId!);
+    const svc = snap.services.find((s) => s.name === "crasher");
+    expect(svc?.state).toBe("failed");
+    expect(svc?.failure_reason).toBeDefined();
+    expect(svc?.failure_reason!.toLowerCase()).toMatch(/exit|exited/);
+  }, 10_000);
+
+  it("does not hang on ready_when after the process has died", async () => {
+    // Regression guard for the bug the old `sentinelMs` race used to
+    // catch (and the Task 17 watcher must continue to catch): a service
+    // that exits BEFORE its `ready_when` evaluator could ever satisfy.
+    // Without the exit-watcher race inside `waitReady`, the ready
+    // evaluator would happily poll for the full `ready_when.timeout`
+    // window — e.g. 60s for an http_get probe pointed at a port nobody
+    // opened — and `lich up` would appear to hang.
+    //
+    // We deliberately set a long timeout (30s) and assert that the up
+    // fails in well under that. If the orchestrator regresses to
+    // "hang until ready_when's deadline," this test catches it via
+    // the elapsed-time assertion.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19860, 19910]
+owned:
+  dead-on-arrival:
+    cmd: 'exit 1'
+    ready_when:
+      http_get: '/health'
+      timeout: '30s'
+    port:
+      env: PORT
+`);
+
+    const start = Date.now();
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    const elapsed = Date.now() - start;
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // The exit-watcher race must fire long before the 30s ready timeout.
+    // We give a generous 10s budget for slow CI; a regression where the
+    // orchestrator waited on ready_when would push this past 30s and
+    // fail the per-test timeout instead.
+    expect(elapsed).toBeLessThan(10_000);
+
+    const snap = await loadSnapshot(result.stackId!);
+    const svc = snap.services.find((s) => s.name === "dead-on-arrival");
+    expect(svc?.state).toBe("failed");
+    // Must NOT be a ready timeout — the exit must have won the race.
+    // (If the watcher regressed and the timeout fired, the reason would
+    // mention "timeout"/"ready" instead of the exit.)
+    expect(svc?.failure_reason).toBeDefined();
+    expect(svc?.failure_reason!.toLowerCase()).toMatch(/exit|exited/);
+    expect(svc?.failure_reason!.toLowerCase()).not.toMatch(/timeout/);
+  }, 15_000);
+});
