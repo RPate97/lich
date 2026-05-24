@@ -22,13 +22,26 @@
  * the host to reap orphans whose state directories were already deleted
  * by hand. That belongs to Plan 5/6 (daemon + onramp); for now we only
  * touch compose projects we know about via `state.json`.
+ *
+ * Per LEV-309, before the PID-kill step we re-parse `lich.yaml` from
+ * `snapshot.worktree_path` (best-effort) so we can invoke `stop_cmd`
+ * for owned services that declare one. This is the only teardown path
+ * that reaches resources owned by `oneshot: true` services — for those,
+ * the lich-spawned PID has already exited; the long-lived state lives
+ * in docker containers / external state stores that only the user's
+ * `stop_cmd` knows how to clean up. Missing/invalid yaml or a non-zero
+ * stop_cmd exit logs a warning and continues.
  */
 
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
 import { down as composeDown, type RunnerCtx } from "../compose/runner.js";
 import { resolveComposeCli } from "../compose/detect.js";
+import { parseConfig } from "../config/parse.js";
+import type { LichConfig } from "../config/types.js";
 import { release } from "../ports/allocator.js";
 import {
   listStacks,
@@ -144,7 +157,60 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
 
   const warnings: string[] = [];
 
-  // 1. Kill owned PIDs (best-effort).
+  // 1. Re-parse lich.yaml from the worktree to recover `stop_cmd`, which
+  // isn't carried by state.json (LEV-309). This is best-effort: if the
+  // worktree is gone or the yaml has rotted since `lich up`, we just log
+  // a warning and continue with PID-only teardown. Aborting the whole
+  // nuke because a yaml is missing would defeat the escape-hatch contract.
+  let config: LichConfig | null = null;
+  const configPath = join(snap.worktree_path, "lich.yaml");
+  if (existsSync(configPath)) {
+    const parsed = await parseConfig(configPath).catch((err) => {
+      warnings.push(`parse lich.yaml: ${errorMessage(err)}`);
+      return null;
+    });
+    if (parsed && parsed.ok) {
+      config = parsed.config;
+    } else if (parsed && !parsed.ok) {
+      const first = parsed.errors[0];
+      warnings.push(
+        `parse lich.yaml: ${first?.message ?? "schema validation failed"}`,
+      );
+    }
+  } else {
+    warnings.push(
+      `parse lich.yaml: not found at ${configPath}`,
+    );
+  }
+
+  // 2. Run stop_cmd for each owned service that declares one. This is the
+  // teardown path for oneshot services (supabase, etc.) whose lich-spawned
+  // PID exits cleanly after launch — the long-lived state lives in docker
+  // containers / external state stores the stop_cmd knows how to clean up.
+  // PID-based kills (step 3 below) can't reach those resources.
+  if (config !== null) {
+    for (const svc of snap.services) {
+      if (svc.kind !== "owned") continue;
+      const stopCmd = config.owned?.[svc.name]?.stop_cmd;
+      if (typeof stopCmd !== "string" || stopCmd.length === 0) continue;
+      try {
+        const result = await runStopCmd(stopCmd, snap.worktree_path);
+        if (result.exitCode !== 0) {
+          warnings.push(
+            `service ${svc.name} stop_cmd exited ${result.exitCode}`,
+          );
+        }
+      } catch (err) {
+        warnings.push(
+          `service ${svc.name} stop_cmd: ${errorMessage(err)}`,
+        );
+      }
+    }
+  }
+
+  // 3. Kill owned PIDs (best-effort). For oneshot services the PID is
+  // already dead and this is a no-op. For long-lived owned services
+  // without a stop_cmd, this is still the only teardown path.
   for (const svc of snap.services) {
     if (svc.kind !== "owned" || typeof svc.pid !== "number") continue;
     try {
@@ -156,7 +222,7 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
     }
   }
 
-  // 2. Tear down compose services we know about (best-effort).
+  // 4. Tear down compose services we know about (best-effort).
   // Plan 1: snapshot doesn't carry the user's base compose file path
   // or the runtime.compose_cli override. We use just the override
   // file (which lich wrote) and fall back to compose-CLI autodetect.
@@ -173,14 +239,14 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
     }
   }
 
-  // 3. Release allocated ports (best-effort; idempotent).
+  // 5. Release allocated ports (best-effort; idempotent).
   try {
     await release(snap.stack_id);
   } catch (err) {
     warnings.push(`release ports: ${errorMessage(err)}`);
   }
 
-  // 4. Remove the state directory. This is the "done" signal — if we
+  // 6. Remove the state directory. This is the "done" signal — if we
   // got here, lich considers the stack erased even if some upstream
   // step warned.
   try {
@@ -202,6 +268,67 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
     status: "nuked",
     detail: warnings.length > 0 ? warnings.join("; ") : undefined,
   };
+}
+
+/** Cap on stop_cmd execution time. Mirrors `commands/down.ts`. */
+const STOP_CMD_TIMEOUT_MS = 30_000;
+
+/**
+ * Run a user-supplied `stop_cmd` for an owned service via `/bin/sh -c`.
+ * Bounded by `STOP_CMD_TIMEOUT_MS`; if the command hasn't exited by then
+ * we SIGKILL it and move on. Resolves with the process's exit code (or
+ * `null` if it was killed by signal) so the caller can decide whether
+ * to log a warning.
+ *
+ * This mirrors the helper in `commands/down.ts` rather than importing it
+ * — keeps nuke self-contained and lets the two evolve independently if
+ * down ever needs richer per-service env handling. If both helpers grow
+ * complex, factor into `owned/teardown.ts`; for now ~30 lines of
+ * duplication is the right trade-off.
+ */
+async function runStopCmd(
+  stopCmd: string,
+  cwd: string,
+): Promise<{ exitCode: number | null }> {
+  return new Promise((resolve) => {
+    const child = spawn("/bin/sh", ["-c", stopCmd], {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let settled = false;
+    const finish = (exitCode: number | null): void => {
+      if (settled) return;
+      settled = true;
+      resolve({ exitCode });
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      if (typeof child.pid === "number") {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      finish(null);
+    }, STOP_CMD_TIMEOUT_MS);
+
+    // Drain the streams so the child doesn't block on a full pipe.
+    child.stdout?.on("data", () => {});
+    child.stderr?.on("data", () => {});
+
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      finish(code);
+    });
+    child.once("error", () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+  });
 }
 
 /**
