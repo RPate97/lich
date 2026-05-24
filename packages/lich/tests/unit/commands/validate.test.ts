@@ -1419,4 +1419,282 @@ describe("runValidate", () => {
     );
     expect(apiWarn).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-386 (Plan 3 Task 12): per-profile interpolation simulation
+  //
+  // These tests pin the contract for `checkProfileInterpolations`: simulate
+  // the top-level + profile env merge per profile and drive the engine's
+  // interpolator against a synthetic context that lists ONLY services in
+  // the profile's resolved set. References to declared-but-excluded
+  // services should surface as `interp` errors that the structural top-
+  // level check can't catch.
+  //
+  // Deduplication contract: structural failures (refs to services not
+  // declared anywhere) are NOT re-emitted from the per-profile pass —
+  // the existing `checkInterpolations` already flagged them.
+  // -------------------------------------------------------------------------
+
+  it("profile that overrides a top-level value avoids the top-level's bad ref", async () => {
+    // Top-level DATABASE_URL refs `${owned.supabase.port}`. The `dev`
+    // profile excludes supabase entirely (lists only `api`) BUT overrides
+    // DATABASE_URL with a literal. The override means the top-level's
+    // unresolvable ref is never the surviving value for that key — no
+    // error should fire for `dev`.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n` +
+        `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    owned: [api]\n` +
+        `    env:\n` +
+        `      DATABASE_URL: "postgresql://hosted.example.com:5432/x"\n`,
+    );
+    const res = await run({ path: p });
+    // No interp error on DATABASE_URL under the `dev` profile.
+    const profileInterpErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "interp" &&
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/dev/"),
+    );
+    expect(profileInterpErrs).toEqual([]);
+    // And the `dev`-scoped `/env/DATABASE_URL` (top-level survival) error
+    // must also be absent — the profile override took ownership of the key.
+    const inheritedErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "interp" &&
+        typeof e.location === "string" &&
+        e.location.includes("(/env/DATABASE_URL)"),
+    );
+    expect(inheritedErrs).toEqual([]);
+  });
+
+  it("profile that does NOT override is flagged when top-level value refs a service not in profile's resolved set", async () => {
+    // Top-level DATABASE_URL refs `${owned.supabase.port}`. The `lite`
+    // profile excludes supabase from its resolved set AND does NOT
+    // override DATABASE_URL. Under `lite` the top-level value survives
+    // the merge and refs an excluded service — emit an interp error at
+    // `/env/DATABASE_URL` (inherited from top-level).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n` +
+        `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  lite:\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const interpErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "interp",
+    );
+    // The location points at the top-level layer (inherited), namespaced
+    // by the profile in the message body.
+    const inheritedErr = interpErrs.find(
+      (e) =>
+        typeof e.location === "string" &&
+        e.location.includes("(/env/DATABASE_URL)") &&
+        e.message.includes('under profile "lite"'),
+    );
+    expect(inheritedErr).toBeDefined();
+    expect(inheritedErr!.message).toContain("supabase");
+  });
+
+  it("top-level interp check still flags refs to services not declared anywhere", async () => {
+    // A top-level ref to `${owned.ghost.port}` where ghost is NOT declared.
+    // The existing structural `checkInterpolations` catches this; the new
+    // per-profile pass should NOT re-emit a duplicate for the same key
+    // (would-fail-anywhere is structural, not profile-specific).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n` +
+        `  X: "\${owned.ghost.port}"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const interpErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "interp" && e.message.includes("ghost"),
+    );
+    // Exactly one — the structural check fires once. The per-profile pass
+    // must dedupe against it rather than double-reporting.
+    expect(interpErrs.length).toBe(1);
+    // The single error is the structural one (no profile prefix in
+    // message, location is the bare `/env/X`).
+    expect(interpErrs[0].location).toContain("(/env/X)");
+    expect(interpErrs[0].message).not.toContain('under profile "');
+  });
+
+  it("per-profile interp catches refs to services not in profile's services/owned", async () => {
+    // The OFFENDING value lives on the PROFILE layer this time:
+    // `profiles.test.env.X` refs `${owned.supabase.port}`. supabase is
+    // declared at the top level but NOT in `test`'s owned list — under
+    // the `test` profile that reference cannot resolve. Emit an interp
+    // error at `/profiles/test/env/X`.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  test:\n` +
+        `    owned: [api]\n` +
+        `    env:\n` +
+        `      X: "\${owned.supabase.port}"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const interpErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "interp",
+    );
+    const profileErr = interpErrs.find(
+      (e) =>
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/test/env/X"),
+    );
+    expect(profileErr).toBeDefined();
+    expect(profileErr!.message).toContain('under profile "test"');
+    expect(profileErr!.message).toContain("supabase");
+  });
+
+  it("does not run per-profile interp sim when profiles section is absent", async () => {
+    // No profiles -> no per-profile pass. The existing top-level check
+    // still runs (and catches its own kinds of failure).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  Y: "\${owned.api.port}"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n    port: { env: PORT }\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const profileInterpErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "interp" && e.message.includes('under profile "'),
+    );
+    expect(profileInterpErrs).toEqual([]);
+  });
+
+  it("accepts a top-level ref to a service the profile includes", async () => {
+    // Top-level DATABASE_URL refs `${owned.api.port}`; `dev` profile
+    // resolved set includes `api`. The reference resolves under the
+    // profile context — no error.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  DATABASE_URL: "postgresql://localhost:\${owned.api.port}/x"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n    port: { env: PORT }\n` +
+        `profiles:\n  dev:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const profileInterpErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "interp",
+    );
+    expect(profileInterpErrs).toEqual([]);
+  });
+
+  it("checks references against the resolved set (extends chain)", async () => {
+    // `dev` extends `base`. The resolved set for `dev` includes services
+    // contributed by `base`, so a top-level ref to a `base`-only service
+    // STILL resolves under `dev`. No error.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n` +
+        `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  base:\n    owned: [supabase]\n` +
+        `  dev:\n    extends: base\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const interpErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "interp",
+    );
+    expect(interpErrs).toEqual([]);
+  });
+
+  it("emits a separate per-profile error for each profile that excludes the referenced service", async () => {
+    // Both `lite` and `lean` exclude supabase and neither overrides
+    // DATABASE_URL. Each profile's simulation surfaces an interp error
+    // pointing at the inherited top-level value, scoped by profile in the
+    // message. (Two profiles -> two distinct error entries; consumers can
+    // tell which profile context failed.)
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n` +
+        `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
+        `owned:\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  lite:\n    owned: [api]\n` +
+        `  lean:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const profileScoped = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "interp" &&
+        e.message.includes('under profile "') &&
+        e.message.includes("supabase"),
+    );
+    // One error per profile that fails.
+    expect(profileScoped.length).toBe(2);
+    const profiles = profileScoped.map((e) =>
+      e.message.match(/under profile "([^"]+)"/u)![1],
+    );
+    expect(profiles.sort()).toEqual(["lean", "lite"]);
+  });
+
+  it("flags a multi-port profile-only env ref to an excluded service", async () => {
+    // Profile-layer env refs `${owned.supabase.ports.api}`. supabase is
+    // declared (with multi-port shape) but excluded by the profile.
+    // The engine surfaces the same "unknown owned service" diagnostic
+    // we'd hit at runtime — we just wrap it with the profile prefix.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  supabase:\n` +
+        `    cmd: supabase start\n` +
+        `    ports:\n      api: { env: SUPA_API }\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  test:\n` +
+        `    owned: [api]\n` +
+        `    env:\n` +
+        `      SUPA_URL: "http://localhost:\${owned.supabase.ports.api}"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const interpErr = (res.report.errors ?? []).find(
+      (e) =>
+        e.kind === "interp" &&
+        typeof e.location === "string" &&
+        e.location.includes("/profiles/test/env/SUPA_URL") &&
+        e.message.includes('under profile "test"'),
+    );
+    expect(interpErr).toBeDefined();
+    expect(interpErr!.message).toContain("supabase");
+  });
 });

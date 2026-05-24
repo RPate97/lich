@@ -43,6 +43,18 @@ import { detectProfileExtendsCycle } from "../profiles/validate-extends.js";
 // `checkProfileDefaultsAndExtends` below; lifted into a shared helper so
 // `lich up` (Plan 3 Task 13) and `lich validate` agree on the rule.
 import { pickDefaultProfile } from "../profiles/default.js";
+// LEV-386 (Plan 3 Task 12): per-profile interpolation simulation. We use
+// the resolver to compute the profile's full env + services + owned set,
+// then drive `interpolateString` against a synthetic context that includes
+// ONLY services in the profile's resolved set. References to declared-but-
+// excluded services surface as `interp` errors here that the structural
+// check above can't catch.
+import { resolveProfile } from "../profiles/resolve.js";
+import {
+  interpolateString,
+  InterpolationError,
+  type InterpolationContext,
+} from "../config/interpolation.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,6 +182,13 @@ export async function runValidate(
       // pushes onto `errors` (warnings use kind: "warning").
       checkProfileDefaultsAndExtends(config, resolvedPath, errors);
       checkProfileUnusedServices(config, resolvedPath, errors);
+      // LEV-386 (Plan 3 Task 12): per-profile interpolation simulation.
+      // Catches `${owned.X.port}` references in the surviving merged env
+      // that point at services declared but excluded by a profile. Runs
+      // AFTER the structural top-level `checkInterpolations` so we can
+      // skip emitting duplicates for structurally-bad refs (the existing
+      // check already flagged those).
+      checkProfileInterpolations(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
@@ -1227,6 +1246,276 @@ function normalizeExtends(
   if (ext === undefined) return [];
   if (typeof ext === "string") return [ext];
   return ext.filter((e): e is string => typeof e === "string");
+}
+
+// ---------------------------------------------------------------------------
+// LEV-386 — Per-profile interpolation simulation (Plan 3 Task 12)
+// ---------------------------------------------------------------------------
+//
+// The structural top-level interpolation check (`checkInterpolations`) above
+// verifies that every `${...}` reference in env values names a DECLARED
+// service. That's enough to catch typos (`${owned.api}` when the service is
+// `${owned.apiq}`) but it misses a profile-specific failure mode:
+//
+//   A profile may EXCLUDE a service that's still declared at the top level.
+//   References to that excluded service in env values that survive the
+//   profile's merge would fail at `lich up` time even though they pass the
+//   structural check — the synthetic allocated-ports map under that profile
+//   simply won't have the excluded service.
+//
+// This check simulates the env merge per profile (top-level + profile env,
+// no per-service layer per Task 12's contract) and drives `interpolateString`
+// against a context built from the profile's resolved `services` + `owned`
+// lists. Failures here surface as `interp` errors with the location pointing
+// at the surviving layer (`/profiles/<name>/env/<key>` if the profile
+// overrode the key; `/env/<key>` if the top-level value survived).
+//
+// "Surviving" is the per-key wins-by-precedence value: profile env wins over
+// top-level env. A top-level value with a bad ref is NOT checked under a
+// profile that overrides that key — the override means the bad value never
+// reaches the runtime interpolator (matches the spec's lazy-per-key
+// semantics, which Plan 3 Task 7 verified holds for the eager pass too —
+// overridden values are lost before interpolation runs).
+//
+// Deduplication with the structural check: if the offending reference would
+// ALSO fail in a "max" context (every declared service present), the error
+// is structural and the existing top-level check already flagged it. We
+// skip emission in that case so the user sees one diagnostic per problem.
+
+/**
+ * For each declared profile, simulate the top-level + profile env merge
+ * and drive `interpolateString` against a synthetic interpolation context
+ * containing ONLY the profile's resolved services + owned. Unresolved
+ * references emit `interp` validation errors.
+ *
+ * Skips when `config.profiles` is absent or empty — there's no profile-
+ * specific context to simulate. The existing structural check
+ * (`checkInterpolations`) handles the no-profile case.
+ */
+function checkProfileInterpolations(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const profiles = config.profiles;
+  if (!profiles || Object.keys(profiles).length === 0) return;
+
+  // Build a "max" context: every declared service + owned is present, every
+  // port stubbed as 1 (only reference shape matters here). We use this to
+  // discriminate structural failures (would-fail-anywhere — caught by the
+  // existing top-level check) from profile-specific failures (only fail when
+  // the profile excludes the referenced service).
+  const maxCtx = buildMaxInterpolationContext(config);
+
+  for (const profileName of Object.keys(profiles)) {
+    let resolved;
+    try {
+      resolved = resolveProfile(profileName, config);
+    } catch {
+      // Resolution errors (cycle, missing extends) are caught by the
+      // dedicated checks above (LEV-384/385). Skip simulation for this
+      // profile rather than double-reporting.
+      continue;
+    }
+
+    // Build the profile-scoped synthetic context: only services in the
+    // profile's resolved set are populated. Stubbed ports as 1 — any
+    // positive int satisfies the resolver. We're checking reference
+    // shape, not numeric values.
+    const profileCtx = buildProfileInterpolationContext(resolved, config);
+
+    // Compute the surviving merged env per Task 12's contract:
+    // top-level + profile.env, no per-service. Track origin per key so the
+    // emitted error points at the right location (top-level vs profile).
+    const surviving = mergeWithOrigin(config.env, resolved.env);
+
+    for (const [key, entry] of surviving) {
+      // Skip non-string values (numbers/booleans coerced lazily at resolve
+      // time; they can't contain `${...}` since they aren't strings).
+      if (typeof entry.value !== "string") continue;
+      if (entry.value.indexOf("$") === -1) continue;
+
+      // Locate the source per origin layer. The Task 12 contract uses
+      // `/env/<key>` when the surviving value came from the top-level
+      // layer (the profile didn't override) and `/profiles/<name>/env/<key>`
+      // when the profile overrode the key.
+      const location =
+        entry.origin === "profile"
+          ? `${path} (/profiles/${profileName}/env/${key})`
+          : `${path} (/env/${key})`;
+
+      try {
+        interpolateString(entry.value, profileCtx, `validate:${profileName}:${key}`);
+      } catch (e) {
+        if (!(e instanceof InterpolationError)) throw e;
+
+        // Deduplicate with the structural top-level check: if the same
+        // value also fails in the max context (every declared service
+        // present), the offense is "service not declared" — already
+        // flagged by `checkInterpolations`. Skip emission here.
+        if (failsInContext(entry.value, maxCtx)) continue;
+
+        errors.push({
+          kind: "interp",
+          location,
+          message: profileInterpMessage(e, profileName),
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Build a synthetic {@link InterpolationContext} covering the profile's
+ * resolved set: only the named services + owned appear in the maps,
+ * with stub ports of 1. References to services declared at the top level
+ * but EXCLUDED by the profile fail interpolation under this context — the
+ * exact failure mode this check exists to catch.
+ *
+ * For owned services, we honour the declared `port:` vs `ports:` shape so
+ * that a `${owned.X.ports.<key>}` reference fails with the right diagnostic
+ * (rather than a misleading single-port message) when X uses multi-port.
+ */
+function buildProfileInterpolationContext(
+  resolved: ReturnType<typeof resolveProfile>,
+  config: LichConfig,
+): InterpolationContext {
+  const services: InterpolationContext["services"] = {};
+  for (const name of resolved.services) {
+    services[name] = { host_port: 1 };
+  }
+
+  const owned: InterpolationContext["owned"] = {};
+  for (const name of resolved.owned) {
+    const svc = config.owned?.[name];
+    const entry: { port?: number; ports?: Record<string, number> } = {};
+    if (svc) {
+      if (svc.ports && typeof svc.ports === "object") {
+        const stubbed: Record<string, number> = {};
+        for (const key of Object.keys(svc.ports)) {
+          stubbed[key] = 1;
+        }
+        entry.ports = stubbed;
+      }
+      if (svc.port !== undefined) {
+        entry.port = 1;
+      }
+      // If neither shape is declared we still register the name so refs
+      // like `${owned.X.captured.Y}` reach the engine's own diagnostic
+      // (instead of "unknown owned service") — the engine surfaces a
+      // capture-specific message when the service exists but lacks the
+      // referenced facet.
+    }
+    owned[name] = entry;
+  }
+
+  // Worktree fields are stubbed with non-empty strings so any
+  // `${worktree.*}` reference in env values resolves trivially. The
+  // existing structural check would already flag unknown worktree fields;
+  // we just need values present here so the engine doesn't trip on a real
+  // worktree reference unrelated to the profile slicing.
+  return {
+    worktree: { name: "stub", id: "stub", path: "/stub" },
+    services,
+    owned,
+  };
+}
+
+/**
+ * Build a "max" {@link InterpolationContext} — every declared service +
+ * owned is present, ports stubbed as 1. References that fail here are
+ * structurally bad (typo, undeclared name) and the existing top-level
+ * check has already flagged them. We use this to skip duplicate
+ * diagnostics from the per-profile simulation.
+ */
+function buildMaxInterpolationContext(
+  config: LichConfig,
+): InterpolationContext {
+  const services: InterpolationContext["services"] = {};
+  for (const name of Object.keys(config.services ?? {})) {
+    services[name] = { host_port: 1 };
+  }
+
+  const owned: InterpolationContext["owned"] = {};
+  for (const [name, svc] of Object.entries(config.owned ?? {})) {
+    const entry: { port?: number; ports?: Record<string, number> } = {};
+    if (svc?.ports && typeof svc.ports === "object") {
+      const stubbed: Record<string, number> = {};
+      for (const key of Object.keys(svc.ports)) {
+        stubbed[key] = 1;
+      }
+      entry.ports = stubbed;
+    }
+    if (svc?.port !== undefined) {
+      entry.port = 1;
+    }
+    owned[name] = entry;
+  }
+
+  return {
+    worktree: { name: "stub", id: "stub", path: "/stub" },
+    services,
+    owned,
+  };
+}
+
+/**
+ * Best-effort: does `interpolateString` throw against `ctx`? Used to
+ * detect structural failures (would-fail-anywhere) so we can dedupe with
+ * the existing top-level check.
+ */
+function failsInContext(value: string, ctx: InterpolationContext): boolean {
+  try {
+    interpolateString(value, ctx);
+    return false;
+  } catch (e) {
+    return e instanceof InterpolationError;
+  }
+}
+
+/**
+ * Per-key merge of top-level env + profile env, tracking the source layer
+ * for each surviving key. The profile's value wins on key collision —
+ * matches the spec's precedence (top-level → profile → per-service); we
+ * only consider the first two layers per Task 12's contract.
+ *
+ * Returns a `Map<string, { value, origin }>` rather than a plain object so
+ * order is preserved (insertion order: top-level keys first, then any
+ * profile-only keys at the end — matches the natural iteration order the
+ * runtime resolver would produce after layering).
+ */
+function mergeWithOrigin(
+  topLevel: EnvMap | undefined,
+  profile: EnvMap,
+): Map<string, { value: unknown; origin: "top" | "profile" }> {
+  const out = new Map<string, { value: unknown; origin: "top" | "profile" }>();
+  if (topLevel) {
+    for (const [k, v] of Object.entries(topLevel)) {
+      out.set(k, { value: v, origin: "top" });
+    }
+  }
+  // Profile keys overlay top-level; their origin shifts to "profile".
+  for (const [k, v] of Object.entries(profile)) {
+    out.set(k, { value: v, origin: "profile" });
+  }
+  return out;
+}
+
+/**
+ * Prefix the underlying InterpolationError's message with the profile
+ * name so the user sees which profile's context surfaced the failure.
+ * Strips the engine's `(source: ...)` suffix since the location already
+ * pinpoints the offending env entry.
+ */
+function profileInterpMessage(
+  err: InterpolationError,
+  profileName: string,
+): string {
+  // Remove the "(source: validate:<profile>:<key>)" suffix the engine
+  // appends — the validation error's `location` field carries that info
+  // in a more readable shape.
+  const stripped = err.message.replace(/\s*\(source: [^)]*\)$/u, "");
+  return `under profile "${profileName}": ${stripped}`;
 }
 
 // ---------------------------------------------------------------------------
