@@ -868,6 +868,179 @@ profiles:
 });
 
 // ---------------------------------------------------------------------------
+// LEV-388 (Plan 3 Task 14): filter dep graph + start set to profile's
+// services/owned. The acceptance criteria pin three behaviors:
+//
+//   1. Only profile-included services become graph nodes, get ports, and
+//      land in the state.json snapshot. Excluded services are structurally
+//      absent — not just "running but hidden."
+//   2. A profile-included service with a `depends_on` edge to a profile-
+//      EXCLUDED service errors out at graph construction with a message
+//      that names the active profile (so the user understands the
+//      `depends_on` target is declared in the yaml, just not in the
+//      profile).
+//   3. A profile with empty services + owned lists still completes the up
+//      as a no-op (lifecycle hooks still run, exit 0).
+// ---------------------------------------------------------------------------
+
+describe("runUp — LEV-388: profile filters the start set", () => {
+  it("starts only services in the active profile", async () => {
+    // Three owned services declared at the top level; the profile lists
+    // only [a, b] so c MUST NOT start. Each ready service writes a sentinel
+    // file we can probe for "did this actually run?"
+    const sentinelA = join(projectDir, "a.ready");
+    const sentinelB = join(projectDir, "b.ready");
+    const sentinelC = join(projectDir, "c.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  a:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinelA))}
+    ready_when:
+      log_match: "READY"
+  b:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinelB))}
+    ready_when:
+      log_match: "READY"
+  c:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinelC))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  ab:
+    default: true
+    owned: [a, b]
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+
+    // Snapshot proves a + b started and c was structurally absent
+    // (not just hidden — never seeded into the snapshot map).
+    const snap = await loadSnapshot(result.stackId!);
+    const names = snap.services.map((s) => s.name).sort();
+    expect(names).toEqual(["a", "b"]);
+    expect(snap.services.find((s) => s.name === "a")?.state).toBe("ready");
+    expect(snap.services.find((s) => s.name === "b")?.state).toBe("ready");
+
+    // Independent verification: c's cmd never ran (no sentinel file).
+    expect(existsSync(sentinelA)).toBe(true);
+    expect(existsSync(sentinelB)).toBe(true);
+    expect(existsSync(sentinelC)).toBe(false);
+
+    // runUp's return value mirrors the snapshot — also no `c`.
+    const returnedNames = (result.services ?? []).map((s) => s.name).sort();
+    expect(returnedNames).toEqual(["a", "b"]);
+  }, 20_000);
+
+  it("errors when a profile service depends_on a non-profile service", async () => {
+    // `a` depends on `b`, but the active profile only includes [a] —
+    // `b` exists in the yaml's `owned:` map but is excluded from the
+    // profile. The dep graph builder sees `a` referencing an undeclared
+    // node (because `b` was filtered out) and aborts with the profile-
+    // scoping message.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  a:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+    depends_on: [b]
+  b:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  just-a:
+    default: true
+    owned: [a]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // The error names the offending service, the active profile, and the
+    // excluded target. We don't pin the exact substring order so a future
+    // wording polish doesn't break tests, but each piece must be present.
+    const evt = expectErrorEvent(chunks, "depends_on");
+    expect(evt.title).toBe("invalid dependency graph");
+    expect(evt.detail).toContain("'a'");
+    expect(evt.detail).toContain("'just-a'");
+    expect(evt.detail).toContain("'b'");
+    expect(evt.detail).toContain("not in the profile");
+
+    // No service ever transitioned to ready (the graph step aborted before
+    // startup).
+    const snap = await readSnapshot(result.stackId!);
+    expect(snap?.status).toBe("failed");
+  }, 10_000);
+
+  it("profile with empty services and owned lists still completes the up (no-op)", async () => {
+    // Profile selects no services and no owned. Lifecycle hooks run; exit
+    // is 0 because the spec's contract is "lifecycle still fires even on
+    // an empty start-set" — useful for profiles that only do setup work.
+    const beforeSentinel = join(projectDir, "before.ran");
+    const afterSentinel = join(projectDir, "after.ran");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  someone:
+    cmd: "echo SHOULD_NOT_RUN"
+    ready_when:
+      log_match: "READY"
+profiles:
+  noop:
+    default: true
+lifecycle:
+  before_up:
+    - touch ${shellQuote(beforeSentinel)}
+  after_up:
+    - touch ${shellQuote(afterSentinel)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+
+    // Both lifecycle hooks ran even though no services started.
+    expect(existsSync(beforeSentinel)).toBe(true);
+    expect(existsSync(afterSentinel)).toBe(true);
+
+    // Snapshot's services list is empty — proves the start-set was empty.
+    const snap = await loadSnapshot(result.stackId!);
+    expect(snap.status).toBe("up");
+    expect(snap.services).toEqual([]);
+  }, 10_000);
+
+});
+
+// ---------------------------------------------------------------------------
 // Local helpers
 // ---------------------------------------------------------------------------
 

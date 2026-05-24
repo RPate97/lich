@@ -95,7 +95,12 @@ import {
   formatFailure,
   type FailureInput,
 } from "../failure/formatter.js";
-import { buildGraph, validateGraph, type NodeDecl } from "../deps/graph.js";
+import {
+  buildGraph,
+  validateGraph,
+  DependencyError,
+  type NodeDecl,
+} from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
 import {
   createOutput,
@@ -498,17 +503,34 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         return { exitCode: 1, stackId: worktree.stack_id };
       }
     }
-    // Suppress unused-variable warnings for resolvedProfile — downstream
-    // Plan 3 tasks (14: service filtering; 15: env + lifecycle wiring) will
-    // consume it. Leaving the binding in place here means those tasks can
-    // be applied as small, focused edits rather than re-introducing the
-    // resolution call.
-    void resolvedProfile;
     // ---- LEV-387 (Plan 3 Task 13) END --------------------------------------
+
+    // ---- LEV-388 (Plan 3 Task 14) BEGIN: filter config to active profile --
+    // When a profile is active, narrow the working `LichConfig` to only the
+    // compose services + owned processes the profile includes. Every
+    // downstream step (dep graph, port plan, env resolution, compose
+    // override generation, per-level startup, snapshot) consumes
+    // `effectiveConfig` instead of the raw `config`, so a service declared
+    // in `services:` / `owned:` but excluded from the active profile is
+    // NEVER started — it never becomes a graph node, never gets a port
+    // allocated, never appears in the snapshot.
+    //
+    // When no profile is active (no `profiles:` section OR Plan-1 fallback),
+    // `effectiveConfig === config` and behavior is unchanged.
+    //
+    // Lifecycle hooks (top-level `before_up` / `after_up`) are NOT filtered
+    // out — they run regardless of the start-set being empty. That matches
+    // the spec ("profile with empty services and owned lists still completes
+    // the up; lifecycle hooks still run") and the unit-test contract for
+    // this task.
+    const effectiveConfig: LichConfig = resolvedProfile
+      ? filterConfigToProfile(config, resolvedProfile)
+      : config;
+    // ---- LEV-388 (Plan 3 Task 14) END --------------------------------------
 
     // ---- Step 3: build dep graph + topo levels ----------------------------
     const graphPhase = output.phase("dependency-graph");
-    const decls = buildNodeDecls(config);
+    const decls = buildNodeDecls(effectiveConfig);
     let levels: string[][];
     try {
       const graph = buildGraph(decls);
@@ -516,9 +538,15 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       levels = topoLevels(graph);
     } catch (err) {
       graphPhase.end("fail");
-      const msg = err instanceof CycleError
-        ? `dependency cycle: ${err.cycle.join(" → ")}`
-        : (err as Error).message;
+      // LEV-388 (Plan 3 Task 14): when a profile is active, surface
+      // missing-dep errors with profile-scoping context. The underlying
+      // `DependencyError` lists each offender as
+      //   "service '<a>' depends_on '<b>', which is not in the profile"
+      // — same shape as Plan 1's missing-target message, but each line
+      // names the active profile so the user knows WHY the target is
+      // missing (it's defined in the yaml, just not selected by this
+      // profile). Cycle errors keep their original wording.
+      const msg = formatGraphError(err, resolvedProfile);
       output.error({
         title: "invalid dependency graph",
         detail: msg,
@@ -539,9 +567,14 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     }
 
     // ---- Step 4: allocate ports -------------------------------------------
+    // LEV-388 (Plan 3 Task 14): `effectiveConfig` carries the profile-filtered
+    // `services` / `owned` records, so the port plan only allocates for
+    // services in the active profile. `pickPortRange` reads
+    // `config.runtime.port_range` — preserved untouched by the filter, so
+    // either binding works; we use `effectiveConfig` for consistency.
     const portsPhase = output.phase("allocate-ports");
-    const portPlan = buildPortPlan(config);
-    const range = pickPortRange(config);
+    const portPlan = buildPortPlan(effectiveConfig);
+    const range = pickPortRange(effectiveConfig);
 
     let portMap: Record<string, number> = {};
     if (Object.keys(portPlan.logicalPorts).length > 0) {
@@ -568,9 +601,14 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     portsPhase.end("ok", `${Object.keys(portMap).length} port${Object.keys(portMap).length === 1 ? "" : "s"}`);
 
     // ---- Step 5: resolve top-level env -------------------------------------
+    // LEV-388 (Plan 3 Task 14): pass `effectiveConfig` so per-service env
+    // resolution downstream operates on the filtered service set. Top-level
+    // env / env_files / env_from are preserved untouched by the filter.
+    // Profile-layer env wiring (passing `profile: resolvedProfile`) is Task
+    // 15's job; this task only narrows the structural service set.
     const envPhase = output.phase("resolve-env");
     const topLevelEnv = await resolveTopLevelEnv({
-      config,
+      config: effectiveConfig,
       worktree,
       allocatedPorts,
       projectRoot: worktree.path,
@@ -593,7 +631,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     ): Promise<NodeJS.ProcessEnv> =>
       resolveEnvGroup({
         name,
-        config,
+        // LEV-388: env_groups themselves are top-level and untouched by the
+        // profile filter, but resolution may reference services for
+        // interpolation — `effectiveConfig` keeps that reference set in
+        // sync with what's actually being started.
+        config: effectiveConfig,
         worktree,
         allocatedPorts,
         projectRoot: worktree.path,
@@ -609,11 +651,17 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // Plan 1 — `resolveEnvForService` just returns the top-level layer for
     // them — but we go through the same path so any future per-service env
     // is automatically picked up.)
-    const composeNames = Object.keys(config.services ?? {});
+    //
+    // LEV-388 (Plan 3 Task 14): iterate the FILTERED config so a compose
+    // service excluded from the active profile gets neither an env resolution
+    // nor an entry in the generated override file. `writeComposeOverride`
+    // walks `input.config.services`; passing `effectiveConfig` ensures the
+    // override only declares profile-included services.
+    const composeNames = Object.keys(effectiveConfig.services ?? {});
     const resolvedComposeEnv: Record<string, NodeJS.ProcessEnv> = {};
     for (const name of composeNames) {
       resolvedComposeEnv[name] = await resolveEnvForService({
-        config,
+        config: effectiveConfig,
         service: { kind: "compose", name },
         worktree,
         allocatedPorts,
@@ -627,7 +675,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     if (composeNames.length > 0) {
       const overridePhase = output.phase("compose-override");
       const overridePath = await writeComposeOverride({
-        config,
+        config: effectiveConfig,
         allocatedPorts: { compose: allocatedPorts.compose },
         resolvedEnv: resolvedComposeEnv,
         stackId: worktree.stack_id,
@@ -635,12 +683,12 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       // Compose needs the user's compose file(s) too. Plan 1 reads them off
       // the per-service `compose_file:` field. The dogfood stack pattern is
       // a single shared file referenced by every service.
-      const userFiles = collectComposeFiles(config, worktree.path);
+      const userFiles = collectComposeFiles(effectiveConfig, worktree.path);
       composeFiles = [...userFiles, overridePath];
       overridePhase.end("ok");
 
       const detectPhase = output.phase("compose-detect");
-      const composeOverride = pickComposeOverride(config);
+      const composeOverride = pickComposeOverride(effectiveConfig);
       composeCli = await resolveComposeCli(composeOverride);
       composeProject = `lich-${worktree.stack_id}`;
       detectPhase.end("ok", composeCli.kind);
@@ -687,7 +735,13 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         level.map((name) =>
           startOneService({
             name,
-            config,
+            // LEV-388 (Plan 3 Task 14): per-service start consumes the
+            // filtered config so `config.services[name]` / `config.owned[name]`
+            // lookups inside `startOwned` / `startCompose` only see profile-
+            // included services. Defensive — the topo levels were already
+            // built from `effectiveConfig`, but threading the filtered config
+            // keeps the contract consistent end-to-end.
+            config: effectiveConfig,
             worktree,
             allocatedPorts,
             topLevelEnv,
@@ -1759,6 +1813,128 @@ function buildHttpUrl(
 // ---------------------------------------------------------------------------
 // Helpers — dep decls, port plan, state
 // ---------------------------------------------------------------------------
+
+/**
+ * LEV-388 (Plan 3 Task 14): produce a narrowed {@link LichConfig} whose
+ * `services` and `owned` records are restricted to entries the resolved
+ * profile selects. Every other top-level field (`runtime`, `env`,
+ * `env_files`, `env_from`, `env_groups`, `lifecycle`, `commands`,
+ * `profiles`, `version`) is preserved by reference — the filter only
+ * narrows the start-set.
+ *
+ * Why a shallow clone with narrowed maps (vs deep clone, vs mutating in
+ * place):
+ *
+ *   - Mutating `config` in place would surprise any caller that holds a
+ *     reference to the parsed config (currently none, but the parsed
+ *     object is the kind of thing that grows reference holders as the
+ *     code evolves).
+ *   - Deep cloning would unnecessarily duplicate every value across every
+ *     service definition (cmd strings, port descriptors, lifecycle
+ *     entries, env maps), all of which the downstream callers read
+ *     read-only.
+ *   - A shallow clone + narrowed two-key rebuild gives downstream code a
+ *     drop-in replacement: `effectiveConfig.services[x]` returns the same
+ *     `ComposeService` object the original config carried — same ports,
+ *     same lifecycle, same depends_on — but the `services` map itself
+ *     excludes profile-excluded names.
+ *
+ * A service excluded from the profile is not just hidden from iteration;
+ * it's structurally absent — so `validateGraph` naturally fails when a
+ * profile-INCLUDED service has a `depends_on` edge to a profile-EXCLUDED
+ * name (the dep target isn't a declared node). The orchestrator wraps
+ * that failure with profile-scoping context in `formatGraphError` so the
+ * user gets a useful error message instead of a generic
+ * "unknown nodes" report.
+ *
+ * @param config - the full parsed lich.yaml
+ * @param profile - the resolved active profile (services + owned lists)
+ * @returns a new LichConfig with services + owned narrowed to the profile
+ */
+function filterConfigToProfile(
+  config: LichConfig,
+  profile: ResolvedProfile,
+): LichConfig {
+  const includedServices = new Set(profile.services);
+  const includedOwned = new Set(profile.owned);
+
+  // Rebuild the maps with only the profile-included keys. Preserve declared
+  // order from the original yaml (Object.entries iterates in insertion order)
+  // so error messages and topo-sort tie-breaking remain deterministic and
+  // user-facing-stable across reruns. The set membership check is O(1); the
+  // overall filter is O(N) in the number of declared services + owned.
+  const services: Record<string, (typeof config.services)[string]> = {};
+  for (const [name, def] of Object.entries(config.services ?? {})) {
+    if (includedServices.has(name) && def !== undefined) {
+      services[name] = def;
+    }
+  }
+  const owned: Record<string, (typeof config.owned)[string]> = {};
+  for (const [name, def] of Object.entries(config.owned ?? {})) {
+    if (includedOwned.has(name) && def !== undefined) {
+      owned[name] = def;
+    }
+  }
+
+  // Spread to preserve every other field (runtime, env, env_files, env_from,
+  // env_groups, lifecycle, commands, profiles, version). Then assign the
+  // narrowed services/owned maps explicitly. The result is a fresh object
+  // (different identity than `config`) but every nested value is the same
+  // reference — downstream readers see identical data structures.
+  return {
+    ...config,
+    services,
+    owned,
+  };
+}
+
+/**
+ * LEV-388 (Plan 3 Task 14): format the error message rendered when graph
+ * construction / validation fails. When a profile is active, missing-target
+ * errors get profile-scoping context so the user understands WHY a
+ * `depends_on` reference is unresolved: the target IS declared in the yaml,
+ * but the active profile doesn't include it.
+ *
+ * Two error shapes are recognized:
+ *
+ *   - {@link DependencyError} — at least one `depends_on` target isn't a
+ *     declared node. When a profile is active, each line is reformatted to
+ *     read
+ *       service '<a>' (in active profile '<p>') depends_on '<b>', which is
+ *       not in the profile
+ *     so the user can either add `<b>` to the profile's services/owned list
+ *     or drop the depends_on edge. Without an active profile, the original
+ *     `DependencyError` message is used as-is.
+ *
+ *   - {@link CycleError} — original message ("dependency cycle: a → b → a").
+ *     Profile context doesn't help here; cycles are configuration bugs
+ *     orthogonal to profile selection.
+ *
+ * Any other error reaches us only by misuse; fall back to its message text.
+ */
+function formatGraphError(
+  err: unknown,
+  profile: ResolvedProfile | null,
+): string {
+  if (err instanceof CycleError) {
+    return `dependency cycle: ${err.cycle.join(" → ")}`;
+  }
+  if (err instanceof DependencyError) {
+    if (profile === null) {
+      return err.message;
+    }
+    const profileName = profile.name;
+    // `err.missing` is already sorted (DependencyError's constructor sorts
+    // by from-name then target-name); preserve that order so the rendered
+    // output stays deterministic for tests.
+    const lines = err.missing.map(
+      (m) =>
+        `service '${m.from}' (in active profile '${profileName}') depends_on '${m.target}', which is not in the profile`,
+    );
+    return lines.join("\n");
+  }
+  return (err as Error).message;
+}
 
 function buildNodeDecls(config: LichConfig): NodeDecl[] {
   const decls: NodeDecl[] = [];
