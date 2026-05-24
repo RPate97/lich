@@ -105,6 +105,12 @@ export interface ValidationSummary {
   compose: number;
   owned: number;
   lifecycle_hooks: number;
+  /**
+   * LEV-401 (Plan 3 Task 27): count of declared profiles. Optional so old
+   * JSON consumers that don't expect the field still parse cleanly; new
+   * writes always populate it (zero when `config.profiles` is absent).
+   */
+  profiles?: number;
 }
 
 export interface JsonReport {
@@ -1525,6 +1531,10 @@ function profileInterpMessage(
 function computeSummary(config: LichConfig): ValidationSummary {
   const compose = Object.keys(config.services ?? {}).length;
   const owned = Object.keys(config.owned ?? {}).length;
+  // LEV-401 (Plan 3 Task 27): include declared profiles count. Plan 2's
+  // Task 27 (conformance benchmark refresh) set the precedent of keeping the
+  // summary a fast signal of what's in the yaml; this continues that line.
+  const profiles = Object.keys(config.profiles ?? {}).length;
 
   let hooks = 0;
   const top = config.lifecycle;
@@ -1547,7 +1557,7 @@ function computeSummary(config: LichConfig): ValidationSummary {
     hooks += lc.after_ready?.length ?? 0;
     hooks += lc.before_down?.length ?? 0;
   }
-  return { compose, owned, lifecycle_hooks: hooks };
+  return { compose, owned, lifecycle_hooks: hooks, profiles };
 }
 
 // ---------------------------------------------------------------------------
@@ -1573,6 +1583,14 @@ function renderPretty(
       sink(`  • ${plural(s.compose, "compose service")}`);
       sink(`  • ${plural(s.owned, "owned service")}`);
       sink(`  • ${plural(s.lifecycle_hooks, "lifecycle hook")}`);
+      // LEV-401 (Plan 3 Task 27): only show the profiles line when the
+      // yaml actually declares profiles — otherwise the noise of "0
+      // profile(s)" on every pre-Plan-3 config would clutter the success
+      // output. The JSON summary still records the count (zero or more)
+      // unconditionally so consumers don't have to special-case absence.
+      if (s.profiles !== undefined && s.profiles > 0) {
+        sink(`  • ${plural(s.profiles, "profile")}`);
+      }
     }
     for (const w of warnings) {
       warnOut(`${warnPrefix()} ${w.location}: ${w.message}`);

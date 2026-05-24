@@ -1697,4 +1697,119 @@ describe("runValidate", () => {
     expect(interpErr).toBeDefined();
     expect(interpErr!.message).toContain("supabase");
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-401 (Plan 3 Task 27): validate summary polish + profile count
+  //
+  // `ValidationSummary` gained an optional `profiles` field; `computeSummary`
+  // populates it from `Object.keys(config.profiles ?? {}).length`; pretty
+  // output prints `• N profile(s)` alongside the existing compose / owned /
+  // lifecycle_hooks lines, but ONLY when N > 0 (avoids noise on the legacy
+  // no-profile case). JSON summary always carries the count.
+  // -------------------------------------------------------------------------
+
+  it("summary includes profile count for the dogfood yaml (after Task 18)", async () => {
+    // The dogfood-stack lich.yaml declares two profiles: `dev` (default)
+    // and `dev:env-override` (extends dev). The summary's `profiles` field
+    // must surface that count so downstream consumers (dashboard, CI) can
+    // tell at a glance how many slices the stack defines.
+    const res = await run({ path: DOGFOOD_YAML });
+    expect(res.exitCode).toBe(0);
+    expect(res.report.summary).toBeDefined();
+    expect(res.report.summary?.profiles).toBe(2);
+  });
+
+  it("summary.profiles is 0 when no profiles section is defined", async () => {
+    // The JSON shape carries the field regardless — a numeric zero is more
+    // useful to consumers than absence, since the no-profile case is a
+    // valid stack configuration (Plan 1 semantics).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\nowned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    expect(res.report.summary?.profiles).toBe(0);
+  });
+
+  it("--json summary includes profiles count for a yaml with profiles", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    default: true\n    owned: [api]\n` +
+        `  test:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p, json: true });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.length).toBe(1);
+    const parsed = JSON.parse(stdout[0]) as JsonReport;
+    expect(parsed.ok).toBe(true);
+    expect(parsed.summary).toBeDefined();
+    expect(parsed.summary?.profiles).toBe(2);
+  });
+
+  it("--json summary includes profiles: 0 when profiles section is absent", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\nowned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p, json: true });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(stdout[0]) as JsonReport;
+    expect(parsed.summary?.profiles).toBe(0);
+  });
+
+  it("pretty output renders 'N profile(s)' line when profiles defined", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    default: true\n    owned: [api]\n` +
+        `  test:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("✓");
+    // Plural form because N=2.
+    expect(out).toMatch(/•\s+2 profiles/);
+  });
+
+  it("pretty output uses singular 'profile' when exactly one declared", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    default: true\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const out = stdout.join("\n");
+    // Singular form because N=1 — matches the existing pluralization
+    // convention used for compose/owned/lifecycle_hooks lines.
+    expect(out).toMatch(/•\s+1 profile\b/);
+    expect(out).not.toMatch(/•\s+1 profiles/);
+  });
+
+  it("pretty output omits the profiles line when no profiles defined", async () => {
+    // The summary still carries `profiles: 0` in JSON, but the pretty
+    // output suppresses the line so pre-Plan-3 configs (and any stack
+    // that genuinely has no profiles) stay visually clean.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\nowned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const out = stdout.join("\n");
+    expect(out).toContain("✓");
+    expect(out).toMatch(/owned service/);
+    // No profile(s) line should appear when the count is zero.
+    expect(out).not.toMatch(/profile\(s\)/);
+    expect(out).not.toMatch(/•\s+\d+\s+profile/);
+  });
 });
