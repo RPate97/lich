@@ -69,6 +69,15 @@ export interface StackSnapshot {
   /** ISO 8601 timestamp. */
   started_at: string;
   services: ServiceSnapshot[];
+  /**
+   * Name of the profile this stack was started under, or omitted when no
+   * profile was active (e.g. the yaml has no `profiles` section, or this is
+   * a pre-Plan-3 snapshot). Plan 3 writers populate this so subsequent
+   * commands (down/restart/stacks) can re-resolve the same profile from
+   * `lich.yaml` and surface it to the dashboard. Readers must tolerate its
+   * absence — old snapshots written before Plan 3 don't carry the field.
+   */
+  active_profile?: string;
 }
 
 function snapshotPath(stackId: string): string {

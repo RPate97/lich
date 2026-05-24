@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stackDir } from "../../../src/state/directory.js";
@@ -92,6 +93,89 @@ describe("writeSnapshot + readSnapshot round-trip", () => {
     const got = await readSnapshot("s1");
     expect(got?.status).toBe("stopped");
     expect(got?.services).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// active_profile (LEV-382, Plan 3 Task 8)
+//
+// The snapshot carries the name of the profile the stack was started under,
+// or omits the field entirely when no profile is in use. Three invariants:
+//
+//   1. ROUND-TRIP when set: write with active_profile, read it back unchanged.
+//   2. OMIT when unset: undefined active_profile must not appear as a JSON key
+//      (relies on JSON.stringify dropping undefined values).
+//   3. BACK-COMPAT: pre-Plan-3 snapshots have no active_profile field at all
+//      and must still parse cleanly via readSnapshot.
+// ---------------------------------------------------------------------------
+
+describe("StackSnapshot active_profile", () => {
+  it("writeSnapshot + readSnapshot round-trips active_profile when set", async () => {
+    const snap: StackSnapshot = {
+      ...sampleSnapshot("ap-set"),
+      active_profile: "dev",
+    };
+    await writeSnapshot(snap);
+
+    const got = await readSnapshot("ap-set");
+    expect(got).not.toBeNull();
+    expect(got!.active_profile).toBe("dev");
+    // Full equality — verifies sanitizeForWrite didn't strip the field and
+    // no other shape drift snuck in.
+    expect(got).toEqual(snap);
+  });
+
+  it("writeSnapshot + readSnapshot omits active_profile when unset", async () => {
+    // sampleSnapshot() returns a snapshot with no active_profile.
+    const snap = sampleSnapshot("ap-unset");
+    expect(snap.active_profile).toBeUndefined();
+
+    await writeSnapshot(snap);
+
+    // Verify the on-disk JSON has no active_profile key — undefined must
+    // not serialize as `"active_profile": null` or any other artifact.
+    const raw = readFileSync(join(stackDir("ap-unset"), "state.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    expect(parsed).not.toHaveProperty("active_profile");
+
+    // And the readback object also lacks the field.
+    const got = await readSnapshot("ap-unset");
+    expect(got).not.toBeNull();
+    expect(got!.active_profile).toBeUndefined();
+  });
+
+  it("readSnapshot tolerates an old snapshot that lacks active_profile", async () => {
+    // Simulate a state.json written by lich pre-Plan-3 — no active_profile
+    // key anywhere in the document.
+    const stackId = "ap-legacy";
+    const dir = stackDir(stackId);
+    await mkdir(dir, { recursive: true });
+    const legacy = {
+      stack_id: stackId,
+      worktree_name: "main",
+      worktree_path: "/tmp/legacy",
+      status: "up",
+      started_at: "2026-05-23T10:00:00.000Z",
+      services: [
+        {
+          name: "postgres",
+          kind: "compose",
+          state: "ready",
+          allocated_ports: { POSTGRES_HOST_PORT: 54321 },
+          started_at: "2026-05-23T10:00:01.000Z",
+        },
+      ],
+    };
+    writeFileSync(join(dir, "state.json"), JSON.stringify(legacy, null, 2), "utf8");
+
+    const got = await readSnapshot(stackId);
+    expect(got).not.toBeNull();
+    expect(got!.stack_id).toBe(stackId);
+    expect(got!.active_profile).toBeUndefined();
+    // Verify the rest of the snapshot parsed correctly so we know the
+    // missing field didn't cascade into other problems.
+    expect(got!.services).toHaveLength(1);
+    expect(got!.services[0].name).toBe("postgres");
   });
 });
 
