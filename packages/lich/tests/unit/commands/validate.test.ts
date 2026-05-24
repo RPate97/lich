@@ -61,7 +61,9 @@ describe("runValidate", () => {
     expect(res.report.ok).toBe(true);
     expect(res.report.path).toBe(DOGFOOD_YAML);
     expect(res.report.summary).toBeDefined();
-    expect(res.report.summary?.owned).toBe(3);
+    // 4 owned services: supabase, api, web, tunnel_demo. tunnel_demo was
+    // added in Plan 4 (LEV-368) to exercise ready_when.capture + fail_when.
+    expect(res.report.summary?.owned).toBe(4);
     expect(res.report.summary?.compose).toBe(0);
   });
 

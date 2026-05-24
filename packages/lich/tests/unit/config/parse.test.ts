@@ -48,11 +48,15 @@ describe("parseConfig", () => {
     expect(result.sourcePath).toBe(DOGFOOD_YAML);
     expect(result.config.version).toBe("1");
 
-    // owned services we expect from the dogfood yaml
+    // owned services we expect from the dogfood yaml. `tunnel_demo` was
+    // added in Plan 4 (LEV-368) as a synthetic fixture that exercises
+    // ready_when.capture and fail_when end-to-end; if it disappears from
+    // the yaml the capture e2e tests in Plan 4 lose their target.
     expect(result.config.owned).toBeDefined();
     expect(Object.keys(result.config.owned!).sort()).toEqual([
       "api",
       "supabase",
+      "tunnel_demo",
       "web",
     ]);
 

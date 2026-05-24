@@ -28,7 +28,11 @@ owned:
       analytics: { env: SUPABASE_ANALYTICS_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"
-      timeout: 90s
+      # Plan 4 (LEV-368): supabase start pulls images on first run and brings
+      # up ~10 containers. 90s was tight on cold-cache machines; 120s gives
+      # headroom without masking a real hang (the timeout still fires loudly
+      # if startup actually wedges).
+      timeout: 120s
 
   api:
     cmd: bun run dev
@@ -39,6 +43,11 @@ owned:
       http_get: /health
       timeout: 30s
     fail_when:
+      # Plan 4 fail_when demo: the Express dev server prints `EADDRINUSE` when
+      # the host port is occupied, and Node prints `Cannot find module` when a
+      # require/import resolves to nothing. Either failure mode means waiting
+      # on `ready_when.http_get` is pointless — fail_when short-circuits the
+      # ready loop and surfaces the offending log line inline.
       log_match: "EADDRINUSE|Cannot find module"
 
   web:
@@ -52,6 +61,29 @@ owned:
       http_get: /
       timeout: 60s
 
+  # Plan 4 (LEV-368) ready_when.capture demo. Purely synthetic — this service
+  # exists to exercise the capture path end-to-end against a real owned
+  # process. The `echo … ; sleep 99999` pattern is deliberate: emit a log line
+  # that satisfies `ready_when.log_match`, then hang so the service stays
+  # alive (so `lich up` completes and downstream services / `lich env stack`
+  # can read the captured value). A future Plan 5 dashboard task reuses the
+  # same service for the "live log tail" demo.
+  tunnel_demo:
+    cmd: 'echo "starting"; sleep 0.5; echo "Listening on http://localhost:54999 (demo)"; sleep 99999'
+    ready_when:
+      log_match: "Listening on"
+      capture:
+        # Pull the URL out of the emitted log line and expose it as
+        # `${owned.tunnel_demo.captured.listen_url}` (used below in `env`).
+        # The literal port (54999) is hard-coded in `cmd` above — capture
+        # demonstrates the regex extraction, not dynamic port allocation.
+        listen_url: "http://localhost:\\d+"
+    fail_when:
+      # Sentinel patterns a real tunnel agent would emit on hard failure.
+      # tunnel_demo never emits these, so this is purely shape-coverage for
+      # the schema + watcher wiring.
+      log_match: "PANIC|FATAL"
+
 env:
   # Supabase wiring (used by the API to talk to Supabase)
   NEXT_PUBLIC_SUPABASE_URL: "http://localhost:${owned.supabase.ports.api}"
@@ -64,6 +96,12 @@ env:
 
   # Postgres connection (for migrate/seed via psql)
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
+
+  # Plan 4 (LEV-368) capture-wiring demo: the URL captured from tunnel_demo's
+  # log surfaces in the resolved stack env so downstream tools (or e2e tests
+  # via `lich env stack` / `lich exec`) can read it. Per the synthetic cmd
+  # above, this resolves to `http://localhost:54999` on every up.
+  TUNNEL_DEMO_URL: "${owned.tunnel_demo.captured.listen_url}"
 
 env_groups:
   # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
@@ -99,7 +137,10 @@ lifecycle:
 profiles:
   dev:
     default: true
-    owned: [supabase, api, web]
+    # `tunnel_demo` is included so `lich up` exercises the Plan 4 capture
+    # pipeline on every dev run — the captured listen_url flows into
+    # TUNNEL_DEMO_URL (see `env` above) before the after_up hooks fire.
+    owned: [supabase, api, web, tunnel_demo]
     lifecycle:
       after_up:
         - supabase migration up
