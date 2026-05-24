@@ -84,6 +84,18 @@ env_groups:
     env:
       TOOL_MODE: "standalone"
 
+lifecycle:
+  # Long-form `after_up` entry exercises Plan 2 Task 13's env_group wiring
+  # (LEV-345 sentinel): the hook runs with the resolved `stack-plus-test`
+  # group's env (inherits `stack` vars + adds `TEST_MODE=integration`), and
+  # the e2e test in tests/e2e/lifecycle-env-group.test.ts asserts the marker
+  # file the script writes contains both the inherited DATABASE_URL and the
+  # layered TEST_MODE. If this hook ever silently drops back to the top-level
+  # env, TEST_MODE would be empty and the e2e test would fail loudly.
+  after_up:
+    - cmd: ./scripts/write-marker.sh
+      env_group: stack-plus-test
+
 profiles:
   dev:
     default: true
