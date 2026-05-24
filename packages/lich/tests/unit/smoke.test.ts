@@ -35,8 +35,8 @@ describe("smoke", () => {
   it("every unimplemented command stub returns not-yet-implemented", async () => {
     // Commands implemented in Plan 1 are excluded from the stub sweep;
     // their own tests cover behavior. Plan 2 promotes `help` (LEV-329)
-    // to a real handler; exec/env follow in sibling tasks. restart lands
-    // in a later plan.
+    // and `env` (LEV-331) to real handlers; exec follows in a sibling
+    // task. restart lands in a later plan.
     const implemented = new Set<string>([
       "init",
       "validate",
@@ -47,6 +47,7 @@ describe("smoke", () => {
       "stacks",
       "nuke",
       "help",
+      "env",
     ]);
     for (const [name, fn] of Object.entries(COMMANDS)) {
       if (implemented.has(name)) continue;

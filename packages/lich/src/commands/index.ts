@@ -8,6 +8,7 @@ import { runStacks } from "./stacks.js";
 import { runNuke } from "./nuke.js";
 import { runDown } from "./down.js";
 import { runHelp } from "./help.js";
+import { runEnvCmd } from "./env.js";
 
 /**
  * The shape every command returns to the router.
@@ -141,6 +142,14 @@ const helpHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
+const envHandler: CommandHandler = async (ctx) => {
+  // First positional after `env` (e.g. `lich env stack` → "stack").
+  const groupName =
+    typeof ctx.argv._[0] === "string" ? ctx.argv._[0] : undefined;
+  const result = await runEnvCmd({ groupName, cwd: process.cwd() });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
 export const COMMANDS: Record<string, CommandHandler> = {
   up: upHandler,
   down: downHandler,
@@ -153,7 +162,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   validate: validateHandler,
   help: helpHandler,
   exec: stub("exec"),
-  env: stub("env"),
+  env: envHandler,
 };
 
 export type CommandName = keyof typeof COMMANDS;
