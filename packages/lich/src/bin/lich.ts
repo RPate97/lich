@@ -10,6 +10,12 @@ const argv = mri(process.argv.slice(2), {
   // are nuke flags (LEV-311 for rescue); `json` is shared across
   // commands that support structured output.
   boolean: ["version", "help", "json", "yes", "rescue"],
+  // Declare `env-group` as a string option so mri parses `--env-group=foo`
+  // (and the space-separated `--env-group foo`) into `{ "env-group": "foo" }`
+  // without trying to swallow it as a boolean. Used by `lich exec` (LEV-330)
+  // and `lich env` (LEV-331) to select which env_group's env to load. Other
+  // commands ignore it.
+  string: ["env-group"],
 });
 
 if (argv.version) {
@@ -99,5 +105,11 @@ if (result.message) {
 // 130 instead of 1 gives shells and scripts the standard signal hint.
 if (controller.signal.aborted) {
   process.exit(130);
+}
+// Honor a command-supplied exit code when present (e.g. `lich exec`
+// surfaces the child's own code, plus distinct codes for usage / 127 /
+// 130). Otherwise fall back to the binary 0/1 mapping driven by `ok`.
+if (typeof result.exitCode === "number") {
+  process.exit(result.exitCode);
 }
 process.exit(result.ok ? 0 : 1);

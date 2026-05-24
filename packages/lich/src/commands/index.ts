@@ -9,18 +9,30 @@ import { runNuke } from "./nuke.js";
 import { runDown } from "./down.js";
 import { runHelp } from "./help.js";
 import { runEnvCmd } from "./env.js";
+import { runExec } from "./exec.js";
 
 /**
  * The shape every command returns to the router.
  *
- * `ok` becomes the process exit status: `true` → 0, `false` → 1. The router
- * may also print `message` if non-empty (stubs use it to say "not yet
- * implemented"; real commands typically write their own output and leave
- * `message` empty).
+ * `ok` is the headline pass/fail: `true` → exit 0 by default, `false` →
+ * exit 1 by default. The router may also print `message` if non-empty
+ * (stubs use it to say "not yet implemented"; real commands typically
+ * write their own output and leave `message` empty).
+ *
+ * `exitCode` overrides the default 0/1 mapping when a command needs to
+ * surface a specific POSIX exit code distinct from generic success/failure.
+ * Examples (from `lich exec`, LEV-330): `2` for usage errors, `127` for
+ * "command not found", `130` for SIGINT-cancelled child. When present, the
+ * router uses this value directly; when absent, it falls back to the `ok`
+ * mapping. Commands MUST keep `ok` and `exitCode` consistent — pass
+ * `ok: false` whenever `exitCode !== 0` so any caller reading just `ok`
+ * (e.g. tests asserting on success/failure shape) still sees the right
+ * answer.
  */
 export interface CommandResult {
   ok: boolean;
   message?: string;
+  exitCode?: number;
 }
 
 /**
@@ -150,6 +162,27 @@ const envHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
+const execHandler: CommandHandler = async (ctx) => {
+  // The router strips the command name (`exec`) and leaves everything else
+  // in `ctx.argv._`. mri also parses `--env-group=<X>` into the camelCased
+  // `env-group` key (the bin layer registers it as a string option so mri
+  // doesn't try to swallow the following positional as the flag's value).
+  const envGroupName =
+    typeof ctx.argv["env-group"] === "string"
+      ? ctx.argv["env-group"]
+      : undefined;
+  const result = await runExec({
+    argv: ctx.argv._,
+    envGroupName,
+    cwd: process.cwd(),
+    signal: ctx.signal,
+  });
+  // Forward the specific exit code (2/127/130/child's own code) so users
+  // and scripts can distinguish "usage error" from "command not found"
+  // from "child failed with N". Default 0/1 mapping would erase this.
+  return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
+};
+
 export const COMMANDS: Record<string, CommandHandler> = {
   up: upHandler,
   down: downHandler,
@@ -161,7 +194,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   init: initHandler,
   validate: validateHandler,
   help: helpHandler,
-  exec: stub("exec"),
+  exec: execHandler,
   env: envHandler,
 };
 
