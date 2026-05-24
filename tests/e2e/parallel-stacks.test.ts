@@ -357,8 +357,11 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
 
       // Both web URLs serve traffic — proves the stacks are truly running
       // in parallel, not just having state.json say so.
-      await waitForHttp200(`http://localhost:${webA}/`, { timeoutMs: 60_000 });
-      await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 60_000 });
+      // Web (Next.js dev) cold compile on first request usually ~3-8s.
+      // 20s headroom; if it's slower than that, something is wrong rather
+      // than "the server is still starting."
+      await waitForHttp200(`http://localhost:${webA}/`, { timeoutMs: 20_000 });
+      await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 20_000 });
 
       // ---- Sentinel #3: lich stacks (from a third spawn) lists BOTH ---
       // Run `lich stacks` from a directory that is NOT inside either copy
@@ -399,7 +402,7 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
 
       // B's web URL still serves — the load-bearing assertion that down A
       // didn't accidentally reach into B's resources.
-      await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 30_000 });
+      await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 10_000 });
 
       // ---- Take B down (explicit cleanup; afterAll is a safety net) ---
       const downB = lichDown(b.path);

@@ -5,11 +5,18 @@ export interface WaitOptions {
   intervalMs?: number;
 }
 
-const DEFAULT_TIMEOUT = 30_000;
+const DEFAULT_TIMEOUT = 15_000;
 const DEFAULT_INTERVAL = 250;
 
 /**
  * Polls an HTTP URL until it returns a 2xx status, or times out.
+ *
+ * Uses ONE outer deadline (`timeoutMs`) bounding the whole loop. We do NOT
+ * set a per-request abort — that creates a thrashing loop with servers
+ * that compile on first request (Next.js dev), where each retry kicks off
+ * a fresh compile that gets cancelled before it finishes. Let each fetch
+ * take as long as it needs; the outer deadline catches actually-dead
+ * servers.
  */
 export async function waitForHttp200(
   url: string,
@@ -18,13 +25,14 @@ export async function waitForHttp200(
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT;
   const interval = opts.intervalMs ?? DEFAULT_INTERVAL;
   const deadline = Date.now() + timeout;
+  const outerSignal = AbortSignal.timeout(timeout);
 
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(url, { signal: outerSignal });
       if (res.status >= 200 && res.status < 300) return;
     } catch {
-      // ignore; will retry
+      // ignore; will retry until outer deadline
     }
     await sleep(interval);
   }

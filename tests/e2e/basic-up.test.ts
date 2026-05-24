@@ -276,14 +276,16 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       // api: single-port → "default"; verify /health responds.
       const apiUrl = urls.api?.default;
       expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
-      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 30_000 });
+      // Express api: responds immediately after spawn. 10s is huge headroom.
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
       const health = await fetch(`${apiUrl}/health`).then((r) => r.json());
       expect(health).toMatchObject({ status: "ok" });
 
       // web: single-port → "default"; verify root returns 200 HTML.
       const webUrl = urls.web?.default;
       expect(webUrl, `expected web url in: ${urlsResult.stdout}`).toBeTruthy();
-      await waitForHttp200(webUrl!, { timeoutMs: 60_000 });
+      // Next.js dev cold compile on first request usually ~3-8s.
+      await waitForHttp200(webUrl!, { timeoutMs: 20_000 });
       const webResp = await fetch(webUrl!);
       expect(webResp.status).toBe(200);
       const webBody = await webResp.text();
