@@ -97,12 +97,6 @@ env:
   # Postgres connection (for migrate/seed via psql)
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
 
-  # Plan 4 (LEV-368) capture-wiring demo: the URL captured from tunnel_demo's
-  # log surfaces in the resolved stack env so downstream tools (or e2e tests
-  # via `lich env stack` / `lich exec`) can read it. Per the synthetic cmd
-  # above, this resolves to `http://localhost:54999` on every up.
-  TUNNEL_DEMO_URL: "${owned.tunnel_demo.captured.listen_url}"
-
 env_groups:
   # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
   # (top-level env + ports + interpolated values) and layers an extra literal
