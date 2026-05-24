@@ -160,8 +160,23 @@ export interface OwnedHandle {
    * then escalate to `SIGKILL` if still alive. Idempotent: calling `stop()`
    * on an already-exited process resolves immediately without sending
    * signals.
+   *
+   * After `stop()` resolves, inspect {@link stopWarning} — when non-null
+   * it carries a diagnostic about a teardown lich could not verify (e.g.
+   * SIGKILL was sent but the pid still answers `kill(pid, 0)` after a
+   * brief post-kill grace). On the common happy path `stopWarning` is
+   * null. The promise itself never rejects.
    */
   stop(graceMs?: number): Promise<void>;
+  /**
+   * Diagnostic populated by the most recent {@link stop} call when lich
+   * could not verify the process is actually gone. `null` until a stop()
+   * runs, and after a successful-and-verified stop. Used by callers
+   * (e.g. `lich up`'s cancellation cleanup) to surface "we sent SIGKILL
+   * but the pid still answers" as a user-visible warning instead of
+   * silently pretending success.
+   */
+  readonly stopWarning: string | null;
 }
 
 /**
@@ -184,6 +199,33 @@ const STOP_CMD_TIMEOUT_MS = 30_000;
  * shell error line; not so much that the message becomes useless.
  */
 const ONESHOT_TAIL_BYTES = 2_048;
+
+/**
+ * Grace window between sending SIGKILL and re-checking liveness. The
+ * kernel needs a moment to reap the process and unregister the pid;
+ * polling immediately after `process.kill(pid, 'SIGKILL')` would race
+ * the reaper and incorrectly report "still alive." 500ms is comfortably
+ * longer than the reap latency on any sane Unix while still being
+ * imperceptible from a user's perspective. We're only here in the
+ * pathological "SIGTERM was ignored" path, so an extra half-second is
+ * fine.
+ */
+const SIGKILL_VERIFY_GRACE_MS = 500;
+
+/** Standard "is this pid alive?" probe via signal 0. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Promise-based sleep — used for short grace windows. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Compute the canonical-case real path for `cwd` so it can be injected as
@@ -346,11 +388,12 @@ export async function startOwnedService(
     // only realistic way it's missing is a pre-fork failure — in which case
     // the 'error' listener above will resolve `exited` shortly. Surface a
     // sentinel pid so the handle shape stays uniform.
-    return {
+    const noPidHandle: OwnedHandle = {
       name: spec.name,
       pid: Number.NaN,
       exited,
-      stop: async () => {
+      stopWarning: null,
+      stop: async (): Promise<void> => {
         // No pid to signal — but a stopCmd may still need to run (e.g. the
         // child failed to spawn but the service had a teardown side-effect
         // from a prior run). Best-effort; ignore failures.
@@ -360,11 +403,23 @@ export async function startOwnedService(
         await exited;
       },
     };
+    return noPidHandle;
   }
 
   const pid = child.pid;
 
-  const stop = async (graceMs: number = DEFAULT_GRACE_MS): Promise<void> => {
+  // Backing store for the handle's `stopWarning` getter. Mutated only from
+  // inside stop(); exposed read-only on the handle so the latest verification
+  // result is observable after the promise resolves.
+  let lastStopWarning: string | null = null;
+
+  const stop = async (
+    graceMs: number = DEFAULT_GRACE_MS,
+  ): Promise<void> => {
+    // Reset on each call. A previous stop() may have left a warning; a
+    // fresh attempt (e.g. caller retried) starts from a clean slate.
+    lastStopWarning = null;
+
     // Custom teardown path: run the user-provided shell command instead of
     // signaling the child. This is the supabase pattern — `supabase start`
     // launches Docker containers and exits (oneshot), so SIGTERM to the
@@ -437,14 +492,34 @@ export async function startOwnedService(
       // Already gone between the timeout and the kill.
     }
     await exited;
+
+    // Post-SIGKILL verification (LEV-312): SIGKILL is uncatchable but the
+    // kernel needs a tick or two to reap the process. After a brief grace
+    // window we poll `process.kill(pid, 0)` — the standard "is this pid
+    // alive?" probe. ESRCH means dead (the happy path); no error means
+    // the pid is somehow still resolvable, which is the "lich said it
+    // killed the thing and it didn't" case. Extremely rare — typically
+    // uninterruptible D-state, zombie accounting, or a containerized pid
+    // mismatch — but when it does happen the user's "if lich reports
+    // success the thing is gone" contract is broken and we should say so
+    // rather than pretend. The diagnostic surfaces on the handle's
+    // `stopWarning` field for callers to read.
+    await sleep(SIGKILL_VERIFY_GRACE_MS);
+    if (isAlive(pid)) {
+      lastStopWarning = `SIGKILL did not reap pid ${pid} after ${SIGKILL_VERIFY_GRACE_MS}ms; process may still be alive`;
+    }
   };
 
-  return {
+  const handle: OwnedHandle = {
     name: spec.name,
     pid,
     exited,
     stop,
+    get stopWarning() {
+      return lastStopWarning;
+    },
   };
+  return handle;
 }
 
 /**

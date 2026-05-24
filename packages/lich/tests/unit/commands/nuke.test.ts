@@ -221,19 +221,29 @@ describe("runNuke — single compose-only stack", () => {
     // State dir gone.
     expect(existsSync(stackDir("compose-only-abc12345"))).toBe(false);
 
-    // Compose down was attempted with the lich- prefix project name.
-    expect(composeCalls.length).toBe(1);
-    const call = composeCalls[0];
-    expect(call.cmd).toBe("docker");
-    expect(call.args).toContain("compose");
-    expect(call.args).toContain("down");
-    expect(call.args).toContain("-v");
-    expect(call.args).toContain("--remove-orphans");
+    // Two compose calls: down -v --remove-orphans, then a post-down
+    // verification ps -q (LEV-312). The default stub returns empty
+    // stdout from ps -q so no force-remove path fires.
+    expect(composeCalls.length).toBe(2);
+    const downCall = composeCalls[0];
+    expect(downCall.cmd).toBe("docker");
+    expect(downCall.args).toContain("compose");
+    expect(downCall.args).toContain("down");
+    expect(downCall.args).toContain("-v");
+    expect(downCall.args).toContain("--remove-orphans");
     // Project name uses the lich-<worktree>-<short> convention.
-    const projectIdx = call.args.indexOf("-p");
+    const projectIdx = downCall.args.indexOf("-p");
     expect(projectIdx).toBeGreaterThanOrEqual(0);
-    expect(call.args[projectIdx + 1]).toBe("lich-compose-only-abc12345");
+    expect(downCall.args[projectIdx + 1]).toBe("lich-compose-only-abc12345");
 
+    // Second call is ps -q verification.
+    const psCall = composeCalls[1];
+    expect(psCall.cmd).toBe("docker");
+    expect(psCall.args).toContain("ps");
+    expect(psCall.args).toContain("-q");
+
+    // No compose warnings — ps -q returned empty.
+    expect(result.outcomes[0].detail ?? "").not.toMatch(/compose down/);
     expect(sink.text()).toMatch(/nuked 1, failed 0, skipped 0/);
   });
 });
@@ -459,6 +469,145 @@ describe("runNuke — compose down failure", () => {
     expect(result.outcomes[0].status).toBe("nuked");
     expect(result.outcomes[0].detail).toMatch(/compose down/);
     expect(existsSync(stackDir("no-cli"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LEV-312: compose force-remove salvage path during nuke.
+// ---------------------------------------------------------------------------
+
+describe("runNuke — compose force-remove (LEV-312)", () => {
+  it("force-removes a container that compose down left running, then warns", async () => {
+    // Mirror of the down.ts test: scripted exec stub where compose down
+    // exits 0, ps -q returns a surviving container, docker rm -f sweeps,
+    // and the second ps -q comes back empty. The outcome must:
+    //   - stay 'nuked' (state dir removed, escape-hatch contract intact),
+    //   - surface a warning in `detail` naming the salvage.
+    await writeSnapshot(
+      snap({
+        stack_id: "leaky-abc12345",
+        worktree_name: "leaky",
+        services: [{ name: "pg", kind: "compose", state: "stopped" }],
+      }),
+    );
+
+    const leakedId = "leftover-abc123";
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    let psCallCount = 0;
+    _exec.current = async (cmd, args) => {
+      calls.push({ cmd, args });
+      let stdout = "";
+      if (
+        args[args.length - 2] === "ps" &&
+        args[args.length - 1] === "-q"
+      ) {
+        psCallCount++;
+        if (psCallCount === 1) stdout = `${leakedId}\n`;
+      }
+      return { exitCode: 0, stdout, stderr: "" };
+    };
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("nuked");
+
+    // The docker rm -f <leakedId> call ran.
+    const rmCall = calls.find(
+      (c) =>
+        c.args[0] === "rm" && c.args[1] === "-f" && c.args[2] === leakedId,
+    );
+    expect(rmCall).toBeDefined();
+    expect(rmCall?.cmd).toBe("docker");
+
+    // Salvage warning is present in the outcome detail.
+    expect(result.outcomes[0].detail).toBeDefined();
+    expect(result.outcomes[0].detail).toMatch(/force-removed/);
+    expect(result.outcomes[0].detail).toContain("lich-leaky-abc12345");
+
+    expect(existsSync(stackDir("leaky-abc12345"))).toBe(false);
+  });
+
+  it("warns loudly when force-remove also fails to clear the container", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "stuck-abc12345",
+        worktree_name: "stuck",
+        services: [{ name: "pg", kind: "compose", state: "stopped" }],
+      }),
+    );
+
+    const stuckId = "stuck-xyz789";
+    _exec.current = async (cmd, args) => {
+      if (
+        args[args.length - 2] === "ps" &&
+        args[args.length - 1] === "-q"
+      ) {
+        // Both ps -q calls return the stuck container → salvage failed.
+        return { exitCode: 0, stdout: `${stuckId}\n`, stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("nuked");
+
+    expect(result.outcomes[0].detail).toBeDefined();
+    expect(result.outcomes[0].detail).toMatch(/could not fully remove/);
+    expect(result.outcomes[0].detail).toContain(stuckId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LEV-312: stop_cmd stderr tail surfaced in the warning on non-zero exit.
+// ---------------------------------------------------------------------------
+
+describe("runNuke — stop_cmd stderr surfacing (LEV-312)", () => {
+  it("includes stop_cmd stderr tail in the warning detail on non-zero exit", async () => {
+    const projectDir = makeProjectDir(
+      "stop-stderr",
+      `version: "1"
+owned:
+  flaky:
+    cmd: "true"
+    stop_cmd: "echo failure-detail 1>&2; exit 7"
+`,
+    );
+
+    await writeSnapshot(
+      snap({
+        stack_id: "stop-stderr-abc12345",
+        worktree_name: "stop-stderr",
+        worktree_path: projectDir,
+        services: [
+          {
+            name: "flaky",
+            kind: "owned",
+            state: "stopped",
+            pid: 2_147_483_640,
+          },
+        ],
+      }),
+    );
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("nuked");
+
+    // Detail mentions stop_cmd, exit code, AND the captured stderr marker
+    // — the LEV-312 contract that pre-LEV-312 was missing.
+    expect(result.outcomes[0].detail).toMatch(/flaky/);
+    expect(result.outcomes[0].detail).toMatch(/stop_cmd/);
+    expect(result.outcomes[0].detail).toContain("7");
+    expect(result.outcomes[0].detail).toContain("failure-detail");
+
+    expect(existsSync(stackDir("stop-stderr-abc12345"))).toBe(false);
   });
 });
 

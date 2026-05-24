@@ -346,6 +346,101 @@ owned:
       "stopped",
     );
   }, 15_000);
+
+  // -------------------------------------------------------------------------
+  // LEV-312: surface stop_cmd stderr tail in the warning on non-zero exit.
+  // -------------------------------------------------------------------------
+  it("surfaces stop_cmd stderr tail in the warning when stop_cmd exits non-zero (LEV-312)", async () => {
+    // stop_cmd that prints a useful failure marker to stderr and exits 7.
+    // The warning that ends up in the result MUST contain both the exit
+    // code and the stderr marker — otherwise the user gets the useless
+    // "stop_cmd exited 7" with no context for what failed.
+    writeYaml(`
+version: "1"
+owned:
+  flaky:
+    cmd: "sleep 60"
+    stop_cmd: "echo failure-detail 1>&2; exit 7"
+`);
+
+    const stackId = await seedSnapshot({
+      services: [
+        {
+          name: "flaky",
+          kind: "owned",
+          state: "stopped",
+          // Dead pid so the SIGTERM path doesn't fire and the only
+          // warning generation point is the stop_cmd result.
+          pid: 2_147_483_640,
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+
+    // Exit code stays 0 (best-effort teardown).
+    expect(result.exitCode).toBe(0);
+
+    // Find the stop_owned warning for flaky.
+    const stopWarnings = result.warnings.filter(
+      (w) => w.phase === "stop_owned" && w.service === "flaky",
+    );
+    expect(stopWarnings).toHaveLength(1);
+    const message = stopWarnings[0].message;
+    // Exit code is surfaced.
+    expect(message).toContain("7");
+    // The stderr tail with the actual failure detail is surfaced — this
+    // is the LEV-312 contract that pre-LEV-312 was missing.
+    expect(message).toContain("failure-detail");
+
+    // Teardown still completed.
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  }, 15_000);
+
+  it("logs an info note when stop_cmd takes longer than the slow threshold but exits 0 (LEV-312)", async () => {
+    // 5s threshold — sleep for 6s to trigger. Cap test runtime by
+    // exiting cleanly. The note is written to stdout as "info: [<name>]
+    // stop_cmd took N.Ns — verify resources are actually gone".
+    writeYaml(`
+version: "1"
+owned:
+  slow:
+    cmd: "sleep 60"
+    stop_cmd: "sleep 6; exit 0"
+`);
+
+    const stackId = await seedSnapshot({
+      services: [
+        {
+          name: "slow",
+          kind: "owned",
+          state: "stopped",
+          pid: 2_147_483_641,
+        },
+      ],
+    });
+
+    const { stream, chunks } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // No warning — slow + exit 0 is an info-level note, not a warning.
+    const stopWarnings = result.warnings.filter(
+      (w) => w.phase === "stop_owned" && w.service === "slow",
+    );
+    expect(stopWarnings).toEqual([]);
+
+    const stdout = Buffer.concat(chunks).toString("utf8");
+    expect(stdout).toContain("info:");
+    expect(stdout).toContain("[slow]");
+    expect(stdout).toMatch(/stop_cmd took \d/);
+    expect(stdout).toContain("verify resources are actually gone");
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -369,23 +464,174 @@ services:
     const result = await runDown({ cwd: projectDir, out: stream });
     expect(result.exitCode).toBe(0);
 
-    // One compose call: down -v (no --remove-orphans).
-    expect(composeCalls).toHaveLength(1);
-    const call = composeCalls[0];
-    expect(call.cmd).toBe("docker");
-    expect(call.args).toContain("compose");
-    expect(call.args).toContain("down");
-    expect(call.args).toContain("-v");
-    expect(call.args).not.toContain("--remove-orphans");
+    // Two compose calls: down -v, then a post-down verification ps -q
+    // (LEV-312). The verification confirms the project is empty after
+    // down; in this stub the canned exec returns empty stdout so no
+    // force-remove path fires.
+    expect(composeCalls).toHaveLength(2);
+    const downCall = composeCalls[0];
+    expect(downCall.cmd).toBe("docker");
+    expect(downCall.args).toContain("compose");
+    expect(downCall.args).toContain("down");
+    expect(downCall.args).toContain("-v");
+    expect(downCall.args).not.toContain("--remove-orphans");
 
     // Project name follows the up convention: lich-<stack_id>.
-    const projectIdx = call.args.indexOf("-p");
+    const projectIdx = downCall.args.indexOf("-p");
     expect(projectIdx).toBeGreaterThanOrEqual(0);
-    expect(call.args[projectIdx + 1]).toBe(`lich-${stackId}`);
+    expect(downCall.args[projectIdx + 1]).toBe(`lich-${stackId}`);
+
+    // Second call: ps -q for the same project, verifying empty.
+    const psCall = composeCalls[1];
+    expect(psCall.cmd).toBe("docker");
+    expect(psCall.args).toContain("compose");
+    expect(psCall.args).toContain("ps");
+    expect(psCall.args).toContain("-q");
+    const psProjectIdx = psCall.args.indexOf("-p");
+    expect(psProjectIdx).toBeGreaterThanOrEqual(0);
+    expect(psCall.args[psProjectIdx + 1]).toBe(`lich-${stackId}`);
+
+    // Empty ps stdout → no warnings about leftover containers.
+    expect(
+      result.warnings.filter((w) => w.phase === "compose_down"),
+    ).toEqual([]);
 
     const snap = await readSnapshot(stackId);
     expect(snap?.status).toBe("stopped");
     expect(snap?.services.find((s) => s.name === "pg")?.state).toBe("stopped");
+  });
+
+  // -------------------------------------------------------------------------
+  // LEV-312: compose teardown force-remove salvage path.
+  // -------------------------------------------------------------------------
+  it("force-removes a container that compose down left running, then warns (LEV-312)", async () => {
+    // Replace the default exec stub with a scripted one that mimics
+    // compose down "succeeding" while a container slips through. The
+    // sequence we expect runDown to drive:
+    //   1. `compose down -v` — exit 0.
+    //   2. `compose ps -q`   — returns "leftover-abc123" (one ID).
+    //   3. `docker rm -f leftover-abc123` — exit 0 (salvage).
+    //   4. `compose ps -q`   — returns "" (now empty).
+    // After this lich should warn about the salvage but exit 0; the
+    // warning text mentions the container that survived compose down.
+    writeYaml(`
+version: "1"
+services:
+  pg:
+    image: postgres:15
+`);
+
+    const stackId = await seedSnapshot({
+      services: [{ name: "pg", kind: "compose", state: "ready" }],
+    });
+
+    const leakedId = "leftover-abc123";
+    const calls: Array<{ cmd: string; args: string[]; stdout: string }> = [];
+    let psCallCount = 0;
+    _exec.current = async (cmd, args) => {
+      let stdout = "";
+      // Identify which call this is. We don't try to keyword-match the
+      // full compose argv — instead we look for the trailing subcommand,
+      // which is unambiguous in this flow.
+      if (args.includes("rm") && args.includes("-f")) {
+        // docker rm -f <id>
+      } else if (args[args.length - 2] === "ps" && args[args.length - 1] === "-q") {
+        psCallCount++;
+        if (psCallCount === 1) stdout = `${leakedId}\n`;
+        // Second ps after force-remove returns empty (cleanup worked).
+      }
+      // `compose down -v` and all other calls succeed with empty stdout.
+      calls.push({ cmd, args, stdout });
+      return { exitCode: 0, stdout, stderr: "" };
+    };
+    composeCalls = calls.map((c) => ({ cmd: c.cmd, args: c.args }));
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // The down call ran.
+    const downCall = calls.find((c) => c.args.includes("down"));
+    expect(downCall).toBeDefined();
+
+    // The ps -q call ran (and was called twice — initial + post-salvage).
+    const psCalls = calls.filter(
+      (c) =>
+        c.args[c.args.length - 2] === "ps" &&
+        c.args[c.args.length - 1] === "-q",
+    );
+    expect(psCalls.length).toBe(2);
+
+    // The docker rm -f <leakedId> call ran.
+    const rmCall = calls.find(
+      (c) => c.args[0] === "rm" && c.args[1] === "-f" && c.args[2] === leakedId,
+    );
+    expect(rmCall).toBeDefined();
+    expect(rmCall?.cmd).toBe("docker");
+
+    // A warning was surfaced for the salvage — exit 0 but with diagnostic.
+    const composeWarnings = result.warnings.filter(
+      (w) => w.phase === "compose_down",
+    );
+    expect(composeWarnings.length).toBeGreaterThanOrEqual(1);
+    expect(composeWarnings.some((w) => w.message.includes("force-removed"))).toBe(
+      true,
+    );
+    // The warning surfaces enough context to investigate.
+    expect(composeWarnings[0].message).toContain(`lich-${stackId}`);
+
+    // State persisted as stopped despite the salvage.
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  });
+
+  it("warns loudly when force-remove also fails to clear the container (LEV-312)", async () => {
+    // Same shape as the salvage test but the second ps -q ALSO returns
+    // the leaked container ID — meaning docker rm -f didn't actually
+    // remove it. The user MUST get a loud warning naming the survivor.
+    writeYaml(`
+version: "1"
+services:
+  pg:
+    image: postgres:15
+`);
+
+    const stackId = await seedSnapshot({
+      services: [{ name: "pg", kind: "compose", state: "ready" }],
+    });
+
+    const stuckId = "stuck-xyz789";
+    _exec.current = async (cmd, args) => {
+      if (
+        args[args.length - 2] === "ps" &&
+        args[args.length - 1] === "-q"
+      ) {
+        // Both ps -q calls return the stuck container — salvage failed.
+        return { exitCode: 0, stdout: `${stuckId}\n`, stderr: "" };
+      }
+      // Everything else (down, rm -f) exits 0; the rm -f succeeding
+      // status-wise but not actually removing it mirrors the real
+      // pathological case (e.g. container in middle of restart loop).
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // Loud warning naming the surviving container.
+    const composeWarnings = result.warnings.filter(
+      (w) => w.phase === "compose_down",
+    );
+    expect(composeWarnings.length).toBeGreaterThanOrEqual(1);
+    const stuckWarning = composeWarnings.find((w) =>
+      w.message.includes(stuckId),
+    );
+    expect(stuckWarning).toBeDefined();
+    expect(stuckWarning?.message).toMatch(/could not fully remove/);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
   });
 });
 

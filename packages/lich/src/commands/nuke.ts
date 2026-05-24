@@ -38,7 +38,11 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import { down as composeDown, type RunnerCtx } from "../compose/runner.js";
+import {
+  down as composeDown,
+  _exec as composeExec,
+  type RunnerCtx,
+} from "../compose/runner.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { parseConfig } from "../config/parse.js";
 import type { LichConfig } from "../config/types.js";
@@ -280,9 +284,36 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
 
       try {
         const result = await runStopCmd(stopCmd, snap.worktree_path, stopEnv);
-        if (result.exitCode !== 0) {
+        // LEV-312: surface the stderr tail with the exit code so the user
+        // can actually diagnose a teardown failure. The pre-LEV-312
+        // "exit 7" message left them grepping log files by hand.
+        if (result.timedOut) {
+          const tail = formatStderrTail(result.stderrTail);
+          const tailSection = tail ? ` stderr tail: "${tail}"` : "";
           warnings.push(
-            `service ${svc.name} stop_cmd exited ${result.exitCode}`,
+            `service ${svc.name} stop_cmd exceeded ${STOP_CMD_TIMEOUT_MS}ms timeout and was SIGKILL'd;${tailSection}`,
+          );
+        } else if (
+          typeof result.exitCode === "number" &&
+          result.exitCode !== 0
+        ) {
+          const tail = formatStderrTail(result.stderrTail);
+          const tailSection = tail ? ` stderr tail: "${tail}"` : "";
+          warnings.push(
+            `service ${svc.name} stop_cmd exited ${result.exitCode};${tailSection}`,
+          );
+        } else if (result.exitCode === null && !result.timedOut) {
+          // Signal-killed or spawn-level failure — either is worth noting.
+          const tail = formatStderrTail(result.stderrTail);
+          const tailSection = tail ? ` stderr tail: "${tail}"` : "";
+          warnings.push(
+            `service ${svc.name} stop_cmd terminated abnormally (no exit code);${tailSection}`,
+          );
+        } else if (result.durationMs > STOP_CMD_SLOW_MS) {
+          // Slow + exit 0 — surface as a note so the user can verify.
+          const seconds = (result.durationMs / 1000).toFixed(1);
+          warnings.push(
+            `service ${svc.name} stop_cmd took ${seconds}s — verify resources are actually gone`,
           );
         }
       } catch (err) {
@@ -299,7 +330,10 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
   for (const svc of snap.services) {
     if (svc.kind !== "owned" || typeof svc.pid !== "number") continue;
     try {
-      await killOwned(svc);
+      const killWarning = await killOwned(svc);
+      if (killWarning !== null) {
+        warnings.push(killWarning);
+      }
     } catch (err) {
       warnings.push(
         `service ${svc.name} (pid ${svc.pid}): ${errorMessage(err)}`,
@@ -318,7 +352,14 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
   const hasComposeServices = snap.services.some((s) => s.kind === "compose");
   if (hasComposeServices) {
     try {
-      await tearDownCompose(snap.stack_id, snap.worktree_path, snap.worktree_name);
+      const composeWarnings = await tearDownCompose(
+        snap.stack_id,
+        snap.worktree_path,
+        snap.worktree_name,
+      );
+      for (const w of composeWarnings) {
+        warnings.push(`compose down: ${w}`);
+      }
     } catch (err) {
       warnings.push(`compose down: ${errorMessage(err)}`);
     }
@@ -357,19 +398,40 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
 
 /** Cap on stop_cmd execution time. Mirrors `commands/down.ts`. */
 const STOP_CMD_TIMEOUT_MS = 30_000;
+/**
+ * Stderr ring-buffer size for stop_cmd capture. Mirrors `commands/down.ts`
+ * — keeps the warning string bounded while preserving enough context to
+ * debug a teardown failure. (LEV-312)
+ */
+const STOP_CMD_STDERR_RING_BYTES = 4 * 1024;
+/**
+ * Threshold above which a stop_cmd that exited 0 is flagged as slow.
+ * (LEV-312)
+ */
+const STOP_CMD_SLOW_MS = 5_000;
+
+/** Outcome of a stop_cmd run (LEV-312). */
+interface StopCmdResult {
+  /** Exit code; `null` if the command was killed by signal (timeout). */
+  exitCode: number | null;
+  /** Tail of stderr (up to STOP_CMD_STDERR_RING_BYTES bytes). */
+  stderrTail: string;
+  /** Wall-clock duration of the stop_cmd run, in ms. */
+  durationMs: number;
+  /** True if we had to SIGKILL the stop_cmd because it exceeded the timeout. */
+  timedOut: boolean;
+}
 
 /**
  * Run a user-supplied `stop_cmd` for an owned service via `/bin/sh -c`.
  * Bounded by `STOP_CMD_TIMEOUT_MS`; if the command hasn't exited by then
- * we SIGKILL it and move on. Resolves with the process's exit code (or
- * `null` if it was killed by signal) so the caller can decide whether
- * to log a warning.
+ * we SIGKILL it and move on.
  *
- * This mirrors the helper in `commands/down.ts` rather than importing it
- * — keeps nuke self-contained and lets the two evolve independently if
- * down ever needs richer per-service env handling. If both helpers grow
- * complex, factor into `owned/teardown.ts`; for now ~30 lines of
- * duplication is the right trade-off.
+ * Resolves with a {@link StopCmdResult} carrying exit code, stderr tail
+ * (ring buffer, capped at `STOP_CMD_STDERR_RING_BYTES`), wall-clock
+ * duration, and whether the timeout fired — same shape as the helper in
+ * `commands/down.ts` so both teardown paths produce comparable warnings.
+ * (LEV-312)
  *
  * Per-service env resolved via the same pipeline used at startup, so
  * stop_cmd addresses the same external state the service was started
@@ -379,23 +441,46 @@ async function runStopCmd(
   stopCmd: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
-): Promise<{ exitCode: number | null }> {
-  return new Promise((resolve) => {
+): Promise<StopCmdResult> {
+  return new Promise<StopCmdResult>((resolve) => {
+    const startMs = Date.now();
     const child = spawn("/bin/sh", ["-c", stopCmd], {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    // Stderr ring buffer (LEV-312) — see commands/down.ts for the
+    // identical pattern + rationale.
+    let stderrBuf = "";
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      const text =
+        typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      stderrBuf += text;
+      if (stderrBuf.length > STOP_CMD_STDERR_RING_BYTES) {
+        stderrBuf = stderrBuf.slice(-STOP_CMD_STDERR_RING_BYTES);
+      }
+    });
+    // Drain stdout so the child doesn't block on a full pipe.
+    child.stdout?.on("data", () => {});
+
     let settled = false;
-    const finish = (exitCode: number | null): void => {
+    let timedOut = false;
+    let exitCode: number | null = null;
+    const finish = (): void => {
       if (settled) return;
       settled = true;
-      resolve({ exitCode });
+      resolve({
+        exitCode,
+        stderrTail: stderrBuf,
+        durationMs: Date.now() - startMs,
+        timedOut,
+      });
     };
 
     const timer = setTimeout(() => {
       if (settled) return;
+      timedOut = true;
       if (typeof child.pid === "number") {
         try {
           process.kill(child.pid, "SIGKILL");
@@ -403,22 +488,28 @@ async function runStopCmd(
           /* already gone */
         }
       }
-      finish(null);
+      finish();
     }, STOP_CMD_TIMEOUT_MS);
-
-    // Drain the streams so the child doesn't block on a full pipe.
-    child.stdout?.on("data", () => {});
-    child.stderr?.on("data", () => {});
 
     child.once("exit", (code) => {
       clearTimeout(timer);
-      finish(code);
+      exitCode = code;
+      finish();
     });
     child.once("error", () => {
       clearTimeout(timer);
-      finish(null);
+      exitCode = null;
+      finish();
     });
   });
+}
+
+/**
+ * Compact a stderr tail for inclusion in a single-line warning. Mirrors
+ * the helper in `commands/down.ts`. (LEV-312)
+ */
+function formatStderrTail(tail: string): string {
+  return tail.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -431,12 +522,17 @@ async function runStopCmd(
  * across stacks lich didn't necessarily start in this process), so we
  * can't use the supervisor's `stop()` directly. Pure pid-based signaling
  * is the cross-process tool we have.
+ *
+ * Returns `null` on success (process is gone), or a warning string when
+ * SIGKILL itself didn't reap the pid within the grace window (LEV-312).
+ * Throws only for unexpected errno (e.g. EPERM) — the caller's catch
+ * block turns those into warnings.
  */
-async function killOwned(svc: ServiceSnapshot): Promise<void> {
+async function killOwned(svc: ServiceSnapshot): Promise<string | null> {
   const pid = svc.pid;
-  if (typeof pid !== "number") return;
+  if (typeof pid !== "number") return null;
 
-  if (!isAlive(pid)) return; // already gone — nothing to do
+  if (!isAlive(pid)) return null; // already gone — nothing to do
 
   // SIGTERM gives the process a chance to clean up.
   try {
@@ -444,7 +540,7 @@ async function killOwned(svc: ServiceSnapshot): Promise<void> {
   } catch (err) {
     // ESRCH = process died between our isAlive check and the kill.
     // Anything else (EPERM) is a genuine warning.
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") return;
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return null;
     throw err;
   }
 
@@ -453,7 +549,7 @@ async function killOwned(svc: ServiceSnapshot): Promise<void> {
   // within a few hundred ms of SIGTERM.
   const startMs = Date.now();
   while (Date.now() - startMs < 2_000) {
-    if (!isAlive(pid)) return;
+    if (!isAlive(pid)) return null;
     await sleep(50);
   }
 
@@ -461,18 +557,21 @@ async function killOwned(svc: ServiceSnapshot): Promise<void> {
   try {
     process.kill(pid, "SIGKILL");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") return;
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return null;
     throw err;
   }
 
   // SIGKILL is uncatchable; the kernel will reap shortly. One brief
   // poll is enough to confirm so callers don't race.
   for (let i = 0; i < 20; i++) {
-    if (!isAlive(pid)) return;
+    if (!isAlive(pid)) return null;
     await sleep(50);
   }
-  // If it's somehow still here, the caller's warning will at least
-  // mention this stack so the user knows where to look.
+  // LEV-312: still alive after SIGKILL + 1s grace. Pathological (D-state,
+  // zombie, container/pid mismatch) but the user's "lich said it killed
+  // the thing" contract requires us to say so rather than silently
+  // claim success.
+  return `pid ${pid} still alive after SIGKILL + 1s grace; service "${svc.name}" may still be running`;
 }
 
 /** Liveness probe via signal 0. */
@@ -486,19 +585,27 @@ function isAlive(pid: number): boolean {
 }
 
 /**
- * Drive `<compose-cli> compose down -v --remove-orphans` for a stack.
+ * Drive `<compose-cli> compose down -v --remove-orphans` for a stack,
+ * then verify the project actually emptied out (LEV-312). If
+ * `compose ps -q` still returns container IDs, force-remove each with
+ * `<cli> rm -f <id>` and re-check. Anything still alive after the salvage
+ * surfaces as a loud warning naming the surviving container IDs.
+ *
  * Plan 1: we only know the override file's path; the user's base
  * `compose_file` isn't in the snapshot. Compose treats `-f` files
  * additively, so passing just the override (plus whatever the project
  * label tells compose) lets compose find the running containers by
  * project name and tear them down. Containers without a matching
  * compose project label aren't lich's responsibility.
+ *
+ * Returns the list of warnings the caller should attach to the per-stack
+ * outcome detail.
  */
 async function tearDownCompose(
   stackId: string,
   worktreePath: string,
   worktreeName: string,
-): Promise<void> {
+): Promise<string[]> {
   const cli = await resolveComposeCli(undefined);
   const overridePath = join(stackDir(stackId), "compose.override.yaml");
 
@@ -521,6 +628,67 @@ async function tearDownCompose(
   // file missing, etc.) doesn't throw — we just move on. The state dir
   // removal that follows is what definitively "ends" the stack.
   await composeDown(ctx, { volumes: true, remove_orphans: true });
+
+  // LEV-312: post-down verification. See commands/down.ts for the
+  // identical pattern + rationale.
+  return verifyComposeTeardown(ctx);
+}
+
+/**
+ * Verify the compose project is actually empty after `down`. Mirrors the
+ * helper in `commands/down.ts`. Returns warnings for anything still alive
+ * after the force-remove salvage. (LEV-312)
+ */
+async function verifyComposeTeardown(ctx: RunnerCtx): Promise<string[]> {
+  const remaining = await composePsQ(ctx);
+  if (remaining.length === 0) return [];
+
+  // Attempt force-remove on each survivor.
+  for (const id of remaining) {
+    await forceRemoveContainer(ctx.cli.cmd, id);
+  }
+
+  const stillAlive = await composePsQ(ctx);
+  if (stillAlive.length > 0) {
+    return [
+      `compose teardown could not fully remove project "${ctx.project}"; ${stillAlive.length} container(s) still alive after force-remove: ${stillAlive.join(", ")}`,
+    ];
+  }
+  return [
+    `compose down left ${remaining.length} container(s) running for project "${ctx.project}"; force-removed via ${ctx.cli.cmd} rm -f`,
+  ];
+}
+
+/**
+ * Run `<cli> compose -p <project> -f <file>... ps -q` and parse stdout
+ * into a list of container IDs. Mirrors the helper in `commands/down.ts`.
+ * (LEV-312)
+ */
+async function composePsQ(ctx: RunnerCtx): Promise<string[]> {
+  const args: string[] = [...ctx.cli.args, "-p", ctx.project];
+  for (const f of ctx.files) {
+    args.push("-f", f);
+  }
+  args.push("ps", "-q");
+  const result = await composeExec.current(ctx.cli.cmd, args, {
+    cwd: ctx.cwd,
+    env: ctx.env,
+  }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }));
+  return result.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * `<cli> rm -f <container_id>`. Best-effort — failures are silent because
+ * the immediate re-check catches anything we couldn't kill. Mirrors the
+ * helper in `commands/down.ts`. (LEV-312)
+ */
+async function forceRemoveContainer(cli: string, id: string): Promise<void> {
+  await composeExec.current(cli, ["rm", "-f", id], {}).catch(() => {
+    /* best-effort; the re-check is the source of truth */
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -190,6 +190,96 @@ describe("startOwnedService — stop()", () => {
     expect(result.signal).toBe("SIGKILL");
   });
 
+  it("stops a SIGTERM-ignoring process via SIGKILL escalation and verifies dead afterward (LEV-312)", async () => {
+    // The full LEV-312 contract: SIGTERM is trapped + ignored, escalation
+    // fires SIGKILL, and after stop() resolves the pid MUST be reaped.
+    // Verifies the post-SIGKILL liveness check returns the right answer
+    // for the common path — no warning, process actually gone.
+    const name = "verify-dead-svc";
+    const handle = await startOwnedService({
+      name,
+      cmd: "trap '' TERM; echo READY; while true; do sleep 0.1; done",
+      cwd: homeDir,
+      env: {},
+      logPath: serviceLogPath(STACK_ID, name),
+    });
+
+    await waitForReady(name);
+    const recordedPid = handle.pid;
+
+    await handle.stop(200);
+    // No warning on the happy-path "SIGKILL did its job" case.
+    expect(handle.stopWarning).toBeNull();
+
+    // The pid must NOT answer signal 0 — kernel reaped it.
+    let alive = true;
+    try {
+      process.kill(recordedPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+
+    // Belt-and-braces: the exited promise also resolved with SIGKILL.
+    const exitInfo = await handle.exited;
+    expect(exitInfo.signal).toBe("SIGKILL");
+  });
+
+  it("surfaces a warning on stopWarning if SIGKILL also doesn't reap the process (LEV-312)", async () => {
+    // We can't truly make SIGKILL fail (the kernel rarely allows it), but
+    // we can monkey-patch `process.kill` so the signal-0 liveness check
+    // run AFTER SIGKILL returns "still alive." This exercises the warning
+    // emission code path without needing an actual stuck pid.
+    //
+    // The real production path this simulates: pid is in uninterruptible
+    // D-state (NFS hang, etc.), zombie accounting, or a containerized pid
+    // mismatch — extremely rare, but when it happens lich should tell the
+    // user rather than silently report success.
+    const name = "kill-no-reap-svc";
+    const handle = await startOwnedService({
+      name,
+      cmd: "trap '' TERM; echo READY; while true; do sleep 0.1; done",
+      cwd: homeDir,
+      env: {},
+      logPath: serviceLogPath(STACK_ID, name),
+    });
+
+    await waitForReady(name);
+
+    // Swap process.kill so:
+    //   - the actual SIGKILL call still goes through (the test child needs
+    //     to die or vitest hangs at teardown);
+    //   - the signal-0 liveness check that runs ~500ms AFTER SIGKILL lies
+    //     and reports "still alive" so we can verify the warning path.
+    const real = process.kill.bind(process);
+    let killSent = false;
+    const fake = (pid: number, signal?: string | number): true => {
+      // Let real signals through so the child actually dies.
+      if (signal !== 0) {
+        if (signal === "SIGKILL") killSent = true;
+        return real(pid, signal);
+      }
+      // Liveness probe. Before SIGKILL is sent, behave normally (the
+      // SIGTERM path's own ESRCH checks would behave wrong otherwise).
+      // After SIGKILL, pretend the pid is still alive to exercise the
+      // warning code path.
+      if (!killSent) return real(pid, signal);
+      // Simulate "pid still answers signal 0" — kill returns true.
+      return true;
+    };
+    // Node typedefs require the cast; swapping for the duration of this
+    // test only.
+    process.kill = fake as unknown as typeof process.kill;
+    try {
+      await handle.stop(200);
+      expect(handle.stopWarning).not.toBeNull();
+      expect(handle.stopWarning).toMatch(/SIGKILL did not reap/);
+      expect(handle.stopWarning).toContain(String(handle.pid));
+    } finally {
+      process.kill = real;
+    }
+  });
+
   it("is idempotent when called after the process has already exited", async () => {
     const name = "already-exited-svc";
     const handle = await startOwnedService({
