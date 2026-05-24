@@ -59,6 +59,7 @@ export interface LoadEnvFilesInput {
 // Parser
 // ---------------------------------------------------------------------------
 
+// see CLEANUP-HINTS.md: extract when next touched
 /**
  * Parse a single dotenv file's contents into a flat env map. Throws on
  * malformed lines (unbalanced quotes, missing `=`). The `file` argument

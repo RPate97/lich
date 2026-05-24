@@ -36,3 +36,9 @@ cd ../../tests/e2e && bun test
 
 At end of Plan 0, every e2e test fails (lich is a stub). Each
 subsequent plan turns tests green.
+
+## Contributing
+
+See [`CLEANUP-HINTS.md`](./CLEANUP-HINTS.md) for small refactor
+opportunities that aren't worth their own ticket but should get picked
+up the next time someone is already in the neighborhood.

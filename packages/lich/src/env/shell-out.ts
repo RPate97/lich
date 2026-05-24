@@ -102,6 +102,7 @@ function runShell(
   });
 }
 
+// see CLEANUP-HINTS.md: extract when next touched
 /**
  * Minimal dotenv parser. Supports:
  *  - blank lines and `#` comment lines (ignored)

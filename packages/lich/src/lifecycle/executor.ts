@@ -101,6 +101,7 @@ interface SpawnResult {
   stderr: string;
 }
 
+// see CLEANUP-HINTS.md: extract when next touched
 function runOne(
   cmd: string,
   cwd: string,
