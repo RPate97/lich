@@ -34,11 +34,15 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parseConfig, type ParseError } from "../config/parse.js";
 import { buildGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
-import type { EnvMap, LichConfig } from "../config/types.js";
+import type { EnvMap, LichConfig, ProfileDef } from "../config/types.js";
 import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 import { detectExtendsCycle } from "../groups/validate-extends.js";
 // LEV-384 (Plan 3 Task 10): cycle detection for `profiles.<name>.extends`.
 import { detectProfileExtendsCycle } from "../profiles/validate-extends.js";
+// LEV-385 (Plan 3 Task 11): single-default enforcement helper. Used in
+// `checkProfileDefaultsAndExtends` below; lifted into a shared helper so
+// `lich up` (Plan 3 Task 13) and `lich validate` agree on the rule.
+import { pickDefaultProfile } from "../profiles/default.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +65,14 @@ export interface ValidateOptions {
 }
 
 export interface ValidationError {
-  /** Coarse error category. */
+  /**
+   * Coarse error category.
+   *
+   * `"warning"` (LEV-385, Plan 3 Task 11) is for non-fatal advisories such
+   * as "service not referenced by any profile" — surfaced alongside hard
+   * errors in the JSON `errors` array, but the exit code stays 0 when only
+   * warnings are present. Consumers filter by `kind` to separate them.
+   */
   kind:
     | "io"
     | "yaml"
@@ -70,7 +81,8 @@ export interface ValidationError {
     | "cycle"
     | "regex"
     | "interp"
-    | "shadow";
+    | "shadow"
+    | "warning";
   /** Source location — `<file>:<line>:<col>` when available, else just `<file>`. */
   location: string;
   /** Human-readable message, ready to print. */
@@ -153,20 +165,38 @@ export async function runValidate(
       // node, which is a misleading diagnostic. Same pattern as the
       // env_groups cycle-vs-reference ordering above.
       checkProfileExtendsCycles(config, resolvedPath, errors);
+      // LEV-385 (Plan 3 Task 11): profile extends-reference resolution,
+      // single-default enforcement, and unused-services warnings. Each
+      // pushes onto `errors` (warnings use kind: "warning").
+      checkProfileDefaultsAndExtends(config, resolvedPath, errors);
+      checkProfileUnusedServices(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
 
-  const ok = errors.length === 0;
+  // LEV-385 (Plan 3 Task 11): hard errors fail the run; warnings alone do
+  // NOT change exit code. The JSON report still lists warnings under
+  // `errors` (the discriminating `kind` lets consumers filter); pretty
+  // output renders them under the success line with a `!` prefix.
+  const hardErrors = errors.filter((e) => e.kind !== "warning");
+  const warnings = errors.filter((e) => e.kind === "warning");
+  const ok = hardErrors.length === 0;
   const report: JsonReport = ok
-    ? { ok: true, path: resolvedPath, summary: summary ?? undefined }
+    ? {
+        ok: true,
+        path: resolvedPath,
+        summary: summary ?? undefined,
+        ...(warnings.length > 0 ? { errors: warnings } : {}),
+      }
     : { ok: false, path: resolvedPath, errors };
 
   // ---- emit output ---------------------------------------------------------
   if (opts.json) {
     out(JSON.stringify(report, null, 2));
   } else {
-    renderPretty(report, ok ? out : err);
+    // Warnings go to stderr (advisory output, not on the happy path).
+    // The pretty success/summary still goes to stdout.
+    renderPretty(report, ok ? out : err, err);
   }
 
   return { exitCode: ok ? 0 : 1, report };
@@ -951,6 +981,255 @@ function checkProfileExtendsCycles(
 }
 
 // ---------------------------------------------------------------------------
+// LEV-385 — Profile extends-reference + single-default + unused warning
+//          (Plan 3 Task 11)
+// ---------------------------------------------------------------------------
+//
+// Three checks bundled together because they share the same input shape
+// (`config.profiles`) and the same iteration pass. They run AFTER
+// `checkProfiles` (LEV-383) so reference errors on services/owned are
+// reported first; they run AFTER the schema validation guarantees
+// `profile.extends` is either `string`, `string[]`, or absent.
+//
+// Hard errors (kind: "ref" / "schema") fail the run; "warning" entries
+// don't change exit code. The unused-services warning is the first user of
+// the new "warning" kind — see the union in `ValidationError`.
+
+/**
+ * Validate `profiles.<name>.extends` references and the single-`default: true`
+ * invariant.
+ *
+ * Two distinct checks live here:
+ *
+ * 1. **Extends references must resolve.** Every name in a profile's
+ *    `extends` (whether the single-string form or the array form) must
+ *    name another declared profile. Unresolved entries push a `ref`
+ *    error with a "did you mean" suggestion when the typo is within
+ *    Levenshtein distance ~name/3. Location format mirrors the
+ *    `env_groups.X.extends` check above:
+ *      `<file> (/profiles/<name>/extends)`   for the single-string form
+ *      `<file> (/profiles/<name>/extends/<i>)` for each array entry
+ *
+ * 2. **At most one `default: true`.** Per spec section 4, exactly zero or
+ *    one profile may opt into being the implicit selection for `lich up`
+ *    (no positional arg). Two or more is a configuration error — surfaced
+ *    as `schema` (not `ref`) because the offense isn't a missing name,
+ *    it's a mutually-exclusive flag being set on multiple entries.
+ *    Reuses `pickDefaultProfile` so the rule lives in one place and
+ *    `lich up` (Plan 3 Task 13) and `lich validate` agree.
+ *
+ * Both checks no-op when `config.profiles` is absent or empty.
+ */
+function checkProfileDefaultsAndExtends(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const profiles = config.profiles;
+  if (!profiles || Object.keys(profiles).length === 0) return;
+
+  // ---- 1. extends references ---------------------------------------------
+  const declared = Object.keys(profiles);
+  const declaredSet = new Set(declared);
+
+  for (const [profileName, profile] of Object.entries(profiles)) {
+    if (!profile) continue;
+    const ext = profile.extends;
+    if (ext === undefined) continue;
+
+    if (typeof ext === "string") {
+      if (declaredSet.has(ext)) continue;
+      const suggestion = suggest(ext, declared);
+      const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+      errors.push({
+        kind: "ref",
+        location: `${path} (/profiles/${profileName}/extends)`,
+        message: `extends unknown profile "${ext}"${hint}`,
+      });
+      continue;
+    }
+
+    if (Array.isArray(ext)) {
+      for (let i = 0; i < ext.length; i++) {
+        const parent = ext[i];
+        if (typeof parent !== "string") continue;
+        if (declaredSet.has(parent)) continue;
+        const suggestion = suggest(parent, declared);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "ref",
+          location: `${path} (/profiles/${profileName}/extends/${i})`,
+          message: `extends unknown profile "${parent}"${hint}`,
+        });
+      }
+    }
+  }
+
+  // ---- 2. single default: true -------------------------------------------
+  // Delegate to the shared helper so the rule lives in one place. The
+  // `error` field is populated only on the multi-default case; absent and
+  // single-default both yield no error here (this check does NOT require
+  // a default; `lich up` decides whether the no-default case is fatal at
+  // its call site).
+  const pick = pickDefaultProfile(config);
+  if (pick.error) {
+    errors.push({
+      kind: "schema",
+      location: path,
+      message: pick.error,
+    });
+  }
+}
+
+/**
+ * Warn (don't fail) for services declared in `config.services` /
+ * `config.owned` that aren't included by any profile's fully-resolved
+ * `services` / `owned` lists.
+ *
+ * "Fully resolved" means union over the `extends` chain — a profile that
+ * extends `base` inherits everything `base` lists. Without walking the
+ * chain, every child profile would re-report a parent's services as
+ * "unused", which contradicts how `lich up` actually selects services.
+ *
+ * Edge cases:
+ *   - `config.profiles` absent / empty: SKIP. Every service is implicitly
+ *     "always-on" in that case (Plan 1 behavior), so there's nothing to
+ *     warn about.
+ *   - A profile with a cycle in its `extends` chain: the cycle detector
+ *     (LEV-384, Plan 3 Task 10) catches that first; here we defensively
+ *     guard the chain walk against re-entry so we don't blow the stack
+ *     when validate is run on an unvalidated config (e.g. via direct
+ *     `runValidate` invocation that bypasses the cycle check ordering).
+ *
+ * Output: one warning per unused service, kind `"warning"`, location
+ * `<file> (/services/<name>)` or `<file> (/owned/<name>)`. Exit code
+ * stays 0 if these are the only diagnostics.
+ *
+ * Implementation note: when Task 5 (`profiles/resolve.ts`) lands, this
+ * function should be refactored to consume its `ResolvedProfile.services`
+ * and `.owned` fields directly. For now we compute the union locally
+ * because Task 5 doesn't exist yet — the local computation matches the
+ * resolver's documented semantics (union over the extends chain,
+ * dedupe-preserving order) and the tests pin the contract so a future
+ * refactor is safe.
+ */
+function checkProfileUnusedServices(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const profiles = config.profiles;
+  if (!profiles || Object.keys(profiles).length === 0) return;
+
+  const declaredCompose = Object.keys(config.services ?? {});
+  const declaredOwned = Object.keys(config.owned ?? {});
+  if (declaredCompose.length === 0 && declaredOwned.length === 0) return;
+
+  // Collect the union of every profile's resolved services/owned set. A
+  // service is "used" iff ANY profile's resolved set includes it.
+  const usedCompose = new Set<string>();
+  const usedOwned = new Set<string>();
+
+  for (const profileName of Object.keys(profiles)) {
+    const resolved = resolveProfileServiceSet(profileName, profiles);
+    for (const s of resolved.services) usedCompose.add(s);
+    for (const o of resolved.owned) usedOwned.add(o);
+  }
+
+  // Compose services not referenced by any profile.
+  for (const name of declaredCompose) {
+    if (usedCompose.has(name)) continue;
+    errors.push({
+      kind: "warning",
+      location: `${path} (/services/${name})`,
+      message:
+        `compose service "${name}" is not included by any profile and ` +
+        `will never start; add it to a profile's \`services:\` list or ` +
+        `remove the declaration`,
+    });
+  }
+  // Owned services not referenced by any profile.
+  for (const name of declaredOwned) {
+    if (usedOwned.has(name)) continue;
+    errors.push({
+      kind: "warning",
+      location: `${path} (/owned/${name})`,
+      message:
+        `owned service "${name}" is not included by any profile and ` +
+        `will never start; add it to a profile's \`owned:\` list or ` +
+        `remove the declaration`,
+    });
+  }
+}
+
+/**
+ * Compute the union of `services` + `owned` referenced by a profile,
+ * walking the `extends` chain breadth-first.
+ *
+ * This is a LOCAL shadow of what `profiles/resolve.ts` (Plan 3 Task 5,
+ * not yet landed) will return as `ResolvedProfile.{services, owned}`.
+ * Only services and owned are needed here — env/lifecycle composition is
+ * unrelated to the unused-services check, so we don't replicate them.
+ *
+ * Guards against cycles in `extends` via a `visited` set: if the cycle
+ * detector (LEV-384) is bypassed or hasn't run yet, this walk still
+ * terminates instead of recursing infinitely. References to undeclared
+ * profiles (caught by the extends-reference check above) are simply
+ * skipped — they contribute no services, so they can't suppress an
+ * unused-warning for a sibling service.
+ */
+function resolveProfileServiceSet(
+  name: string,
+  profiles: Record<string, ProfileDef>,
+): { services: string[]; owned: string[] } {
+  const services: string[] = [];
+  const owned: string[] = [];
+  const seenServices = new Set<string>();
+  const seenOwned = new Set<string>();
+  const visited = new Set<string>();
+
+  walk(name);
+
+  return { services, owned };
+
+  function walk(node: string): void {
+    if (visited.has(node)) return; // cycle guard
+    visited.add(node);
+    const profile = profiles[node];
+    if (!profile) return; // unresolved extends — caller's job to flag
+
+    // Recurse into parents first so their entries land before the child's
+    // (preserves declared order, parents-first). The Task-5 resolver uses
+    // the same parents-first ordering — see its `ResolvedProfile` docs.
+    const parents = normalizeExtends(profile.extends);
+    for (const parent of parents) walk(parent);
+
+    if (Array.isArray(profile.services)) {
+      for (const s of profile.services) {
+        if (typeof s !== "string" || seenServices.has(s)) continue;
+        seenServices.add(s);
+        services.push(s);
+      }
+    }
+    if (Array.isArray(profile.owned)) {
+      for (const o of profile.owned) {
+        if (typeof o !== "string" || seenOwned.has(o)) continue;
+        seenOwned.add(o);
+        owned.push(o);
+      }
+    }
+  }
+}
+
+function normalizeExtends(
+  ext: string | string[] | undefined,
+): string[] {
+  if (ext === undefined) return [];
+  if (typeof ext === "string") return [ext];
+  return ext.filter((e): e is string => typeof e === "string");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 
@@ -989,7 +1268,15 @@ function computeSummary(config: LichConfig): ValidationSummary {
 function renderPretty(
   report: JsonReport,
   sink: (line: string) => void,
+  warnSink?: (line: string) => void,
 ): void {
+  // LEV-385 (Plan 3 Task 11): warnings render with a `!` prefix; on a TTY
+  // with color support they're yellow. They appear under success runs (no
+  // hard errors) and under failed runs alongside the errors.
+  const warnings = (report.errors ?? []).filter((e) => e.kind === "warning");
+  const hard = (report.errors ?? []).filter((e) => e.kind !== "warning");
+  const warnOut = warnSink ?? sink;
+
   if (report.ok) {
     sink(`✓ ${report.path}`);
     const s = report.summary;
@@ -998,12 +1285,34 @@ function renderPretty(
       sink(`  • ${plural(s.owned, "owned service")}`);
       sink(`  • ${plural(s.lifecycle_hooks, "lifecycle hook")}`);
     }
+    for (const w of warnings) {
+      warnOut(`${warnPrefix()} ${w.location}: ${w.message}`);
+    }
     return;
   }
   sink(`✗ ${report.path}`);
-  for (const e of report.errors ?? []) {
+  for (const e of hard) {
     sink(`  ${e.location}: ${e.message}`);
   }
+  for (const w of warnings) {
+    warnOut(`${warnPrefix()} ${w.location}: ${w.message}`);
+  }
+}
+
+/**
+ * LEV-385 (Plan 3 Task 11): prefix string for warning lines. Yellow `!` on
+ * TTYs that support color; plain `!` otherwise (and in CI / piped output,
+ * where `tty.hasColors()` is unavailable on the sink).
+ */
+function warnPrefix(): string {
+  // process.stderr is the natural destination for warnings; check its TTY
+  // capabilities. Bun's WriteStream exposes `hasColors()` like Node's.
+  const stream = process.stderr as
+    | (NodeJS.WriteStream & { hasColors?: () => boolean })
+    | undefined;
+  const colored =
+    !!stream && typeof stream.hasColors === "function" && stream.hasColors();
+  return colored ? "\x1b[33m!\x1b[0m" : "!";
 }
 
 function plural(n: number, noun: string): string {

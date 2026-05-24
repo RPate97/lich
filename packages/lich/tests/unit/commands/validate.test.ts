@@ -1015,4 +1015,408 @@ describe("runValidate", () => {
     );
     expect(cycErrs).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-385 (Plan 3 Task 11): profile extends-reference resolution +
+  // single-default enforcement + unused-services warning.
+  //
+  // These tests pin THREE distinct checks bundled together in
+  // `checkProfileDefaultsAndExtends` and `checkProfileUnusedServices`:
+  //   1. `profiles.X.extends` must resolve to a declared profile.
+  //   2. At most one profile may set `default: true`.
+  //   3. Services not in any profile's resolved set emit a non-fatal
+  //      warning (kind: "warning") — exit code stays 0.
+  // -------------------------------------------------------------------------
+
+  it("refuses profiles.X.extends pointing at undeclared profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    extends: missing-base\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"missing-base"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("extends unknown profile");
+    expect(refErr!.location).toContain("/profiles/dev/extends");
+    // Single-string form has no index suffix.
+    expect(refErr!.location).not.toContain("/extends/");
+  });
+
+  it("refuses profiles.X.extends array entries pointing at undeclared profiles", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  base:\n    owned: [api]\n` +
+        `  dev:\n` +
+        `    extends: [base, ghost]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"ghost"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("extends unknown profile");
+    // Array form uses index suffix; `ghost` is at index 1.
+    expect(refErr!.location).toContain("/profiles/dev/extends/1");
+    // `base` resolved cleanly — no error mentioning it.
+    const baseRefErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"base"'),
+    );
+    expect(baseRefErr).toBeUndefined();
+  });
+
+  it("suggests close-match profile name on extends typo", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  base-stack:\n    owned: [api]\n` +
+        `  dev:\n` +
+        `    extends: base-stck\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"base-stck"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("did you mean");
+    expect(refErr!.message).toContain('"base-stack"');
+  });
+
+  it("accepts profiles.X.extends pointing at a declared profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  base:\n    owned: [api]\n` +
+        `  dev:\n    extends: base\n` +
+        `    default: true\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const refErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "ref" &&
+        typeof e.location === "string" &&
+        e.location.includes("/extends"),
+    );
+    expect(refErrs).toEqual([]);
+  });
+
+  it("refuses two profiles with default: true", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  alpha:\n    default: true\n    owned: [api]\n` +
+        `  beta:\n    default: true\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const schemaErr = res.report.errors!.find(
+      (e) =>
+        e.kind === "schema" &&
+        e.message.includes("multiple profiles set default: true"),
+    );
+    expect(schemaErr).toBeDefined();
+    // pickDefaultProfile sorts alphabetically for deterministic output.
+    expect(schemaErr!.message).toContain("alpha, beta");
+  });
+
+  it("accepts a config with exactly one default: true profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    default: true\n    owned: [api]\n` +
+        `  test:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const schemaErrs = (res.report.errors ?? []).filter(
+      (e) =>
+        e.kind === "schema" &&
+        e.message.includes("multiple profiles set default"),
+    );
+    expect(schemaErrs).toEqual([]);
+  });
+
+  it("accepts a config with zero profiles setting default: true", async () => {
+    // pickDefaultProfile yields { name: null } with no error; validate
+    // should not flag this — `lich up` decides at its call site whether
+    // the no-default case is fatal.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n    owned: [api]\n` +
+        `  test:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+  });
+
+  it("emits warning for compose service not in any profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n` +
+        `  postgres:\n    image: postgres:16\n` +
+        `  redis:\n    image: redis:7\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [postgres]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    // Warnings alone don't change exit code.
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings.length).toBe(1);
+    expect(warnings[0].message).toContain('"redis"');
+    expect(warnings[0].message).toContain("not included by any profile");
+    expect(warnings[0].location).toContain("/services/redis");
+  });
+
+  it("emits warning for owned service not in any profile", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  worker:\n    cmd: echo work\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings.length).toBe(1);
+    expect(warnings[0].message).toContain('"worker"');
+    expect(warnings[0].message).toContain("not included by any profile");
+    expect(warnings[0].location).toContain("/owned/worker");
+  });
+
+  it("treats services as USED when included via an extends chain", async () => {
+    // `dev` extends `base`; the resolved set for `dev` includes `api`
+    // (from `base`). Even though no profile lists `api` directly, the
+    // walk over `dev`'s extends chain picks it up — no warning.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  base:\n    owned: [api]\n` +
+        `  dev:\n    extends: base\n    default: true\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn when no profiles section exists (every service implicitly always-on)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n  postgres:\n    image: postgres:16\n` +
+        `owned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn when profiles section is empty", async () => {
+    // Schema accepts an empty profiles map (additionalProperties on a {}).
+    // The check skips when there are no profile entries to walk.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles: {}\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("exit code is 0 when only warnings are present", async () => {
+    // A config with an unused service is the canonical warning-only case.
+    // The exit code must remain 0 so CI doesn't trip on advisories.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  orphan:\n    cmd: echo orphan\n` +
+        `profiles:\n` +
+        `  dev:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    expect(res.report.ok).toBe(true);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings.length).toBe(1);
+  });
+
+  it("warnings appear in --json output under errors[] with kind 'warning'", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  orphan:\n    cmd: echo orphan\n` +
+        `profiles:\n` +
+        `  dev:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p, json: true });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.length).toBe(1);
+    const parsed = JSON.parse(stdout[0]) as JsonReport;
+    expect(parsed.ok).toBe(true); // warnings don't flip ok
+    expect(Array.isArray(parsed.errors)).toBe(true);
+    expect(parsed.errors!.length).toBe(1);
+    expect(parsed.errors![0].kind).toBe("warning");
+    expect(parsed.errors![0].message).toContain('"orphan"');
+  });
+
+  it("renders warnings with `!` prefix in pretty output", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  orphan:\n    cmd: echo orphan\n` +
+        `profiles:\n` +
+        `  dev:\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    // Success line goes to stdout; warning lines go to stderr.
+    const out = stdout.join("\n");
+    const errOut = stderr.join("\n");
+    expect(out).toContain("✓");
+    // Warning prefix may be wrapped in ANSI color codes when stderr is
+    // a TTY; the literal `!` is always present. Strip the color codes
+    // before asserting.
+    const stripped = errOut.replace(/\x1b\[\d+m/g, "");
+    expect(stripped).toContain("! ");
+    expect(stripped).toContain('"orphan"');
+    expect(stripped).toContain("/owned/orphan");
+  });
+
+  it("emits both compose and owned warnings together when multiple are unused", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `services:\n` +
+        `  postgres:\n    image: postgres:16\n` +
+        `  redis:\n    image: redis:7\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  worker:\n    cmd: echo work\n` +
+        `profiles:\n` +
+        `  dev:\n` +
+        `    services: [postgres]\n` +
+        `    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    expect(warnings.length).toBe(2);
+    const flagged = warnings.map((w) => w.message).join(" | ");
+    expect(flagged).toContain('"redis"');
+    expect(flagged).toContain('"worker"');
+  });
+
+  it("hard errors still fail when warnings are also present", async () => {
+    // An unused owned service (warning) plus a bad extends ref (hard
+    // error). The exit code must be 1 because of the hard error; the
+    // warning still appears in errors[].
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n    cmd: echo hi\n` +
+        `  orphan:\n    cmd: echo orphan\n` +
+        `profiles:\n` +
+        `  dev:\n    extends: ghost\n    owned: [api]\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    expect(res.report.ok).toBe(false);
+    const warnings = (res.report.errors ?? []).filter(
+      (e) => e.kind === "warning",
+    );
+    const refErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "ref",
+    );
+    expect(warnings.length).toBe(1);
+    expect(refErrs.length).toBeGreaterThan(0);
+  });
+
+  it("guards against cycles in extends during unused-services walk", async () => {
+    // The extends cycle itself isn't yet caught by validate (Plan 3
+    // Task 10 wires `detectProfileExtendsCycle` in — separate ticket).
+    // What we DO promise here: the unused-services walk doesn't blow
+    // the stack on a cyclic config. It still produces a sensible result
+    // (cycle members count as "using" each other's services).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `profiles:\n` +
+        `  a:\n    extends: b\n    owned: [api]\n` +
+        `  b:\n    extends: a\n`,
+    );
+    const res = await run({ path: p });
+    // No crash. Exit code depends on other checks (the cycle isn't
+    // currently fatal in validate, but `extends` references both
+    // resolve — they point at declared profiles). What matters: the
+    // function returns without infinite recursion.
+    expect(typeof res.exitCode).toBe("number");
+    // `api` is reached via the walk through `a`; no warning expected.
+    const apiWarn = (res.report.errors ?? []).find(
+      (e) => e.kind === "warning" && e.message.includes('"api"'),
+    );
+    expect(apiWarn).toBeUndefined();
+  });
 });
