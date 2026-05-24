@@ -229,7 +229,7 @@ profiles:
     extends: dev
     services: [localstack]
 
-  dev:test:dev:
+  dev:test-env:
     # No local postgres, no migrations, no seed. Web points at a hosted backend.
     owned: [api, web]
     env:
@@ -369,7 +369,7 @@ Environment variables available to owned services and (filtered) injected into c
   - `LICH_WORKTREE` — the name of the current worktree
   - `LICH_STACK_ID` — the unique stack identifier
   
-  Use these in lifecycle scripts to gate behavior (`[ "$LICH_PROFILE" = "dev:test:dev" ] && skip-some-step`) when first-class lifecycle splits don't fit.
+  Use these in lifecycle scripts to gate behavior (`[ "$LICH_PROFILE" = "dev:test-env" ] && skip-some-step`) when first-class lifecycle splits don't fit.
 
 #### `env_files`
 
@@ -409,7 +409,7 @@ Commands run with `cwd = project_root` (unless explicitly chained via `cd path &
 - `after_up`: top-level hooks run first, then the active profile's hooks
 - `before_down`: active profile's hooks run first, then top-level hooks (reverse order — undo specialization before tearing down base)
 
-So truly always-on steps go at top-level; profile-specific steps go in each profile. The user's worked example (migrations + seed only for the `dev` profile, NOT for `dev:test:dev`) is expressed by putting those commands in the `dev` profile's `lifecycle.after_up` instead of the top-level.
+So truly always-on steps go at top-level; profile-specific steps go in each profile. The user's worked example (migrations + seed only for the `dev` profile, NOT for `dev:test-env`) is expressed by putting those commands in the `dev` profile's `lifecycle.after_up` instead of the top-level.
 
 #### `env_groups`
 

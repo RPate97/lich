@@ -8,7 +8,7 @@
 
 **Required reading:** `docs/superpowers/specs/2026-05-23-lich-v1-testing-standards.md`
 
-**Goal:** Add named slices of the stack. Profiles define which services start AND what env they run with AND what lifecycle hooks fire. Enables the user's "dev:full vs dev:light vs dev:test:dev" workflows. By end of plan, the dogfood-stack defines at least two profiles, `lich up [profile]` works, profile-scoped env overrides work, and profile-scoped lifecycle works.
+**Goal:** Add named slices of the stack. Profiles define which services start AND what env they run with AND what lifecycle hooks fire. Enables the user's "dev:full vs dev:lite vs dev:test-env" workflows. By end of plan, the dogfood-stack defines at least two profiles, `lich up [profile]` works, profile-scoped env overrides work, and profile-scoped lifecycle works.
 
 **Builds on:** Plan 1 (services, owned, env, lifecycle), Plan 2 (env_groups for context — profiles use the same env primitives but a different layering).
 
@@ -116,7 +116,7 @@ tests/e2e/
   profiles-lifecycle-scoping.test.ts
   profiles-switch-refused.test.ts
 
-examples/dogfood-stack/lich.yaml  # MODIFY — define at least 2 profiles (dev default, dev:test:dev pointing at hosted)
+examples/dogfood-stack/lich.yaml  # MODIFY — define at least 2 profiles (dev default, dev:test-env pointing at hosted)
 ```
 
 ---
@@ -132,7 +132,7 @@ examples/dogfood-stack/lich.yaml  # MODIFY — define at least 2 profiles (dev d
 7. **Refuse profile switch while stack up**
 8. **Auto-export `LICH_PROFILE`** env var
 9. **`lich validate`** profile checks: name resolution, cycle detection, default uniqueness, unused warning, per-profile interpolation simulation
-10. **Update `examples/dogfood-stack/lich.yaml`** — add `dev` default profile + `dev:test:dev` overriding env to point at fake hosted backend; move migrations into the `dev` profile lifecycle (not top-level)
+10. **Update `examples/dogfood-stack/lich.yaml`** — add `dev` default profile + `dev:test-env` overriding env to point at fake hosted backend; move migrations into the `dev` profile lifecycle (not top-level)
 11. **E2e tests** per the testing standards floor
 
 ---
@@ -152,10 +152,10 @@ E2e coverage floor:
 - **`lich up <profile>` activates named profile** — verifiable via `lich stacks` or service discovery.
 - **`lich up <bad-name>` exits non-zero** with a clear error.
 - **Profile extends works** — child includes parent's services/owned + its own.
-- **Switching profiles while up is refused** — start dev, attempt `lich up dev:test:dev`, expect error.
+- **Switching profiles while up is refused** — start dev, attempt `lich up dev:test-env`, expect error.
 - **Services not in active profile do NOT start** — verifiable via process listing.
-- **Profile-scoped env overrides** — `DATABASE_URL` differs between dev (local) and dev:test:dev (hosted).
-- **Profile-scoped lifecycle** — migrations run for dev, do NOT run for dev:test:dev.
+- **Profile-scoped env overrides** — `DATABASE_URL` differs between dev (local) and dev:test-env (hosted).
+- **Profile-scoped lifecycle** — migrations run for dev, do NOT run for dev:test-env.
 - **`LICH_PROFILE` env var** — visible in service env (e.g. via `lich exec sh -c 'echo $LICH_PROFILE'`).
 - **Validate failure cases** — profile references nonexistent service, extends cycle, two `default: true`, unused-service warning, per-profile interpolation ref to non-included service.
 
@@ -165,8 +165,8 @@ E2e coverage floor:
 
 Plan 3 is done when:
 
-- `examples/dogfood-stack/lich.yaml` has at least two profiles (`dev` as default + `dev:test:dev` pointing at hosted)
-- `lich up` activates `dev`; `lich up dev:test:dev` activates that one
+- `examples/dogfood-stack/lich.yaml` has at least two profiles (`dev` as default + `dev:test-env` pointing at hosted)
+- `lich up` activates `dev`; `lich up dev:test-env` activates that one
 - The resolved service set, env vars, and lifecycle hooks differ correctly between the two profiles, verifiable e2e
 - `lich validate` catches profile misconfigurations
 - All Plan 3 e2e tests pass
