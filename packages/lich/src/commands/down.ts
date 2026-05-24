@@ -30,6 +30,41 @@
  * Best-effort by design: any failure during teardown becomes a warning and
  * teardown continues. Exit code stays 0. The warnings list is returned to
  * the caller for inspection (tests assert on it).
+ *
+ * ### LogTail lifecycle (Plan 4 Task 16 / LEV-365)
+ *
+ * `lich up` (Plan 4 Task 14) registers a `LogTail` per owned service in an
+ * in-process `Map<string, LogTail>` on `UpState`. Those tails feed
+ * `ready_when.log_match`, `fail_when.log_match`, `ready_when.capture`, and
+ * (Plan 5) the dashboard live-tail. On the success path, `up` deliberately
+ * leaves the tails RUNNING after it returns so a service that emits a
+ * `fail_when` line five minutes post-startup still trips its failure handler.
+ *
+ * `lich down` runs in a SEPARATE process from `lich up`. It inherits NO
+ * LogTail state — there is no in-process registry to drain here. Plan 4's
+ * contract for the cross-process boundary is:
+ *
+ *   - The supervisor's stop_cmd / SIGTERM→SIGKILL escalation in
+ *     `stopOwnedService` below terminates the spawned child. The child held
+ *     the WRITE fd on the log file (via `stdio: ["ignore", logFd, logFd]`,
+ *     see `packages/lich/src/owned/supervisor.ts`). When the child exits the
+ *     kernel reclaims that fd. The log file itself stays on disk under
+ *     `~/.lich/stacks/<id>/logs/` so `lich logs --failed` can still read it
+ *     post-teardown.
+ *
+ *   - Any LogTail that was tied to a still-running `lich up` process gets
+ *     stopped by the cancellation cleanup in `up.ts` (Plan 4 Task 15) when
+ *     the user Ctrl-Cs that process, or by garbage collection when the up
+ *     process itself exits. `lich down` doesn't and can't reach into another
+ *     process's heap to call `.stop()` — the OS-level fd reclamation is the
+ *     coordination mechanism.
+ *
+ * In short: there is nothing for `lich down` to do here beyond what it
+ * already does. This docblock exists so the cross-plan dependency is
+ * explicit and a future agent doesn't try to thread a registry through
+ * IPC for no benefit. The interesting "LogTails outlive `up` for late
+ * failure detection" behavior moves into Plan 5's daemon, which owns the
+ * long-running state across multiple CLI invocations.
  */
 
 import { spawn } from "node:child_process";
@@ -240,6 +275,14 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     }
 
     // ---- service-kind-specific stop --------------------------------
+    // Plan 4 Task 16 (LEV-365): No explicit LogTail teardown here. `lich up`
+    // owned the LogTail registry in its own process; when that process is
+    // gone the tails are gone with it. Killing the supervised child below
+    // (via stop_cmd or SIGTERM→SIGKILL) releases the write fd on the log
+    // file; any still-running tail in the up process (if it's still alive
+    // — single-binary CLI, so usually not) sees stat() report a stable
+    // size and stops emitting. See the top-of-file docblock for the full
+    // cross-process LogTail lifecycle contract.
     if (svcSnap.kind === "owned") {
       const ownedDef = config?.owned?.[name];
       try {

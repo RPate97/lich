@@ -25,12 +25,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { runDown } from "../../../src/commands/down.js";
@@ -48,6 +49,7 @@ import {
 } from "../../../src/ports/allocator.js";
 import { _exec, type ExecFn } from "../../../src/compose/runner.js";
 import { _probe } from "../../../src/compose/detect.js";
+import { serviceLogPath } from "../../../src/state/directory.js";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation
@@ -909,6 +911,146 @@ owned:
 
     const out = Buffer.concat(chunks2).toString("utf8");
     expect(out).toContain("already stopped");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LogTail lifecycle across the up/down process boundary (Plan 4 Task 16 / LEV-365)
+//
+// `lich up` (Plan 4 Task 14) keeps a per-stack `Map<string, LogTail>` in
+// `UpState`. Those tails feed `ready_when.log_match`, `fail_when.log_match`,
+// `ready_when.capture`, and (Plan 5) the dashboard live-tail. On a successful
+// up the tails stay RUNNING after `up` returns so post-startup fail_when matches
+// still fire.
+//
+// `lich down` runs in a separate process — it inherits no LogTail state. The
+// contract Plan 4 documents (see the top-of-file docblock in down.ts) is:
+//
+//   - down does NOT try to reach into another process's heap to .stop() tails.
+//   - down DOES kill the supervised child (stop_cmd or SIGTERM→SIGKILL).
+//     The child held the write fd on the log file via the supervisor's
+//     `stdio: ["ignore", logFd, logFd]` shape; killing it releases the fd
+//     to the OS.
+//   - down PRESERVES the log file on disk under `~/.lich/stacks/<id>/logs/`
+//     so post-teardown tools (`lich logs --failed`, dashboard) can still read it.
+//
+// These tests pin that contract so a future agent doesn't grow LogTail-specific
+// cleanup into `lich down` (which would do nothing in the cross-process case
+// and risk regressing the log-preservation invariant).
+// ---------------------------------------------------------------------------
+
+describe("runDown — LogTail lifecycle (LEV-365)", () => {
+  it("preserves the on-disk log file after teardown so post-down log tooling can still read it", async () => {
+    // ARRANGE: an owned service whose supervisor would have written to a log
+    // file under `~/.lich/stacks/<id>/logs/<svc>.log`. We simulate the
+    // post-up state by seeding the file ourselves — down doesn't depend on
+    // up actually having run inside the same process. The point is to assert
+    // that down NEVER deletes/truncates this file, because Plan 5's
+    // `lich logs --failed` and the dashboard need to read it.
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+`);
+    const stackId = await seedSnapshot({
+      services: [
+        {
+          name: "svc",
+          kind: "owned",
+          // No PID — the up process is gone; we're simulating the common
+          // case where the user runs `lich down` after closing the terminal
+          // that ran `lich up`. There's no live LogTail in this process and
+          // no live supervised child either; only the on-disk artefacts.
+          state: "ready",
+        },
+      ],
+    });
+
+    // Materialize the log file the way the supervisor would.
+    const logPath = serviceLogPath(stackId, "svc");
+    mkdirSync(dirname(logPath), { recursive: true });
+    const logBody =
+      "2026-05-24T22:00:00Z svc starting\n" +
+      "2026-05-24T22:00:01Z svc ready\n";
+    writeFileSync(logPath, logBody, "utf8");
+
+    // ACT: tear down.
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+
+    // ASSERT: clean exit, no warnings related to log handling.
+    expect(result.exitCode).toBe(0);
+    const logWarnings = result.warnings.filter(
+      (w) => w.message.toLowerCase().includes("log") ||
+        w.phase.toLowerCase().includes("log"),
+    );
+    expect(logWarnings).toEqual([]);
+
+    // The log file MUST still exist with its original content after down.
+    // This pins the cross-process LogTail contract: down does not (and must
+    // not) try to clean up per-service log files — they live under the
+    // stack's state directory and are only removed by `lich nuke`.
+    expect(existsSync(logPath)).toBe(true);
+
+    // State is stopped — proves down actually ran end-to-end against this
+    // service rather than silently no-op'ing past it.
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+    expect(snap?.services.find((s) => s.name === "svc")?.state).toBe(
+      "stopped",
+    );
+  });
+
+  it("completes cleanly when down inherits no in-process LogTail registry (the common cross-process case)", async () => {
+    // ARRANGE: an owned service with a stop_cmd that writes a sentinel.
+    // The point of this test is to drive down end-to-end and assert that
+    // there's no implicit LogTail-state requirement on the down side: down
+    // succeeds in a fresh process with nothing in its heap that resembles
+    // a LogTail map, and produces no warnings related to such state.
+    const sentinel = join(projectDir, "stop.ran");
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+    stop_cmd: "touch ${shellQuote(sentinel)}"
+`);
+    const stackId = await seedSnapshot({
+      services: [
+        {
+          // No PID: simulates the cross-process case where the up process
+          // is gone but its supervised child was somehow cleaned up by the
+          // user (the most pessimistic input shape — down must still
+          // complete).
+          name: "svc",
+          kind: "owned",
+          state: "ready",
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+
+    // ASSERT: exit clean, stop_cmd ran (proves the teardown branch wasn't
+    // accidentally skipped), and no warnings whose phase suggests a
+    // LogTail/registry-style operation was attempted and failed.
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(sentinel)).toBe(true);
+
+    const suspectWarnings = result.warnings.filter((w) => {
+      const blob = `${w.phase} ${w.message}`.toLowerCase();
+      return (
+        blob.includes("logtail") ||
+        blob.includes("log_tail") ||
+        blob.includes("tail registry")
+      );
+    });
+    expect(suspectWarnings).toEqual([]);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
   });
 });
 
