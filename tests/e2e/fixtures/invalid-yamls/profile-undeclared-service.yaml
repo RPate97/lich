@@ -1,0 +1,7 @@
+version: "1"
+owned:
+  api:
+    cmd: "x"
+profiles:
+  dev:
+    owned: [api, missing]

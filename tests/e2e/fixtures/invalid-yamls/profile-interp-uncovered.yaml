@@ -1,0 +1,17 @@
+version: "1"
+# Top-level env value references `${owned.supabase.port}`. Profile `lite`
+# excludes `supabase` from its owned set AND does NOT override DATABASE_URL,
+# so under that profile the top-level value survives the merge and refers to
+# a service the profile excludes. Triggers `checkProfileInterpolations`
+# (LEV-386 / Plan 3 Task 12).
+env:
+  DATABASE_URL: "postgresql://localhost:${owned.supabase.port}/x"
+owned:
+  supabase:
+    cmd: "supabase start"
+    port: { env: SUPA }
+  api:
+    cmd: "echo hi"
+profiles:
+  lite:
+    owned: [api]
