@@ -1,5 +1,5 @@
 /**
- * TypeScript types for a parsed lich.yaml (Plan 1 subset).
+ * TypeScript types for a parsed lich.yaml (Plan 1 + Plan 2 subset).
  *
  * These types mirror the JSON Schema in `./schema.ts` — hand-rolled rather
  * than generated, both because the schema is small and because we want
@@ -8,9 +8,11 @@
  * Plan-1 scope: `version`, `services`, `owned`, `env`, `env_files`,
  * `env_from`, `lifecycle`, `runtime`.
  *
- * Sections owned by later plans (`env_groups`, `commands`, `profiles`) are
- * typed as opaque records here. Plans 2-4 will replace these placeholders
- * with proper shapes once those features are implemented.
+ * Plan-2 scope: `env_groups`, `commands` (now strict shapes — see
+ * `EnvGroupDef` and `UserCommandDef` below).
+ *
+ * Sections owned by later plans (`profiles`) are still typed as opaque
+ * records here. Plan 3 will replace that placeholder.
  *
  * Likewise a handful of fields *inside* services/owned that belong to later
  * plans (`ready_when.capture`, `ready_when.timeout`, `fail_when`) are
@@ -191,6 +193,82 @@ export interface Runtime {
 }
 
 // ---------------------------------------------------------------------------
+// env_groups (Plan 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A user-defined named env group. Plan 2 introduces `env_groups:` as a
+ * top-level config section; this interface types one entry inside that map.
+ *
+ * The built-in group `stack` is NOT represented here — it's auto-populated
+ * from the top-level env pipeline (see `src/groups/built-in-stack.ts` in
+ * Plan 2). The schema rejects `env_groups.stack` so user configs cannot
+ * redeclare it.
+ *
+ * `extends` is single-string only — env_groups support exactly one parent.
+ * (Profiles support a list of names; env_groups do not. See spec section 4.)
+ *
+ * Spec source: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`,
+ * section 4 (`env_groups`).
+ */
+export interface EnvGroupDef {
+  /** Shell-out / dotenv-file entries layered before `env` literals. */
+  env_from?: EnvFrom;
+  /** Literal `KEY: VALUE` map, layered last (wins over `env_from`). */
+  env?: EnvMap;
+  /**
+   * Name of the parent group to extend. Resolution starts with the parent
+   * (recursively), then this group's `env_from` + `env` layer on top.
+   * `extends: stack` opts back into the built-in stack group's env.
+   */
+  extends?: string;
+  /**
+   * Whether to overlay `process.env` at the outermost resolution call.
+   * Defaults to `true`. Set to `false` to make a group hermetic — useful
+   * for isolated tool envs that shouldn't see the user's shell exports.
+   */
+  process_env?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// commands (Plan 2 — user-defined commands)
+// ---------------------------------------------------------------------------
+
+/**
+ * A user-defined command, invokable as `lich <name>`. Plan 2 introduces
+ * `commands:` as a top-level config section; this interface types one entry
+ * inside that map.
+ *
+ * Built-in commands always win on name conflict; `lich validate` refuses
+ * configs whose user-command names shadow a built-in (see Plan 2 Task 14).
+ *
+ * Argv after the name is forwarded as positional args to the underlying
+ * shell command via `/bin/sh -c <cmd> -- "$@"`.
+ *
+ * Spec source: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`,
+ * section 4 (`commands`).
+ */
+export interface UserCommandDef {
+  /** Shell command to execute. Required. */
+  cmd: string;
+  /** Working directory, relative to the project root. Defaults to `.`. */
+  cwd?: string;
+  /**
+   * Name of the env_group whose resolved env is loaded into the child.
+   * Defaults to `"stack"` (the built-in group). May be overridden at
+   * invocation time via the universal `--env-group=<name>` flag.
+   */
+  env_group?: string;
+  /** Per-command env literals, layered on top of the resolved group env. */
+  env?: EnvMap;
+  /**
+   * Free-form help text shown by `lich help <name>` and summarised (first
+   * line) in `lich help`'s command listing.
+   */
+  help?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -204,11 +282,19 @@ export interface LichConfig {
   env_from?: EnvFrom;
   lifecycle?: TopLevelLifecycle;
 
+  /**
+   * Named env groups (Plan 2). Keyed by group name; values are
+   * {@link EnvGroupDef} entries. The built-in `stack` group is implicit
+   * and may not be redeclared here (the schema rejects it).
+   */
+  env_groups?: Record<string, EnvGroupDef>;
+  /**
+   * User-defined commands (Plan 2). Keyed by command name (invoked as
+   * `lich <name>`); values are {@link UserCommandDef} entries.
+   */
+  commands?: Record<string, UserCommandDef>;
+
   // ----- Sections owned by later plans — opaque placeholders for now. -----
-  /** Plan 2 will replace this. */
-  env_groups?: Record<string, unknown>;
-  /** Plan 2 will replace this. */
-  commands?: Record<string, unknown>;
   /** Plan 3 will replace this. */
   profiles?: Record<string, unknown>;
 }
