@@ -293,7 +293,18 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       const a = stackA!;
       const b = stackB!;
 
+      // Progress logger. Writes to stderr, which bun displays live during
+      // the test rather than buffering until the it() resolves. Without
+      // these the test goes silent for minutes (lich up is synchronous +
+      // supabase first-pull is slow) and any failure looks like a hang.
+      const t0 = Date.now();
+      const step = (label: string): void => {
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        process.stderr.write(`  [+${elapsed}s] ${label}\n`);
+      };
+
       // ---- Bring A up --------------------------------------------------
+      step("lich up A (supabase first-pull ~30-60s)");
       const upA = lichUp(a.path);
       if (upA.exitCode !== 0) {
         throw new Error(
@@ -303,8 +314,10 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       const stateA1 = readStateForWorktree(a.path);
       expect(stateA1, "state.json for A should exist after up").not.toBeNull();
       expect(stateA1!.status).toBe("up");
+      step(`A up (stack_id=${stateA1!.stack_id})`);
 
       // ---- Bring B up (file-locked allocator must give it different ports)
+      step("lich up B");
       const upB = lichUp(b.path);
       if (upB.exitCode !== 0) {
         throw new Error(
@@ -314,10 +327,12 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       const stateB1 = readStateForWorktree(b.path);
       expect(stateB1, "state.json for B should exist after up").not.toBeNull();
       expect(stateB1!.status).toBe("up");
+      step(`B up (stack_id=${stateB1!.stack_id})`);
 
       // After B is up, A must still be up (B's up didn't perturb A's state).
       const stateA2 = readStateForWorktree(a.path);
       expect(stateA2!.status).toBe("up");
+      step("A still up after B's up (no cross-stack interference)");
 
       // ---- Sentinel #1: no port overlap -------------------------------
       const portsA = collectAllocatedPorts(stateA2!);
@@ -360,8 +375,11 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       // Web (Next.js dev) cold compile on first request usually ~3-8s.
       // 20s headroom; if it's slower than that, something is wrong rather
       // than "the server is still starting."
+      step(`probing A web (port ${webA})`);
       await waitForHttp200(`http://localhost:${webA}/`, { timeoutMs: 20_000 });
+      step(`A web 200 OK, probing B web (port ${webB})`);
       await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 20_000 });
+      step("B web 200 OK");
 
       // ---- Sentinel #3: lich stacks (from a third spawn) lists BOTH ---
       // Run `lich stacks` from a directory that is NOT inside either copy
@@ -384,6 +402,7 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       expect(idsListed).toContain(stateB1!.stack_id);
 
       // ---- Take A down; B must be unaffected --------------------------
+      step("lich down A");
       const downA = lichDown(a.path);
       if (downA.exitCode !== 0) {
         throw new Error(
@@ -402,9 +421,12 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
 
       // B's web URL still serves — the load-bearing assertion that down A
       // didn't accidentally reach into B's resources.
+      step("A down; verifying B web still 200 OK");
       await waitForHttp200(`http://localhost:${webB}/`, { timeoutMs: 10_000 });
+      step("B still serving after A teardown — sentinel passed");
 
       // ---- Take B down (explicit cleanup; afterAll is a safety net) ---
+      step("lich down B");
       const downB = lichDown(b.path);
       if (downB.exitCode !== 0) {
         throw new Error(

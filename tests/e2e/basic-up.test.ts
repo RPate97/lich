@@ -232,11 +232,20 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       fixture = makeFixture();
       const { stackPath, lichHome } = fixture;
 
+      // Progress logger — writes to stderr (live during test) so the user
+      // sees what phase we're in rather than staring at silence for minutes.
+      const t0 = Date.now();
+      const step = (label: string): void => {
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        process.stderr.write(`  [+${elapsed}s] ${label}\n`);
+      };
+
       // ---- lich up ------------------------------------------------------
       // Run synchronously: `lich up` returns once the stack is fully ready
       // (services are detached — owned services run in their own process
       // groups, compose runs `-d`). Generous timeout: first run pulls the
       // supabase images, which can take a couple of minutes on a cold host.
+      step("lich up (supabase first-pull ~30-60s)");
       const upResult = runLich(["up"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -249,6 +258,7 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
         console.error("lich up stderr:", upResult.stderr);
       }
       expect(upResult.exitCode).toBe(0);
+      step("lich up exit 0");
 
       // ---- state.json: status:up ---------------------------------------
       const stackId = findStackId(lichHome);
@@ -277,6 +287,7 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const apiUrl = urls.api?.default;
       expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
       // Express api: responds immediately after spawn. 10s is huge headroom.
+      step(`probing api /health (${apiUrl})`);
       await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
       const health = await fetch(`${apiUrl}/health`).then((r) => r.json());
       expect(health).toMatchObject({ status: "ok" });
@@ -285,7 +296,9 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const webUrl = urls.web?.default;
       expect(webUrl, `expected web url in: ${urlsResult.stdout}`).toBeTruthy();
       // Next.js dev cold compile on first request usually ~3-8s.
+      step(`probing web / (${webUrl})`);
       await waitForHttp200(webUrl!, { timeoutMs: 20_000 });
+      step("all probes 200 OK");
       const webResp = await fetch(webUrl!);
       expect(webResp.status).toBe(200);
       const webBody = await webResp.text();
