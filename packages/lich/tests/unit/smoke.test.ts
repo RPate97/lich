@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { VERSION } from "../../src/version.js";
 import { COMMANDS, isCommand } from "../../src/commands/index.js";
 
@@ -37,24 +37,44 @@ describe("smoke", () => {
     // their own tests cover behavior. Plan 2 promotes `help` (LEV-329),
     // `exec` (LEV-330), and `env` (LEV-331) to real handlers. `restart`
     // lands in a later plan.
-    const implemented = new Set<string>([
-      "init",
-      "validate",
-      "up",
-      "down",
-      "logs",
-      "urls",
-      "stacks",
-      "nuke",
-      "help",
-      "env",
-      "exec",
-    ]);
+    const STUB_COMMANDS = new Set<string>(["restart"]);
     for (const [name, fn] of Object.entries(COMMANDS)) {
-      if (implemented.has(name)) continue;
+      if (!STUB_COMMANDS.has(name)) continue;
       const result = await fn({ argv: { _: [] } });
       expect(result.ok).toBe(false);
       expect(result.message).toContain(name);
+    }
+  });
+
+  it("help/exec/env are real handlers, not stubs", async () => {
+    // Plan 2 Task 12 (LEV-332): the router wires runHelp/runExec/runEnvCmd
+    // for these three names. This assertion guards against a regression
+    // where the wiring is reverted to `stub("help")` etc. — each handler,
+    // invoked with minimal argv, must NOT return the not-yet-implemented
+    // stub message.
+    //
+    // - `help` with empty argv enters list mode (tolerant of missing
+    //   lich.yaml; prints built-ins to stdout). We silence console.log so
+    //   it doesn't pollute the test output.
+    // - `exec` with empty argv exits 2 with a usage message on stderr
+    //   (no filesystem IO).
+    // - `env` with empty argv exits 2 with a usage message on stderr
+    //   (no filesystem IO).
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      for (const name of ["help", "exec", "env"] as const) {
+        const fn = COMMANDS[name];
+        const result = await fn({ argv: { _: [] } });
+        expect(result.message ?? "").not.toContain("not yet implemented");
+      }
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      writeSpy.mockRestore();
     }
   });
 });
