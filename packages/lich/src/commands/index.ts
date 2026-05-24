@@ -7,6 +7,7 @@ import { runUrls } from "./urls.js";
 import { runStacks } from "./stacks.js";
 import { runNuke } from "./nuke.js";
 import { runDown } from "./down.js";
+import { runHelp } from "./help.js";
 
 /**
  * The shape every command returns to the router.
@@ -132,6 +133,14 @@ const nukeHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
+const helpHandler: CommandHandler = async (ctx) => {
+  // First positional after `help` (e.g. `lich help up` → "up").
+  const commandName =
+    typeof ctx.argv._[0] === "string" ? ctx.argv._[0] : undefined;
+  const result = await runHelp({ commandName, cwd: process.cwd() });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
 export const COMMANDS: Record<string, CommandHandler> = {
   up: upHandler,
   down: downHandler,
@@ -142,7 +151,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   nuke: nukeHandler,
   init: initHandler,
   validate: validateHandler,
-  help: stub("help"),
+  help: helpHandler,
   exec: stub("exec"),
   env: stub("env"),
 };
