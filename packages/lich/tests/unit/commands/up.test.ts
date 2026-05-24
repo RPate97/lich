@@ -33,9 +33,14 @@ import { PassThrough } from "node:stream";
 import { runUp } from "../../../src/commands/up.js";
 import {
   readSnapshot,
+  writeSnapshot,
   type StackSnapshot,
 } from "../../../src/state/snapshot.js";
 import { listAllocations, release } from "../../../src/ports/allocator.js";
+// LEV-387 (Plan 3 Task 13): used by the refuse-mid-flight tests to derive the
+// per-worktree stack_id without spinning up the full pipeline first.
+import { detectWorktree } from "../../../src/worktree/detect.js";
+import { ensureStackDir } from "../../../src/state/directory.js";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation: a fresh LICH_HOME tmpdir, a fresh project tmpdir.
@@ -477,6 +482,389 @@ owned:
 
     expect(result.exitCode).toBe(1);
   }, 5_000);
+});
+
+// ---------------------------------------------------------------------------
+// LEV-387 (Plan 3 Task 13): profile argument, default lookup, refuse-switch
+// ---------------------------------------------------------------------------
+//
+// These tests pin the entry-point behavior of `runUp` w.r.t. the new
+// `profile?: string` field on `RunUpInput`. They are intentionally NARROW:
+// the goal is to assert that profile lookup + the refuse-mid-flight check
+// fire at the right moments, with the right error messages. Service
+// FILTERING by profile (Task 14 / LEV-388) and lifecycle / env wiring
+// (Task 15 / LEV-389) are not exercised here — those land in follow-up
+// commits with their own test surface.
+//
+// Two patterns recur:
+//   - "happy path" tests use a minimal profile that lists a single owned
+//     service the top-level config also declares; downstream stays Plan-1
+//     compatible because (today) up.ts ignores the resolved profile's
+//     services list. The test asserts on the snapshot existing AND on the
+//     resolved-profile path having been exercised (via the absence of any
+//     "no active profile" error and exit code 0).
+//   - "error path" tests rely on the new code paths returning exit 1
+//     BEFORE any state mutation — i.e. without writing a state.json. They
+//     inspect the captured JSON output stream for the structured `error`
+//     event the orchestrator emits.
+
+/**
+ * Verify the orchestrator's stdout JSON stream contains a `type:error`
+ * record whose title or detail includes the substring. Returns the parsed
+ * matching event for additional assertions; throws when no match exists.
+ *
+ * The output sink we hand to `runUp` is a PassThrough that collects every
+ * event the json renderer emits. Each event is one JSON line; the renderer
+ * uses `{ type: "error", title, detail, ... }` (see `output/json.ts`).
+ *
+ * Defined at module scope so both LEV-387 describe blocks can reuse it.
+ */
+function expectErrorEvent(
+  chunks: Buffer[],
+  needle: string,
+): { title?: string; detail?: string } {
+  const out = Buffer.concat(chunks).toString("utf8");
+  for (const line of out.split("\n")) {
+    if (!line.trim()) continue;
+    let parsed: { type?: string; title?: string; detail?: string };
+    try {
+      parsed = JSON.parse(line) as typeof parsed;
+    } catch {
+      continue;
+    }
+    if (parsed.type !== "error") continue;
+    const hay = `${parsed.title ?? ""}\n${parsed.detail ?? ""}`;
+    if (hay.includes(needle)) return parsed;
+  }
+  throw new Error(
+    `no type:error with substring "${needle}" in output:\n${out}`,
+  );
+}
+
+describe("runUp — LEV-387: profile argument", () => {
+  it("runs the default profile when no argument supplied", async () => {
+    const sentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  primary:
+    default: true
+    owned: [svc]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    // No "no active profile" error fired; the up flowed through to start.
+    expect(result.exitCode).toBe(0);
+    const out = Buffer.concat(chunks).toString("utf8");
+    expect(out).not.toContain("no active profile");
+  }, 15_000);
+
+  it("runs the named profile when argument supplied", async () => {
+    const sentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  primary:
+    default: true
+    owned: [svc]
+  secondary:
+    owned: [svc]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      profile: "secondary",
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    const out = Buffer.concat(chunks).toString("utf8");
+    expect(out).not.toContain("unknown profile");
+    expect(out).not.toContain("no profile named");
+  }, 15_000);
+
+  it("errors when profile name unknown", async () => {
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  primary:
+    default: true
+    owned: [svc]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      profile: "does-not-exist",
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // The error names the requested profile + lists what's declared.
+    const evt = expectErrorEvent(chunks, "no profile named");
+    expect(evt.detail).toContain("does-not-exist");
+    expect(evt.detail).toContain("primary");
+
+    // Refuse-switch / unknown-profile paths must NOT have written a
+    // state.json — they bail before any state mutation. The stackId may
+    // be undefined OR present (worktree wasn't detected yet); but if it
+    // IS present, the snapshot must be absent.
+    if (result.stackId) {
+      const snap = await readSnapshot(result.stackId);
+      expect(snap).toBeNull();
+    }
+  }, 10_000);
+
+  it("errors when no default and no argument", async () => {
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  primary:
+    owned: [svc]
+  secondary:
+    owned: [svc]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // The default-picker fell through with `{ name: null }` (no `error`
+    // field); up.ts substitutes the user-facing message.
+    const evt = expectErrorEvent(chunks, "no default profile set in lich.yaml");
+    expect(evt.detail).toContain("default: true");
+    expect(evt.detail).toContain("lich up <profile>");
+  }, 10_000);
+
+  it("errors when multiple defaults set", async () => {
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  primary:
+    default: true
+    owned: [svc]
+  secondary:
+    default: true
+    owned: [svc]
+`);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(1);
+    // pickDefaultProfile's error path surfaces the offending names in
+    // sorted order (primary < secondary, alphabetic).
+    const evt = expectErrorEvent(chunks, "multiple profiles set default: true");
+    expect(evt.detail).toContain("primary");
+    expect(evt.detail).toContain("secondary");
+  }, 10_000);
+});
+
+describe("runUp — LEV-387: refuse-mid-flight switch", () => {
+  it("refuses up <other> while a stack is up under different profile", async () => {
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+  dev:test-env:
+    owned: [svc]
+`);
+
+    // Pre-seed a state.json showing the stack is already up under "dev".
+    // detectWorktree is deterministic w.r.t. the project path, so we can
+    // compute the stack_id up-front and write the snapshot at that location.
+    const wt = detectWorktree(projectDir);
+    await ensureStackDir(wt.stack_id);
+    await writeSnapshot({
+      stack_id: wt.stack_id,
+      worktree_name: wt.name,
+      worktree_path: wt.path,
+      status: "up",
+      started_at: new Date().toISOString(),
+      services: [],
+      active_profile: "dev",
+    });
+    createdStackIds.push(wt.stack_id);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      profile: "dev:test-env",
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stackId).toBe(wt.stack_id);
+    const evt = expectErrorEvent(
+      chunks,
+      "stack is already up under profile 'dev'",
+    );
+    expect(evt.detail).toContain("dev:test-env");
+    expect(evt.detail).toContain("lich down");
+
+    // The pre-seeded snapshot survives untouched — refuse-switch fires
+    // BEFORE any state mutation in this run.
+    const snap = await readSnapshot(wt.stack_id);
+    expect(snap).not.toBeNull();
+    expect(snap!.status).toBe("up");
+    expect(snap!.active_profile).toBe("dev");
+  }, 10_000);
+
+  it("refuses up <same> while a stack is up under same profile (no re-up semantics)", async () => {
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+`);
+
+    const wt = detectWorktree(projectDir);
+    await ensureStackDir(wt.stack_id);
+    await writeSnapshot({
+      stack_id: wt.stack_id,
+      worktree_name: wt.name,
+      worktree_path: wt.path,
+      status: "up",
+      started_at: new Date().toISOString(),
+      services: [],
+      active_profile: "dev",
+    });
+    createdStackIds.push(wt.stack_id);
+
+    const { stream, chunks } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      profile: "dev",
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stackId).toBe(wt.stack_id);
+    // Same-profile re-up surfaces the simpler "already up" message, NOT
+    // the cross-profile switch message.
+    const evt = expectErrorEvent(chunks, "stack is already up");
+    expect(evt.detail).toContain("lich down");
+    expect(evt.detail).not.toContain("switching");
+  }, 10_000);
+
+  it("does not refuse when the prior snapshot is stopped/failed", async () => {
+    const sentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(sentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+`);
+
+    const wt = detectWorktree(projectDir);
+    await ensureStackDir(wt.stack_id);
+    // A "stopped" snapshot is a legitimate "previous run already torn
+    // down" state — `lich up` should proceed without complaint.
+    await writeSnapshot({
+      stack_id: wt.stack_id,
+      worktree_name: wt.name,
+      worktree_path: wt.path,
+      status: "stopped",
+      started_at: new Date().toISOString(),
+      services: [],
+      active_profile: "dev",
+    });
+    createdStackIds.push(wt.stack_id);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      profile: "dev",
+    });
+
+    expect(result.exitCode).toBe(0);
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------

@@ -54,12 +54,21 @@ import {
   stackDir,
 } from "../state/directory.js";
 import {
+  readSnapshot,
   writeSnapshot,
   type ServiceSnapshot,
   type ServiceState,
   type StackSnapshot,
   type StackStatus,
 } from "../state/snapshot.js";
+// LEV-387 (Plan 3 Task 13): profile resolution imports.
+import { pickDefaultProfile } from "../profiles/default.js";
+import {
+  resolveProfile,
+  ProfileResolveError,
+  ProfileCycleError,
+  type ResolvedProfile,
+} from "../profiles/resolve.js";
 import {
   startOwnedService,
   runOneshot,
@@ -107,6 +116,14 @@ export interface RunUpInput {
   out?: NodeJS.WritableStream;
   /** AbortSignal for cancellation (Ctrl-C handler in real CLI). */
   signal?: AbortSignal;
+  /**
+   * LEV-387 (Plan 3 Task 13): name of the profile to activate. When
+   * omitted, falls back to the single profile declared with `default: true`
+   * (errors if none / multiple exist). When the yaml has no `profiles`
+   * section at all, this argument must be omitted — the behavior is
+   * unchanged from Plan 1.
+   */
+  profile?: string;
 }
 
 export interface RunUpResult {
@@ -231,6 +248,88 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     const config = parsed.config;
     parsePhase.end("ok");
 
+    // ---- LEV-387 (Plan 3 Task 13) BEGIN: resolve active profile -----------
+    // Determine which profile (if any) this `up` invocation targets. The
+    // resolution decides the rest of Plan 3's downstream behavior (Task 14:
+    // service filtering; Task 15: env layering, lifecycle composition,
+    // snapshot writes), but THIS task only does the lookup + validation;
+    // downstream wiring lands in subsequent tasks.
+    //
+    // Three input cases:
+    //   (a) no input.profile, no profiles section in yaml → no profile
+    //       active; preserve Plan 1 behavior.
+    //   (b) no input.profile, yaml HAS profiles → pick the single default;
+    //       error if there is no default or multiple defaults.
+    //   (c) input.profile set → require the named profile to exist.
+    let resolvedProfile: ResolvedProfile | null = null;
+    {
+      const profiles = config.profiles;
+      const hasProfilesSection =
+        profiles !== undefined && Object.keys(profiles).length > 0;
+
+      let activeProfileName: string | null = null;
+
+      if (input.profile === undefined) {
+        if (!hasProfilesSection) {
+          // Case (a): no profiles in yaml, no profile arg → unchanged Plan 1.
+          activeProfileName = null;
+        } else {
+          // Case (b): defer to the default-picker.
+          const pick = pickDefaultProfile(config);
+          if (pick.name === null) {
+            const detail = pick.error
+              ? pick.error
+              : "no default profile set in lich.yaml; either declare a profile with default: true or run lich up <profile>";
+            output.error({
+              title: "no active profile",
+              detail,
+            });
+            await output.close();
+            return { exitCode: 1 };
+          }
+          activeProfileName = pick.name;
+        }
+      } else {
+        // Case (c): name supplied — must exist.
+        if (!profiles || profiles[input.profile] === undefined) {
+          const available = profiles ? Object.keys(profiles).sort() : [];
+          const list =
+            available.length === 0 ? "<none>" : available.join(", ");
+          output.error({
+            title: "unknown profile",
+            detail: `no profile named '${input.profile}' (available: ${list})`,
+          });
+          await output.close();
+          return { exitCode: 1 };
+        }
+        activeProfileName = input.profile;
+      }
+
+      // Realize the resolved profile (only when we picked a name). Surface
+      // resolver errors via the same `output.error` channel so the CLI
+      // remains structured even when something downstream of name lookup
+      // (cycle / unknown parent) trips.
+      if (activeProfileName !== null) {
+        try {
+          resolvedProfile = resolveProfile(activeProfileName, config);
+        } catch (err) {
+          const title =
+            err instanceof ProfileCycleError
+              ? "profile extends cycle"
+              : err instanceof ProfileResolveError
+                ? "profile resolution failed"
+                : "profile resolution failed";
+          output.error({
+            title,
+            detail: (err as Error).message,
+          });
+          await output.close();
+          return { exitCode: 1 };
+        }
+      }
+    }
+    // ---- LEV-387 (Plan 3 Task 13) END --------------------------------------
+
     // ---- Step 2: detect worktree ------------------------------------------
     const worktreePhase = output.phase("worktree");
     const worktree = detectWorktree(cwd);
@@ -243,6 +342,62 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
+
+    // ---- LEV-387 (Plan 3 Task 13) BEGIN: refuse-mid-flight switch ---------
+    // Before any state mutation (port allocation, override generation, etc.)
+    // we check whether a prior `lich up` is already in flight or up for this
+    // worktree. If so, and the prior run picked a DIFFERENT profile than the
+    // one we're about to activate, refuse: profile-switching needs an
+    // explicit `lich down` first. This protects against half-tearing-down a
+    // dev stack when the user types `lich up dev:test-env` over the top.
+    //
+    // The check is best-effort: readSnapshot returns null when there's no
+    // prior state, and any read error means "no usable prior state" (caller
+    // can still proceed). We treat "stack is up under the SAME profile" as
+    // an error too — Plan 1 has no idempotent re-up semantics, so neither
+    // does Plan 3 — but the message is the simpler "already up; run lich
+    // down" form rather than the cross-profile one.
+    {
+      const requested = resolvedProfile?.name ?? null;
+      let priorSnap: StackSnapshot | null = null;
+      try {
+        priorSnap = await readSnapshot(worktree.stack_id);
+      } catch {
+        priorSnap = null;
+      }
+      if (
+        priorSnap &&
+        (priorSnap.status === "up" || priorSnap.status === "starting")
+      ) {
+        const prior = priorSnap.active_profile ?? null;
+        const sameProfile = prior === requested;
+        // If neither has a profile (both null), `sameProfile` is true →
+        // hit the "already up" branch. Cross-profile switch produces the
+        // explicit refuse-switch message.
+        if (!sameProfile) {
+          output.error({
+            title: "stack already running under a different profile",
+            detail: `stack is already up under profile '${prior ?? "<none>"}'; run 'lich down' before switching to profile '${requested ?? "<none>"}'`,
+          });
+          await output.close();
+          return { exitCode: 1, stackId: worktree.stack_id };
+        }
+        output.error({
+          title: "stack already running",
+          detail:
+            "stack is already up; run 'lich down' first (lich up has no re-run semantics in v1)",
+        });
+        await output.close();
+        return { exitCode: 1, stackId: worktree.stack_id };
+      }
+    }
+    // Suppress unused-variable warnings for resolvedProfile — downstream
+    // Plan 3 tasks (14: service filtering; 15: env + lifecycle wiring) will
+    // consume it. Leaving the binding in place here means those tasks can
+    // be applied as small, focused edits rather than re-introducing the
+    // resolution call.
+    void resolvedProfile;
+    // ---- LEV-387 (Plan 3 Task 13) END --------------------------------------
 
     // ---- Step 3: build dep graph + topo levels ----------------------------
     const graphPhase = output.phase("dependency-graph");
