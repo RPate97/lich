@@ -522,6 +522,19 @@ function validateRefBody(
       }
       return;
     }
+    // Plan-4 deferral: ${owned.X.captured.Y} is a planned feature
+    // (failure-surfacing / capture pipeline). The validator catches it here
+    // with a clearer message than the generic "unknown reference" so users
+    // aren't misled into thinking they mistyped. Plan 4 will remove this
+    // special case once captures are implemented.
+    if (rest.length === 3 && rest[1] === "captured") {
+      errors.push({
+        kind: "interp",
+        location,
+        message: `${fullRef} is a Plan-4 (failure-surfacing) feature; supported references today: worktree.*, services.<name>.host_port, owned.<name>.port, owned.<name>.ports.<key>`,
+      });
+      return;
+    }
     errors.push({
       kind: "interp",
       location,

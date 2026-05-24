@@ -299,6 +299,27 @@ describe("runValidate", () => {
     expect(res.exitCode).toBe(0);
   });
 
+  it("reports a clearer error for ${owned.X.captured.Y} references (Plan 4 feature)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  TOKEN: "\${owned.api.captured.AUTH_TOKEN}"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const ie = res.report.errors!.find((e) => e.kind === "interp");
+    expect(ie).toBeDefined();
+    expect(ie!.message).toContain("Plan-4");
+    expect(ie!.message).toContain("failure-surfacing");
+    expect(ie!.message).toContain("${owned.api.captured.AUTH_TOKEN}");
+    // Includes the list of currently supported reference shapes.
+    expect(ie!.message).toContain("worktree.*");
+    expect(ie!.message).toContain("services.<name>.host_port");
+    expect(ie!.message).toContain("owned.<name>.port");
+    expect(ie!.message).toContain("owned.<name>.ports.<key>");
+  });
+
   // -------------------------------------------------------------------------
   // JSON output
   // -------------------------------------------------------------------------
