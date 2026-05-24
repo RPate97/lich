@@ -911,3 +911,207 @@ owned:
     expect(out).toContain("already stopped");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Profile-scoped before_down composition (Plan 3 Task 16 / LEV-390)
+//
+// `lich up` composes top-level + profile before_up entries (top-level first,
+// then profile). `lich down` is the LIFO inverse: profile entries run FIRST
+// (undo the specialization), then top-level entries (tear down the base).
+//
+// Down also has to survive snapshot/yaml drift gracefully — if the user
+// edited the yaml between up and down such that `snap.active_profile` is
+// no longer declared, down warns (`profile_resolve`) and falls back to
+// top-level-only teardown rather than failing.
+// ---------------------------------------------------------------------------
+
+describe("runDown — profile before_down composition (LEV-390)", () => {
+  it("runs profile before_down first, then top-level before_down (LIFO)", async () => {
+    // Two sentinels: one written by the profile's entry, one by the
+    // top-level entry. Each appends a token to a shared ledger so we can
+    // assert the exact order even if mtime resolution is too coarse.
+    const ledger = join(projectDir, "before_down.ledger");
+
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19600, 19699]
+owned:
+  svc:
+    cmd: "sleep 60"
+lifecycle:
+  before_down:
+    - "printf 'TOP\\n' >> ${shellQuote(ledger)}"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+    lifecycle:
+      before_down:
+        - "printf 'PROFILE\\n' >> ${shellQuote(ledger)}"
+`);
+
+    const stackId = await seedSnapshot({
+      active_profile: "dev",
+      services: [
+        {
+          name: "svc",
+          kind: "owned",
+          state: "stopped",
+          // Dead pid: SIGTERM path is silent no-op so the only state
+          // change comes from the lifecycle hooks + bookkeeping.
+          pid: 2_147_483_640,
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // No before_down warnings: both entries exited 0.
+    const bdWarnings = result.warnings.filter(
+      (w) => w.phase === "before_down",
+    );
+    expect(bdWarnings).toEqual([]);
+    // No profile_resolve warnings: the profile resolved cleanly.
+    const prWarnings = result.warnings.filter(
+      (w) => w.phase === "profile_resolve",
+    );
+    expect(prWarnings).toEqual([]);
+
+    // The ledger captures the EXACT order: PROFILE first, then TOP.
+    expect(existsSync(ledger)).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    const lines = readFileSync(ledger, "utf8").trim().split("\n");
+    expect(lines).toEqual(["PROFILE", "TOP"]);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  });
+
+  it("warns when active_profile in snapshot is missing from yaml (post-edit drift)", async () => {
+    // Top-level before_down writes a sentinel — we use its presence to
+    // prove top-level entries STILL run on the drift fallback path.
+    const topSentinel = join(projectDir, "top.ran");
+
+    // Yaml HAS profiles but DOES NOT have the one the snapshot references.
+    // Simulates: user ran `lich up gone` (state.json now records active
+    // profile "gone"), then edited lich.yaml to remove "gone" before
+    // running `lich down`.
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+lifecycle:
+  before_down:
+    - "touch ${shellQuote(topSentinel)}"
+profiles:
+  other:
+    default: true
+    owned: [svc]
+`);
+
+    const stackId = await seedSnapshot({
+      active_profile: "gone",
+      services: [
+        {
+          name: "svc",
+          kind: "owned",
+          state: "stopped",
+          pid: 2_147_483_641,
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // The drift surfaces as a profile_resolve warning naming the missing
+    // profile so the user understands why their profile-scoped tear-down
+    // didn't run.
+    const prWarnings = result.warnings.filter(
+      (w) => w.phase === "profile_resolve",
+    );
+    expect(prWarnings).toHaveLength(1);
+    expect(prWarnings[0].message).toContain("gone");
+
+    // Fall-back path: top-level before_down still ran.
+    expect(existsSync(topSentinel)).toBe(true);
+
+    // No before_down hook failures (the only entry was the top-level one
+    // which exits 0).
+    const bdWarnings = result.warnings.filter(
+      (w) => w.phase === "before_down",
+    );
+    expect(bdWarnings).toEqual([]);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  });
+
+  it("snapshot without active_profile (pre-Plan-3 stack) still tears down cleanly via top-level before_down only", async () => {
+    // A snapshot written before Plan 3 has no `active_profile` field. The
+    // yaml may even declare profiles (no requirement that pre-Plan-3
+    // stacks were on a profile-free yaml). Down must skip the profile
+    // resolution entirely — no profile_resolve warning, no attempt to
+    // look up an undefined name — and run top-level before_down as-is.
+    const topSentinel = join(projectDir, "top.ran");
+
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+lifecycle:
+  before_down:
+    - "touch ${shellQuote(topSentinel)}"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+    lifecycle:
+      before_down:
+        - "echo profile-should-not-run-without-active_profile 1>&2; exit 1"
+`);
+
+    const stackId = await seedSnapshot({
+      // No active_profile — mirrors a Plan-1/2 snapshot on disk.
+      services: [
+        {
+          name: "svc",
+          kind: "owned",
+          state: "stopped",
+          pid: 2_147_483_642,
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // No profile_resolve warning: we never attempted profile resolution
+    // because the snapshot didn't ask for one.
+    const prWarnings = result.warnings.filter(
+      (w) => w.phase === "profile_resolve",
+    );
+    expect(prWarnings).toEqual([]);
+
+    // Top-level entry ran.
+    expect(existsSync(topSentinel)).toBe(true);
+
+    // The dev profile's before_down would have exited 1 if it had run;
+    // assert no before_down warnings were produced (which proves the
+    // profile's entries were NOT executed).
+    const bdWarnings = result.warnings.filter(
+      (w) => w.phase === "before_down",
+    );
+    expect(bdWarnings).toEqual([]);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  });
+});

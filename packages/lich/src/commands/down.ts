@@ -55,10 +55,11 @@ import {
   type RunnerCtx,
 } from "../compose/runner.js";
 import { resolveEnvForService } from "../env/resolve.js";
-import { runLifecycle } from "../lifecycle/executor.js";
+import { runLifecycle, type LifecycleEntry } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { buildGraph, type NodeDecl } from "../deps/graph.js";
 import { shutdownOrder, CycleError } from "../deps/sort.js";
+import { resolveProfile } from "../profiles/resolve.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
 
 // ---------------------------------------------------------------------------
@@ -295,15 +296,50 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     }
   }
 
-  // ---- Step 7: top-level before_down ------------------------------------
+  // ---- Step 7: composed before_down (profile + top-level, LIFO) ---------
+  // Compose order is the LIFO inverse of `up`'s before_up composition:
+  // profile-scoped entries run FIRST (undo the specialization), then
+  // top-level entries (tear down the base). This mirrors `resolveProfile`'s
+  // `lifecycle.before_down` composition (child-first), applied here at the
+  // call site so existing callers without a profile keep working unchanged.
+  //
+  // Re-resolve the active profile from the on-disk yaml. The snapshot
+  // carries only the profile NAME (Plan 3 Task 8); the lifecycle entries
+  // live in the yaml. If the yaml has drifted between up and down (user
+  // removed the profile, renamed it, broke the extends chain, etc.) we
+  // emit a `profile_resolve` warning and fall back to top-level-only so
+  // teardown still makes forward progress — best-effort like the rest of
+  // down.
+  const beforeDownEntries: LifecycleEntry[] = [];
+  if (snap.active_profile && config) {
+    if (config.profiles?.[snap.active_profile]) {
+      try {
+        const resolved = resolveProfile(snap.active_profile, config);
+        beforeDownEntries.push(...resolved.lifecycle.before_down);
+      } catch (err) {
+        warnings.push({
+          phase: "profile_resolve",
+          message: `failed to resolve profile "${snap.active_profile}" for before_down: ${errorMessage(err)}; proceeding with top-level entries only`,
+        });
+      }
+    } else {
+      warnings.push({
+        phase: "profile_resolve",
+        message: `active profile "${snap.active_profile}" recorded in state.json is no longer declared in lich.yaml; proceeding with top-level before_down entries only`,
+      });
+    }
+  }
   if (
     config?.lifecycle?.before_down &&
     config.lifecycle.before_down.length > 0
   ) {
+    beforeDownEntries.push(...config.lifecycle.before_down);
+  }
+  if (beforeDownEntries.length > 0) {
     await runLifecycle(
       {
         phase: "before_down",
-        entries: config.lifecycle.before_down,
+        entries: beforeDownEntries,
         cwd: worktree.path,
         env: process.env,
       },
