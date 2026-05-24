@@ -908,11 +908,20 @@ async function waitReady(
  * Build the HTTP URL for a ready probe.
  *
  * Plan 1 supports two shapes (per spec section 4 examples + dogfood-stack):
- *   - A relative path like `/health`: prefixed with `http://localhost:<port>`
+ *   - A relative path like `/health`: prefixed with `http://127.0.0.1:<port>`
  *     where <port> is the service's primary allocated port.
  *   - An absolute URL: used verbatim. (Plan 1's interpolation pipeline does
  *     NOT touch ready_when fields — they're consumed raw from the parsed
- *     config — so an absolute URL must already be a literal localhost URL.)
+ *     config — so an absolute URL must already be a literal address.)
+ *
+ * Why 127.0.0.1 instead of localhost: Docker for Mac's userspace network
+ * proxy can hijack IPv6 localhost routing once 25+ containers are running
+ * (TCP accepts succeed but HTTP responses get dropped). macOS resolves
+ * `localhost` to `::1` first, putting any probe via `localhost` straight
+ * into this hole. Using 127.0.0.1 bypasses it entirely. Verified
+ * empirically against the dogfood-stack parallel-stack scenario: 26
+ * supabase containers running, IPv4 probes return in <50ms, IPv6 probes
+ * time out without a single byte received.
  */
 function buildHttpUrl(
   pathOrUrl: string,
@@ -934,7 +943,7 @@ function buildHttpUrl(
     );
   }
   const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
-  return `http://localhost:${port}${path}`;
+  return `http://127.0.0.1:${port}${path}`;
 }
 
 // ---------------------------------------------------------------------------
