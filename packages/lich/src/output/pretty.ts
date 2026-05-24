@@ -11,6 +11,7 @@
  * No external deps — ANSI escapes are emitted directly.
  */
 
+import type { FailureBlock } from "../failure/formatter.js";
 import type {
   ErrorBlock,
   Output,
@@ -192,6 +193,56 @@ export function renderError(err: ErrorBlock, color: boolean): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Render a per-service failure block (Plan 4).
+ *
+ * Shape (one line per element):
+ *   `✗ <title>`           (red)
+ *   `  <reason>`
+ *   `  log tail:`         (only when `logTail` is non-empty)
+ *   `    <line 1>`
+ *   `    ...`
+ *   `    <line N>`
+ *   `  hint: <hint>`      (cyan, only when `hint` is set)
+ *
+ * The `log tail:` heading + 4-space indent makes the log block visually
+ * distinguishable from the reason text above it — without that cue the wall
+ * of indented lines can look like one long reason. The hint sits below the
+ * tail because by the time a user is reading hints, they've already scanned
+ * the log to understand what happened.
+ *
+ * This renderer is intentionally dumb — it takes a `FailureBlock` (built by
+ * `formatFailure`) and prints it. Title/reason/hint copy lives in the
+ * formatter, not here, so renderer changes don't ripple into JSON/state.
+ */
+export function renderFailure(block: FailureBlock, color: boolean): string {
+  const lines: string[] = [];
+  lines.push(paint(`${ICON.fail} ${block.title}`, "red", color));
+  // Reason: single line in practice; if the formatter ever emits a multi-
+  // line reason we still keep it left-aligned under the title so the eye
+  // can group it with the headline.
+  for (const reasonLine of block.reason.split("\n")) {
+    lines.push(`  ${reasonLine}`);
+  }
+  if (block.logTail.length > 0) {
+    // 2-space heading, then 4-space lines so the tail clearly nests under
+    // the reason above. Use a heading so a long tail can't be mistaken for
+    // additional reason prose.
+    lines.push("  log tail:");
+    for (const tailLine of block.logTail) {
+      lines.push(`    ${tailLine}`);
+    }
+  }
+  if (block.hint !== undefined) {
+    // The formatter already prefixes well-known hints with `hint: ` (see
+    // `inferHint`); we render the line verbatim in cyan so the prefix
+    // shows in color too. If a caller passes a hint without the prefix,
+    // the colored line is still readable.
+    lines.push(paint(`  ${block.hint}`, "cyan", color));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Output implementation
 // ──────────────────────────────────────────────────────────────────────
@@ -336,6 +387,13 @@ export function createPrettyOutput(
     error(err: ErrorBlock): void {
       if (isTTY) stopSpinner();
       stream.write(renderError(err, color));
+    },
+
+    failure(block: FailureBlock): void {
+      // Tear down any in-flight spinner so the failure banner isn't shoved
+      // onto the same row as a half-drawn frame. Mirrors `error` above.
+      if (isTTY) stopSpinner();
+      stream.write(renderFailure(block, color));
     },
 
     async close(): Promise<void> {

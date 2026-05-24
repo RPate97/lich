@@ -15,11 +15,18 @@
  * `error()` and `await close()` to flush any animation state.
  */
 
+import type { FailureBlock } from "../failure/formatter.js";
 import { createJsonOutput } from "./json.js";
 import { createPrettyOutput } from "./pretty.js";
 import { createQuietOutput } from "./quiet.js";
 
 export type OutputMode = "pretty" | "json" | "quiet";
+
+// Re-export FailureBlock so callers that already import from "./output/index.js"
+// can reach the type without a second import path. The failure renderer and
+// state-snapshot persistence are both downstream of the formatter that owns
+// this type (see `src/failure/formatter.ts`).
+export type { FailureBlock } from "../failure/formatter.js";
 
 export type ServiceState =
   | "starting"
@@ -122,6 +129,20 @@ export interface Output {
   summary(summary: SummaryBlock): void;
   /** Error block. Always emitted. Process should exit non-zero after. */
   error(err: ErrorBlock): void;
+  /**
+   * Per-service failure block (Plan 4). Always emitted, even in quiet.
+   *
+   * Contrast with {@link Output.error} which is for non-service failures
+   * (yaml parse errors, missing files): `failure` carries log context for a
+   * specific service. Pretty mode renders a red banner + reason + indented
+   * log tail + cyan hint; json mode emits one `{ type: "failure", ... }`
+   * NDJSON line; quiet mode emits the same NDJSON line on stderr so even
+   * quiet users see per-service failures.
+   *
+   * The block is produced by `formatFailure` (`src/failure/formatter.ts`) —
+   * renderers here are intentionally dumb: take the block, print it.
+   */
+  failure(block: FailureBlock): void;
   /** Flush any pending I/O (e.g. wait for spinners to clear). */
   close(): Promise<void>;
 }
@@ -130,6 +151,21 @@ export interface CreateOutputOptions {
   mode: OutputMode;
   /** Defaults to process.stdout. Tests pass a captured stream. */
   stream?: NodeJS.WritableStream;
+  /**
+   * Stream used by quiet mode for the `failure` block (Plan 4). Defaults to
+   * `process.stderr`. Other modes ignore this — pretty/json write the
+   * failure block to the main `stream` like every other event. Tests pass a
+   * captured stream to assert on quiet's NDJSON failure output without
+   * polluting actual stderr.
+   *
+   * Why a separate stream just for quiet's failure path: the spec mandates
+   * that even quiet users see per-service failures, and the natural place
+   * for that signal in a CI / scripted context is stderr (so stdout stays
+   * clean for the summary block the user is parsing). The other emitters
+   * stay single-streamed because their failure output is already part of
+   * the same human/json stream consumers are reading.
+   */
+  errStream?: NodeJS.WritableStream;
   /**
    * Render per-phase elapsed time on phase-end (`✓ phase — 1.2s`) and the
    * top-level elapsed in summaries. Defaults to `false` so unit tests with
@@ -144,12 +180,13 @@ export interface CreateOutputOptions {
 
 export function createOutput(opts: CreateOutputOptions): Output {
   const stream = opts.stream ?? process.stdout;
+  const errStream = opts.errStream ?? process.stderr;
   const showTiming = opts.showTiming === true;
   switch (opts.mode) {
     case "json":
       return createJsonOutput(stream, { showTiming });
     case "quiet":
-      return createQuietOutput(stream);
+      return createQuietOutput(stream, { errStream });
     case "pretty":
       return createPrettyOutput(stream, { showTiming });
     default: {
