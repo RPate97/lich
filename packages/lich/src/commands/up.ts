@@ -819,6 +819,29 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     );
     await output.close();
 
+    // Plan 4 Task 15 — INTENTIONAL: we do NOT stop the per-stack LogTails
+    // on the happy-path return. The success path is the ONLY place in the
+    // orchestrator where the LogTail registry survives the function exit
+    // — every failure / cancellation branch above tears them down.
+    //
+    // Why keep them running? `fail_when.log_match` is not a one-shot
+    // startup check; it stays armed for the entire stack lifetime. A
+    // service that emits `EADDRINUSE` five minutes after a successful
+    // `lich up` still trips its `fail_when`, the formatter records the
+    // failure to `state.json`, and the dashboard (Plan 5) renders it.
+    // Stopping the tails here would silently disarm that surface and
+    // break the contract documented on `UpState.logTails`.
+    //
+    // The tails are stopped instead on `lich down` (the supervisor's
+    // stop_cmd terminates the writing child and the OS reclaims the
+    // file fds) and, once Plan 5's daemon owns the long-running state,
+    // by the daemon's per-stack teardown.
+    //
+    // Future agent looking to "clean up": don't. The leaving-running is
+    // load-bearing for the post-startup failure surface. The Plan 5
+    // dashboard work will further extend the LogTail lifetime by
+    // subscribing a third consumer (live log streaming to the web UI) —
+    // the API is already shaped for that.
     if (signal) signal.removeEventListener("abort", onAbort);
     return {
       exitCode: 0,

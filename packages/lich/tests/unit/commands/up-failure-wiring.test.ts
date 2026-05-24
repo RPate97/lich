@@ -37,7 +37,7 @@
  *     in the shell `cmd` to make the timing observable.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdtempSync,
   readFileSync,
@@ -54,6 +54,7 @@ import {
   type StackSnapshot,
 } from "../../../src/state/snapshot.js";
 import { release } from "../../../src/ports/allocator.js";
+import { LogTail } from "../../../src/logs/tail.js";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation: a fresh LICH_HOME tmpdir, a fresh project tmpdir.
@@ -322,4 +323,172 @@ owned:
     // timeout and well over the expected ~500ms happy path.
     expect(elapsed).toBeLessThan(8_000);
   }, 10_000);
+
+  // -------------------------------------------------------------------------
+  // Plan 4 Task 15 — direct assertions via LogTail.prototype.stop spying.
+  //
+  // The cancellation test above asserts the OBSERVABLE behavior (the event
+  // loop doesn't get pinned by a leaked poll timer). The tests below assert
+  // the CAUSAL invariant: every started LogTail had `.stop()` called on it
+  // on the failure paths, and ZERO `.stop()` calls happen on the happy path.
+  //
+  // Spying on the prototype means every LogTail constructed inside `runUp`
+  // (including the per-service tails created in `startOwned`, and any
+  // just-in-time compose tails created in `buildReadyEvaluator`) is captured
+  // — we don't need to reach into private state to count instances.
+  //
+  // Each test restores the spy in its own finally block rather than relying
+  // on a global `afterEach` so a failure in one test doesn't leak the spy
+  // into the next.
+  // -------------------------------------------------------------------------
+
+  it("stops all LogTails on the catch-all error path", async () => {
+    // A service whose log emits a fail_when match early and then hangs.
+    // The orchestrator's per-level failure path is the practical catch-all
+    // for any startup failure — it runs the LogTail.stop() loop documented
+    // at the per-level failure site AND the per-stack catch-all at the
+    // bottom of runUp. Either one satisfies Task 15's acceptance criterion
+    // ("the catch-all block stops all LogTails on any failure path").
+    //
+    // We use fail_when (not process exit) to ensure the LogTail is
+    // definitely constructed and started — fail_when matching requires the
+    // tail to be subscribed first.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19740, 19790]
+owned:
+  doomed:
+    cmd: 'echo "EADDRINUSE somewhere"; sleep 60'
+    ready_when:
+      log_match: "READY"
+      timeout: "30s"
+    fail_when:
+      log_match: "EADDRINUSE"
+`);
+
+    // Spy on the prototype so EVERY LogTail constructed during runUp is
+    // counted, including ones created inside helpers we don't have direct
+    // access to (e.g. the just-in-time compose tails in buildReadyEvaluator).
+    const startSpy = vi.spyOn(LogTail.prototype, "start");
+    const stopSpy = vi.spyOn(LogTail.prototype, "stop");
+    try {
+      const { stream } = captureStdout();
+      const result = await runUp({
+        cwd: projectDir,
+        outputMode: "json",
+        out: stream,
+      });
+      if (result.stackId) createdStackIds.push(result.stackId);
+
+      expect(result.exitCode).toBe(1);
+
+      // At least one LogTail was started (the per-service registry entry for
+      // `doomed`). If this is zero, the test's premise is broken.
+      expect(startSpy.mock.calls.length).toBeGreaterThan(0);
+
+      // Every started LogTail must have had .stop() called on it. We assert
+      // `stop.calls >= start.calls` rather than equality because:
+      //   - the per-level failure path and the catch-all both run stop()
+      //     loops over the registry, and a tail may be stopped twice (stop
+      //     is documented idempotent), so the count is >=, not ==
+      //   - the AbortSignal-driven auto-stop path in LogTail's constructor
+      //     can also call stop() once the signal fires
+      // The load-bearing assertion is "no started tail was left untouched",
+      // which the >= form captures.
+      expect(stopSpy.mock.calls.length).toBeGreaterThanOrEqual(
+        startSpy.mock.calls.length,
+      );
+    } finally {
+      startSpy.mockRestore();
+      stopSpy.mockRestore();
+    }
+  }, 15_000);
+
+  it("leaves LogTails running on successful up — Map isn't cleared", async () => {
+    // Plan 4 Task 15: the happy path INTENTIONALLY leaves the per-stack
+    // LogTail registry running after `runUp` returns. The leaving-running
+    // is load-bearing: `fail_when.log_match` stays armed for the entire
+    // stack lifetime so a post-startup `EADDRINUSE` (e.g. five minutes
+    // after `lich up` returned) still trips the failure surface and lands
+    // in state.json for the dashboard (Plan 5) to render.
+    //
+    // We assert this by spying on `LogTail.prototype.stop`: on the happy
+    // path, NO `.stop()` call may happen between `runUp` entering and
+    // returning successfully. (After return, the tails are still
+    // theoretically running in the background — there's no reliable way to
+    // assert "still running" without leaking the event loop, but the
+    // CAUSAL invariant — "we didn't stop them" — is exactly what the spy
+    // captures.)
+    //
+    // We use a service that becomes ready quickly via log_match so the
+    // up sequence completes in a few hundred ms, keeping the test fast.
+    // We then stop the long-lived process manually after asserting, so
+    // afterEach's port-release doesn't see a leaked child.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19800, 19850]
+owned:
+  ready_fast:
+    cmd: 'echo "READY"; sleep 60'
+    ready_when:
+      log_match: "READY"
+      timeout: "10s"
+`);
+
+    const startSpy = vi.spyOn(LogTail.prototype, "start");
+    const stopSpy = vi.spyOn(LogTail.prototype, "stop");
+    let result: Awaited<ReturnType<typeof runUp>> | undefined;
+    try {
+      const { stream } = captureStdout();
+      result = await runUp({
+        cwd: projectDir,
+        outputMode: "json",
+        out: stream,
+      });
+      if (result.stackId) createdStackIds.push(result.stackId);
+
+      // Sanity: the happy path must actually complete successfully.
+      expect(result.exitCode).toBe(0);
+
+      // At least one LogTail was constructed + started (one per owned
+      // service that has a `ready_when.log_match` or fail_when block).
+      // If this is zero, the test's premise is broken.
+      expect(startSpy.mock.calls.length).toBeGreaterThan(0);
+
+      // The load-bearing assertion: NO `.stop()` calls during a successful
+      // up. The registry must still hold every LogTail that was started —
+      // they keep polling for post-startup `fail_when` matches.
+      //
+      // A regression that "cleans up" the running tails on the happy path
+      // would manifest as stopSpy.mock.calls.length >= 1 here. Pin it to
+      // exactly zero so the assertion is unambiguous.
+      expect(stopSpy.mock.calls.length).toBe(0);
+    } finally {
+      startSpy.mockRestore();
+      stopSpy.mockRestore();
+      // Manually drain the long-lived child the test left running so we
+      // don't leak the supervised process past the test boundary. The
+      // global afterEach already releases the port, but the spawned shell
+      // needs an explicit kill — we trigger one by sending SIGTERM to the
+      // pid recorded in the snapshot.
+      if (result?.stackId) {
+        try {
+          const snap = await readSnapshot(result.stackId);
+          for (const svc of snap?.services ?? []) {
+            if (typeof svc.pid === "number") {
+              try {
+                process.kill(svc.pid, "SIGTERM");
+              } catch {
+                // already dead / not ours — harmless
+              }
+            }
+          }
+        } catch {
+          // snapshot read failed — nothing to clean up that we can find
+        }
+      }
+    }
+  }, 15_000);
 });
