@@ -140,6 +140,23 @@ profiles:
         - supabase migration up
         - psql "$DATABASE_URL" -f supabase/seed.sql
 
+  # Plan 3 Task 18 demo: profile-scoped env precedence (LEV-392).
+  # Inherits `dev`'s owned list AND its lifecycle via `extends: dev`, so the
+  # same services start and the same after_up hooks run — only the env values
+  # below override what dev resolved. This exercises the layering rule
+  # (top-level → profile → per-service) without the per-profile depends_on
+  # tangle that an exclude-services profile would create against the api's
+  # `depends_on: [supabase]`. The hostnames are intentionally non-resolving;
+  # e2e coverage asserts on the env Lich resolved (via `lich exec`), not on
+  # actually opening a DB connection. The "test-env without supabase"
+  # scenario (excluding services) is deferred to a Plan 3.x follow-up that
+  # adds per-profile depends_on overrides.
+  dev:env-override:
+    extends: dev
+    env:
+      DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/postgres"
+      NEXT_PUBLIC_SUPABASE_URL: "https://test.example.com"
+
 commands:
   test:e2e:
     cmd: echo "no e2e tests in dogfood-stack yet"
