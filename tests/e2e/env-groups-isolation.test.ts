@@ -1,0 +1,245 @@
+/**
+ * Plan 2 Task 22 — `env_groups` isolation and `process_env` (LEV-342).
+ *
+ * Verifies the three end-to-end env_group resolution semantics that prove
+ * spec section 4's patterns A, B, C work through the real binary:
+ *
+ *   1. `process_env: false blocks shell env passthrough`
+ *      Set a shell env var via the runLich `env` override, then run
+ *      `lich env isolated-tools`. The output must NOT contain the leaked
+ *      var — isolated-tools declares `process_env: false`.
+ *
+ *   2. `extends: stack inherits stack env`
+ *      Run `lich env stack-plus-test`. The output must contain BOTH the
+ *      stack-derived `DATABASE_URL=postgresql://...` AND the literal
+ *      `TEST_MODE=integration` declared on the group itself.
+ *
+ *   3. `user group without extends does NOT include stack env`
+ *      Run `lich env isolated-tools`. The output must NOT contain
+ *      `DATABASE_URL` or `NEXT_PUBLIC_SUPABASE_URL`, even though those are
+ *      on the resolved `stack` group — isolated-tools has no `extends`.
+ *
+ * Together these pin the env_groups isolation guarantees end-to-end.
+ *
+ * Why `lich up` before `lich env`?
+ *   The dogfood-stack's `stack` env references `${owned.supabase.ports.db}`
+ *   etc. — those refs only resolve after the supabase service has been
+ *   allocated ports (which happens during `lich up`). For test 2
+ *   (`extends: stack`) and test 3 (`without extends`) the stack must be up
+ *   so port allocation has written `state.json`. Test 1 (`process_env`
+ *   isolation) doesn't strictly need a live stack — `isolated-tools` has no
+ *   interpolation refs — but we keep all three tests on the same fixture so
+ *   the up/down cost is paid once across the suite.
+ *
+ * Isolation:
+ *   - tmpdir copy of dogfood-stack (never the repo's real one).
+ *   - LICH_HOME under the tmpdir so the user's real ~/.lich is untouched.
+ *   - lich binary built in `beforeAll` from packages/lich/.
+ *
+ * Cleanup contract (testing-standards §"Resource cleanup contract"):
+ *   - `lich nuke --yes` runs in `afterAll` to release docker resources +
+ *     owned PIDs from the shared fixture.
+ *   - tmpdir + LICH_HOME removed in `afterAll`.
+ */
+
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
+import { runLich } from "./helpers/lich.js";
+
+// ---------------------------------------------------------------------------
+// Build the binary up front. We fail loudly (don't skip) — the binary is OUR
+// code, and a broken build is a real bug.
+// ---------------------------------------------------------------------------
+
+const repoRoot = resolve(import.meta.dir, "../..");
+const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
+
+beforeAll(() => {
+  if (existsSync(lichBinary)) return;
+  const build = spawnSync("bun", ["run", "build"], {
+    cwd: resolve(repoRoot, "packages/lich"),
+    stdio: "inherit",
+    timeout: 120_000,
+  });
+  if (build.status !== 0) {
+    throw new Error(
+      `failed to build lich binary (exit ${build.status}); cannot run e2e tests`,
+    );
+  }
+  if (!existsSync(lichBinary)) {
+    throw new Error(
+      `lich build reported success but ${lichBinary} does not exist`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Shared fixture: one `lich up` is amortized across the three tests in this
+// suite. Each test asserts a different isolation property against the same
+// running stack, so a single up/down cycle is plenty.
+// ---------------------------------------------------------------------------
+
+interface Fixture {
+  stackPath: string;
+  stackCleanup: () => void;
+  lichHome: string;
+}
+
+let fixture: Fixture | null = null;
+
+beforeAll(async () => {
+  // install: true — apps/web runs `next dev`, which needs `next` in
+  // node_modules/.bin. Same prerequisite as basic-up.test.ts (see LEV-313).
+  const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
+  const home = mkdtempSync(join(tmpdir(), "lich-e2e-env-groups-iso-home-"));
+  fixture = {
+    stackPath: stack.path,
+    stackCleanup: stack.cleanup,
+    lichHome: home,
+  };
+
+  // Bring the stack up — required for the two tests that resolve the
+  // `stack` group (or extend it). The third test (process_env isolation on
+  // `isolated-tools`) doesn't reference allocated ports, but running all
+  // three against the same live stack keeps the suite simple.
+  //
+  // Generous timeout on the inner runLich call: cold supabase image pull
+  // can take a couple of minutes. The bun-test hook timeout itself is
+  // governed at the test-runner level (cd tests/e2e && bun test passes
+  // generous defaults; see vitest.config.ts's hookTimeout for the vitest
+  // path). We don't pass a timeout arg to beforeAll here because bun's
+  // signature treats the second arg as the function (not a number).
+  const upResult = runLich(["up"], {
+    cwd: fixture.stackPath,
+    env: { LICH_HOME: fixture.lichHome },
+    timeout: 240_000,
+  });
+  if (upResult.exitCode !== 0) {
+    // eslint-disable-next-line no-console
+    console.error("lich up stdout:", upResult.stdout);
+    // eslint-disable-next-line no-console
+    console.error("lich up stderr:", upResult.stderr);
+    throw new Error(
+      `lich up failed (exit ${upResult.exitCode}); cannot proceed with env_group tests`,
+    );
+  }
+});
+
+afterAll(() => {
+  if (!fixture) return;
+  // `lich nuke --yes` is the catch-all: it stops and cleans up regardless of
+  // whether the stack is still up or already partially torn down. Failures
+  // are swallowed; the tmpdir/home removal below disposes of state files
+  // either way.
+  try {
+    runLich(["nuke", "--yes"], {
+      cwd: fixture.stackPath,
+      env: { LICH_HOME: fixture.lichHome },
+      timeout: 120_000,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("afterAll lich nuke failed:", err);
+  }
+  try {
+    fixture.stackCleanup();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("afterAll tmpdir cleanup failed:", err);
+  }
+  try {
+    rmSync(fixture.lichHome, { recursive: true, force: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("afterAll LICH_HOME cleanup failed:", err);
+  }
+  fixture = null;
+});
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("env_groups isolation (Plan 2 Task 22)", () => {
+  it("process_env: false blocks shell env passthrough", () => {
+    const fix = fixture!;
+    const result = runLich(["env", "isolated-tools"], {
+      cwd: fix.stackPath,
+      // The runLich helper merges these on top of process.env when invoking
+      // the child. LEAK_TEST is the canary: it MUST NOT appear in the
+      // resolved `isolated-tools` group (process_env: false).
+      env: { LICH_HOME: fix.lichHome, LEAK_TEST: "from-shell" },
+    });
+    if (result.exitCode !== 0) {
+      // eslint-disable-next-line no-console
+      console.error("lich env stdout:", result.stdout);
+      // eslint-disable-next-line no-console
+      console.error("lich env stderr:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+    // The literal LEAK_TEST key (and its from-shell value) must be absent.
+    // Use exact-key match rather than a loose substring to avoid false
+    // negatives from any unrelated text that happens to contain the
+    // substring (the literal isn't in any baseline group's keys).
+    expect(result.stdout).not.toMatch(/^LEAK_TEST=/m);
+    expect(result.stdout).not.toContain("from-shell");
+    // Sanity: the group's own literal IS present.
+    expect(result.stdout).toMatch(/^TOOL_MODE=standalone$/m);
+  });
+
+  it("extends: stack inherits stack env", () => {
+    const fix = fixture!;
+    const result = runLich(["env", "stack-plus-test"], {
+      cwd: fix.stackPath,
+      env: { LICH_HOME: fix.lichHome },
+    });
+    if (result.exitCode !== 0) {
+      // eslint-disable-next-line no-console
+      console.error("lich env stdout:", result.stdout);
+      // eslint-disable-next-line no-console
+      console.error("lich env stderr:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+    // From the inherited `stack` group: DATABASE_URL gets interpolated with
+    // the allocated postgres port (digits prove port resolution ran end-to-
+    // end, not just literal-pass-through).
+    expect(result.stdout).toMatch(
+      /^DATABASE_URL=postgresql:\/\/postgres:postgres@localhost:\d+\/postgres$/m,
+    );
+    // From the group's own `env:` literal.
+    expect(result.stdout).toMatch(/^TEST_MODE=integration$/m);
+  });
+
+  it("user group without extends does NOT include stack env", () => {
+    const fix = fixture!;
+    const result = runLich(["env", "isolated-tools"], {
+      cwd: fix.stackPath,
+      env: { LICH_HOME: fix.lichHome },
+    });
+    if (result.exitCode !== 0) {
+      // eslint-disable-next-line no-console
+      console.error("lich env stdout:", result.stdout);
+      // eslint-disable-next-line no-console
+      console.error("lich env stderr:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+    // Neither stack-defined var should appear: isolated-tools has no
+    // `extends`, so the stack pipeline doesn't run for this group.
+    expect(result.stdout).not.toMatch(/^DATABASE_URL=/m);
+    expect(result.stdout).not.toMatch(/^NEXT_PUBLIC_SUPABASE_URL=/m);
+    // Sanity: the group's own literal IS present, confirming we got real
+    // output (not an empty file that would also pass the negative checks).
+    expect(result.stdout).toMatch(/^TOOL_MODE=standalone$/m);
+  });
+});
