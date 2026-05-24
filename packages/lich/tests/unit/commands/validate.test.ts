@@ -442,6 +442,80 @@ describe("runValidate", () => {
   });
 
   // -------------------------------------------------------------------------
+  // env_groups extends cycle detection (Plan 2 Task 15 — LEV-335)
+  // -------------------------------------------------------------------------
+
+  it("detects a 2-node env_groups extends cycle", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  a:\n    extends: b\n    env:\n      X: "1"\n` +
+        `  b:\n    extends: a\n    env:\n      Y: "2"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const cycErr = res.report.errors!.find(
+      (e) => e.kind === "cycle" && e.message.includes("env_groups extends"),
+    );
+    expect(cycErr).toBeDefined();
+    // Closed-walk format mirrors depends_on cycles (start node repeated).
+    expect(cycErr!.message).toMatch(/a → b → a|b → a → b/);
+  });
+
+  it("detects a self-loop in env_groups extends", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  loop:\n    extends: loop\n    env:\n      X: "1"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const cycErr = res.report.errors!.find(
+      (e) => e.kind === "cycle" && e.message.includes("env_groups extends"),
+    );
+    expect(cycErr).toBeDefined();
+    expect(cycErr!.message).toContain("loop → loop");
+  });
+
+  it("accepts env_groups extends chains that terminate", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  base:\n    env:\n      BASE: "1"\n` +
+        `  middle:\n    extends: base\n    env:\n      MID: "2"\n` +
+        `  leaf:\n    extends: middle\n    env:\n      LEAF: "3"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const cycErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "cycle",
+    );
+    expect(cycErrs).toEqual([]);
+  });
+
+  it("accepts env_groups with extends: stack (built-in terminator)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  derived:\n    extends: stack\n    env:\n      DERIVED: "1"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const cycErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "cycle",
+    );
+    expect(cycErrs).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
   // env_group reference resolution (Plan 2 Task 16 — LEV-336)
   // -------------------------------------------------------------------------
 

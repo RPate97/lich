@@ -36,6 +36,7 @@ import { buildGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
 import type { EnvMap, LichConfig } from "../config/types.js";
 import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
+import { detectExtendsCycle } from "../groups/validate-extends.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,6 +134,11 @@ export async function runValidate(
       // LEV-334 (Plan 2 Task 14): refuse user-defined commands whose
       // name shadows a built-in.
       checkCommandShadowing(config, resolvedPath, errors);
+      // LEV-335 (Plan 2 Task 15): cycle detection in env_groups extends.
+      // MUST run before checkEnvGroupReferences — a cycle would otherwise
+      // appear there as "extends X not found" once the resolver walks past
+      // the duplicate node, which is a misleading diagnostic.
+      checkEnvGroupExtendsCycles(config, resolvedPath, errors);
       // LEV-336 (Plan 2 Task 16): every env_group reference must resolve.
       checkEnvGroupReferences(config, resolvedPath, errors);
       summary = computeSummary(config);
@@ -600,6 +606,43 @@ function checkCommandShadowing(
       });
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// LEV-335 — env_groups extends cycle detection (Plan 2 Task 15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect cycles in the `env_groups.<name>.extends` graph and surface them as
+ * `cycle` validation errors. Delegates to {@link detectExtendsCycle} from
+ * `groups/validate-extends.ts` (Task 4) so the cycle algorithm lives in one
+ * place and the validator just owns the message wrapping.
+ *
+ * Message shape mirrors `checkDependsOnAndCycles`'s
+ * `cycle in depends_on: a → b → a` so readers see one consistent format
+ * across both cycle categories.
+ *
+ * This check MUST run BEFORE {@link checkEnvGroupReferences}: a cycle would
+ * otherwise surface there as "extends X not found" when the parent walk
+ * re-enters a duplicate node, which is a misleading diagnostic. Wired into
+ * `runValidate` in the correct order above.
+ */
+function checkEnvGroupExtendsCycles(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const groups = config.env_groups;
+  if (!groups) return;
+
+  const result = detectExtendsCycle(groups);
+  if (!result) return;
+
+  errors.push({
+    kind: "cycle",
+    location: path,
+    message: `cycle in env_groups extends: ${result.cycle.join(" → ")}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
