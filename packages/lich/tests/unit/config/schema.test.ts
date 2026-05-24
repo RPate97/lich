@@ -204,16 +204,162 @@ describe("config/schema", () => {
     ).toBe(true);
   });
 
-  it("accepts unknown keys inside an opaque-future section (profiles)", () => {
-    // Plans 2-4 will tighten profiles/commands/env_groups. Until then we
-    // accept arbitrary nested shapes so the dogfood yaml validates.
+  // -------------------------------------------------------------------------
+  // Plan 3 Task 2 — profiles is now a strict shape (no longer opaque).
+  //
+  // The opaque `profiles: { type: "object", additionalProperties: true }`
+  // placeholder has been replaced with `profileSchema`. The dogfood-stack's
+  // existing `profiles.dev` block (default + owned list + lifecycle) must
+  // continue to validate; arbitrary unknown keys inside a profile entry now
+  // fail validation.
+  // -------------------------------------------------------------------------
+
+  it("validates a config with a minimal profile (only services list)", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
       profiles: {
-        foo: { bar: { baz: "anything" } },
+        minimal: { services: ["postgres"] },
       },
     });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("validates a config with a profile that uses extends: string", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        base: { owned: ["api"] },
+        child: { extends: "base" },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("validates a config with a profile that uses extends: [a, b]", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        a: { owned: ["api"] },
+        b: { owned: ["web"] },
+        combo: { extends: ["a", "b"] },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("validates a config with profile-scoped env, env_files, env_from, lifecycle", () => {
+    // Exercises every supported field on a profile entry. The lifecycle
+    // shape mirrors the top-level lifecycle (before_up / after_up /
+    // before_down only — no before_start / after_ready, those are
+    // per-service).
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        rich: {
+          services: ["postgres"],
+          owned: ["api", "web"],
+          default: true,
+          env: { DATABASE_URL: "postgresql://hosted.example.com:5432/x" },
+          env_files: ["profile.env", "secrets.env"],
+          env_from: [
+            "HOME",
+            { cmd: "infisical export --format=dotenv", format: "dotenv" },
+          ],
+          lifecycle: {
+            before_up: ["echo profile starting"],
+            after_up: [
+              "supabase migration up",
+              { cmd: "./scripts/seed.sh", env_group: "stack-plus-test" },
+            ],
+            before_down: ["echo profile stopping"],
+          },
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("rejects unknown property inside a profile entry", () => {
+    // additionalProperties: false on the profile schema means typos like
+    // `lifeycle:` and unsupported keys (`before_start:` at the profile
+    // level — that's per-service only) fail validation up-front.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        bad: {
+          owned: ["api"],
+          // Typo: should be `lifecycle`.
+          lifeycle: { after_up: ["echo hi"] },
+        },
+      },
+    });
+    expect(ok).toBe(false);
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          /additional/i.test(e.keyword) ||
+          /must NOT have additional properties/i.test(e.message ?? "")
+      )
+    ).toBe(true);
+  });
+
+  it("rejects profile.services with non-string entries", () => {
+    // services is `array of strings`; numbers / nested objects must be
+    // rejected at the schema layer (otherwise the resolver would crash
+    // later trying to look up a non-string name).
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        bad: {
+          services: ["postgres", 42],
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("accepts profile names containing `:` (dev:test-env style)", () => {
+    // Spec worked examples use `:` as a logical separator
+    // (`dev:test-env`, `dev:with-tunnel`). The schema must NOT regex-
+    // constrain property names so these are accepted.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      profiles: {
+        dev: { default: true, owned: ["api"] },
+        "dev:test-env": {
+          extends: "dev",
+          env: { DATABASE_URL: "postgresql://hosted.example.com:5432/x" },
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
     expect(ok).toBe(true);
   });
 

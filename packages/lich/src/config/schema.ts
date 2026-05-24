@@ -3,10 +3,11 @@
  *
  * Plan 1 subset: this schema strictly validates the sections that Plan 1
  * implements (`services`, `owned`, `env`, `env_files`, `env_from`,
- * `lifecycle`, `runtime`). Plan 2 tightens `env_groups` (see
- * `envGroupSchema`) and will tighten `commands` next. Sections still owned
- * by later plans (`commands`, `profiles`) are accepted as opaque objects so
- * the dogfood-stack yaml validates today — Plans 2-4 will tighten them.
+ * `lifecycle`, `runtime`). Plan 2 tightens `env_groups` and `commands`
+ * (see `envGroupSchema`, `userCommandSchema`). Plan 3 tightens `profiles`
+ * (see `profileSchema`). Sections still owned by later plans are accepted
+ * as opaque objects so the dogfood-stack yaml validates today — Plan 4
+ * will continue tightening `ready_when` / `fail_when` internals.
  *
  * Likewise a handful of fields *inside* services/owned that belong to later
  * plans (`ready_when.capture`, `ready_when.timeout`, `fail_when`) are
@@ -400,6 +401,76 @@ const userCommandSchema = {
   additionalProperties: false,
 } as const;
 
+// ---------------------------------------------------------------------------
+// profiles (Plan 3 — named slices of the stack)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single profile entry. Plan 3 introduces `profiles:` as a strictly-shaped
+ * top-level section; this schema validates one entry.
+ *
+ * Per spec section 4 (`profiles`):
+ *   - `services`: list of compose-service names included in this slice.
+ *   - `owned`: list of owned-service names included in this slice.
+ *   - `extends`: a single parent profile name OR an array of parent names.
+ *     The array form lets a profile compose its behavior from multiple bases
+ *     (e.g. `[dev, with-tunnel]`); per-key env layering disambiguates
+ *     collisions deterministically (later parent wins, then the child).
+ *   - `default`: when `true`, this profile is what `lich up` (no argument)
+ *     activates. Exactly zero or one profile in the map may set this — the
+ *     "multiple defaults" check is a `lich validate` reference check
+ *     (Plan 3 Task 11), NOT enforced at the schema layer (it would require
+ *     cross-property awareness ajv doesn't express cleanly here).
+ *   - `env` / `env_files` / `env_from`: profile-scoped env contributions
+ *     (layered between top-level and per-service per spec section 4).
+ *   - `lifecycle`: profile-scoped lifecycle hooks (same shape as
+ *     `TopLevelLifecycle` — `before_up` / `after_up` / `before_down`).
+ *
+ * `additionalProperties: false` so typos surface at validate time.
+ *
+ * Notes:
+ *   - The `extends` oneOf lists `string` first for readability — for
+ *     `extends: "foo"` the `array` branch fails on shape, so ajv selects the
+ *     string branch unambiguously regardless of order.
+ *   - No regex constraint on profile names: spec worked examples use `:`
+ *     separators (`dev:test-env`, `dev:with-tunnel`), so we keep names
+ *     fully free-form (matches `commands` for the same reason).
+ *   - Name collisions with built-in command names are intentionally NOT
+ *     rejected here — that's a `lich validate` reference check (same
+ *     rationale as Plan 2 Task 3 for `commands`).
+ *
+ * Spec source: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`,
+ * section 4 (`profiles`).
+ */
+const profileSchema = {
+  type: "object",
+  properties: {
+    services: {
+      type: "array",
+      items: { type: "string" },
+    },
+    owned: {
+      type: "array",
+      items: { type: "string" },
+    },
+    extends: {
+      oneOf: [
+        { type: "string" },
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+      ],
+    },
+    default: { type: "boolean" },
+    env: envMapSchema,
+    env_files: envFilesSchema,
+    env_from: envFromSchema,
+    lifecycle: topLevelLifecycleSchema,
+  },
+  additionalProperties: false,
+} as const;
+
 const runtimeSchema = {
   type: "object",
   properties: {
@@ -466,8 +537,15 @@ export const schema = {
       type: "object",
       additionalProperties: userCommandSchema,
     },
-    // Plan 3 will tighten profiles.
-    profiles: { type: "object", additionalProperties: true },
+    /**
+     * Named profiles (Plan 3 Task 2). Strict: keys are profile names
+     * (free-form strings — `:` and `/` allowed so names like `dev:test-env`
+     * work), values match {@link profileSchema}.
+     */
+    profiles: {
+      type: "object",
+      additionalProperties: profileSchema,
+    },
   },
   required: ["version"],
   additionalProperties: false,
