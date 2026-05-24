@@ -44,7 +44,7 @@
  *     writes — a failed log write must never crash the supervisor.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, realpathSync, type WriteStream } from "node:fs";
 
 /** Spec for one owned service the supervisor will spawn. */
@@ -223,42 +223,80 @@ function isAlive(pid: number): boolean {
 }
 
 /**
- * "Is any process in the process group `pid` alive?" — uses signal 0 sent
- * to the negative pid (POSIX semantics: kill(-pgid, sig) signals every
- * member of the group with pgid). ESRCH means the group is empty (every
- * member is dead AND reaped). Anything else means at least one member is
- * still alive. We use this to verify a group-kill actually reaped every
- * descendant, not just the leader. See LEV-319.
+ * Walk the process tree rooted at `pid` and return every descendant pid
+ * (depth-first). Uses `pgrep -P` to enumerate direct children at each
+ * step. `pgrep` is universally available on macOS + Linux.
+ *
+ * Returns `[]` if `pid` has no descendants or if pgrep fails (treats
+ * pgrep failure as "no descendants" so killTree doesn't throw on systems
+ * without it — the root pid still gets signaled).
  */
-function isGroupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch {
-    return false;
+function descendantsOf(pid: number): number[] {
+  const out: number[] = [];
+  const stack: number[] = [pid];
+  while (stack.length > 0) {
+    const parent = stack.pop()!;
+    let raw: string;
+    try {
+      raw = execFileSync("pgrep", ["-P", String(parent)], {
+        encoding: "utf8",
+        // pgrep exits 1 when there are no matches; treat as empty.
+      }).trim();
+    } catch {
+      continue;
+    }
+    for (const line of raw.split("\n")) {
+      const childPid = Number(line.trim());
+      if (Number.isFinite(childPid) && childPid > 0) {
+        out.push(childPid);
+        stack.push(childPid);
+      }
+    }
   }
+  return out;
 }
 
 /**
- * Send a signal to every process in the process group whose PGID is `pid`.
- * Negative pid is the POSIX convention for "this is a pgid, fan out to
- * every member." Requires the child to have been spawned with
- * `detached: true` so it became a group leader (PGID == its own PID).
+ * Signal `rootPid` AND every pid in the pre-captured `descendants` list.
+ * POSIX-portable replacement for the process-group-kill approach we
+ * tried via `detached: true` — that spawned the child as a session
+ * leader, which broke Next.js dev's worker_threads architecture (TCP
+ * accepted but no HTTP response).
  *
- * ESRCH ("no such process") is silently swallowed — the group is already
+ * IMPORTANT: `descendants` must be captured by the caller via
+ * `descendantsOf(rootPid)` BEFORE any kill is sent. Once the parent
+ * dies, its grandchildren get reparented to init (pid 1) and
+ * `pgrep -P <dead-parent>` returns nothing — we'd lose them. Capture
+ * once at the top of stop(), reuse the snapshot for SIGTERM + SIGKILL.
+ *
+ * Pgrep-walk doesn't change how children are spawned, so the user's
+ * dev server sees the same environment it always has; the only change
+ * is that on stop, we explicitly signal every descendant rather than
+ * relying on the parent forwarding signals.
+ *
+ * Order: signal children-first (descendants is depth-first, reversed
+ * here), then the root. For SIGKILL the order doesn't matter; for
+ * SIGTERM it gives children a chance to notice before their parent
+ * dies (some processes re-spawn workers on parent death).
+ *
+ * ESRCH on any individual kill is swallowed — the target is already
  * gone, which is the desired end-state. Other errors propagate.
- *
- * Why this exists: the supervisor's child is `/bin/sh -c <user-cmd>`, and
- * the user-cmd typically spawns its own grandchildren (`bun run dev`
- * spawns Express; `npm run dev` spawns a webpack server; etc.). If we
- * SIGTERM just the leader PID, the leader exits but the grandchildren get
- * reparented to init and keep running — port still bound, supabase
- * connection still open, ghost process for every test run. Signaling the
- * whole group catches every descendant. See LEV-319.
  */
-function killGroup(pid: number, signal: NodeJS.Signals): void {
+function killTree(
+  rootPid: number,
+  descendants: number[],
+  signal: NodeJS.Signals,
+): void {
+  for (let i = descendants.length - 1; i >= 0; i--) {
+    try {
+      process.kill(descendants[i], signal);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH") throw err;
+    }
+  }
   try {
-    process.kill(-pid, signal);
+    process.kill(rootPid, signal);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ESRCH") throw err;
@@ -366,17 +404,19 @@ export async function startOwnedService(
     // Ignore stdin (owned services don't read from the user); pipe both
     // stdout and stderr so we can tee them into the log file.
     stdio: ["ignore", "pipe", "pipe"],
-    // `detached: true` makes the child a process group leader (its PGID
-    // equals its own PID), so on stop() we can signal the whole group
-    // via `kill(-pid, sig)` and reach every descendant the user's cmd
-    // spawned (e.g. `bun run dev` → actual Express server). Without
-    // this, SIGTERM kills the leader but its grandchildren get
-    // orphaned and keep running. See LEV-319.
-    //
-    // Note: we deliberately do NOT call child.unref() — we want node to
-    // keep tracking the child (stdio, exit events) for the supervisor's
-    // lifetime. detached only affects process-group semantics here.
-    detached: true,
+    // Grandchild cleanup (LEV-319) is handled at kill time via killTree
+    // (pgrep -P tree walk), not at spawn time via process groups. We
+    // tried `detached: true` first; it broke Next.js dev's parallel
+    // HTTP serving (TCP accept worked, no response bytes ever sent).
+    // detached:false — we previously tried `detached: true` to enable
+    // process-group kill (LEV-319), but it broke parallel Next.js dev
+    // serving: with two stacks up, both web processes accepted TCP but
+    // never wrote HTTP response bytes. Empirically the session-leader
+    // change is what breaks Next.js's worker_threads architecture. We
+    // get the same grandchild-cleanup behavior via pgrep-based tree
+    // walk in killTree, with no spawn-time changes that could affect
+    // the user's dev server.
+    detached: false,
   });
 
   // Open the log file for APPEND, not truncate. This preserves output from
@@ -486,9 +526,12 @@ export async function startOwnedService(
     // leaking that PID across a stop() call would be a bug. The signal
     // failing (ESRCH) is fine and expected for oneshots.
     if (spec.stopCmd) {
+      // Capture descendants BEFORE any kill, while parent is alive
+      // (see comment on killTree about reparenting).
+      let stopCmdDescendants: number[] = [];
       if (exitResult === null) {
-        // Group-signal (LEV-319): catch the leader + any descendants.
-        killGroup(pid, "SIGTERM");
+        stopCmdDescendants = descendantsOf(pid);
+        killTree(pid, stopCmdDescendants, "SIGTERM");
       }
       await runStopCmd(spec, STOP_CMD_TIMEOUT_MS);
       // If the original child was still alive, give it a brief moment to
@@ -501,7 +544,7 @@ export async function startOwnedService(
           new Promise<"timeout">((r) => setTimeout(() => r("timeout"), graceMs)),
         ]);
         if (graceful === "timeout") {
-          killGroup(pid, "SIGKILL");
+          killTree(pid, stopCmdDescendants, "SIGKILL");
           await exited;
         }
       }
@@ -511,45 +554,47 @@ export async function startOwnedService(
     // Idempotent: already exited → nothing to do.
     if (exitResult !== null) return;
 
-    // SIGTERM the whole process group (LEV-319) — gives the leader AND
-    // its descendants (the actual Express server spawned by `bun run dev`,
-    // etc.) a chance to clean up. Most dev servers handle SIGTERM within
-    // a few ms.
-    killGroup(pid, "SIGTERM");
+    // Snapshot the descendant tree NOW, while the parent is still alive
+    // and pgrep can walk it. Once the parent dies, its descendants get
+    // reparented to init (pid 1) and `pgrep -P <parent>` returns nothing.
+    // We need the list for both SIGTERM and SIGKILL rounds — recomputing
+    // after the parent dies would silently lose them.
+    const descendants = descendantsOf(pid);
 
-    // Race the leader's graceful exit against the grace timeout. The
-    // leader exiting doesn't guarantee descendants are gone — that's
-    // what the post-SIGKILL group-alive check below catches.
+    // SIGTERM the leader + its captured descendants (LEV-319). The user's
+    // cmd often spawns grandchildren (`bun run dev` → actual Express
+    // server, `npm run dev` → webpack worker); signaling just the leader
+    // leaves them as orphans. Walking the tree at kill time avoids the
+    // `detached: true` approach (which broke Next.js dev parallel serving).
+    killTree(pid, descendants, "SIGTERM");
+
+    // Race the leader's graceful exit against the grace timeout.
     const graceful = await Promise.race([
       exited.then(() => "exited" as const),
       new Promise<"timeout">((r) => setTimeout(() => r("timeout"), graceMs)),
     ]);
 
-    // Whether or not the leader exited gracefully, escalate to SIGKILL on
-    // the group if anyone is still alive. SIGKILL is uncatchable; this is
-    // the "we tried polite, now we're going" step.
-    if (graceful === "timeout" || isGroupAlive(pid)) {
-      killGroup(pid, "SIGKILL");
-      // Even when only descendants needed killing (leader already exited),
-      // the leader's `exited` promise has already resolved, so this await
-      // is a no-op in the happy case.
+    // Escalate to SIGKILL if the leader timed out OR any descendant is
+    // still alive (leader can exit cleanly while children keep going).
+    const stillAlive =
+      graceful === "timeout" || descendants.some((d) => isAlive(d));
+    if (stillAlive) {
+      killTree(pid, descendants, "SIGKILL");
+      // Leader's exited promise already resolved if it exited gracefully;
+      // this await is a no-op in that case. For the SIGKILL'd-leader case,
+      // exit fires once the kernel reaps it.
       await exited;
     }
 
     // Post-SIGKILL verification (LEV-312 + LEV-319): SIGKILL is uncatchable
-    // but the kernel needs a tick or two to reap each process. After a
-    // brief grace window we check the WHOLE GROUP via `kill(-pid, 0)` —
-    // ESRCH means every group member is dead and reaped (happy path);
-    // no error means at least one descendant is still alive, which is the
-    // "lich said it killed the thing and it didn't" case. Extremely rare
-    // — typically uninterruptible D-state, zombie accounting, or a
-    // containerized pid mismatch — but when it does happen the user's
-    // "if lich reports success the thing is gone" contract is broken
-    // and we should say so. The diagnostic surfaces on the handle's
-    // `stopWarning` field for callers to read.
+    // but the kernel needs a tick to reap each process. After a brief
+    // grace window, check that nothing in the captured tree is alive.
+    // If something is, the "if lich reports success the thing is gone"
+    // contract is broken and we should surface it.
     await sleep(SIGKILL_VERIFY_GRACE_MS);
-    if (isGroupAlive(pid)) {
-      lastStopWarning = `SIGKILL did not reap process group ${pid} after ${SIGKILL_VERIFY_GRACE_MS}ms; one or more processes may still be alive`;
+    const lingering = [pid, ...descendants].filter((p) => isAlive(p));
+    if (lingering.length > 0) {
+      lastStopWarning = `SIGKILL did not reap pid(s) ${lingering.join(", ")} after ${SIGKILL_VERIFY_GRACE_MS}ms; one or more processes may still be alive`;
     }
   };
 
@@ -615,7 +660,15 @@ async function runStopCmd(
     // Group leader so the timeout-SIGKILL path can fan out to descendants
     // the stop_cmd may have spawned (e.g. `supabase stop` shells out to
     // docker compose). LEV-319.
-    detached: true,
+    // detached:false — we previously tried `detached: true` to enable
+    // process-group kill (LEV-319), but it broke parallel Next.js dev
+    // serving: with two stacks up, both web processes accepted TCP but
+    // never wrote HTTP response bytes. Empirically the session-leader
+    // change is what breaks Next.js's worker_threads architecture. We
+    // get the same grandchild-cleanup behavior via pgrep-based tree
+    // walk in killTree, with no spawn-time changes that could affect
+    // the user's dev server.
+    detached: false,
   });
 
   // Append to the same log file — the teardown's output is part of the
@@ -648,12 +701,14 @@ async function runStopCmd(
     };
     const timer = setTimeout(() => {
       if (settled) return;
-      // Stop_cmd is taking too long. Hard-kill the whole group and move
-      // on (LEV-319). The service's state-of-the-world (containers
-      // running, ports bound) is whatever it is; we don't pretend
-      // otherwise.
+      // Stop_cmd is taking too long. Hard-kill the whole tree and move on
+      // (LEV-319). Capture descendants now while the stop_cmd parent is
+      // still alive — we'd lose them after the kill. The service's
+      // state-of-the-world (containers running, ports bound) is whatever
+      // it is; we don't pretend otherwise.
       if (typeof child.pid === "number") {
-        killGroup(child.pid, "SIGKILL");
+        const desc = descendantsOf(child.pid);
+        killTree(child.pid, desc, "SIGKILL");
       }
       finish();
     }, timeoutMs);
