@@ -30,9 +30,10 @@
  * primitive does. The supervisor writes; LogTail reads; the kernel keeps
  * them coherent without any in-process coordination.
  *
- * ### Task 2 scope (this file's current state)
+ * ### Task 3 scope (this file's current state)
  *
- * Skeleton (Task 1) + poll loop + line fan-out + buffer accumulator.
+ * Skeleton (Task 1) + poll loop + line fan-out + buffer accumulator
+ * + AbortSignal-driven shutdown.
  *
  *   - `start()` schedules a `setInterval` that polls `stat(logPath)` at
  *     `intervalMs`. On size growth, opens the file, reads new bytes from
@@ -48,8 +49,13 @@
  *     same as `log-match.ts`).
  *   - `stop()` clears the interval, closes any open fd, and flips the
  *     `stopped` flag so an in-flight poll cannot emit after teardown.
- *
- * AbortSignal-driven shutdown lands in Task 3.
+ *   - When the optional `signal` constructor option fires, the LogTail
+ *     auto-stops as if `stop()` had been called. If the signal is already
+ *     aborted at construction time, the LogTail is born in the stopped
+ *     state and any subsequent `start()` is a no-op. This wires the
+ *     orchestrator's single cancellation source (a Ctrl-C handler in
+ *     `lich up`) to every LogTail in a stack without forcing the caller
+ *     to iterate the registry and call `stop()` N times.
  *
  * ### Design notes for future tasks
  *
@@ -120,8 +126,10 @@ export interface LogTailOptions {
    * user hits Ctrl-C, every LogTail teardown happens via this one signal
    * rather than N explicit `stop()` calls.
    *
-   * Wired in Task 3. Task 2 accepts and stores the option but does not yet
-   * react to abort events.
+   * If the signal is already aborted at construction time, the LogTail is
+   * born in the stopped state and any subsequent `start()` is a no-op —
+   * the orchestrator's cancellation reached this LogTail before its first
+   * tick, so there's nothing to start.
    */
   signal?: AbortSignal;
 }
@@ -154,7 +162,8 @@ export type Unsubscribe = () => void;
  *   4. Call `stop()` (or trip the constructor's `signal`) to tear down.
  *      Idempotent. Safe to call before `start()`.
  *
- * Skeleton (Task 1) + poll loop (Task 2). AbortSignal wiring lands in Task 3.
+ * Skeleton (Task 1) + poll loop (Task 2) + AbortSignal-driven shutdown
+ * (Task 3).
  */
 export class LogTail {
   /** Stored verbatim from the constructor; read by the poll loop. */
@@ -162,12 +171,22 @@ export class LogTail {
   /** Effective poll interval (caller's override or {@link DEFAULT_INTERVAL_MS}). */
   private readonly intervalMs: number;
   /**
-   * Optional external cancellation signal. Stored for the AbortSignal wiring
-   * Task 3 will add; Task 2 accepts the option for API stability but does
-   * not yet attach an `abort` listener.
+   * Optional external cancellation signal. When non-null, the constructor
+   * attaches a one-shot `abort` listener that calls `stop()` on fire — see
+   * `attachAbort` below. We keep the reference so the listener can be
+   * removed on `stop()`, avoiding a leaked subscription on a long-lived
+   * AbortSignal (the orchestrator's signal can outlive any single LogTail).
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private readonly signal: AbortSignal | undefined;
+
+  /**
+   * The abort listener attached to `this.signal`, if any. Captured so
+   * `stop()` can remove it. Without this, a stop() that was caused by
+   * something other than the signal (e.g. the orchestrator's per-service
+   * teardown) would leave a dangling listener on a still-live signal,
+   * keeping the LogTail object retained beyond its useful lifetime.
+   */
+  private abortListener: (() => void) | null = null;
 
   /**
    * Set of registered line callbacks. We use a bare `Set` rather than
@@ -237,6 +256,35 @@ export class LogTail {
     this.logPath = opts.logPath;
     this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.signal = opts.signal;
+
+    // Wire the abort signal. Two distinct cases:
+    //   1. Signal is already aborted — flip the LogTail straight to the
+    //      stopped state. A subsequent `start()` returns immediately
+    //      without scheduling the poll loop (the `if (this.stopped)`
+    //      guard in `start()` handles it). This covers the case where
+    //      the orchestrator's cancellation arrived BEFORE this LogTail
+    //      was constructed (e.g. the user Ctrl-C's during a slow
+    //      `lich up` and we're still building the per-service registry).
+    //   2. Signal not yet aborted — attach a one-shot `abort` listener
+    //      that calls `stop()`. We keep the listener reference on
+    //      `this.abortListener` so `stop()` can remove it; this prevents
+    //      a leaked subscription on long-lived signals (the
+    //      orchestrator's signal outlives any single LogTail).
+    if (this.signal !== undefined) {
+      if (this.signal.aborted) {
+        this.stopped = true;
+      } else {
+        // Fire-and-forget: stop() is async and idempotent. If a poll is
+        // in flight when the signal fires, the in-poll stop-checks
+        // ensure no further emissions slip out.
+        this.abortListener = () => {
+          void this.stop();
+        };
+        this.signal.addEventListener("abort", this.abortListener, {
+          once: true,
+        });
+      }
+    }
   }
 
   /**
@@ -294,6 +342,20 @@ export class LogTail {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+
+    // Remove our abort listener. Two reasons:
+    //   1. Avoid leaking the listener (and therefore retaining `this`) on
+    //      a still-live AbortSignal — the orchestrator's signal is a
+    //      single instance shared across every LogTail in a stack, so it
+    //      easily outlives any one LogTail being torn down ahead of the
+    //      others (e.g. one service failed, we stop just its tail).
+    //   2. Idempotency: if stop() was triggered BY the signal firing, the
+    //      `{ once: true }` flag has already removed the listener; the
+    //      explicit `removeEventListener` is a harmless no-op in that case.
+    if (this.signal !== undefined && this.abortListener !== null) {
+      this.signal.removeEventListener("abort", this.abortListener);
+      this.abortListener = null;
     }
   }
 
