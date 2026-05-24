@@ -3,8 +3,9 @@
  *
  * Plan 1 subset: this schema strictly validates the sections that Plan 1
  * implements (`services`, `owned`, `env`, `env_files`, `env_from`,
- * `lifecycle`, `runtime`). Sections owned by later plans
- * (`env_groups`, `commands`, `profiles`) are accepted as opaque objects so
+ * `lifecycle`, `runtime`). Plan 2 tightens `env_groups` (see
+ * `envGroupSchema`) and will tighten `commands` next. Sections still owned
+ * by later plans (`commands`, `profiles`) are accepted as opaque objects so
  * the dogfood-stack yaml validates today — Plans 2-4 will tighten them.
  *
  * Likewise a handful of fields *inside* services/owned that belong to later
@@ -175,6 +176,37 @@ const readyWhenSchema = {
 const failWhenSchema = {
   type: "object",
   additionalProperties: true,
+} as const;
+
+// ---------------------------------------------------------------------------
+// env_groups (Plan 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A user-defined env_group entry. Per spec section 4 (`env_groups`):
+ *   - `env_from`: shell-out / dotenv-file sources (reuses `envFromSchema`).
+ *   - `env`: literal `KEY: VALUE` map layered last (reuses `envMapSchema`).
+ *   - `extends`: single string — name of parent group to inherit from.
+ *     env_groups support exactly one parent (unlike profiles).
+ *   - `process_env`: boolean (defaults to `true` at resolve time). When
+ *     `false`, the resolver does NOT overlay `process.env` at the outermost
+ *     call — useful for hermetic tool envs.
+ *
+ * `additionalProperties: false` so typos surface at validate time.
+ *
+ * Note: `env_files` is intentionally NOT a field here. The spec restricts
+ * env_groups to `env_from` for file/shell sourcing; `env_files` belongs to
+ * the top-level stack composition only. See spec section 4 env_groups.
+ */
+const envGroupSchema = {
+  type: "object",
+  properties: {
+    env_from: envFromSchema,
+    env: envMapSchema,
+    extends: { type: "string" },
+    process_env: { type: "boolean" },
+  },
+  additionalProperties: false,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -349,8 +381,18 @@ export const schema = {
     lifecycle: topLevelLifecycleSchema,
 
     // ----- Sections owned by later plans — accept-as-opaque for now. -----
-    // Plan 2 will tighten env_groups (Task 2). Task 3 tightens commands.
-    env_groups: { type: "object", additionalProperties: true },
+    // Plan 2 tightens env_groups (Task 2) and commands (Task 3).
+    /**
+     * Named env_groups (Plan 2 Task 2). Keys are group names; values
+     * match `envGroupSchema`. The built-in group name `stack` is
+     * reserved — the `propertyNames` constraint rejects it at parse
+     * time so users can't redeclare the built-in.
+     */
+    env_groups: {
+      type: "object",
+      propertyNames: { not: { const: "stack" } },
+      additionalProperties: envGroupSchema,
+    },
     /**
      * User-defined commands (Plan 2 Task 3). Strict: keys are command
      * names (free-form strings; `:` and `/` are intentionally allowed so

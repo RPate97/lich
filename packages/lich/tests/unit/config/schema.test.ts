@@ -242,15 +242,75 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
-  it("accepts unknown keys inside an opaque-future section (env_groups)", () => {
+  it("validates a config with one user-defined env_group", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
       env_groups: {
-        prod: { env_from: [{ cmd: "infisical export" }], extends: "stack" },
+        foo: { env: { A: "1" } },
       },
     });
     expect(ok).toBe(true);
+  });
+
+  it("validates an env_group exercising every supported field", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      env_groups: {
+        prod: {
+          env_from: [{ cmd: "infisical export", format: "dotenv" }],
+          env: { LOG_LEVEL: "info" },
+          extends: "stack",
+          process_env: false,
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("rejects env_groups.stack as a reserved name", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      env_groups: {
+        stack: { env: { OOPS: "1" } },
+      },
+    });
+    expect(ok).toBe(false);
+    // The property-name constraint should fire — the error should point at
+    // the reserved name so the user sees what went wrong.
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          (e.keyword === "propertyNames" || e.keyword === "not") &&
+          /stack/.test(JSON.stringify(e))
+      )
+    ).toBe(true);
+  });
+
+  it("rejects unknown property inside an env_group entry", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      env_groups: {
+        foo: {
+          env: { A: "1" },
+          // Typo: should be `env_from`.
+          env_form: [{ cmd: "echo hi" }],
+        },
+      },
+    });
+    expect(ok).toBe(false);
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          /additional/i.test(e.keyword) ||
+          /must NOT have additional properties/i.test(e.message ?? "")
+      )
+    ).toBe(true);
   });
 
   it("rejects a bad runtime.port_range shape (string instead of [int, int])", () => {
