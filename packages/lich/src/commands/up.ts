@@ -212,6 +212,26 @@ interface UpState {
   status: StackStatus;
   startedAt: string;
   /**
+   * LEV-389 (Plan 3 Task 15): name of the profile this `lich up` is running
+   * under, or undefined when no profile is active (the yaml has no
+   * `profiles` section, or the caller didn't pass one and there's no
+   * default). Threaded into `writeStateSnapshot` so every persisted
+   * `state.json` carries `active_profile` — downstream `lich down` /
+   * `lich stacks` / dashboard re-resolve the same profile from the yaml.
+   */
+  activeProfile?: string;
+  /**
+   * LEV-389 (Plan 3 Task 15): the fully-realized profile object, threaded
+   * through to per-service env resolution (`startOwned`'s
+   * `resolveEnvForService` call) so the profile-scoped env layer + the
+   * `LICH_PROFILE` auto-inject apply to every spawned owned service.
+   * `undefined` whenever `activeProfile` is undefined. Kept alongside the
+   * name (rather than re-resolved per service) because resolution is pure
+   * and the result is small; we'd otherwise be paying a tree-walk for
+   * every service in the stack.
+   */
+  resolvedProfile?: ResolvedProfile;
+  /**
    * Per-owned-service LogTail registry. Indexed by service name; entries are
    * inserted in `startOwned` after the supervisor spawns the process and the
    * LogTail starts polling its log file. Removed only on stop (cancellation
@@ -451,6 +471,16 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       capturedValues: {},
       exitWatchers: new Map(),
       stageRefs: new Map(),
+      // LEV-389 (Plan 3 Task 15): persist the active profile name so every
+      // `writeStateSnapshot` call (including the first one at Step 6) emits
+      // `active_profile` into state.json. Undefined when no profile is in
+      // play; the snapshot field is optional and omitted in that case (see
+      // `writeStateSnapshot` below).
+      activeProfile: resolvedProfile?.name,
+      // The fully-realized profile rides alongside so `startOwned` (running
+      // many levels later) can pass it to `resolveEnvForService` without
+      // re-resolving. Both are populated together.
+      resolvedProfile: resolvedProfile ?? undefined,
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
@@ -604,14 +634,19 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // LEV-388 (Plan 3 Task 14): pass `effectiveConfig` so per-service env
     // resolution downstream operates on the filtered service set. Top-level
     // env / env_files / env_from are preserved untouched by the filter.
-    // Profile-layer env wiring (passing `profile: resolvedProfile`) is Task
-    // 15's job; this task only narrows the structural service set.
+    //
+    // LEV-389 (Plan 3 Task 15): pass the active profile so the profile-scoped
+    // env layer (precedence steps 6-8 per `env/resolve.ts`'s module docstring)
+    // applies AND so `LICH_PROFILE` is auto-injected. `resolvedProfile` is
+    // null when no profile is active; `env/resolve.ts` treats `profile:
+    // undefined` as the Plan-1 no-op (no layer, no LICH_PROFILE).
     const envPhase = output.phase("resolve-env");
     const topLevelEnv = await resolveTopLevelEnv({
       config: effectiveConfig,
       worktree,
       allocatedPorts,
       projectRoot: worktree.path,
+      profile: resolvedProfile ?? undefined,
     });
     envPhase.end("ok");
 
@@ -666,6 +701,10 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         worktree,
         allocatedPorts,
         projectRoot: worktree.path,
+        // LEV-389 (Plan 3 Task 15): apply the profile layer + LICH_PROFILE
+        // for per-compose-service env so the compose override embeds the
+        // profile-aware env into the file.
+        profile: resolvedProfile ?? undefined,
       });
     }
 
@@ -695,12 +734,38 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     }
 
     // ---- Step 9: before_up lifecycle --------------------------------------
-    if (config.lifecycle?.before_up && config.lifecycle.before_up.length > 0) {
+    // LEV-389 (Plan 3 Task 15): compose top-level + profile-scoped entries
+    // into a SINGLE call to `runLifecycle`. Composition rule (mirrored on
+    // `after_up` below; INVERTED on `before_down` in `commands/down.ts`):
+    //
+    //   before_up / after_up: top-level entries first, then profile entries.
+    //     The base setup runs before specialization, so a profile's
+    //     `after_up` (e.g. `dev`'s migrations + seed) sees the env / state
+    //     left by the top-level hook (e.g. a shared bootstrap step).
+    //
+    //   before_down (in down.ts): profile entries first, then top-level
+    //     entries (LIFO — undo specialization before tearing down the
+    //     base). Plan 3 Task 16 / LEV-390 lands that composition.
+    //
+    // Passing the composed array in ONE call preserves the executor's
+    // contract (non-zero exit in any entry aborts the phase) — splitting
+    // into two calls would let a top-level failure skip the profile entries
+    // silently OR let a profile failure run after a top-level one,
+    // depending on phase. One call, one ordered run, one fail-fast point.
+    //
+    // Empty arrays are fine: `runLifecycle` is a no-op on an empty entries
+    // list, so a profile with no `before_up` and a top-level with no
+    // `before_up` produces a skipped phase exactly as before.
+    const beforeUpEntries = [
+      ...(config.lifecycle?.before_up ?? []),
+      ...(resolvedProfile?.lifecycle.before_up ?? []),
+    ];
+    if (beforeUpEntries.length > 0) {
       const phase = output.phase("before_up");
       try {
         await runLifecycle({
           phase: "before_up",
-          entries: config.lifecycle.before_up,
+          entries: beforeUpEntries,
           cwd: worktree.path,
           env: topLevelEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -828,12 +893,20 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     }
 
     // ---- Step 11: after_up lifecycle --------------------------------------
-    if (config.lifecycle?.after_up && config.lifecycle.after_up.length > 0) {
+    // LEV-389 (Plan 3 Task 15): same composition rule as `before_up` above —
+    // top-level first, then profile-scoped. The composed array is passed in
+    // a SINGLE `runLifecycle` call so a non-zero exit in any entry aborts
+    // the phase. See the before_up comment block for the full rationale.
+    const afterUpEntries = [
+      ...(config.lifecycle?.after_up ?? []),
+      ...(resolvedProfile?.lifecycle.after_up ?? []),
+    ];
+    if (afterUpEntries.length > 0) {
       const phase = output.phase("after_up");
       try {
         await runLifecycle({
           phase: "after_up",
-          entries: config.lifecycle.after_up,
+          entries: afterUpEntries,
           cwd: worktree.path,
           env: topLevelEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -1249,6 +1322,10 @@ async function startOwned(
     allocatedPorts,
     projectRoot: worktree.path,
     capturedValues: state.capturedValues,
+    // LEV-389 (Plan 3 Task 15): apply the profile env layer + auto-inject
+    // `LICH_PROFILE` for every spawned owned service. `undefined` when no
+    // profile is active (which `env/resolve.ts` treats as the Plan-1 no-op).
+    profile: state.resolvedProfile,
   });
 
   // Build the spec from the parsed config + allocated ports.
@@ -2315,6 +2392,13 @@ async function writeStateSnapshot(state: UpState): Promise<void> {
     started_at: state.startedAt,
     services: [...state.services.values()],
   };
+  // LEV-389 (Plan 3 Task 15): persist the active profile name. Only set the
+  // field when one is active — pre-Plan-3 snapshots and no-profile stacks
+  // intentionally omit it so `readSnapshot` consumers can tell the two
+  // states apart (per Plan 3 Task 8 / LEV-382, the field is optional).
+  if (state.activeProfile !== undefined) {
+    snapshot.active_profile = state.activeProfile;
+  }
   await writeSnapshot(snapshot);
   // Touch the stack dir to ensure it exists (writeSnapshot does this too,
   // but make it explicit so tests that read stackDir() without going through

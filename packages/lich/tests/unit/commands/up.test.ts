@@ -1037,7 +1037,238 @@ lifecycle:
     expect(snap.status).toBe("up");
     expect(snap.services).toEqual([]);
   }, 10_000);
+});
 
+// ---------------------------------------------------------------------------
+// LEV-389 (Plan 3 Task 15): compose lifecycle, pass profile to env, write
+// active_profile. The acceptance criteria pin four behaviors:
+//
+//   1. `before_up` entries = top-level entries first, then profile entries.
+//      Composed array passed in ONE call to runLifecycle so a non-zero exit
+//      in any entry aborts the phase. We assert the order via a shared
+//      marker file: each entry appends its own tag, and the resulting file
+//      content reads `top:profile:` (or just `top:` / `profile:` when only
+//      one side declares entries).
+//   2. `after_up` entries = same composition rule. Same marker-append
+//      strategy as before_up.
+//   3. state.json round-trips `active_profile: <name>` when a profile is
+//      active. Tests for the no-profile case live in the LEV-387 block above
+//      (those snapshots intentionally omit the field).
+//   4. `LICH_PROFILE` is auto-injected into every spawned owned service's
+//      env. The owned cmd writes `$LICH_PROFILE` to a marker file so the
+//      test reads it back without depending on the orchestrator's output
+//      format.
+// ---------------------------------------------------------------------------
+
+describe("runUp — LEV-389: lifecycle composition + profile env", () => {
+  it("runs top-level before_up first, then profile before_up", async () => {
+    // Each entry appends its own tag to a shared marker file. The file is
+    // read AFTER `runUp` resolves; content reads as the concatenated tags
+    // in the order the executor invoked them. The composition rule (top-
+    // level first, then profile) is what we assert on.
+    const marker = join(projectDir, "before_up.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+    lifecycle:
+      before_up:
+        - printf 'profile:' >> ${shellQuote(marker)}
+lifecycle:
+  before_up:
+    - printf 'top:' >> ${shellQuote(marker)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    // top-level entry ran first, profile entry ran second.
+    expect(readFileSync(marker, "utf8")).toBe("top:profile:");
+  }, 15_000);
+
+  it("runs top-level after_up first, then profile after_up", async () => {
+    const marker = join(projectDir, "after_up.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+    lifecycle:
+      after_up:
+        - printf 'profile:' >> ${shellQuote(marker)}
+lifecycle:
+  after_up:
+    - printf 'top:' >> ${shellQuote(marker)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf8")).toBe("top:profile:");
+  }, 15_000);
+
+  it("snapshot persists active_profile", async () => {
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    const snap = await loadSnapshot(result.stackId!);
+    // The default profile resolved to "dev"; the snapshot carries it.
+    expect(snap.active_profile).toBe("dev");
+  }, 15_000);
+
+  it("snapshot omits active_profile when no profile is in play", async () => {
+    // Companion to the above: when the yaml has no `profiles` section AND no
+    // profile arg is supplied, the snapshot must NOT carry `active_profile`
+    // (per LEV-382's "field is optional, omitted in the no-profile case").
+    // Catches a regression where we'd write `active_profile: null` or `""`.
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    const snap = await loadSnapshot(result.stackId!);
+    expect(snap.active_profile).toBeUndefined();
+  }, 15_000);
+
+  it("LICH_PROFILE is set in the env of owned services started under a profile", async () => {
+    // The owned cmd writes `$LICH_PROFILE` to a marker file so the test reads
+    // the env value back without depending on orchestrator output format.
+    // The auto-inject lives in `env/resolve.ts`'s `autoInjects(worktree,
+    // profileName)` — Task 15 wires it by passing `profile: state.
+    // resolvedProfile` through to `resolveEnvForService` in `startOwned`.
+    const marker = join(projectDir, "lich_profile.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(`printf %s "$LICH_PROFILE" > ${marker}; echo READY; touch ${svcSentinel}; sleep 30`)}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf8")).toBe("dev");
+  }, 15_000);
+
+  it("LICH_PROFILE is absent (unset) in spawned env when no profile is active", async () => {
+    // Companion: when no profile is in play the auto-inject must NOT fire.
+    // Catches regressions where we'd inject `LICH_PROFILE=""` or
+    // `LICH_PROFILE=undefined` for the no-profile case.
+    const marker = join(projectDir, "lich_profile.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(`printf %s "<<${"$"}{LICH_PROFILE:-MISSING}>>" > ${marker}; echo READY; touch ${svcSentinel}; sleep 30`)}
+    ready_when:
+      log_match: "READY"
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    // LICH_PROFILE is unset → shell's `:-MISSING` fallback fires → marker is
+    // `<<MISSING>>`. If we accidentally injected an empty string, the value
+    // would be `<<>>` (still falsy but distinguishable from the unset case).
+    expect(readFileSync(marker, "utf8")).toBe("<<MISSING>>");
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------
