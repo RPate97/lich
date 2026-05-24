@@ -17,8 +17,9 @@
  *     names the available services.
  *
  * This is a HEAVY test — it spawns docker + supabase + bun dev servers.
- * It is skipped when `docker` or `supabase` (CLI v2+) aren't available
- * on PATH so a stripped-down CI box doesn't fail spuriously.
+ * Runs unconditionally; without docker + supabase v2+ on PATH the (setup)
+ * `lich up` fails loudly with the real error (see tests/e2e/README.md
+ * and LEV-314).
  *
  * Isolation:
  *   - Each test copies `examples/dogfood-stack` into a fresh tmpdir.
@@ -38,53 +39,8 @@ import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
 
-// ---------------------------------------------------------------------------
-// Preflight: docker + supabase availability
-// ---------------------------------------------------------------------------
-
 const repoRoot = resolve(import.meta.dir, "../..");
 const LICH_BINARY = resolve(repoRoot, "packages/lich/dist/lich");
-
-function hasDocker(): boolean {
-  try {
-    // `docker info` actually contacts the daemon — `docker --version` only
-    // proves the CLI is installed. We use `docker version --format` because
-    // it exits non-zero when the daemon is unreachable (whereas `docker
-    // info` exits 0 and prints "Cannot connect to the Docker daemon" to
-    // stderr, which would let dead environments slip through).
-    const r = spawnSync(
-      "docker",
-      ["version", "--format", "{{.Server.Version}}"],
-      { encoding: "utf8", timeout: 5_000 },
-    );
-    if (r.status !== 0) return false;
-    // A reachable daemon prints a non-empty version string.
-    return (r.stdout ?? "").trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Supabase CLI v2+ is required by the dogfood-stack. v1 has a different
- * subcommand surface; testing against it would be flaky and pointless.
- */
-function hasSupabaseV2Plus(): boolean {
-  try {
-    const r = spawnSync("supabase", ["--version"], { encoding: "utf8" });
-    if (r.status !== 0) return false;
-    // `supabase --version` prints just the version number, e.g. "2.98.2".
-    const match = (r.stdout ?? "").trim().match(/^(\d+)\./);
-    if (!match) return false;
-    return Number(match[1]) >= 2;
-  } catch {
-    return false;
-  }
-}
-
-const DOCKER_OK = hasDocker();
-const SUPABASE_OK = hasSupabaseV2Plus();
-const PREREQS_OK = DOCKER_OK && SUPABASE_OK;
 
 // ---------------------------------------------------------------------------
 // Test-scoped state
@@ -124,7 +80,7 @@ function parseUrls(stdout: string): Record<string, number> {
 // Suite setup
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!PREREQS_OK)("lich logs filtering", () => {
+describe("lich logs filtering", () => {
   // Bun's test runner enforces a 5s timeout on beforeAll/afterAll hooks with
   // no way to override per-hook (see https://bun.sh/docs/cli/test#timeouts).
   // Pushing the expensive `lich up` into a regular `it` lets us pass a

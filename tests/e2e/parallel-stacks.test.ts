@@ -43,9 +43,10 @@
  * recursively removed. Leaving leaks here would corrupt subsequent runs.
  *
  * Resource budget: starting two full stacks (Supabase + API + web each)
- * is heavy — we extend the test timeout to 5 minutes. On machines without
- * docker / supabase v2+, the suite skips with a clear message rather than
- * failing.
+ * is heavy — we extend the test timeout to 5 minutes. The test runs
+ * unconditionally; without docker + supabase v2+ on the host, `lich up`
+ * fails loudly with the real underlying error (see tests/e2e/README.md
+ * and LEV-314).
  */
 
 import {
@@ -55,7 +56,7 @@ import {
   expect,
   it,
 } from "vitest";
-import { spawnSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,42 +64,6 @@ import { join } from "node:path";
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich, spawnLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
-
-// ---------------------------------------------------------------------------
-// Environment probes — skip cleanly if the host can't run the test
-// ---------------------------------------------------------------------------
-
-/** True if the docker daemon is reachable. */
-function dockerAvailable(): boolean {
-  const r = spawnSync("docker", ["info"], {
-    stdio: ["ignore", "ignore", "ignore"],
-    timeout: 5_000,
-  });
-  return r.status === 0;
-}
-
-/** True if `supabase --version` reports a major version ≥ 2. */
-function supabaseV2Available(): boolean {
-  const r = spawnSync("supabase", ["--version"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
-  if (r.status !== 0) return false;
-  // Output looks like `2.98.2\n` (possibly followed by an upgrade banner).
-  const firstLine = (r.stdout ?? "").split("\n")[0].trim();
-  const major = parseInt(firstLine.split(".")[0] ?? "", 10);
-  return Number.isFinite(major) && major >= 2;
-}
-
-const HAVE_DOCKER = dockerAvailable();
-const HAVE_SUPABASE_V2 = supabaseV2Available();
-const SHOULD_RUN = HAVE_DOCKER && HAVE_SUPABASE_V2;
-
-const SKIP_REASON = !HAVE_DOCKER
-  ? "skipped: docker daemon not reachable"
-  : !HAVE_SUPABASE_V2
-    ? "skipped: supabase CLI v2+ not available"
-    : "";
 
 // ---------------------------------------------------------------------------
 // Test scope state — shared across the single sentinel test
@@ -249,8 +214,6 @@ function parseUrls(stdout: string): Record<string, number> {
 // ---------------------------------------------------------------------------
 
 beforeAll(() => {
-  if (!SHOULD_RUN) return;
-
   // Single shared LICH_HOME — this is the whole point of the sentinel.
   // Both stacks must coexist under one ~/.lich layout.
   lichHome = mkdtempSync(join(tmpdir(), "lich-e2e-parallel-home-"));
@@ -323,15 +286,10 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 describe("parallel stacks (REQUIRED sentinel)", () => {
-  if (!SHOULD_RUN) {
-    it.skip(SKIP_REASON, () => {});
-    return;
-  }
-
   it(
     "two dogfood-stack copies in distinct worktrees coexist; lich down A leaves B running",
     async () => {
-      // We're inside SHOULD_RUN; beforeAll has populated these.
+      // beforeAll has populated these unconditionally.
       const a = stackA!;
       const b = stackB!;
 

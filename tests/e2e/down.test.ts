@@ -17,10 +17,9 @@
  * Heavy test — supabase startup alone can take 60-90s. Total runtime budget
  * is ~5 minutes (timeout set on the describe block).
  *
- * Docker assertions are conditionally skipped when docker is not on the host;
- * the rest of the checks (state, PIDs, ports) still run. The entire test is
- * skipped if supabase v2+ isn't available, since `lich up` against the
- * dogfood-stack requires it.
+ * Runs unconditionally. Requires docker + supabase CLI v2+ on the host;
+ * without them, `lich up` fails loudly with the real underlying error
+ * (see tests/e2e/README.md and LEV-314).
  */
 
 import { spawnSync } from "node:child_process";
@@ -34,40 +33,6 @@ import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 const LICH_BINARY = resolve(REPO_ROOT, "packages/lich/dist/lich");
-
-// ---------------------------------------------------------------------------
-// Environment probes — used to gate the test on tool availability
-// ---------------------------------------------------------------------------
-
-function which(binary: string): string | null {
-  const result = spawnSync("which", [binary], { encoding: "utf8" });
-  if (result.status !== 0) return null;
-  const path = (result.stdout ?? "").trim();
-  return path.length > 0 ? path : null;
-}
-
-function hasDocker(): boolean {
-  if (!which("docker")) return false;
-  const result = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
-  return result.status === 0;
-}
-
-function supabaseMajorVersion(): number | null {
-  if (!which("supabase")) return null;
-  const result = spawnSync("supabase", ["--version"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
-  if (result.status !== 0) return null;
-  // Output is just the version like "2.98.2" (possibly followed by an
-  // update banner on stderr). Parse the first line of stdout.
-  const firstLine = (result.stdout ?? "").trim().split(/\r?\n/)[0]?.trim() ?? "";
-  const match = /^(\d+)\./.exec(firstLine);
-  return match ? parseInt(match[1], 10) : null;
-}
 
 // ---------------------------------------------------------------------------
 // State helpers
@@ -150,10 +115,11 @@ function isPortFree(port: number): Promise<boolean> {
 
 /**
  * Capture the list of docker container IDs under a compose project. Empty
- * array if docker is unavailable OR no containers exist.
+ * array if no containers exist. Docker is a hard prerequisite for this
+ * suite (LEV-314); if it's missing the earlier `lich up` step will have
+ * failed loudly already.
  */
 function composeContainerIds(project: string): string[] {
-  if (!hasDocker()) return [];
   const result = spawnSync(
     "docker",
     ["compose", "-p", project, "ps", "-q", "-a"],
@@ -172,10 +138,9 @@ function composeContainerIds(project: string): string[] {
 /**
  * True iff a docker container with the given id is still present on the
  * host (running or stopped). Uses `docker ps -a --filter "id=<id>"` and
- * checks for any output. Returns false if docker is unavailable.
+ * checks for any output.
  */
 function dockerContainerExists(id: string): boolean {
-  if (!hasDocker()) return false;
   const result = spawnSync(
     "docker",
     ["ps", "-a", "--filter", `id=${id}`, "--format", "{{.ID}}"],
@@ -233,30 +198,8 @@ afterAll(() => {
 // The test
 // ---------------------------------------------------------------------------
 
-const supabaseVersion = supabaseMajorVersion();
-const supabaseAvailable = supabaseVersion !== null && supabaseVersion >= 2;
-const dockerAvailable = hasDocker();
-
-// The dogfood-stack's supabase service depends on a live docker daemon, so
-// without docker the `lich up` step can't succeed and the test is moot.
-// "Skip docker-specific assertions if docker not available" (per the task
-// spec) only matters once `up` succeeds; here, `up` itself requires docker
-// because supabase needs it. Both gates fire together for this stack.
-const canRun = supabaseAvailable && dockerAvailable;
-const skipReasons: string[] = [];
-if (!supabaseAvailable) {
-  skipReasons.push(`supabase v2+ unavailable (found ${supabaseVersion ?? "none"})`);
-}
-if (!dockerAvailable) {
-  skipReasons.push("docker daemon unreachable");
-}
-const describeOrSkip = canRun ? describe : describe.skip;
-const describeName = canRun
-  ? "lich down leaves no leftover resources"
-  : `lich down leaves no leftover resources — skipped: ${skipReasons.join("; ")}`;
-
-describeOrSkip(
-  describeName,
+describe(
+  "lich down leaves no leftover resources",
   () => {
     beforeAll(() => {
       // Sanity: the compiled binary must exist. Plan 0 / Plan 1 task
@@ -372,19 +315,16 @@ describeOrSkip(
           expect(portsAfter.allocations[stackId]).toBeUndefined();
         }
 
-        // 5. Docker containers for the compose project are gone (skipped
-        //    cleanly if docker isn't on the host).
-        if (dockerAvailable) {
-          for (const id of containerIdsBefore) {
-            expect(
-              dockerContainerExists(id),
-              `expected docker container ${id} to be gone after down, but it still exists`,
-            ).toBe(false);
-          }
-          // Defense in depth: a fresh `docker compose -p <project> ps -q -a`
-          // should return nothing.
-          expect(composeContainerIds(composeProject)).toEqual([]);
+        // 5. Docker containers for the compose project are gone.
+        for (const id of containerIdsBefore) {
+          expect(
+            dockerContainerExists(id),
+            `expected docker container ${id} to be gone after down, but it still exists`,
+          ).toBe(false);
         }
+        // Defense in depth: a fresh `docker compose -p <project> ps -q -a`
+        // should return nothing.
+        expect(composeContainerIds(composeProject)).toEqual([]);
 
         // ---- ACT 3: lich down again (idempotency) ----------------------
         const downAgain = runLich(["down"], {

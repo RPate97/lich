@@ -9,13 +9,16 @@
  * Test breakdown:
  *
  *   1. `lich validate succeeds against the target yaml`
- *      Always runs. Spawns the real binary in a tmpdir copy of the
- *      dogfood-stack, asserts exit 0 with no stderr. This is the test
- *      that should turn GREEN as a result of this task (and LEV-270).
+ *      Spawns the real binary in a tmpdir copy of the dogfood-stack,
+ *      asserts exit 0 with no stderr. Doesn't actually need docker since
+ *      `validate` is pure config parsing, but it runs unconditionally
+ *      anyway — see prerequisites note below.
  *
  *   2. `lich up brings the stack up + lich down cleans it up`
- *      Skipped when the host lacks docker / supabase v2+ (Plan 1 unit
- *      coverage stands in for those environments). When run:
+ *      Runs unconditionally. Requires docker + supabase CLI v2+ on the
+ *      host (see tests/e2e/README.md). On a host missing those, the test
+ *      fails loudly with the actual docker / supabase error — that's
+ *      desired, lich's whole purpose is orchestrating docker (LEV-314).
  *        - `lich up` against a tmpdir copy of the dogfood-stack
  *        - poll state.json until status:up (up to ~3 minutes for first
  *          supabase image pull)
@@ -70,40 +73,6 @@ import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
 import { parseLichUrls, portFromUrl } from "./helpers/urls.js";
 import { readStateJson, waitForStackStatus } from "./helpers/state.js";
-
-// ---------------------------------------------------------------------------
-// Host capability probes — skip cleanly when the host can't run the full up
-// ---------------------------------------------------------------------------
-
-function dockerAvailable(): boolean {
-  const r = spawnSync("docker", ["info"], {
-    stdio: ["ignore", "ignore", "ignore"],
-    timeout: 5_000,
-  });
-  return r.status === 0;
-}
-
-function supabaseV2Available(): boolean {
-  const r = spawnSync("supabase", ["--version"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
-  if (r.status !== 0) return false;
-  // Output looks like `2.98.2\n` (possibly with an upgrade banner after).
-  const firstLine = (r.stdout ?? "").split("\n")[0].trim();
-  const major = parseInt(firstLine.split(".")[0] ?? "", 10);
-  return Number.isFinite(major) && major >= 2;
-}
-
-const HAVE_DOCKER = dockerAvailable();
-const HAVE_SUPABASE_V2 = supabaseV2Available();
-const CAN_RUN_FULL_UP = HAVE_DOCKER && HAVE_SUPABASE_V2;
-
-const FULL_UP_SKIP_REASON = !HAVE_DOCKER
-  ? "docker daemon not reachable"
-  : !HAVE_SUPABASE_V2
-    ? "supabase CLI v2+ not available"
-    : "";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. We fail loudly here (don't skip) — the binary
@@ -257,7 +226,7 @@ describe("lich validate against dogfood-stack", () => {
 });
 
 describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
-  it.skipIf(!CAN_RUN_FULL_UP)(
+  it(
     "brings the stack up, serves raw URLs, then lich down cleans up",
     async () => {
       fixture = makeFixture();

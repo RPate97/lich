@@ -91,6 +91,18 @@ cd tests/e2e && bun test
 ./packages/lich/dist/lich --help
 ```
 
+### Running e2e tests
+
+Requires:
+
+- Docker Desktop (or compatible) running
+- supabase CLI v2.101+ on PATH (`brew install supabase/tap/supabase`)
+
+If you don't have these, the e2e tests will fail with a docker connectivity
+error. That's correct — lich is a docker-compose orchestrator, so a no-docker
+environment isn't a valid place to verify it. Run `cd packages/lich && bun test`
+for unit tests if you just want a quick check.
+
 ## Conventions
 
 - **Commits:** small, focused, one logical change. Use the conventional-commits style (`feat:`, `fix:`, `test:`, `docs:`, `chore:` prefixes) used elsewhere in the repo.
