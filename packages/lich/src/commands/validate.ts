@@ -292,6 +292,7 @@ function checkRegexes(
   errors: ValidationError[],
 ): void {
   // owned.*.ready_when.log_match
+  // owned.*.ready_when.capture (Plan 4 Task 13 — LEV-362)
   // owned.*.fail_when.log_match
   for (const [name, svc] of Object.entries(config.owned ?? {})) {
     const ready = svc?.ready_when;
@@ -301,6 +302,20 @@ function checkRegexes(
         `${path} (/owned/${name}/ready_when/log_match)`,
         errors,
       );
+    }
+    // Each capture value is a regex pattern string. Schema already enforces
+    // the `key -> string` shape; here we surface any value that isn't a
+    // valid JS regex so the user finds out at validate time rather than
+    // mysteriously at ready-check time when the extractor compiles it.
+    if (ready && ready.capture && typeof ready.capture === "object") {
+      for (const [key, pattern] of Object.entries(ready.capture)) {
+        if (typeof pattern !== "string") continue;
+        tryCompile(
+          pattern,
+          `${path} (/owned/${name}/ready_when/capture/${key})`,
+          errors,
+        );
+      }
     }
     const failWhen = svc?.fail_when as { log_match?: unknown } | undefined;
     if (failWhen && typeof failWhen.log_match === "string") {
