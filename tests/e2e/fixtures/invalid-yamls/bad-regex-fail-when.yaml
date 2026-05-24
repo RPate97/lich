@@ -1,0 +1,14 @@
+version: "1"
+owned:
+  api:
+    cmd: bun run dev
+    cwd: apps/api
+    port: { env: PORT }
+    ready_when:
+      http_get: /health
+      timeout: 30s
+    fail_when:
+      # Unterminated character class — guaranteed to throw at RegExp() compile
+      # time. Mirrors the canonical bad-regex shape from the unit tests
+      # (packages/lich/tests/unit/config/validate-capture-regex.test.ts).
+      log_match: "[invalid("
