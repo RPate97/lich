@@ -152,8 +152,15 @@ const portDescriptorSchema = {
 
 /**
  * `ready_when` block (Plan 1 subset).
- * `capture` and `timeout` are accept-as-opaque here; Plan 4 will tighten
- * them.
+ *
+ * `timeout` is still accept-as-opaque here; Plan 4 Task 5 will tighten it
+ * to a duration string / integer-ms shape.
+ *
+ * `capture` is locked down by Plan 4 Task 6: a flat `key -> regex-string`
+ * map. The values are regex PATTERN strings that the runtime will compile
+ * (validate will also compile them so syntax errors surface at load time,
+ * not at ready-check time). Nested objects, numbers, arrays, etc. are
+ * rejected here — keeps the API simple and the surfaced errors precise.
  */
 const readyWhenSchema = {
   type: "object",
@@ -162,9 +169,18 @@ const readyWhenSchema = {
     tcp: { type: "string" },
     log_match: { type: "string" },
     cmd: { type: "string" },
-    // Future-plan placeholders — kept permissive intentionally.
-    timeout: {}, // any type for now (Plan 4 will require a duration string)
-    capture: { type: "object", additionalProperties: true },
+    // Future-plan placeholder — kept permissive intentionally.
+    timeout: {}, // any type for now (Plan 4 Task 5 will require a duration string)
+    /**
+     * Plan 4 Task 6: a flat `key -> regex-pattern` map. Each VALUE must be
+     * a string (the regex pattern). Reject non-string values like numbers
+     * or nested objects so users see a useful error if they accidentally
+     * write `capture: { url: 42 }` or `capture: { url: { regex: "..." } }`.
+     */
+    capture: {
+      type: "object",
+      additionalProperties: { type: "string" },
+    },
   },
   additionalProperties: false,
 } as const;

@@ -103,8 +103,17 @@ export type PortDescriptor =
 // ---------------------------------------------------------------------------
 
 /**
- * `ready_when` block (Plan 1 subset). `capture` and `timeout` are accepted
- * here but their shapes will be tightened in Plan 4.
+ * `ready_when` block (Plan 1 subset). `timeout` is still accepted as a
+ * placeholder here and will be tightened in Plan 4 Task 5.
+ *
+ * `capture` is Plan-4 Task 6's contract: a flat `key -> regex-string` map.
+ * Each value is a regex PATTERN string (compiled at validate time + at
+ * extraction time). The extractor (`src/ready/capture.ts`) returns
+ * `Record<string, string>` of the matched values for downstream
+ * interpolation as `${owned.<name>.captured.<key>}`. Per the spec we
+ * deliberately do not support multiple regex groups per pattern — the
+ * extractor uses group 1 if a `(...)` group is declared, otherwise the full
+ * match. Users wanting multiple values declare multiple captures.
  */
 export interface ReadyWhen {
   http_get?: string;
@@ -113,8 +122,13 @@ export interface ReadyWhen {
   cmd?: string;
   /** Plan-4 placeholder — any type for now. */
   timeout?: unknown;
-  /** Plan-4 placeholder. */
-  capture?: Record<string, unknown>;
+  /**
+   * Map of capture name → regex pattern. After `ready_when` fires, the
+   * orchestrator runs each regex against the service's accumulated log
+   * buffer and exposes the matches as `${owned.<name>.captured.<key>}`.
+   * A missing match aborts the up with a `CaptureMissError`.
+   */
+  capture?: Record<string, string>;
 }
 
 /** `fail_when` is fully owned by Plan 4; accept-as-opaque here. */
