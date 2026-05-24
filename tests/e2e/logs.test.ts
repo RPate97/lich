@@ -224,7 +224,7 @@ describe("lich logs filtering", () => {
       const result = runLich(["logs", "--tail", "50", "--no-follow"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
-        timeout: 30_000,
+        timeout: 5_000,
       });
       expect(result.exitCode).toBe(0);
 
@@ -239,9 +239,6 @@ describe("lich logs filtering", () => {
       // should be SOMETHING. We require ANY one of the multi-line patterns.
       expect(result.stdout).toMatch(/\[supabase\]/);
     },
-    // Bun's default per-it() timeout is 5s — too tight for tests that spawn
-    // the lich binary and slurp per-service log files. See LEV-313.
-    30_000,
   );
 
   it(
@@ -250,7 +247,7 @@ describe("lich logs filtering", () => {
       const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
-        timeout: 30_000,
+        timeout: 5_000,
       });
       expect(result.exitCode).toBe(0);
       // Some content must exist for the api — at minimum the startup banner.
@@ -263,7 +260,6 @@ describe("lich logs filtering", () => {
       expect(result.stdout).not.toMatch(/^\[web\] /m);
       expect(result.stdout).not.toMatch(/^\[supabase\] /m);
     },
-    30_000,
   );
 
   it(
@@ -272,7 +268,7 @@ describe("lich logs filtering", () => {
       const result = runLich(["logs", "api", "--tail", "1", "--no-follow"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
-        timeout: 30_000,
+        timeout: 5_000,
       });
       expect(result.exitCode).toBe(0);
       // tailLines returns at most N lines per service; for a single-service
@@ -281,7 +277,6 @@ describe("lich logs filtering", () => {
       const lines = result.stdout.split("\n").filter((l) => l.length > 0);
       expect(lines.length).toBeLessThanOrEqual(1);
     },
-    30_000,
   );
 
   it(
@@ -293,16 +288,16 @@ describe("lich logs filtering", () => {
         env: { LICH_HOME: lichHome! },
         // If --no-follow were broken (still polling), this would hit the
         // timeout — that's exactly what makes the assertion meaningful.
-        timeout: 15_000,
+        timeout: 5_000,
       });
       const elapsed = Date.now() - start;
 
       expect(result.exitCode).toBe(0);
-      // Should be near-instant. 10s is huge headroom for cold caches /
-      // first-spawn binary unpack; the real expected value is <1s.
-      expect(elapsed).toBeLessThan(10_000);
+      // --no-follow should be near-instant — read state.json, dump tail,
+      // exit. 3s gives headroom for cold-cache binary spawn; real
+      // expected value is <500ms.
+      expect(elapsed).toBeLessThan(3_000);
     },
-    30_000,
   );
 
   it(
@@ -316,7 +311,7 @@ describe("lich logs filtering", () => {
       const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
-        timeout: 30_000,
+        timeout: 5_000,
       });
       expect(result.exitCode).toBe(0);
       // The startup banner from apps/api/src/index.ts:
@@ -326,7 +321,6 @@ describe("lich logs filtering", () => {
       // the test fails loudly and points us at the change.
       expect(result.stdout).toMatch(/listening on http:\/\/localhost:/);
     },
-    30_000,
   );
 
   it(
@@ -337,7 +331,7 @@ describe("lich logs filtering", () => {
         {
           cwd: projectPath!,
           env: { LICH_HOME: lichHome! },
-          timeout: 15_000,
+          timeout: 5_000,
         },
       );
 
@@ -351,6 +345,5 @@ describe("lich logs filtering", () => {
       // what they could have typed. The dogfood-stack has api, web, supabase.
       expect(combined).toMatch(/api|web|supabase/);
     },
-    30_000,
   );
 });

@@ -57,7 +57,9 @@ const initHandler: CommandHandler = (ctx) => {
   const result = runInitSync(
     {
       force: Boolean(ctx.argv.force),
-      noGitignore: Boolean(ctx.argv["no-gitignore"]),
+      // mri parses `--no-gitignore` into `{ gitignore: false }`, NOT
+      // `{ "no-gitignore": true }`. Check the explicit boolean instead.
+      noGitignore: ctx.argv.gitignore === false,
     },
     process.cwd(),
   );
@@ -91,7 +93,10 @@ const downHandler: CommandHandler = async (ctx) => {
 
 const logsHandler: CommandHandler = async (ctx) => {
   const [service] = ctx.argv._;
-  const follow = ctx.argv["no-follow"] ? false : true;
+  // mri parses `--no-follow` into `{ follow: false }`, NOT
+  // `{ "no-follow": true }`. Check the explicit boolean instead.
+  // Default to follow=true when neither flag is passed.
+  const follow = ctx.argv.follow !== false;
   const tail =
     typeof ctx.argv.tail === "number"
       ? ctx.argv.tail
