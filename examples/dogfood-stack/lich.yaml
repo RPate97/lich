@@ -25,6 +25,7 @@ owned:
       db_pooler: { env: SUPABASE_DB_POOLER_PORT }
       studio: { env: SUPABASE_STUDIO_PORT }
       inbucket: { env: SUPABASE_INBUCKET_PORT }
+      analytics: { env: SUPABASE_ANALYTICS_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"
       timeout: 90s
