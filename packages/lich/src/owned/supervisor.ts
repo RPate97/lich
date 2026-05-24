@@ -222,6 +222,49 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * "Is any process in the process group `pid` alive?" — uses signal 0 sent
+ * to the negative pid (POSIX semantics: kill(-pgid, sig) signals every
+ * member of the group with pgid). ESRCH means the group is empty (every
+ * member is dead AND reaped). Anything else means at least one member is
+ * still alive. We use this to verify a group-kill actually reaped every
+ * descendant, not just the leader. See LEV-319.
+ */
+function isGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send a signal to every process in the process group whose PGID is `pid`.
+ * Negative pid is the POSIX convention for "this is a pgid, fan out to
+ * every member." Requires the child to have been spawned with
+ * `detached: true` so it became a group leader (PGID == its own PID).
+ *
+ * ESRCH ("no such process") is silently swallowed — the group is already
+ * gone, which is the desired end-state. Other errors propagate.
+ *
+ * Why this exists: the supervisor's child is `/bin/sh -c <user-cmd>`, and
+ * the user-cmd typically spawns its own grandchildren (`bun run dev`
+ * spawns Express; `npm run dev` spawns a webpack server; etc.). If we
+ * SIGTERM just the leader PID, the leader exits but the grandchildren get
+ * reparented to init and keep running — port still bound, supabase
+ * connection still open, ghost process for every test run. Signaling the
+ * whole group catches every descendant. See LEV-319.
+ */
+function killGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") throw err;
+  }
+}
+
 /** Promise-based sleep — used for short grace windows. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -323,6 +366,17 @@ export async function startOwnedService(
     // Ignore stdin (owned services don't read from the user); pipe both
     // stdout and stderr so we can tee them into the log file.
     stdio: ["ignore", "pipe", "pipe"],
+    // `detached: true` makes the child a process group leader (its PGID
+    // equals its own PID), so on stop() we can signal the whole group
+    // via `kill(-pid, sig)` and reach every descendant the user's cmd
+    // spawned (e.g. `bun run dev` → actual Express server). Without
+    // this, SIGTERM kills the leader but its grandchildren get
+    // orphaned and keep running. See LEV-319.
+    //
+    // Note: we deliberately do NOT call child.unref() — we want node to
+    // keep tracking the child (stdio, exit events) for the supervisor's
+    // lifetime. detached only affects process-group semantics here.
+    detached: true,
   });
 
   // Open the log file for APPEND, not truncate. This preserves output from
@@ -433,11 +487,8 @@ export async function startOwnedService(
     // failing (ESRCH) is fine and expected for oneshots.
     if (spec.stopCmd) {
       if (exitResult === null) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // Already gone — that's the oneshot case, no problem.
-        }
+        // Group-signal (LEV-319): catch the leader + any descendants.
+        killGroup(pid, "SIGTERM");
       }
       await runStopCmd(spec, STOP_CMD_TIMEOUT_MS);
       // If the original child was still alive, give it a brief moment to
@@ -450,11 +501,7 @@ export async function startOwnedService(
           new Promise<"timeout">((r) => setTimeout(() => r("timeout"), graceMs)),
         ]);
         if (graceful === "timeout") {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {
-            /* already gone */
-          }
+          killGroup(pid, "SIGKILL");
           await exited;
         }
       }
@@ -464,49 +511,45 @@ export async function startOwnedService(
     // Idempotent: already exited → nothing to do.
     if (exitResult !== null) return;
 
-    // SIGTERM gives the process a chance to clean up (trap handlers, flush
-    // buffers, close sockets). Most dev servers handle this within a few ms.
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // ESRCH (no such process) means the child already died between our
-      // exitResult check and the kill — treat as already-stopped.
-      await exited;
-      return;
-    }
+    // SIGTERM the whole process group (LEV-319) — gives the leader AND
+    // its descendants (the actual Express server spawned by `bun run dev`,
+    // etc.) a chance to clean up. Most dev servers handle SIGTERM within
+    // a few ms.
+    killGroup(pid, "SIGTERM");
 
-    // Race the graceful exit against the grace timeout.
+    // Race the leader's graceful exit against the grace timeout. The
+    // leader exiting doesn't guarantee descendants are gone — that's
+    // what the post-SIGKILL group-alive check below catches.
     const graceful = await Promise.race([
       exited.then(() => "exited" as const),
       new Promise<"timeout">((r) => setTimeout(() => r("timeout"), graceMs)),
     ]);
 
-    if (graceful === "exited") return;
-
-    // Process ignored SIGTERM (or is genuinely stuck). Escalate to SIGKILL,
-    // which is uncatchable. Then wait for the exit event to fire — even
-    // SIGKILL'd processes emit 'exit'.
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Already gone between the timeout and the kill.
+    // Whether or not the leader exited gracefully, escalate to SIGKILL on
+    // the group if anyone is still alive. SIGKILL is uncatchable; this is
+    // the "we tried polite, now we're going" step.
+    if (graceful === "timeout" || isGroupAlive(pid)) {
+      killGroup(pid, "SIGKILL");
+      // Even when only descendants needed killing (leader already exited),
+      // the leader's `exited` promise has already resolved, so this await
+      // is a no-op in the happy case.
+      await exited;
     }
-    await exited;
 
-    // Post-SIGKILL verification (LEV-312): SIGKILL is uncatchable but the
-    // kernel needs a tick or two to reap the process. After a brief grace
-    // window we poll `process.kill(pid, 0)` — the standard "is this pid
-    // alive?" probe. ESRCH means dead (the happy path); no error means
-    // the pid is somehow still resolvable, which is the "lich said it
-    // killed the thing and it didn't" case. Extremely rare — typically
-    // uninterruptible D-state, zombie accounting, or a containerized pid
-    // mismatch — but when it does happen the user's "if lich reports
-    // success the thing is gone" contract is broken and we should say so
-    // rather than pretend. The diagnostic surfaces on the handle's
+    // Post-SIGKILL verification (LEV-312 + LEV-319): SIGKILL is uncatchable
+    // but the kernel needs a tick or two to reap each process. After a
+    // brief grace window we check the WHOLE GROUP via `kill(-pid, 0)` —
+    // ESRCH means every group member is dead and reaped (happy path);
+    // no error means at least one descendant is still alive, which is the
+    // "lich said it killed the thing and it didn't" case. Extremely rare
+    // — typically uninterruptible D-state, zombie accounting, or a
+    // containerized pid mismatch — but when it does happen the user's
+    // "if lich reports success the thing is gone" contract is broken
+    // and we should say so. The diagnostic surfaces on the handle's
     // `stopWarning` field for callers to read.
     await sleep(SIGKILL_VERIFY_GRACE_MS);
-    if (isAlive(pid)) {
-      lastStopWarning = `SIGKILL did not reap pid ${pid} after ${SIGKILL_VERIFY_GRACE_MS}ms; process may still be alive`;
+    if (isGroupAlive(pid)) {
+      lastStopWarning = `SIGKILL did not reap process group ${pid} after ${SIGKILL_VERIFY_GRACE_MS}ms; one or more processes may still be alive`;
     }
   };
 
@@ -569,6 +612,10 @@ async function runStopCmd(
     cwd: spec.cwd,
     env,
     stdio: ["ignore", "pipe", "pipe"],
+    // Group leader so the timeout-SIGKILL path can fan out to descendants
+    // the stop_cmd may have spawned (e.g. `supabase stop` shells out to
+    // docker compose). LEV-319.
+    detached: true,
   });
 
   // Append to the same log file — the teardown's output is part of the
@@ -601,15 +648,12 @@ async function runStopCmd(
     };
     const timer = setTimeout(() => {
       if (settled) return;
-      // Stop_cmd is taking too long. Hard-kill it and move on. The
-      // service's state-of-the-world (containers running, ports bound)
-      // is whatever it is; we don't pretend otherwise.
+      // Stop_cmd is taking too long. Hard-kill the whole group and move
+      // on (LEV-319). The service's state-of-the-world (containers
+      // running, ports bound) is whatever it is; we don't pretend
+      // otherwise.
       if (typeof child.pid === "number") {
-        try {
-          process.kill(child.pid, "SIGKILL");
-        } catch {
-          /* already gone */
-        }
+        killGroup(child.pid, "SIGKILL");
       }
       finish();
     }, timeoutMs);

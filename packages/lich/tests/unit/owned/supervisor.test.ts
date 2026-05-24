@@ -297,7 +297,92 @@ describe("startOwnedService — stop()", () => {
     // Should resolve without throwing, without trying to signal.
     await expect(handle.stop()).resolves.toBeUndefined();
   });
+
+  /**
+   * The bug class LEV-319 fixes: user `cmd:` spawns child processes
+   * (think `bun run dev` → actual Express server, or any wrapper script).
+   * Before the fix, lich's stop() SIGTERM'd just the leader PID; the
+   * leader exited, the grandchild got reparented to launchd/init and kept
+   * running — port still bound, db connections still open, ghost
+   * processes accumulating per test run.
+   *
+   * The fix: spawn with `detached: true` (child becomes process group
+   * leader), then send SIGTERM/SIGKILL to the entire group via the
+   * negative-pid POSIX convention.
+   *
+   * This test asserts that a grandchild spawned by the user's cmd is
+   * actually dead after handle.stop(). It's the regression that proves
+   * the leak is closed.
+   */
+  it("kills grandchildren too (process group, LEV-319)", async () => {
+    const name = "parent-with-grandchild";
+
+    // The cmd is a one-liner that:
+    //   1. Spawns a long-lived child process (sleep 600) and captures its PID
+    //   2. Echoes "GRANDCHILD_PID=<pid>" so the test can capture it
+    //   3. Keeps the parent alive itself (loops forever)
+    // Both the parent and the grandchild are independent processes; if the
+    // group-kill works, both will be reaped by handle.stop().
+    const handle = await startOwnedService({
+      name,
+      cmd: 'sleep 600 & echo "GRANDCHILD_PID=$!"; while true; do sleep 1; done',
+      cwd: homeDir,
+      env: {},
+      logPath: serviceLogPath(STACK_ID, name),
+    });
+
+    const parentPid = handle.pid;
+
+    // Read the grandchild PID from the log file. The child echoes it
+    // immediately, so a short wait is enough.
+    let grandchildPid: number | null = null;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && grandchildPid === null) {
+      await new Promise((r) => setTimeout(r, 50));
+      try {
+        const log = await readFile(serviceLogPath(STACK_ID, name), "utf8");
+        const m = log.match(/GRANDCHILD_PID=(\d+)/);
+        if (m) grandchildPid = Number(m[1]);
+      } catch {
+        /* file may not exist yet */
+      }
+    }
+    expect(grandchildPid, "grandchild pid should be captured").not.toBeNull();
+    expect(parentPid, "parent pid should exist").toBeTypeOf("number");
+
+    // Pre-stop sanity: both alive.
+    expect(isPidAlive(parentPid!)).toBe(true);
+    expect(isPidAlive(grandchildPid!)).toBe(true);
+
+    // The fix under test.
+    await handle.stop();
+
+    // Brief grace for the kernel to reap. Mirrors the supervisor's own
+    // SIGKILL_VERIFY_GRACE_MS — if it's wrong here, it's wrong there.
+    await new Promise((r) => setTimeout(r, 600));
+
+    // Post-stop assertion: both gone. This is the load-bearing assertion;
+    // before LEV-319, the grandchild was still alive here.
+    expect(isPidAlive(parentPid!), "parent should be dead").toBe(false);
+    expect(
+      isPidAlive(grandchildPid!),
+      `grandchild pid ${grandchildPid} should be dead (this was the LEV-319 bug)`,
+    ).toBe(false);
+
+    // And stopWarning should be null on the happy path.
+    expect(handle.stopWarning).toBeNull();
+  }, 10_000);
 });
+
+/** Helper: probe pid liveness without killing it. */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("startOwnedService — PWD canonicalization (LEV-300)", () => {
   /**
