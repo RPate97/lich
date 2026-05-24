@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { runUrls } from "../../../src/commands/urls.js";
 import { detectWorktree } from "../../../src/worktree/detect.js";
 import {
+  type ServiceSnapshot,
   type StackSnapshot,
   writeSnapshot,
 } from "../../../src/state/snapshot.js";
@@ -223,7 +224,7 @@ describe("runUrls — mixed compose + owned", () => {
           allocated_ports: { PORT: 3001 },
           pid: 2,
         },
-      ],
+      ] as ServiceSnapshot[],
     }));
 
     const { exitCode, out } = await run();

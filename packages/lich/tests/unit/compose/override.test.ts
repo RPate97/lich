@@ -19,9 +19,21 @@ import { stackDir } from "../../../src/state/directory.js";
  * Minimal LichConfig builder. Tests pass just the `services` shape they
  * care about — `version` is required for the type, everything else is
  * optional.
+ *
+ * The parameter is typed as `Record<string, unknown>` (then cast) so tests
+ * can pass the dogfood-style port shape (`{ container, env }`) that the
+ * override generator reads structurally. The `PortDescriptor` type in
+ * `config/types.ts` doesn't yet include `container` on the object form —
+ * tightening that type is owned by LEV-305 — so the test fixture takes
+ * the same permissive shape the runtime accepts.
  */
-function makeConfig(services: NonNullable<LichConfig["services"]>): LichConfig {
-  return { version: "1", services };
+function makeConfig(
+  services: Record<string, unknown>,
+): LichConfig {
+  return {
+    version: "1",
+    services: services as NonNullable<LichConfig["services"]>,
+  };
 }
 
 /** A single-service config: one compose service `api` with one port. */

@@ -33,9 +33,15 @@ describe("runLich", () => {
     expect(result.stderr).toContain("unknown command");
   });
 
-  it("returns 'not yet implemented' for up command (current stub state)", () => {
+  it("captures stdout and exit code for a real command (lich up with no config)", () => {
+    // Running `lich up` from the repo root (which has no lich.yaml) is a
+    // convenient way to exercise the helper end-to-end: the binary spawns,
+    // produces real output, exits non-zero. We assert on the helper's
+    // contract (exitCode + stdout captured), not on the specific message
+    // text — actual `lich up` behavior is covered by the e2e suite for
+    // that command.
     const result = runLich(["up"], { cwd: repoRoot });
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("not yet implemented");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout.length).toBeGreaterThan(0);
   });
 });

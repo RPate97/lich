@@ -90,8 +90,21 @@ const realExec: ExecFn = (cmd, args, opts) =>
         maxBuffer: 50 * 1024 * 1024,
       },
       (err, stdout, stderr) => {
-        const out = typeof stdout === "string" ? stdout : stdout.toString();
-        const errOut = typeof stderr === "string" ? stderr : stderr.toString();
+        // The default encoding for `execFile` (no `encoding` option) returns
+        // strings to the callback. The runtime defensive coercion below
+        // tolerates either string or Buffer in case the binding is invoked
+        // with a different encoding by future callers; the cast to `unknown`
+        // is what lets the runtime check do the work the type system can't.
+        const stdoutAny = stdout as unknown;
+        const stderrAny = stderr as unknown;
+        const out =
+          typeof stdoutAny === "string"
+            ? stdoutAny
+            : (stdoutAny as { toString(): string }).toString();
+        const errOut =
+          typeof stderrAny === "string"
+            ? stderrAny
+            : (stderrAny as { toString(): string }).toString();
         if (err) {
           // execFile gives us `code` on the error for non-zero exits.
           // Distinguish "process spawned and exited non-zero" (resolve
