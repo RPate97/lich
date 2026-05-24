@@ -1,0 +1,9 @@
+version: "1"
+env_groups:
+  "infisical-prod":
+    env:
+      SECRET: shh
+commands:
+  foo:
+    cmd: "x"
+    env_group: "infisical-prdo"
