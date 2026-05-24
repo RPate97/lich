@@ -55,6 +55,10 @@ import {
   type ServiceSnapshot,
   type StackSnapshot,
 } from "../state/snapshot.js";
+import {
+  readStartedLog,
+  type StartedEntry,
+} from "../state/started-log.js";
 import { hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +68,16 @@ import { hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 export interface RunNukeInput {
   /** `--yes` / `-y` to skip the confirmation prompt. */
   yes?: boolean;
+  /**
+   * `--rescue`: after the normal state.json-driven teardown, read
+   * `~/.lich/started.log` and run cleanup for every entry on a
+   * best-effort, idempotent basis. The recovery escape hatch for "I
+   * got lich into a weird state and just want it clean" (LEV-311).
+   *
+   * Default false. Plain `lich nuke` (no `--rescue`) preserves the
+   * fast state.json-driven path from LEV-295/309/310 — unchanged.
+   */
+  rescue?: boolean;
   /** Defaults to `process.stdout`. */
   out?: NodeJS.WritableStream;
   /** Defaults to `process.stderr`. */
@@ -81,9 +95,25 @@ export interface NukeOutcome {
   detail?: string;
 }
 
+/**
+ * One outcome from the `--rescue` scan over `~/.lich/started.log`.
+ * Logged regardless of state.json availability — that's the whole
+ * point of rescue. `kind` mirrors the StartedEntry kind; `detail` is
+ * human-readable context (e.g. "already dead", "container down").
+ */
+export interface RescueOutcome {
+  kind: "pid" | "compose" | "owned";
+  /** Display label: pid number, project name, or service name. */
+  label: string;
+  status: "ok" | "warn";
+  detail?: string;
+}
+
 export interface RunNukeResult {
   exitCode: number;
   outcomes: NukeOutcome[];
+  /** Present when `--rescue` was passed; empty array means the log was empty. */
+  rescue?: RescueOutcome[];
 }
 
 /**
@@ -100,7 +130,10 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
 
   const ids = await listStacks();
 
-  if (ids.length === 0) {
+  // Rescue mode skips the "no stacks to nuke" early return — the whole
+  // point of rescue is that state.json may be gone but external
+  // resources may still be leaking. We still need to scan the log.
+  if (ids.length === 0 && !input.rescue) {
     writeLine(out, "no stacks to nuke");
     return { exitCode: 0, outcomes: [] };
   }
@@ -110,7 +143,7 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
   // requirement would force every test/integration to opt in. Plan 1
   // takes the friendlier route: non-TTY stdin is treated as "the
   // caller knows what they're doing.").
-  if (!input.yes && isTTY(stdin)) {
+  if (!input.yes && isTTY(stdin) && ids.length > 0) {
     writeLine(
       out,
       `will nuke ${ids.length} stack(s): ${ids.join(", ")}`,
@@ -139,11 +172,24 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
   }
 
   // Final summary line. Always one line, machine-readable enough to
-  // grep against in shell.
-  const nuked = outcomes.filter((o) => o.status === "nuked").length;
-  const failed = outcomes.filter((o) => o.status === "failed").length;
-  const skipped = outcomes.filter((o) => o.status === "skipped").length;
-  writeLine(out, `nuked ${nuked}, failed ${failed}, skipped ${skipped}`);
+  // grep against in shell. In rescue mode with no stacks present, we
+  // suppress this line — the rescue summary below tells the whole
+  // story and the "nuked 0, failed 0, skipped 0" line would just be
+  // noise.
+  if (ids.length > 0) {
+    const nuked = outcomes.filter((o) => o.status === "nuked").length;
+    const failed = outcomes.filter((o) => o.status === "failed").length;
+    const skipped = outcomes.filter((o) => o.status === "skipped").length;
+    writeLine(out, `nuked ${nuked}, failed ${failed}, skipped ${skipped}`);
+  }
+
+  // --rescue path: after the normal teardown loop, read the append-only
+  // started log and try to clean up every entry. Idempotent per the
+  // log's design contract (LEV-311) — re-running is safe.
+  if (input.rescue) {
+    const rescueOutcomes = await runRescue(out);
+    return { exitCode: 0, outcomes, rescue: rescueOutcomes };
+  }
 
   return { exitCode: 0, outcomes };
 }
@@ -572,4 +618,374 @@ function sleep(ms: number): Promise<void> {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+// ---------------------------------------------------------------------------
+// Rescue (--rescue) — LEV-311
+//
+// Reads the append-only started log and runs idempotent cleanup per
+// entry. The whole subsystem lives in this dedicated section to keep
+// blast radius small and concentrate the new code, which makes merge
+// conflicts with the parallel LEV-312 work surgical rather than
+// scattered.
+//
+// Cleanup semantics:
+//   - `kind: pid`     SIGTERM, wait 2s, SIGKILL if alive. Dead PIDs are
+//                     silently OK.
+//   - `kind: compose` `compose down -v --remove-orphans -p <project>`
+//                     with the logged `files`. Use the CLI named in the
+//                     entry if available; autodetect otherwise.
+//                     Already-down projects are exit 0 (compose itself
+//                     is idempotent).
+//   - `kind: owned`   If `stop_cmd` set, spawn `/bin/sh -c <stop_cmd>`
+//                     with `cwd: entry.cwd, env: entry.env`. The logged
+//                     env is the resolved env from start time (critical
+//                     for supabase-style tools whose stop_cmd reads
+//                     SUPABASE_PROJECT_ID etc.). Without stop_cmd,
+//                     there's nothing actionable in this entry — the
+//                     paired `kind: pid` entry would have handled it.
+// ---------------------------------------------------------------------------
+
+/** Cap on a single rescue stop_cmd. Mirrors the main nuke teardown. */
+const RESCUE_STOP_CMD_TIMEOUT_MS = 30_000;
+
+/** Grace period before SIGKILL escalation in the rescue PID path. */
+const RESCUE_SIGTERM_GRACE_MS = 2_000;
+
+/**
+ * Top-level rescue driver. Reads the log, dispatches per entry, prints
+ * a summary section, and returns the per-entry outcomes.
+ *
+ * `out` is the same stream as the main nuke output — the summary block
+ * appears AFTER the regular "nuked X, failed Y, skipped Z" line so
+ * humans can scan top-down and machines (`grep "Rescue scan"`) can
+ * still find the rescue boundary.
+ */
+async function runRescue(
+  out: NodeJS.WritableStream,
+): Promise<RescueOutcome[]> {
+  let entries: StartedEntry[];
+  try {
+    entries = await readStartedLog();
+  } catch (err) {
+    // Catastrophic read failure (permissions, etc.) — surface as a
+    // warning section and bail. The exit code stays 0 because rescue
+    // can't make things worse than they already are.
+    writeLine(out, "");
+    writeLine(
+      out,
+      `Rescue scan: failed to read started.log (${errorMessage(err)})`,
+    );
+    return [];
+  }
+
+  writeLine(out, "");
+  writeLine(
+    out,
+    `Rescue scan (${entries.length} entr${entries.length === 1 ? "y" : "ies"} in started.log):`,
+  );
+
+  if (entries.length === 0) {
+    writeLine(out, "  (nothing to do)");
+    return [];
+  }
+
+  const outcomes: RescueOutcome[] = [];
+  for (const entry of entries) {
+    const outcome = await rescueOne(entry).catch((err) => ({
+      kind: entry.kind,
+      label: rescueLabel(entry),
+      status: "warn" as const,
+      detail: errorMessage(err),
+    }));
+    outcomes.push(outcome);
+    // Emit the one-line summary for this entry immediately so the user
+    // sees progress on long rescues rather than a final block at the end.
+    writeLine(out, `  ${formatRescueLine(outcome)}`);
+  }
+
+  return outcomes;
+}
+
+/**
+ * Dispatch one rescue entry to the correct cleanup path. Each path is
+ * idempotent — running twice in a row finds nothing new on the second
+ * pass. Never throws (errors map to `status: "warn"` outcomes) so the
+ * caller's loop can keep going past one bad entry.
+ */
+async function rescueOne(entry: StartedEntry): Promise<RescueOutcome> {
+  if (entry.kind === "pid") {
+    return rescuePid(entry);
+  }
+  if (entry.kind === "compose") {
+    return rescueCompose(entry);
+  }
+  if (entry.kind === "owned") {
+    return rescueOwned(entry);
+  }
+  // Defensive — the type system already exhausts the union, but a
+  // forward-compat new `kind` from a future writer should not crash.
+  return {
+    kind: (entry as { kind: "pid" | "compose" | "owned" }).kind,
+    label: "unknown",
+    status: "warn",
+    detail: "unknown rescue entry kind",
+  };
+}
+
+/**
+ * SIGTERM → grace → SIGKILL on a logged PID. Dead PIDs (ESRCH on
+ * `process.kill(pid, 0)`) are the expected case for rescues run long
+ * after the original lich process exited and are reported as OK.
+ */
+async function rescuePid(
+  entry: Extract<StartedEntry, { kind: "pid" }>,
+): Promise<RescueOutcome> {
+  const label = `pid ${entry.pid} (${entry.service})`;
+
+  if (!isAlive(entry.pid)) {
+    return { kind: "pid", label, status: "ok", detail: "already dead" };
+  }
+
+  // SIGTERM first.
+  try {
+    process.kill(entry.pid, "SIGTERM");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+      return { kind: "pid", label, status: "ok", detail: "already dead" };
+    }
+    return {
+      kind: "pid",
+      label,
+      status: "warn",
+      detail: `SIGTERM: ${errorMessage(err)}`,
+    };
+  }
+
+  // Wait up to grace for graceful exit.
+  const startMs = Date.now();
+  while (Date.now() - startMs < RESCUE_SIGTERM_GRACE_MS) {
+    if (!isAlive(entry.pid)) {
+      return { kind: "pid", label, status: "ok", detail: "SIGTERM" };
+    }
+    await sleep(50);
+  }
+
+  // Escalate.
+  try {
+    process.kill(entry.pid, "SIGKILL");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+      return {
+        kind: "pid",
+        label,
+        status: "ok",
+        detail: "exited during grace",
+      };
+    }
+    return {
+      kind: "pid",
+      label,
+      status: "warn",
+      detail: `SIGKILL: ${errorMessage(err)}`,
+    };
+  }
+
+  // Brief verify so we don't report success on a still-alive pid.
+  for (let i = 0; i < 20; i++) {
+    if (!isAlive(entry.pid)) {
+      return { kind: "pid", label, status: "ok", detail: "SIGKILL" };
+    }
+    await sleep(50);
+  }
+  return {
+    kind: "pid",
+    label,
+    status: "warn",
+    detail: "still alive after SIGKILL — manual cleanup needed",
+  };
+}
+
+/**
+ * `<compose-cli> compose -p <project> -f <files...> down -v --remove-orphans`.
+ *
+ * Uses the CLI named in the entry if available, falls back to autodetect
+ * (e.g. machine moved from podman to docker since the entry was logged).
+ * Both detection and the down call are best-effort — already-down
+ * projects exit 0, and detection failure surfaces as a warn outcome
+ * without aborting the rescue scan.
+ */
+async function rescueCompose(
+  entry: Extract<StartedEntry, { kind: "compose" }>,
+): Promise<RescueOutcome> {
+  const label = `compose project ${entry.project}`;
+
+  let cli;
+  try {
+    // Prefer the CLI the entry was logged with; resolveComposeCli probes
+    // that it's still available, falling through to autodetect on a
+    // missing/changed override.
+    cli = await resolveComposeCli(entry.compose_cli).catch(async () => {
+      return await resolveComposeCli(undefined);
+    });
+  } catch (err) {
+    return {
+      kind: "compose",
+      label,
+      status: "warn",
+      detail: `no compose CLI available: ${errorMessage(err)}`,
+    };
+  }
+
+  const ctx: RunnerCtx = {
+    cli,
+    project: entry.project,
+    files: [...entry.files],
+    cwd: entry.cwd,
+  };
+
+  try {
+    const result = await composeDown(ctx, {
+      volumes: true,
+      remove_orphans: true,
+    });
+    // Non-zero exit is expected for already-down projects (compose
+    // sometimes reports as a warning). Surface the exit code only when
+    // it's actually non-zero — even then it's "warn" not "fail" because
+    // the project is most likely already cleaned up.
+    if (result.exitCode !== 0) {
+      const detail = (result.stderr.trim() || result.stdout.trim() || "")
+        .split("\n")
+        .slice(0, 2)
+        .join(" / ");
+      return {
+        kind: "compose",
+        label,
+        status: "warn",
+        detail: `compose down exited ${result.exitCode}${detail ? `: ${detail}` : ""}`,
+      };
+    }
+    return { kind: "compose", label, status: "ok", detail: "compose down" };
+  } catch (err) {
+    return {
+      kind: "compose",
+      label,
+      status: "warn",
+      detail: `compose down: ${errorMessage(err)}`,
+    };
+  }
+}
+
+/**
+ * Spawn `/bin/sh -c <stop_cmd>` with the LOGGED cwd + env. Critical
+ * detail: the env comes from `entry.env`, NOT `process.env`. The whole
+ * reason this works for supabase et al. is that the resolved env
+ * captured at start time (with SUPABASE_PROJECT_ID etc. interpolated)
+ * is what stop_cmd needs to address the same external state — bare
+ * `process.env` would re-introduce the LEV-310 class of bug at recovery
+ * time.
+ *
+ * Entries without `stop_cmd` are no-ops: there's nothing actionable.
+ * A paired `kind: pid` entry (logged by up.ts for every long-lived
+ * owned service) handles the process side; the `kind: owned` entry's
+ * only contribution is the stop_cmd path.
+ */
+async function rescueOwned(
+  entry: Extract<StartedEntry, { kind: "owned" }>,
+): Promise<RescueOutcome> {
+  const label = `owned service ${entry.service}`;
+
+  if (!entry.stop_cmd) {
+    return {
+      kind: "owned",
+      label,
+      status: "ok",
+      detail: "no stop_cmd",
+    };
+  }
+
+  return new Promise<RescueOutcome>((resolve) => {
+    const child = spawn("/bin/sh", ["-c", entry.stop_cmd!], {
+      cwd: entry.cwd,
+      env: entry.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let settled = false;
+    const finish = (outcome: RescueOutcome): void => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      if (typeof child.pid === "number") {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      finish({
+        kind: "owned",
+        label,
+        status: "warn",
+        detail: `stop_cmd timed out after ${RESCUE_STOP_CMD_TIMEOUT_MS}ms`,
+      });
+    }, RESCUE_STOP_CMD_TIMEOUT_MS);
+
+    // Drain output so the child doesn't block on a full pipe. We don't
+    // tee to a log file — the rescue summary captures the outcome, and
+    // the per-service log is owned by the original stack dir (which may
+    // be gone, which is the whole reason rescue exists).
+    child.stdout?.on("data", () => {});
+    child.stderr?.on("data", () => {});
+
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        finish({
+          kind: "owned",
+          label,
+          status: "ok",
+          detail: "stop_cmd",
+        });
+        return;
+      }
+      finish({
+        kind: "owned",
+        label,
+        status: "warn",
+        detail: `stop_cmd exited ${code}`,
+      });
+    });
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      finish({
+        kind: "owned",
+        label,
+        status: "warn",
+        detail: `stop_cmd: ${errorMessage(err)}`,
+      });
+    });
+  });
+}
+
+/** Compact label used in the rescue summary block. */
+function rescueLabel(entry: StartedEntry): string {
+  if (entry.kind === "pid") return `pid ${entry.pid} (${entry.service})`;
+  if (entry.kind === "compose") return `compose project ${entry.project}`;
+  return `owned service ${entry.service}`;
+}
+
+/**
+ * Format one rescue outcome as a single line. ASCII-only (no
+ * non-printable / non-ASCII chars) so output renders the same across
+ * terminals, CI logs, and file redirects.
+ */
+function formatRescueLine(outcome: RescueOutcome): string {
+  const marker = outcome.status === "ok" ? "ok" : "!!";
+  const tail = outcome.detail ? ` (${outcome.detail})` : "";
+  return `[${marker}] ${outcome.label}${tail}`;
 }

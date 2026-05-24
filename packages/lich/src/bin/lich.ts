@@ -4,8 +4,12 @@ import { VERSION } from "../version.js";
 import { COMMANDS, isCommand } from "../commands/index.js";
 
 const argv = mri(process.argv.slice(2), {
-  alias: { v: "version", h: "help" },
-  boolean: ["version", "help", "json"],
+  alias: { v: "version", h: "help", y: "yes" },
+  // Explicitly declare every boolean flag here so mri never tries to
+  // consume the following positional as the flag's value. `yes`/`rescue`
+  // are nuke flags (LEV-311 for rescue); `json` is shared across
+  // commands that support structured output.
+  boolean: ["version", "help", "json", "yes", "rescue"],
 });
 
 if (argv.version) {

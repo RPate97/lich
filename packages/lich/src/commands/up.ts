@@ -65,6 +65,7 @@ import {
   type OwnedHandle,
   type OwnedServiceSpec,
 } from "../owned/supervisor.js";
+import { appendStarted } from "../state/started-log.js";
 import { waitForHttpReady } from "../ready/http-get.js";
 import { waitForTcpReady } from "../ready/tcp.js";
 import {
@@ -711,6 +712,22 @@ async function startOwned(
     // Oneshots run to completion as the "start" step — runOneshot throws
     // on non-zero exit, with the log tail in the message.
     await runOneshot(spec);
+    // LEV-311: log the oneshot AFTER successful exit. The lich-spawned
+    // child has already exited cleanly; the long-lived external state
+    // (supabase containers, etc.) only cleans up via stop_cmd. We need
+    // every piece a future `lich nuke --rescue` would need: the cmd
+    // itself (for diagnostics), the stop_cmd, the cwd, and — critically
+    // — the RESOLVED env (so SUPABASE_PROJECT_ID etc. round-trip).
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: worktree.stack_id,
+      kind: "owned",
+      service: name,
+      cmd: def.cmd,
+      stop_cmd: def.stop_cmd,
+      cwd: spec.cwd,
+      env: stringifyEnv(env),
+    });
     return;
   }
 
@@ -736,6 +753,38 @@ async function startOwned(
       `owned service "${name}" exited immediately (${exitDesc}) — check ${spec.logPath}`,
     );
   }
+
+  // LEV-311: log the successful long-lived start. We emit TWO entries:
+  //
+  //   - `kind: pid` — direct-kill path. Rescue can SIGTERM/SIGKILL the
+  //     PID without needing the lich.yaml at recovery time.
+  //   - `kind: owned` — stop_cmd path. If the service declared one (rare
+  //     for long-lived; common for tools that manage their own daemons),
+  //     rescue invokes it with the resolved env captured here.
+  //
+  // Either alone would miss cases: pid-only loses stop_cmd-managed state,
+  // owned-only loses orphan-pid cleanup. Both is cheap and idempotent.
+  if (typeof handle.pid === "number" && Number.isFinite(handle.pid)) {
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: worktree.stack_id,
+      kind: "pid",
+      service: name,
+      pid: handle.pid,
+      cmd: def.cmd,
+      cwd: spec.cwd,
+    });
+  }
+  await appendStarted({
+    ts: new Date().toISOString(),
+    stack_id: worktree.stack_id,
+    kind: "owned",
+    service: name,
+    cmd: def.cmd,
+    stop_cmd: def.stop_cmd,
+    cwd: spec.cwd,
+    env: stringifyEnv(env),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +792,7 @@ async function startOwned(
 // ---------------------------------------------------------------------------
 
 async function startCompose(input: StartOneInput): Promise<void> {
-  const { name, composeCtx } = input;
+  const { name, composeCtx, worktree } = input;
   if (!composeCtx) {
     throw new Error(
       `internal: compose service "${name}" requested but compose context not built`,
@@ -755,6 +804,23 @@ async function startCompose(input: StartOneInput): Promise<void> {
       `compose up ${name} exited ${result.exitCode}:\n${result.stderr.trim() || result.stdout.trim()}`,
     );
   }
+  // LEV-311: log the compose project lich just brought up. We log per
+  // invocation rather than per project — each `compose up` call appends
+  // a row, even though multiple calls share the same `project` + `files`.
+  // Idempotent at rescue time: `compose down -p <project>` is a no-op on
+  // an already-down project, so duplicate entries reduce to a single
+  // teardown action. (A per-project dedupe in this function would
+  // require tracking what's already been logged, which adds state to a
+  // hot path for no observable benefit.)
+  await appendStarted({
+    ts: new Date().toISOString(),
+    stack_id: worktree.stack_id,
+    kind: "compose",
+    project: composeCtx.project,
+    files: [...composeCtx.files],
+    cwd: composeCtx.cwd,
+    compose_cli: composeCtx.cli.kind,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,4 +1231,26 @@ function snapshotServiceStates(
 function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * Coerce a `NodeJS.ProcessEnv` (string | undefined values) into the plain
+ * `Record<string, string>` shape `StartedEntry`'s env field expects.
+ *
+ * Why this exists: `resolveEnvForService` returns `NodeJS.ProcessEnv`,
+ * whose values are `string | undefined`. Undefined values can show up
+ * when a parent env had an entry explicitly cleared. The started-log
+ * entry shape is strict `Record<string, string>` — JSON has no `undefined`
+ * representation, so leaking those through would serialize as missing
+ * keys, then deserialize as missing keys, and any rescue stop_cmd that
+ * referenced them would silently see "" instead of the original value.
+ * Dropping them at the boundary keeps the on-disk log faithful to what
+ * we actually intend to round-trip.
+ */
+function stringifyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
 }

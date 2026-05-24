@@ -866,3 +866,358 @@ describe("runNuke — idempotency", () => {
     expect(sink.text()).toContain("no stacks to nuke");
   });
 });
+
+// ---------------------------------------------------------------------------
+// --rescue: reads ~/.lich/started.log and cleans up per entry (LEV-311).
+//
+// Rescue is the "I broke things, fix them" path. It runs AFTER the normal
+// state.json-driven loop and operates entirely off the append-only log,
+// so it works even when state.json is gone (the symptom rescue exists to
+// recover from).
+// ---------------------------------------------------------------------------
+
+import { appendStarted } from "../../../src/state/started-log.js";
+
+describe("runNuke --rescue", () => {
+  it("invokes stop_cmd with the LOGGED env (NOT process.env)", async () => {
+    // The smoking-gun test for the rescue path: a stop_cmd that echoes
+    // an env var only the resolved env knows about. If rescue passes
+    // process.env instead of entry.env, the sentinel will be empty —
+    // which is the LEV-310-equivalent bug at recovery time.
+    const sentinelPath = join(home, "rescue-stop-env.txt");
+    const expectedValue = "p-from-resolved-env-not-process-env";
+
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "leaked-stack",
+      kind: "owned",
+      service: "supabase",
+      cmd: "supabase start",
+      stop_cmd: `printf '%s' "$SUPABASE_PROJECT_ID" > ${shellQuote(sentinelPath)}`,
+      cwd: home,
+      env: { SUPABASE_PROJECT_ID: expectedValue },
+    });
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toBeDefined();
+    expect(result.rescue).toHaveLength(1);
+    expect(result.rescue![0].kind).toBe("owned");
+    expect(result.rescue![0].status).toBe("ok");
+
+    // The sentinel proves stop_cmd ran with the LOGGED env, not process.env.
+    expect(existsSync(sentinelPath)).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(sentinelPath, "utf8")).toBe(expectedValue);
+  });
+
+  it("is idempotent — re-running finds no new orphans and stays green", async () => {
+    const sentinelDir = join(home, "rescue-idempotent");
+    mkdirSync(sentinelDir, { recursive: true });
+
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "rescue-twice",
+      kind: "owned",
+      service: "thing",
+      cmd: "true",
+      // Idempotent stop_cmd: touches a file (no-op on second run).
+      stop_cmd: `touch ${shellQuote(join(sentinelDir, "stopped"))}`,
+      cwd: sentinelDir,
+      env: {},
+    });
+
+    const first = await runNuke({ out: makeSink().out, yes: true, rescue: true });
+    expect(first.exitCode).toBe(0);
+    expect(first.rescue).toHaveLength(1);
+    expect(first.rescue![0].status).toBe("ok");
+
+    // Sentinel exists from the first run.
+    expect(existsSync(join(sentinelDir, "stopped"))).toBe(true);
+
+    // Second run: same log, same idempotent cleanup. Both runs see the
+    // same entry (we don't tombstone) but the cleanup itself is
+    // idempotent so the second result is still "ok".
+    const { sink, out } = makeSink();
+    const second = await runNuke({ out, yes: true, rescue: true });
+    expect(second.exitCode).toBe(0);
+    expect(second.rescue).toHaveLength(1);
+    expect(second.rescue![0].status).toBe("ok");
+    // Summary printed and reports the rescue scan happened.
+    expect(sink.text()).toMatch(/Rescue scan/);
+  });
+
+  it("reports a dead PID as 'already dead' without error", async () => {
+    // Pid we expect to be unused.
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "ghost-stack",
+      kind: "pid",
+      service: "ghost",
+      pid: 2_147_483_640,
+      cmd: "true",
+      cwd: home,
+    });
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toHaveLength(1);
+    expect(result.rescue![0].kind).toBe("pid");
+    expect(result.rescue![0].status).toBe("ok");
+    expect(result.rescue![0].detail).toMatch(/already dead/);
+  });
+
+  it("SIGTERMs a live PID logged in the started log", async () => {
+    const child = spawn("node", ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      detached: false,
+    });
+    expect(typeof child.pid).toBe("number");
+    const pid = child.pid as number;
+
+    try {
+      await appendStarted({
+        ts: new Date().toISOString(),
+        stack_id: "live-pid",
+        kind: "pid",
+        service: "longlived",
+        pid,
+        cmd: "node -e ...",
+        cwd: home,
+      });
+
+      const { out } = makeSink();
+      const result = await runNuke({ out, yes: true, rescue: true });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.rescue).toHaveLength(1);
+      expect(result.rescue![0].kind).toBe("pid");
+      expect(result.rescue![0].status).toBe("ok");
+
+      // Wait for kernel reap.
+      await new Promise<void>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => resolve());
+      });
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+    } finally {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  it("invokes compose down for a logged compose entry", async () => {
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "compose-orphan",
+      kind: "compose",
+      project: "lich-leaked-project",
+      files: [join(home, "compose.yaml")],
+      cwd: home,
+      compose_cli: "docker",
+    });
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toHaveLength(1);
+    expect(result.rescue![0].kind).toBe("compose");
+    expect(result.rescue![0].status).toBe("ok");
+
+    // The stubbed exec recorded the down invocation with the logged
+    // project + files.
+    const downCall = composeCalls.find((c) =>
+      c.args.includes("down") && c.args.includes("--remove-orphans"),
+    );
+    expect(downCall).toBeDefined();
+    const projIdx = downCall!.args.indexOf("-p");
+    expect(downCall!.args[projIdx + 1]).toBe("lich-leaked-project");
+    expect(downCall!.args).toContain("-v");
+  });
+
+  it("works even when state.json is gone (the recovery scenario)", async () => {
+    // The whole point of rescue: state.json was wiped (rm -rf, crash,
+    // user manually cleaned `~/.lich/stacks/`) but the log still
+    // references the orphan resource. Verify rescue picks it up
+    // without depending on stacks/ at all.
+    const sentinelPath = join(home, "recovery.txt");
+
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "wiped-stack",
+      kind: "owned",
+      service: "leaker",
+      cmd: "true",
+      stop_cmd: `touch ${shellQuote(sentinelPath)}`,
+      cwd: home,
+      env: {},
+    });
+
+    // Confirm no stacks exist (the normal nuke path will be a no-op).
+    expect(existsSync(join(home, "stacks"))).toBe(false);
+
+    const { sink, out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toEqual([]); // no state.json work
+    expect(result.rescue).toHaveLength(1);
+    expect(result.rescue![0].status).toBe("ok");
+
+    // Smoking gun: stop_cmd ran via the rescue path.
+    expect(existsSync(sentinelPath)).toBe(true);
+
+    // We do NOT print "no stacks to nuke" in rescue mode — that would
+    // be a lie when the log had work to do.
+    expect(sink.text()).not.toContain("no stacks to nuke");
+    expect(sink.text()).toMatch(/Rescue scan/);
+  });
+
+  it("handles all three entry kinds in one pass", async () => {
+    const sentinel = join(home, "owned.touched");
+    await appendStarted({
+      ts: new Date(Date.UTC(2026, 4, 24, 3, 0, 0)).toISOString(),
+      stack_id: "mixed",
+      kind: "pid",
+      service: "api",
+      pid: 2_147_483_641, // dead
+      cmd: "x",
+      cwd: home,
+    });
+    await appendStarted({
+      ts: new Date(Date.UTC(2026, 4, 24, 3, 0, 1)).toISOString(),
+      stack_id: "mixed",
+      kind: "compose",
+      project: "lich-mixed",
+      files: [join(home, "c.yaml")],
+      cwd: home,
+      compose_cli: "docker",
+    });
+    await appendStarted({
+      ts: new Date(Date.UTC(2026, 4, 24, 3, 0, 2)).toISOString(),
+      stack_id: "mixed",
+      kind: "owned",
+      service: "svc",
+      cmd: "true",
+      stop_cmd: `touch ${shellQuote(sentinel)}`,
+      cwd: home,
+      env: {},
+    });
+
+    const { sink, out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toHaveLength(3);
+    // All entries reported ok.
+    for (const o of result.rescue!) {
+      expect(o.status).toBe("ok");
+    }
+    // Owned stop_cmd ran.
+    expect(existsSync(sentinel)).toBe(true);
+    // Compose down was invoked.
+    expect(composeCalls.find((c) => c.args.includes("down"))).toBeDefined();
+    // Output mentions the rescue scan.
+    expect(sink.text()).toMatch(/Rescue scan \(3 entries/);
+  });
+
+  it("rescue=false (plain nuke) does NOT read or act on the started log", async () => {
+    // Sentinel for stop_cmd: must NOT be created on a plain nuke.
+    const sentinel = join(home, "should-not-exist.txt");
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "non-rescue",
+      kind: "owned",
+      service: "thing",
+      cmd: "true",
+      stop_cmd: `touch ${shellQuote(sentinel)}`,
+      cwd: home,
+      env: {},
+    });
+
+    const result = await runNuke({ out: makeSink().out, yes: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toBeUndefined();
+    // The log entry was NOT acted on — sentinel must not exist.
+    expect(existsSync(sentinel)).toBe(false);
+  });
+
+  it("prints '(nothing to do)' on an empty log", async () => {
+    // No appendStarted calls — log file doesn't exist.
+    const { sink, out } = makeSink();
+    const result = await runNuke({ out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toEqual([]);
+    expect(sink.text()).toMatch(/Rescue scan \(0 entries/);
+    expect(sink.text()).toMatch(/nothing to do/);
+  });
+
+  it("reports owned entry without stop_cmd as ok with 'no stop_cmd' detail", async () => {
+    // Owned entries without stop_cmd are no-ops — the paired pid entry
+    // handles the process side. This test verifies the no-op surfaces
+    // as "ok" rather than a confusing "warn".
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "no-stop",
+      kind: "owned",
+      service: "x",
+      cmd: "true",
+      cwd: home,
+      env: {},
+    });
+
+    const result = await runNuke({ out: makeSink().out, yes: true, rescue: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.rescue).toHaveLength(1);
+    expect(result.rescue![0].status).toBe("ok");
+    expect(result.rescue![0].detail).toMatch(/no stop_cmd/);
+  });
+
+  it("regression — plain nuke (no rescue) still works end-to-end", async () => {
+    // Seed a state.json stack AND a started-log entry. Plain nuke must
+    // only touch the state.json side; rescue is opt-in.
+    await writeSnapshot(snap({ stack_id: "regression", worktree_name: "regression" }));
+    const sentinel = join(home, "regression.untouched");
+    await appendStarted({
+      ts: new Date().toISOString(),
+      stack_id: "regression",
+      kind: "owned",
+      service: "x",
+      cmd: "true",
+      stop_cmd: `touch ${shellQuote(sentinel)}`,
+      cwd: home,
+      env: {},
+    });
+
+    const result = await runNuke({ out: makeSink().out, yes: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("nuked");
+    expect(result.rescue).toBeUndefined();
+    // Sentinel from rescue path must not have been touched.
+    expect(existsSync(sentinel)).toBe(false);
+    // The state dir was actually nuked.
+    expect(existsSync(stackDir("regression"))).toBe(false);
+  });
+});

@@ -118,6 +118,10 @@ const stacksHandler: CommandHandler = async (ctx) => {
 const nukeHandler: CommandHandler = async (ctx) => {
   const result = await runNuke({
     yes: Boolean(ctx.argv.yes || ctx.argv.y),
+    // LEV-311: --rescue scans `~/.lich/started.log` and runs
+    // idempotent cleanup for every spawned resource, regardless of
+    // whether state.json still references it.
+    rescue: Boolean(ctx.argv.rescue),
   });
   return { ok: result.exitCode === 0, message: "" };
 };
