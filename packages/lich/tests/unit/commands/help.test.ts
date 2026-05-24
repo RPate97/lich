@@ -235,6 +235,22 @@ commands: not-an-object
     expect(stderr).toEqual([]);
     expect(stdout.join("\n")).toContain("Usage: lich up");
   });
+
+  it("long help for help/exec/env includes an Example block", async () => {
+    // The three discovery-surface built-ins (introduced in Plan 2) carry
+    // long-form help text that must include at least one runnable example
+    // so users can copy/paste. Pin that explicitly so future edits to the
+    // help text don't accidentally drop the example block.
+    for (const name of ["help", "exec", "env"]) {
+      stdout = [];
+      stderr = [];
+      const res = await run({ commandName: name });
+      expect(res.exitCode).toBe(0);
+      expect(stderr).toEqual([]);
+      const out = stdout.join("\n");
+      expect(out).toMatch(/Examples?:/);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
