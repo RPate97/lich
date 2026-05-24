@@ -120,8 +120,23 @@ export interface ReadyWhen {
   tcp?: string;
   log_match?: string;
   cmd?: string;
-  /** Plan-4 placeholder — any type for now. */
-  timeout?: unknown;
+  /**
+   * Maximum time to wait for the ready evaluator to succeed before lich
+   * declares the service failed (Plan 4 Task 5). Accepts a duration string
+   * with one of the suffixes `ms`, `s`, `m`, `h` (e.g. `"500ms"`, `"30s"`,
+   * `"2m"`, `"1h"`) OR a raw positive integer (interpreted as milliseconds).
+   *
+   * Default applied in `up.ts` is `60s` when this field is unset. Parsing
+   * lives in `src/ready/timeout.ts` (`parseDuration`); the wrapper that
+   * applies the deadline is `withTimeout` in that same file. On expiry the
+   * orchestrator surfaces a `ReadyTimeoutError` carrying the configured
+   * duration; the failure formatter renders the phase + duration inline.
+   *
+   * Schema-level validation (in `src/config/schema.ts`) rejects malformed
+   * values (`"forever"`, `-1`, `0`, fractional values) at `lich validate`
+   * time so config typos never reach the runtime parser.
+   */
+  timeout?: string | number;
   /**
    * Map of capture name → regex pattern. After `ready_when` fires, the
    * orchestrator runs each regex against the service's accumulated log

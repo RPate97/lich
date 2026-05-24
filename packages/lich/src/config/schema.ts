@@ -153,8 +153,19 @@ const portDescriptorSchema = {
 /**
  * `ready_when` block (Plan 1 subset).
  *
- * `timeout` is still accept-as-opaque here; Plan 4 Task 5 will tighten it
- * to a duration string / integer-ms shape.
+ * `timeout` is tightened by Plan 4 Task 5: either a duration STRING matching
+ * `^[0-9]+(ms|s|m|h)?$` (e.g. `"500ms"`, `"30s"`, `"2m"`, `"1h"`, `"60000"`)
+ * OR a positive INTEGER number of milliseconds. Both forms are parsed at
+ * runtime by `src/ready/timeout.ts#parseDuration`; the regex here ensures
+ * malformed strings (`"forever"`, `"5 minutes"`, signed values, decimals)
+ * surface at `lich validate` time, not at ready-check time.
+ *
+ * Why not a single `oneOf` with a freeform string? The pattern-restricted
+ * string variant is the load-bearing piece — without it, ajv would happily
+ * accept `timeout: "forever"` and the user would only see the failure once
+ * a service actually tried to come up. Putting the pattern in the schema
+ * means `lich validate` is the front line of defense and the runtime parser
+ * just confirms what the schema already proved.
  *
  * `capture` is locked down by Plan 4 Task 6: a flat `key -> regex-string`
  * map. The values are regex PATTERN strings that the runtime will compile
@@ -169,8 +180,31 @@ const readyWhenSchema = {
     tcp: { type: "string" },
     log_match: { type: "string" },
     cmd: { type: "string" },
-    // Future-plan placeholder — kept permissive intentionally.
-    timeout: {}, // any type for now (Plan 4 Task 5 will require a duration string)
+    /**
+     * Plan 4 Task 5: duration string OR positive integer ms. The string
+     * pattern `^[0-9]+(ms|s|m|h)?$` accepts the four suffixes documented
+     * in the spec plus the bare-digits form (which the runtime parser
+     * treats as already-ms, same as the `ms` suffix). The integer form
+     * uses ajv's `minimum: 1` to reject `0` and negatives at schema time.
+     *
+     * The runtime parser (`parseDuration`) re-validates these constraints
+     * so any pre-validated direct callers can still rely on safe values,
+     * but the schema is the user-facing front line — a config with
+     * `timeout: "forever"` fails `lich validate` before lich ever tries
+     * to start a service.
+     */
+    timeout: {
+      oneOf: [
+        {
+          type: "string",
+          pattern: "^[0-9]+(ms|s|m|h)?$",
+        },
+        {
+          type: "integer",
+          minimum: 1,
+        },
+      ],
+    },
     /**
      * Plan 4 Task 6: a flat `key -> regex-pattern` map. Each VALUE must be
      * a string (the regex pattern). Reject non-string values like numbers
