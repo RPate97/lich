@@ -1,5 +1,5 @@
 /**
- * Env resolution pipeline (Plan 1 Task 13).
+ * Env resolution pipeline (Plan 1 Task 13; Plan 3 Task 6 added the profile layer).
  *
  * Combines env from every source defined in lich.yaml into a single
  * resolved env map for a given service (or for the "no specific service"
@@ -7,14 +7,18 @@
  *
  * Precedence (later wins, per-key), matching the design spec section 4:
  *
- *   1. host `process.env`
- *   2. auto-injected lich vars (LICH_WORKTREE, LICH_STACK_ID)
- *   3. top-level `env_from`  (shell-out, in declared order)
- *   4. top-level `env_files` (dotenv, in declared order)
- *   5. top-level `env` literals
- *   6. per-service `env_from`
- *   7. per-service `env_files`
- *   8. per-service `env` literals
+ *    1. host `process.env`
+ *    2. auto-injected lich vars (LICH_WORKTREE, LICH_STACK_ID, LICH_PROFILE
+ *       when a profile is active)
+ *    3. top-level `env_from`  (shell-out, in declared order)
+ *    4. top-level `env_files` (dotenv, in declared order)
+ *    5. top-level `env` literals
+ *    6. profile `env_from`     (only when `input.profile` is set)
+ *    7. profile `env_files`    (only when `input.profile` is set)
+ *    8. profile `env` literals (only when `input.profile` is set)
+ *    9. per-service `env_from`
+ *   10. per-service `env_files`
+ *   11. per-service `env` literals
  *
  * Auto-injects sit at the lowest priority that still beats `process.env`
  * so the user's env layers can deliberately override them if needed
@@ -25,13 +29,15 @@
  * After merging, every value goes through {@link interpolateRecord} once
  * against an {@link InterpolationContext} built from the worktree info
  * and the allocated-ports map. This is the single point where `${...}`
- * references in env values are resolved (Plan 3 will refactor this to be
- * per-key lazy; Plan 1 does it eagerly, which is enough for now).
+ * references in env values are resolved (Plan 3 Task 7 will verify that
+ * eager interpolation is correctly lazy-per-key for env values: a key whose
+ * value is overridden by a later layer never sees the earlier layer's
+ * interpolation, because the earlier layer's string was already replaced
+ * before interpolation ran).
  *
- * Profiles (precedence step 4.5 in the spec) are NOT applied here —
- * Plan 3 will layer them in between top-level and per-service. The Plan-1
- * pipeline is intentionally profile-agnostic so the rest of the engine
- * can use it before profiles land.
+ * Profiles (precedence steps 6-8 above) layer between top-level and
+ * per-service. When `input.profile` is undefined, the profile layer is
+ * skipped entirely and behavior matches the Plan-1 pipeline exactly.
  */
 
 import { resolve as resolvePath } from "node:path";
@@ -41,6 +47,7 @@ import {
   interpolateRecord,
   type InterpolationContext,
 } from "../config/interpolation.js";
+import type { ResolvedProfile } from "../profiles/resolve.js";
 import type { Worktree } from "../worktree/detect.js";
 
 import { loadEnvFiles } from "./files.js";
@@ -83,6 +90,19 @@ export interface ResolveEnvForServiceInput {
   processEnv?: NodeJS.ProcessEnv;
   /** Project root cwd used for relative env_files paths AND for env_from cwd default. */
   projectRoot: string;
+  /**
+   * Plan-3 (LEV-380) profile-scoped env layer. When provided, the profile's
+   * `env_from`, `env_files`, and `env` are layered between the top-level and
+   * per-service layers (precedence steps 6-8 in the module-level docstring),
+   * and `LICH_PROFILE` is auto-injected alongside `LICH_WORKTREE` /
+   * `LICH_STACK_ID`. When omitted, behavior is identical to the Plan-1
+   * pipeline (no profile layer, no `LICH_PROFILE`).
+   *
+   * Callers obtain `ResolvedProfile` from `profiles/resolve.ts`'s
+   * `resolveProfile()`. The active profile is decided by `commands/up.ts`
+   * before env resolution runs.
+   */
+  profile?: ResolvedProfile;
 }
 
 export type ResolveTopLevelEnvInput = Omit<
@@ -140,18 +160,32 @@ function absolutizeFiles(
 }
 
 /**
- * Auto-injects derived from worktree info. These are placed just above
- * process.env in the precedence stack so any user layer (env_from /
- * env_files / env) can override them on a per-key basis.
+ * Auto-injects derived from worktree info (plus the active profile name when
+ * one is in play). These are placed just above process.env in the precedence
+ * stack so any user layer (env_from / env_files / env) can override them on
+ * a per-key basis.
  *
  * If `worktree.stack_id` is absent for any reason (shouldn't happen given
  * Worktree's required fields), fall back to the worktree id alone.
+ *
+ * When `profileName` is provided, `LICH_PROFILE` is also injected so spawned
+ * services (and `lich exec` / `lich env stack` consumers) can see which
+ * profile their stack is running under. When `profileName` is undefined,
+ * `LICH_PROFILE` is NOT injected — the spec treats it as "present iff a
+ * profile is active" rather than "always present, possibly empty".
  */
-function autoInjects(worktree: Worktree): Record<string, string> {
+function autoInjects(
+  worktree: Worktree,
+  profileName?: string,
+): Record<string, string> {
   const injects: Record<string, string> = {};
   if (worktree.name) injects.LICH_WORKTREE = worktree.name;
   // stack_id is the canonical stack identifier (sanitized name + short hash).
   if (worktree.stack_id) injects.LICH_STACK_ID = worktree.stack_id;
+  // Plan-3 (LEV-380): profile name is exposed to children when a profile is
+  // active. Treated as "absent" when no profile is in play so tests can
+  // distinguish the two states cleanly.
+  if (profileName) injects.LICH_PROFILE = profileName;
   return injects;
 }
 
@@ -312,9 +346,10 @@ export async function resolveEnvForService(
   // 1. process.env baseline (drop undefined values).
   let merged: Record<string, string> = processEnvToRecord(processEnv);
 
-  // 2. Auto-injects (LICH_WORKTREE, LICH_STACK_ID) — sit just above
-  //    process.env so user layers can override.
-  Object.assign(merged, autoInjects(input.worktree));
+  // 2. Auto-injects (LICH_WORKTREE, LICH_STACK_ID, and LICH_PROFILE when a
+  //    profile is active) — sit just above process.env so user layers can
+  //    override.
+  Object.assign(merged, autoInjects(input.worktree, input.profile?.name));
 
   // 3-5. Top-level env_from / env_files / env literals.
   merged = await layerBundle({
@@ -325,7 +360,19 @@ export async function resolveEnvForService(
     projectRoot: input.projectRoot,
   });
 
-  // 6-8. Per-service env_from / env_files / env literals.
+  // 6-8. Profile env_from / env_files / env literals (Plan-3 layer; no-op
+  //      when no profile is active so Plan-1 callers see unchanged behavior).
+  if (input.profile) {
+    merged = await layerBundle({
+      into: merged,
+      env_from: input.profile.env_from,
+      env_files: input.profile.env_files,
+      env: input.profile.env,
+      projectRoot: input.projectRoot,
+    });
+  }
+
+  // 9-11. Per-service env_from / env_files / env literals.
   const bundle = getServiceBundle(input.config, input.service);
   merged = await layerBundle({
     into: merged,
@@ -335,7 +382,7 @@ export async function resolveEnvForService(
     projectRoot: input.projectRoot,
   });
 
-  // 9. Interpolate every value against the runtime context.
+  // 12. Interpolate every value against the runtime context.
   const ctx = buildInterpolationContext(
     input.worktree,
     input.allocatedPorts,
@@ -361,7 +408,7 @@ export async function resolveTopLevelEnv(
   const processEnv = input.processEnv ?? process.env;
 
   let merged: Record<string, string> = processEnvToRecord(processEnv);
-  Object.assign(merged, autoInjects(input.worktree));
+  Object.assign(merged, autoInjects(input.worktree, input.profile?.name));
 
   merged = await layerBundle({
     into: merged,
@@ -370,6 +417,20 @@ export async function resolveTopLevelEnv(
     env: input.config.env,
     projectRoot: input.projectRoot,
   });
+
+  // Plan-3 profile layer at the END of the top-level pipeline so callers
+  // that use `resolveTopLevelEnv` (lifecycle hooks, `lich exec`, `lich env
+  // stack`) see profile overrides too. No per-service layer applies here by
+  // design — the function is the "no specific service" path.
+  if (input.profile) {
+    merged = await layerBundle({
+      into: merged,
+      env_from: input.profile.env_from,
+      env_files: input.profile.env_files,
+      env: input.profile.env,
+      projectRoot: input.projectRoot,
+    });
+  }
 
   const ctx = buildInterpolationContext(
     input.worktree,

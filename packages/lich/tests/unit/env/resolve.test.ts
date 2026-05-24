@@ -9,6 +9,7 @@ import {
   type ResolveEnvForServiceInput,
 } from "../../../src/env/resolve.js";
 import type { LichConfig } from "../../../src/config/types.js";
+import type { ResolvedProfile } from "../../../src/profiles/resolve.js";
 import type { Worktree } from "../../../src/worktree/detect.js";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,27 @@ function baseInput(
     allocatedPorts: { compose: {}, owned: {} },
     processEnv: {}, // empty by default so tests don't leak host env
     projectRoot: tmp,
+    ...overrides,
+  };
+}
+
+/**
+ * Build a minimal ResolvedProfile for tests. `resolveProfile()` is exercised
+ * separately in `profiles/resolve.test.ts`; these tests only care that the
+ * env pipeline honors whatever shape is handed in, so we synthesize the
+ * structure inline rather than going through the resolver.
+ */
+function makeProfile(
+  overrides: Partial<ResolvedProfile> = {},
+): ResolvedProfile {
+  return {
+    name: "dev",
+    services: [],
+    owned: [],
+    env: {},
+    env_files: [],
+    env_from: [],
+    lifecycle: { before_up: [], after_up: [], before_down: [] },
     ...overrides,
   };
 }
@@ -462,5 +484,200 @@ describe("resolveTopLevelEnv", () => {
       projectRoot: tmp,
     });
     expect(env.URL).toBe("db://9999");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan-3 Task 6 (LEV-380): profile layer + LICH_PROFILE auto-injection
+// ---------------------------------------------------------------------------
+
+describe("resolveEnvForService — profile layer", () => {
+  it("applies profile env layer between top-level and per-service", async () => {
+    // Top-level sets A=1; profile sets A=2 and adds B=p; no per-service.
+    // Profile wins on A; profile-only B passes through.
+    const env = await resolveEnvForService(
+      baseInput({
+        config: { version: "1", env: { A: "1" } },
+        profile: makeProfile({ env: { A: "2", B: "p" } }),
+      }),
+    );
+    expect(env.A).toBe("2");
+    expect(env.B).toBe("p");
+  });
+
+  it("per-service still overrides profile", async () => {
+    // Top → profile → per-service: per-service is the highest layer, so
+    // its A=3 wins over the profile's A=2 (which in turn beat top's A=1).
+    const env = await resolveEnvForService(
+      baseInput({
+        config: {
+          version: "1",
+          env: { A: "1" },
+          owned: { api: { cmd: "echo", env: { A: "3" } } },
+        },
+        profile: makeProfile({ env: { A: "2" } }),
+      }),
+    );
+    expect(env.A).toBe("3");
+  });
+
+  it("profile env_from is invoked when profile is present", async () => {
+    // The shell-out is the load-bearing assertion: if the profile layer
+    // wasn't wired, FROM_PROFILE_SHELL would never get loaded.
+    const env = await resolveEnvForService(
+      baseInput({
+        profile: makeProfile({
+          env_from: ['echo "FROM_PROFILE_SHELL=yes"'],
+        }),
+      }),
+    );
+    expect(env.FROM_PROFILE_SHELL).toBe("yes");
+  });
+
+  it("profile env_files contributes when present", async () => {
+    write("profile.env", "FROM_PROFILE_FILE=yes\n");
+    const env = await resolveEnvForService(
+      baseInput({
+        profile: makeProfile({ env_files: ["profile.env"] }),
+      }),
+    );
+    expect(env.FROM_PROFILE_FILE).toBe("yes");
+  });
+
+  it("profile env_files override top-level env literals on key collision", async () => {
+    // Profile layer (steps 6-8) sits ABOVE top-level (steps 3-5), so the
+    // profile file's value should win over the top-level literal.
+    write("profile.env", "COLLIDE=from-profile-file\n");
+    const env = await resolveEnvForService(
+      baseInput({
+        config: { version: "1", env: { COLLIDE: "from-top-literal" } },
+        profile: makeProfile({ env_files: ["profile.env"] }),
+      }),
+    );
+    expect(env.COLLIDE).toBe("from-profile-file");
+  });
+
+  it("profile env literals override profile env_files on key collision (within-layer)", async () => {
+    // Within the profile layer itself: env_from → env_files → env, same
+    // precedence rule as the other two bundles. Profile literal wins.
+    write("profile.env", "COLLIDE=from-profile-file\n");
+    const env = await resolveEnvForService(
+      baseInput({
+        profile: makeProfile({
+          env_files: ["profile.env"],
+          env: { COLLIDE: "from-profile-literal" },
+        }),
+      }),
+    );
+    expect(env.COLLIDE).toBe("from-profile-literal");
+  });
+
+  it("undefined profile leaves behavior identical to Plan-1 (no LICH_PROFILE, no extra layer)", async () => {
+    const env = await resolveEnvForService(
+      baseInput({
+        config: { version: "1", env: { A: "1" } },
+      }),
+    );
+    expect(env.A).toBe("1");
+    expect(env.LICH_PROFILE).toBeUndefined();
+  });
+
+  it("profile env_from runs ABOVE top-level env_from (later layer wins)", async () => {
+    const env = await resolveEnvForService(
+      baseInput({
+        config: {
+          version: "1",
+          env_from: ['echo "COLLIDE=from-top-shell"'],
+        },
+        profile: makeProfile({
+          env_from: ['echo "COLLIDE=from-profile-shell"'],
+        }),
+      }),
+    );
+    expect(env.COLLIDE).toBe("from-profile-shell");
+  });
+});
+
+describe("resolveEnvForService — LICH_PROFILE auto-injection", () => {
+  it("LICH_PROFILE is auto-injected when profile is active", async () => {
+    const env = await resolveEnvForService(
+      baseInput({ profile: makeProfile({ name: "dev:env-override" }) }),
+    );
+    expect(env.LICH_PROFILE).toBe("dev:env-override");
+  });
+
+  it("LICH_PROFILE is absent when no profile is active", async () => {
+    const env = await resolveEnvForService(baseInput());
+    expect(Object.prototype.hasOwnProperty.call(env, "LICH_PROFILE")).toBe(
+      false,
+    );
+  });
+
+  it("user env layer can override LICH_PROFILE (matches LICH_WORKTREE behavior)", async () => {
+    // The other auto-injects allow user override (see existing test); the
+    // profile name follows the same rule so behavior is consistent across
+    // all three injects.
+    const env = await resolveEnvForService(
+      baseInput({
+        profile: makeProfile({ name: "dev" }),
+        config: {
+          version: "1",
+          owned: {
+            api: { cmd: "echo", env: { LICH_PROFILE: "user-override" } },
+          },
+        },
+      }),
+    );
+    expect(env.LICH_PROFILE).toBe("user-override");
+  });
+
+  it("LICH_PROFILE beats process.env so a leaked parent value can't masquerade", async () => {
+    const env = await resolveEnvForService(
+      baseInput({
+        profile: makeProfile({ name: "dev" }),
+        processEnv: { LICH_PROFILE: "leaked-from-parent" },
+      }),
+    );
+    expect(env.LICH_PROFILE).toBe("dev");
+  });
+});
+
+describe("resolveTopLevelEnv — profile layer", () => {
+  it("applies profile env on top of top-level env (no per-service path here)", async () => {
+    const env = await resolveTopLevelEnv({
+      config: { version: "1", env: { A: "1" } },
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+      profile: makeProfile({ env: { A: "2", B: "p" } }),
+    });
+    expect(env.A).toBe("2");
+    expect(env.B).toBe("p");
+  });
+
+  it("auto-injects LICH_PROFILE for top-level resolution too", async () => {
+    const env = await resolveTopLevelEnv({
+      config: { version: "1" },
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+      profile: makeProfile({ name: "dev:env-override" }),
+    });
+    expect(env.LICH_PROFILE).toBe("dev:env-override");
+  });
+
+  it("omits LICH_PROFILE when no profile is supplied", async () => {
+    const env = await resolveTopLevelEnv({
+      config: { version: "1" },
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    expect(Object.prototype.hasOwnProperty.call(env, "LICH_PROFILE")).toBe(
+      false,
+    );
   });
 });
