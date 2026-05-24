@@ -42,6 +42,7 @@ import { release } from "../ports/allocator.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
+  injectOwnedPortEnv,
   writeSnapshot,
   type StackSnapshot,
 } from "../state/snapshot.js";
@@ -429,6 +430,17 @@ async function stopOwnedService(
         stopEnv = process.env;
       }
     }
+    // LEV-320: ALSO inject per-port env vars (SUPABASE_API_PORT=9000 etc.).
+    // These live outside the env pipeline — `up.ts` injects them at spawn
+    // time in the supervisor from the yaml's `port:`/`ports:` blocks paired
+    // with allocator output. Stop_cmd needs them too: `supabase stop`
+    // reads supabase/config.toml's `port = "env(SUPABASE_API_PORT)"`
+    // and fails to parse without them. Find the matching snapshot service
+    // and re-derive the env vars from its allocated_ports.
+    const snapSvc = snapshot.services.find(
+      (s) => s.kind === "owned" && s.name === name,
+    );
+    stopEnv = injectOwnedPortEnv(stopEnv, ownedDef, snapSvc?.allocated_ports);
     const result = await runStopCmd(ownedDef.stop_cmd, worktree.path, stopEnv);
     // LEV-312: surface stop_cmd outcomes the user can actually act on.
     //   - non-zero exit (or signal): include exit code + stderr tail so the

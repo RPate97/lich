@@ -56,6 +56,7 @@ import {
 import {
   readSnapshot,
   rebuildAllocatedPorts,
+  injectOwnedPortEnv,
   type ServiceSnapshot,
   type StackSnapshot,
 } from "../state/snapshot.js";
@@ -281,6 +282,15 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
           `service ${svc.name} resolve env (fell back to process.env): ${errorMessage(err)}`,
         );
       }
+      // LEV-320: layer the per-port env vars (SUPABASE_API_PORT=9000 etc.)
+      // that up.ts injected at spawn time. supabase stop reads config.toml
+      // which has `port = "env(SUPABASE_API_PORT)"` and fails to parse
+      // without them.
+      stopEnv = injectOwnedPortEnv(
+        stopEnv,
+        config.owned?.[svc.name],
+        svc.allocated_ports,
+      );
 
       try {
         const result = await runStopCmd(stopCmd, snap.worktree_path, stopEnv);

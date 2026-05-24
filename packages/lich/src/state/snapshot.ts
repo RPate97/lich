@@ -185,3 +185,58 @@ export function rebuildAllocatedPorts(
 
   return { compose, owned };
 }
+
+/**
+ * Inject the per-port env vars an owned service was started with — e.g.
+ * `SUPABASE_API_PORT=9000`. Mirrors what `up.ts`'s `startOwnedService`
+ * does at spawn time: walks the yaml's `port:` / `ports:` declarations,
+ * pairs each `env: VARNAME` with the matching allocated port number from
+ * the snapshot, and writes `env[VARNAME] = String(port)`.
+ *
+ * Used by down + nuke when reconstructing the env they hand to `stop_cmd`.
+ * Without this, supabase's `stop_cmd: "supabase stop"` runs against a
+ * config.toml that contains `port = "env(SUPABASE_API_PORT)"` literals,
+ * supabase tries to parse the un-substituted string as a uint16, and the
+ * teardown fails. See LEV-320.
+ *
+ * The mapping convention: single-port (`port: { env: X }`) → `default` key
+ * in the snapshot; multi-port (`ports: { logical: { env: Y } }`) → logical
+ * key. Matches `rebuildAllocatedPorts` above.
+ *
+ * Returns a new object — does not mutate the input env. Missing pieces
+ * (no env var declared, no allocated port for that logical name, port
+ * is just a number rather than a descriptor) are silently skipped so a
+ * partial config still produces a partial-but-useful env.
+ */
+export function injectOwnedPortEnv(
+  env: NodeJS.ProcessEnv,
+  ownedDef:
+    | {
+        port?: number | { env?: string };
+        ports?: Record<string, number | { env?: string }>;
+      }
+    | undefined,
+  allocatedPorts: Record<string, number> | undefined,
+): NodeJS.ProcessEnv {
+  if (!ownedDef || !allocatedPorts) return { ...env };
+  const out: NodeJS.ProcessEnv = { ...env };
+
+  // Single-port shape: snapshot stores it under key `default`.
+  if (typeof ownedDef.port === "object" && ownedDef.port?.env) {
+    const port = allocatedPorts.default;
+    if (port !== undefined) out[ownedDef.port.env] = String(port);
+  }
+
+  // Multi-port shape: each logical name in the yaml's `ports:` block
+  // maps 1:1 to an entry in the snapshot's allocated_ports.
+  if (ownedDef.ports) {
+    for (const [logical, desc] of Object.entries(ownedDef.ports)) {
+      if (typeof desc === "object" && desc?.env) {
+        const port = allocatedPorts[logical];
+        if (port !== undefined) out[desc.env] = String(port);
+      }
+    }
+  }
+
+  return out;
+}
