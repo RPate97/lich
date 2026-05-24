@@ -122,6 +122,17 @@ export interface OwnedServiceSpec {
    * directory exists (via `ensureStackDir`).
    */
   logPath: string;
+  /**
+   * Optional cancellation signal. Currently consumed by `runOneshot` only —
+   * if it fires while the oneshot is still running, the supervisor calls
+   * `handle.stop()` (SIGTERM→SIGKILL escalation) and the wrapper throws an
+   * "aborted" error so callers can propagate cancellation up the stack.
+   *
+   * `startOwnedService` itself doesn't react to this signal for long-lived
+   * services; the orchestrator already tracks those handles and stops them
+   * directly through its own cancellation path.
+   */
+  signal?: AbortSignal;
 }
 
 /** Result of awaiting a process's exit. */
@@ -558,8 +569,53 @@ async function runStopCmd(
  * the actual stderr/stdout that caused the failure.
  */
 export async function runOneshot(spec: OwnedServiceSpec): Promise<void> {
+  // If the caller already aborted before we got here, refuse to spawn —
+  // the user's Ctrl-C arrived between the prior step and ours; spawning a
+  // child just to kill it would leak file handles for no benefit.
+  if (spec.signal?.aborted) {
+    throw new Error(`oneshot "${spec.name}" aborted before start`);
+  }
+
   const handle = await startOwnedService(spec);
-  const result = await handle.exited;
+
+  // Wire the cancellation signal: if it fires while the oneshot is still
+  // running, escalate via handle.stop() (SIGTERM→SIGKILL). The handle's
+  // `exited` promise will resolve once the process is gone; we then throw
+  // an "aborted" error so callers don't mistake the kill for a normal
+  // non-zero exit. The `abort` listener is one-shot and is removed in the
+  // finally block so we don't leak it across runs.
+  let aborted = false;
+  const onAbort = (): void => {
+    aborted = true;
+    // Fire-and-forget: stop() resolves once the child is dead, but we're
+    // already awaiting `handle.exited` below. Errors are swallowed because
+    // the child may have already exited cleanly between the abort firing
+    // and stop() running.
+    handle.stop().catch(() => {});
+  };
+
+  if (spec.signal) {
+    if (spec.signal.aborted) {
+      // Lost the race between our pre-spawn check and the actual spawn.
+      onAbort();
+    } else {
+      spec.signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  let result: ExitResult;
+  try {
+    result = await handle.exited;
+  } finally {
+    if (spec.signal) {
+      spec.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  if (aborted) {
+    throw new Error(`oneshot "${spec.name}" aborted`);
+  }
+
   if (result.code === 0) return;
 
   // Read the log tail for the error message. Best-effort: if the log

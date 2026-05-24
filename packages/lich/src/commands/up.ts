@@ -39,7 +39,7 @@ import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { parseConfig } from "../config/parse.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
-import { allocate } from "../ports/allocator.js";
+import { allocate, release } from "../ports/allocator.js";
 import { resolveComposeCli, type ComposeCli } from "../compose/detect.js";
 import { up as composeUp, type RunnerCtx } from "../compose/runner.js";
 import { writeComposeOverride } from "../compose/override.js";
@@ -159,6 +159,53 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
   // failed snapshot. Built incrementally as steps complete.
   let state: UpState | null = null;
   let configPath: string | null = null;
+
+  // Cancellation wiring — LEV-302.
+  //
+  // The bin layer ties its SIGINT handler to an AbortController and passes
+  // the signal in via `input.signal`. When that fires (Ctrl-C) we need to:
+  //   1. Mark `cancelled` so the catch-all path labels the failure as
+  //      "cancelled by user" rather than a generic crash.
+  //   2. Stop every owned process we've already spawned (best-effort —
+  //      `handle.stop()` does SIGTERM → SIGKILL escalation).
+  //   3. Release the ports we reserved so a follow-up `lich up` doesn't
+  //      hit a stale reservation.
+  //
+  // The in-flight awaits (ready evaluators, runOneshot, etc.) already
+  // honor the signal directly; their rejections bubble out through the
+  // usual error path. The catch-all at the bottom of this function then
+  // calls `markStackFailed`, which produces the persisted failed state.
+  let cancelled = false;
+  let cancelledCleanup: Promise<void> | null = null;
+  const onAbort = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    // Run cleanup in parallel with the orchestrator unwinding. We keep a
+    // reference so the catch-all can await it before returning, ensuring
+    // the function doesn't resolve while children are still being killed.
+    cancelledCleanup = (async () => {
+      const tasks: Array<Promise<void>> = [];
+      if (state) {
+        for (const handle of state.ownedHandles.values()) {
+          tasks.push(handle.stop().catch(() => {}));
+        }
+      }
+      if (state?.worktree.stack_id) {
+        // release() is idempotent on a missing entry, so calling it even
+        // when allocation never happened is safe.
+        tasks.push(release(state.worktree.stack_id).catch(() => {}));
+      }
+      await Promise.all(tasks);
+    })();
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
 
   try {
     // ---- Step 1: parse + validate the yaml ---------------------------------
@@ -377,16 +424,32 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       );
       if (failures.length > 0) {
         phase.end("fail");
-        const detail = failures.map((f) => describeError(f.reason)).join("\n");
-        // LEV-301: surface the same friendly N/total coordinate the
-        // success path uses, not the level index.
-        output.error({
-          title: `failed to start services in step ${levelIdx + 1}/${levels.length} (${level.join(", ")})`,
-          detail,
-        });
+        // If the abort handler fired during this level (LEV-302), surface
+        // as "cancelled" rather than the per-service "aborted" rejection
+        // messages — they're noisy and they all mean the same thing.
+        if (cancelled) {
+          output.error({
+            title: "lich up cancelled",
+            detail: "cancelled by user (SIGINT)",
+          });
+          // Re-bind via cast so TS sees the closure-assigned value.
+          const cleanup = cancelledCleanup as Promise<void> | null;
+          if (cleanup !== null) {
+            await cleanup.catch(() => {});
+          }
+        } else {
+          const detail = failures.map((f) => describeError(f.reason)).join("\n");
+          // LEV-301: friendly N/total (svc) coordinate, matching the
+          // success path's phase labels.
+          output.error({
+            title: `failed to start services in step ${levelIdx + 1}/${levels.length} (${level.join(", ")})`,
+            detail,
+          });
+        }
         // markFailed has already been called per-service inside startOne.
         await markStackFailed(state);
         await output.close();
+        if (signal) signal.removeEventListener("abort", onAbort);
         return {
           exitCode: 1,
           stackId: worktree.stack_id,
@@ -445,6 +508,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     );
     await output.close();
 
+    if (signal) signal.removeEventListener("abort", onAbort);
     return {
       exitCode: 0,
       stackId: worktree.stack_id,
@@ -453,14 +517,37 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
   } catch (err) {
     // Catch-all for any unexpected synchronous/asynchronous throw we didn't
     // route above (parse errors and friends are handled inline).
-    output.error({
-      title: "lich up failed",
-      detail: describeError(err),
-    });
+    //
+    // If the cancellation handler fired before we landed here, surface the
+    // failure as "cancelled by user" rather than the underlying abort error
+    // (which is whatever raced first: an "aborted" string from
+    // ready/http-get, an early-exit from a killed oneshot, etc.). None of
+    // those messages are useful to the user; "cancelled" is.
+    if (cancelled) {
+      output.error({
+        title: "lich up cancelled",
+        detail: "cancelled by user (SIGINT)",
+      });
+      // Wait for the cleanup tasks the abort handler kicked off — stopping
+      // children, releasing ports — so we don't return while resources are
+      // still being torn down. The cancelledCleanup local is captured by
+      // `onAbort`; TS doesn't track that closure's assignment back to the
+      // outer flow, so we coerce its read type explicitly.
+      const cleanup = cancelledCleanup as Promise<void> | null;
+      if (cleanup !== null) {
+        await cleanup.catch(() => {});
+      }
+    } else {
+      output.error({
+        title: "lich up failed",
+        detail: describeError(err),
+      });
+    }
     if (state) {
       await markStackFailed(state).catch(() => {});
     }
     await output.close();
+    if (signal) signal.removeEventListener("abort", onAbort);
     return {
       exitCode: 1,
       stackId: state?.worktree.stack_id,
@@ -615,6 +702,10 @@ async function startOwned(
 
   if (def.oneshot) spec.oneshot = true;
   if (def.stop_cmd) spec.stopCmd = def.stop_cmd;
+  // Thread the cancellation signal through to runOneshot — supabase-style
+  // setup CLIs can hang for tens of seconds; without a signal a Ctrl-C
+  // during the oneshot would do nothing (the CLI ignores SIGTERM itself).
+  if (input.signal) spec.signal = input.signal;
 
   if (def.oneshot) {
     // Oneshots run to completion as the "start" step — runOneshot throws

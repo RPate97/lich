@@ -24,9 +24,15 @@ export interface CommandResult {
  * What the router hands a command. `argv` is the parsed-but-unconsumed
  * argv after the command name was peeled off:
  *   `lich validate ./foo --json` → { _: ["./foo"], json: true }.
+ *
+ * `signal` is an optional AbortSignal the bin layer wires to the process's
+ * SIGINT handler so commands can react to Ctrl-C (cancel in-flight ready
+ * waits, kill spawned children, release ports). Tests may also pass their
+ * own controller's signal to exercise the cancellation path directly.
  */
 export interface CommandContext {
   argv: ParsedArgv;
+  signal?: AbortSignal;
 }
 
 export interface ParsedArgv {
@@ -71,12 +77,15 @@ const upHandler: CommandHandler = async (ctx) => {
     : ctx.argv.quiet
       ? "quiet"
       : "pretty";
-  const result = await runUp({ outputMode: mode as "pretty" | "json" | "quiet" });
+  const result = await runUp({
+    outputMode: mode as "pretty" | "json" | "quiet",
+    signal: ctx.signal,
+  });
   return { ok: result.exitCode === 0, message: "" };
 };
 
-const downHandler: CommandHandler = async () => {
-  const result = await runDown({});
+const downHandler: CommandHandler = async (ctx) => {
+  const result = await runDown({ signal: ctx.signal });
   return { ok: result.exitCode === 0, message: "" };
 };
 

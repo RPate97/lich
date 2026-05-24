@@ -60,7 +60,14 @@ export interface RunDownInput {
   out?: NodeJS.WritableStream;
   /** Defaults to `process.stderr`. */
   err?: NodeJS.WritableStream;
-  /** Optional AbortSignal — currently unused; reserved for Ctrl-C handling. */
+  /**
+   * Optional AbortSignal — wired to the bin layer's SIGINT handler. When
+   * it fires we short-circuit the SIGTERM grace polling inside
+   * `stopOwnedService`, escalating to SIGKILL immediately so Ctrl-C during
+   * a teardown doesn't make the user wait the full grace window per service.
+   * (The bin layer's second-SIGINT-forces-quit guarantees they can always
+   * escape; this just makes the first SIGINT useful during down too.)
+   */
   signal?: AbortSignal;
 }
 
@@ -209,7 +216,13 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     if (svcSnap.kind === "owned") {
       const ownedDef = config?.owned?.[name];
       try {
-        await stopOwnedService(name, svcSnap.pid, ownedDef, worktree);
+        await stopOwnedService(
+          name,
+          svcSnap.pid,
+          ownedDef,
+          worktree,
+          input.signal,
+        );
       } catch (err) {
         warnings.push({
           service: name,
@@ -315,12 +328,19 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
  * SIGTERM_GRACE_MS, escalate to SIGKILL.
  *
  * Idempotent: a dead/missing PID is a no-op.
+ *
+ * If a `signal` is supplied and fires before the SIGTERM grace expires,
+ * we cut the grace window short and escalate to SIGKILL immediately —
+ * that's how Ctrl-C during a teardown skips the per-service wait. The
+ * outer bin-layer SIGINT handler still guarantees a second Ctrl-C forces
+ * the process to exit; this just makes the first Ctrl-C make progress.
  */
 async function stopOwnedService(
   name: string,
   pid: number | undefined,
   ownedDef: OwnedService | undefined,
   worktree: Worktree,
+  signal?: AbortSignal,
 ): Promise<void> {
   // stop_cmd takes priority — used by self-managing tools (e.g. supabase).
   if (ownedDef?.stop_cmd) {
@@ -339,13 +359,17 @@ async function stopOwnedService(
   }
 
   // Poll for graceful exit. Most processes exit within a few hundred ms.
+  // If the caller's cancellation signal fires mid-grace, break out and
+  // jump straight to SIGKILL.
   const startMs = Date.now();
   while (Date.now() - startMs < SIGTERM_GRACE_MS) {
     if (!isAlive(pid)) return;
+    if (signal?.aborted) break;
     await sleep(POLL_INTERVAL_MS);
   }
 
-  // Still alive after the grace window. Escalate.
+  // Still alive after the grace window (or cancellation cut us short).
+  // Escalate.
   try {
     process.kill(pid, "SIGKILL");
   } catch (err) {
