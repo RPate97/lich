@@ -187,6 +187,106 @@ describe("json output", () => {
     ]);
   });
 
+  it("includes elapsed_ms on phase_end when showTiming is set", async () => {
+    const sink = makeSink();
+    const out = createOutput({ mode: "json", stream: sink, showTiming: true });
+    const p = out.phase("dependency-graph");
+    p.end("ok", "3 levels");
+    await out.close();
+
+    // The shape and ordering of fields don't matter; assert per-event.
+    const events = parseEvents(sink.text) as Array<Record<string, unknown>>;
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({ type: "phase_begin", name: "dependency-graph" });
+    expect(events[1]).toMatchObject({
+      type: "phase_end",
+      name: "dependency-graph",
+      status: "ok",
+      message: "3 levels",
+    });
+    // elapsed_ms is a number, but its value is timing-dependent — just
+    // assert it's present and non-negative.
+    expect(typeof events[1].elapsed_ms).toBe("number");
+    expect(events[1].elapsed_ms as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it("omits elapsed_ms when showTiming is not set (back-compat)", async () => {
+    const sink = makeSink();
+    const out = createOutput({ mode: "json", stream: sink });
+    const p = out.phase("x");
+    p.end("ok");
+    await out.close();
+
+    const events = parseEvents(sink.text) as Array<Record<string, unknown>>;
+    expect(events[1]).toEqual({ type: "phase_end", name: "x", status: "ok" });
+    expect(events[1].elapsed_ms).toBeUndefined();
+  });
+
+  it("emits a richer summary with services (with ports), urls, next, elapsed_ms", async () => {
+    const sink = makeSink();
+    const out = createOutput({ mode: "json", stream: sink });
+    out.summary({
+      title: "stack up",
+      elapsedMs: 12_400,
+      lines: ["stack_id: dogfood-stack-b0669f5c"],
+      services: [
+        { name: "api", state: "ready", ports: { default: 9000 } },
+        { name: "web", state: "ready", ports: { default: 9007 } },
+      ],
+      urls: [
+        { service: "api", url: "http://localhost:9000" },
+        { service: "web", url: "http://localhost:9007" },
+      ],
+      next: [
+        { cmd: "lich logs", description: "follow stack logs" },
+        { cmd: "lich down", description: "stop the stack" },
+      ],
+    });
+    await out.close();
+
+    expect(parseEvents(sink.text)).toEqual([
+      {
+        type: "summary",
+        title: "stack up",
+        lines: ["stack_id: dogfood-stack-b0669f5c"],
+        services: [
+          { name: "api", state: "ready", ports: { default: 9000 } },
+          { name: "web", state: "ready", ports: { default: 9007 } },
+        ],
+        urls: [
+          { service: "api", url: "http://localhost:9000" },
+          { service: "web", url: "http://localhost:9007" },
+        ],
+        next: [
+          { cmd: "lich logs", description: "follow stack logs" },
+          { cmd: "lich down", description: "stop the stack" },
+        ],
+        elapsed_ms: 12_400,
+      },
+    ]);
+  });
+
+  it("omits new optional summary fields when not provided (back-compat)", async () => {
+    const sink = makeSink();
+    const out = createOutput({ mode: "json", stream: sink });
+    out.summary({
+      title: "stack up",
+      lines: ["worktree: ~/foo"],
+      services: [{ name: "api", state: "ready" }],
+    });
+    await out.close();
+
+    // No urls/next/elapsed_ms when SummaryBlock doesn't carry them.
+    expect(parseEvents(sink.text)).toEqual([
+      {
+        type: "summary",
+        title: "stack up",
+        lines: ["worktree: ~/foo"],
+        services: [{ name: "api", state: "ready" }],
+      },
+    ]);
+  });
+
   it("emits no spinner or ANSI bytes", async () => {
     const sink = makeSink();
     const out = createOutput({ mode: "json", stream: sink });

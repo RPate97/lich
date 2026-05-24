@@ -92,18 +92,87 @@ const SERVICE_STYLE: Record<ServiceState, ServiceStyle> = {
 // Block renderers (also reused by quiet mode for summary/error)
 // ──────────────────────────────────────────────────────────────────────
 
+/** Render an elapsed-time number in seconds with one decimal. */
+export function formatElapsed(ms: number): string {
+  // Seconds with one decimal — `91.2s`. Anything sub-second still reads
+  // sensibly (`0.4s`, `0.0s`).
+  const seconds = ms / 1000;
+  return `${seconds.toFixed(1)}s`;
+}
+
+/** Format the allocated-ports cell for a service in the summary table. */
+function formatPortsCell(ports: Record<string, number> | undefined): string {
+  if (!ports) return "";
+  const entries = Object.entries(ports);
+  if (entries.length === 0) return "";
+  if (entries.length === 1) {
+    const [key, port] = entries[0];
+    // For the single-port owned case the key is `default` — collapse to
+    // the user-facing form `1 port (9000)` rather than `1 port (default=9000)`.
+    if (key === "default") return `1 port (${port})`;
+    return `1 port (${key}=${port})`;
+  }
+  return `${entries.length} ports`;
+}
+
+/**
+ * When color is enabled, `padEnd` counts ANSI escape bytes toward the
+ * width, breaking visual alignment. Compute the extra bytes added by a
+ * paint(text, color) call so callers can pad against the visible width.
+ */
+function colorOverhead(color: ColorName): number {
+  return COLOR[color].length + RESET.length;
+}
+
 export function renderSummary(summary: SummaryBlock, color: boolean): string {
   const lines: string[] = [];
-  lines.push(paint(summary.title, "bold", color));
+  // Title line: optionally suffix with elapsed time (`stack up — 12.4s`).
+  const titleSuffix =
+    summary.elapsedMs !== undefined
+      ? ` — ${formatElapsed(summary.elapsedMs)}`
+      : "";
+  lines.push(paint(`${summary.title}${titleSuffix}`, "bold", color));
   for (const line of summary.lines) {
     lines.push(`  ${line}`);
   }
   if (summary.services && summary.services.length > 0) {
+    // Blank line separates the title-with-stack-info block from the table.
+    lines.push("");
     lines.push("  services:");
+    // Compute padding so the state + ports columns line up across rows.
+    const nameWidth = Math.max(...summary.services.map((s) => s.name.length));
     for (const svc of summary.services) {
       const style = SERVICE_STYLE[svc.state];
-      const tag = paint(`${style.icon} ${svc.state}`, style.color, color);
-      lines.push(`    ${tag} ${svc.name}`);
+      const namePadded = svc.name.padEnd(nameWidth);
+      // Pad the state column to a fixed width. When color is enabled, the
+      // string carries ANSI bytes that don't print — compensate so the
+      // visible column width is consistent.
+      const stateRendered = paint(svc.state, style.color, color);
+      const padTarget = 9 + (color ? colorOverhead(style.color) : 0);
+      const stateCol = stateRendered.padEnd(padTarget);
+      const portsCol = formatPortsCell(svc.ports);
+      const portsSuffix = portsCol ? `  ${portsCol}` : "";
+      lines.push(`    ${namePadded}  ${stateCol}${portsSuffix}`.trimEnd());
+    }
+  }
+  if (summary.urls && summary.urls.length > 0) {
+    lines.push("");
+    lines.push("  urls:");
+    const nameWidth = Math.max(...summary.urls.map((u) => u.service.length));
+    for (const entry of summary.urls) {
+      const namePadded = entry.service.padEnd(nameWidth);
+      lines.push(
+        `    ${namePadded}  ${paint(entry.url, "cyan", color)}`,
+      );
+    }
+  }
+  if (summary.next && summary.next.length > 0) {
+    lines.push("");
+    lines.push("  next:");
+    const cmdWidth = Math.max(...summary.next.map((h) => h.cmd.length));
+    for (const hint of summary.next) {
+      const cmdPadded = hint.cmd.padEnd(cmdWidth);
+      lines.push(`    ${paint(cmdPadded, "bold", color)}  ${hint.description}`);
     }
   }
   // Trailing newline so the block is visually separated from anything after.
@@ -131,13 +200,26 @@ interface MaybeTTYStream extends NodeJS.WritableStream {
   isTTY?: boolean;
 }
 
-export function createPrettyOutput(stream: NodeJS.WritableStream): Output {
+export interface PrettyOptions {
+  /**
+   * When true, append per-phase elapsed time to phase-end lines and
+   * surface the SummaryBlock's elapsedMs in the summary title. Defaults
+   * to false so existing unit tests with `toEqual` assertions still match.
+   */
+  showTiming?: boolean;
+}
+
+export function createPrettyOutput(
+  stream: NodeJS.WritableStream,
+  opts: PrettyOptions = {},
+): Output {
   const ttyStream = stream as MaybeTTYStream;
   // Use TTY-only behavior (spinners, color, cursor control) iff the
   // stream declares itself a TTY. Tests use captured streams where
   // isTTY is undefined/false, so they exercise the plain-line path.
   const isTTY = ttyStream.isTTY === true;
   const color = isTTY;
+  const showTiming = opts.showTiming === true;
 
   // Track at most one active spinner. We don't try to render concurrent
   // phases — phases are sequential by design (see plan-1).
@@ -185,6 +267,7 @@ export function createPrettyOutput(stream: NodeJS.WritableStream): Output {
 
   return {
     phase(name: string): PhaseHandle {
+      const startedAt = Date.now();
       if (isTTY) {
         // Print an initial frame so the user sees the phase immediately,
         // then let the timer take over animating it.
@@ -212,7 +295,13 @@ export function createPrettyOutput(stream: NodeJS.WritableStream): Output {
           const icon = ICON[status];
           const iconColor: ColorName =
             status === "ok" ? "green" : status === "fail" ? "red" : "gray";
-          const suffix = message !== undefined ? ` — ${message}` : "";
+          // Compose the trailing suffix from message + elapsed time. Both
+          // are optional; join with the same `— ` separator the framework
+          // uses elsewhere so `start 1/3 (api) — 3.1s` reads naturally.
+          const parts: string[] = [];
+          if (message !== undefined) parts.push(message);
+          if (showTiming) parts.push(formatElapsed(Date.now() - startedAt));
+          const suffix = parts.length > 0 ? ` — ${parts.join(" — ")}` : "";
           stream.write(`${paint(icon, iconColor, color)} ${name}${suffix}\n`);
         },
       };

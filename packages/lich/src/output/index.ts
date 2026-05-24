@@ -29,13 +29,65 @@ export type ServiceState =
   | "stopping"
   | "failed";
 
+/**
+ * One entry per service in a summary block. Carries per-service final state
+ * plus optionally the ports allocated to it. The structured shape lets the
+ * pretty renderer print a tidy table (`api    ready    1 port (9000)`) and
+ * lets the json renderer surface the same data for downstream tools.
+ */
+export interface SummaryService {
+  /** Service name as declared in `services:` / `owned:`. */
+  name: string;
+  /** Final state at the time the summary was emitted. */
+  state: ServiceState;
+  /**
+   * Optional map of allocated ports keyed by port name. e.g.
+   * `{ default: 9000 }` for a single-port owned service or
+   * `{ api: 9001, studio: 9002 }` for a multi-port one.
+   */
+  ports?: Record<string, number>;
+}
+
+/**
+ * One entry per service URL in a summary. Plan 1 surfaces raw
+ * `http://localhost:<port>` URLs (Plan 5 will introduce friendly
+ * `<service>.<worktree>.lich.localhost:<proxy-port>` URLs alongside).
+ */
+export interface SummaryUrl {
+  /** Service name. */
+  service: string;
+  /** Reachable URL the user can hit (raw `http://localhost:<port>`). */
+  url: string;
+}
+
+/**
+ * A bottom-of-the-summary hint line — `lich logs    follow stack logs`.
+ * Renders as a two-column block.
+ */
+export interface SummaryHint {
+  /** The command itself, e.g. `lich logs`. */
+  cmd: string;
+  /** One-line description, e.g. `follow stack logs`. */
+  description: string;
+}
+
 export interface SummaryBlock {
   /** e.g. "stack up" or "stack down". */
   title: string;
+  /**
+   * Optional wall-clock elapsed time in milliseconds since the run started.
+   * Pretty mode renders this next to the title (`stack up — 12.4s`); json
+   * mode surfaces it as `elapsed_ms`.
+   */
+  elapsedMs?: number;
   /** Bullet lines under the title. */
   lines: string[];
-  /** Optional list of service final states. */
-  services?: { name: string; state: ServiceState }[];
+  /** Optional list of service final states (+ optional allocated ports). */
+  services?: SummaryService[];
+  /** Optional list of reachable URLs surfaced to the user. */
+  urls?: SummaryUrl[];
+  /** Optional list of "what now?" hint lines. */
+  next?: SummaryHint[];
 }
 
 export interface ErrorBlock {
@@ -78,17 +130,28 @@ export interface CreateOutputOptions {
   mode: OutputMode;
   /** Defaults to process.stdout. Tests pass a captured stream. */
   stream?: NodeJS.WritableStream;
+  /**
+   * Render per-phase elapsed time on phase-end (`✓ phase — 1.2s`) and the
+   * top-level elapsed in summaries. Defaults to `false` so unit tests with
+   * exact-match assertions stay deterministic; production callers
+   * (`commands/up.ts`) opt in by passing `true`.
+   *
+   * In json mode, this additionally emits an `elapsed_ms` field on every
+   * `phase_end` event when set.
+   */
+  showTiming?: boolean;
 }
 
 export function createOutput(opts: CreateOutputOptions): Output {
   const stream = opts.stream ?? process.stdout;
+  const showTiming = opts.showTiming === true;
   switch (opts.mode) {
     case "json":
-      return createJsonOutput(stream);
+      return createJsonOutput(stream, { showTiming });
     case "quiet":
       return createQuietOutput(stream);
     case "pretty":
-      return createPrettyOutput(stream);
+      return createPrettyOutput(stream, { showTiming });
     default: {
       // Exhaustive check; runtime guard for callers that bypass types.
       const exhaustive: never = opts.mode;

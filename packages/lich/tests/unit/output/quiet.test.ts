@@ -43,11 +43,14 @@ describe("quiet output", () => {
     });
     await out.close();
 
+    // Quiet mode uses the same renderer as pretty (no spinner, no color).
+    // See pretty.test.ts for the rationale on the table layout (LEV-301).
     expect(sink.lines()).toEqual([
       "stack up",
       "  worktree: ~/foo",
+      "",
       "  services:",
-      "    ✓ ready api",
+      "    api  ready",
     ]);
   });
 

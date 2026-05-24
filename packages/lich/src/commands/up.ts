@@ -74,7 +74,15 @@ import {
 import { waitForLogMatch } from "../ready/log-match.js";
 import { buildGraph, validateGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
-import { createOutput, type Output, type OutputMode } from "../output/index.js";
+import {
+  createOutput,
+  type Output,
+  type OutputMode,
+  type SummaryBlock,
+  type SummaryHint,
+  type SummaryService,
+  type SummaryUrl,
+} from "../output/index.js";
 import type {
   ComposeService,
   LichConfig,
@@ -136,8 +144,16 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
   const cwd = input.cwd ?? process.cwd();
   const outputMode = input.outputMode ?? "pretty";
   const sink = input.out ?? process.stdout;
-  const output = createOutput({ mode: outputMode, stream: sink });
+  // LEV-301: opt into per-phase elapsed timing + elapsed_ms on summary so
+  // the user sees how long each step took (`✓ start 1/3 (supabase) — 91.2s`).
+  const output = createOutput({
+    mode: outputMode,
+    stream: sink,
+    showTiming: true,
+  });
   const signal = input.signal;
+  // Wall-clock anchor for the overall summary's elapsed timing.
+  const runStartedAtMs = Date.now();
 
   // The state needs to be visible to the failure path so we can write a
   // failed snapshot. Built incrementally as steps complete.
@@ -320,10 +336,14 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     }
 
     // ---- Step 10: per-level startup ---------------------------------------
+    // Per-level phase name (LEV-301): `start N/total (svc, svc)` — gives the
+    // user a progress counter + the names being started. `start-level-N` was
+    // implementation jargon; this reads as plain English for both single- and
+    // multi-service levels.
     for (let levelIdx = 0; levelIdx < levels.length; levelIdx++) {
       const level = levels[levelIdx];
-      const phase = output.phase(`start-level-${levelIdx}`);
-      phase.step(`services: ${level.join(", ")}`);
+      const phaseName = `start ${levelIdx + 1}/${levels.length} (${level.join(", ")})`;
+      const phase = output.phase(phaseName);
 
       // Throwing inside startOne signals a fatal startup failure for the
       // stack. Use Promise.allSettled-style accumulation so all parallel
@@ -358,8 +378,10 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       if (failures.length > 0) {
         phase.end("fail");
         const detail = failures.map((f) => describeError(f.reason)).join("\n");
+        // LEV-301: surface the same friendly N/total coordinate the
+        // success path uses, not the level index.
         output.error({
-          title: `failed to start services in level ${levelIdx}`,
+          title: `failed to start services in step ${levelIdx + 1}/${levels.length} (${level.join(", ")})`,
           detail,
         });
         // markFailed has already been called per-service inside startOne.
@@ -409,24 +431,18 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     state.status = "up";
     await writeStateSnapshot(state);
 
-    output.summary({
-      title: "stack up",
-      lines: [
-        `stack_id: ${worktree.stack_id}`,
-        `worktree: ${worktree.name}`,
-        `services: ${state.services.size}`,
-      ],
-      services: [...state.services.values()].map((s) => ({
-        name: s.name,
-        state: s.state as
-          | "starting"
-          | "healthy"
-          | "initializing"
-          | "ready"
-          | "stopping"
-          | "failed",
-      })),
-    });
+    // LEV-301: emit a structured success summary — services with their
+    // allocated ports, reachable URLs (raw `http://localhost:<port>`),
+    // and "what now?" hints. Pretty renders this as a tidy table; json
+    // surfaces the same data as an extended summary event.
+    output.summary(
+      buildSuccessSummary({
+        stackId: worktree.stack_id,
+        worktreeName: worktree.name,
+        services: [...state.services.values()],
+        elapsedMs: Date.now() - runStartedAtMs,
+      }),
+    );
     await output.close();
 
     return {
@@ -706,6 +722,9 @@ async function waitReady(
       `${name}.ready_when.http_get`,
     );
     const url = buildHttpUrl(resolved, def, input);
+    // LEV-301: surface the URL we're polling so the user can curl it
+    // themselves while waiting (helpful when a service is slow to come up).
+    input.output.service(name, "initializing", `waiting on ${url}`);
     await waitForHttpReady({ url, signal });
     return;
   }
@@ -716,6 +735,9 @@ async function waitReady(
       interpCtx,
       `${name}.ready_when.tcp`,
     );
+    // LEV-301: surface the tcp target we're probing for the same reason
+    // as the http_get case above.
+    input.output.service(name, "initializing", `waiting on tcp ${target}`);
     await waitForTcpReady({ target, signal });
     return;
   }
@@ -932,6 +954,78 @@ function resolveOwnedCwd(def: OwnedService, projectRoot: string): string {
   if (!def.cwd || def.cwd === "." || def.cwd === "./") return projectRoot;
   if (def.cwd.startsWith("/")) return def.cwd;
   return join(projectRoot, def.cwd);
+}
+
+// ---------------------------------------------------------------------------
+// Success summary builder (LEV-301)
+// ---------------------------------------------------------------------------
+
+interface BuildSummaryInput {
+  stackId: string;
+  worktreeName: string;
+  services: ServiceSnapshot[];
+  elapsedMs: number;
+}
+
+/**
+ * Build the structured success summary block.
+ *
+ * Per LEV-301, the success path should match the failure path's quality:
+ * give the user one tidy block they can read end-to-end without scrolling
+ * back to find what ports got allocated. We surface:
+ *
+ *   - title with stack id + total wall-clock elapsed
+ *   - per-service final state + allocated ports
+ *   - per-service raw URLs (when we can infer one — services with a
+ *     `default` owned port or a single compose port get a
+ *     `http://localhost:<port>` line). Plan 5 will add friendly URLs
+ *     alongside; for now the raw URL is what users actually paste.
+ *   - "what now?" hints: the two most useful next commands.
+ */
+function buildSuccessSummary(input: BuildSummaryInput): SummaryBlock {
+  const services: SummaryService[] = input.services.map((s) => {
+    const out: SummaryService = {
+      name: s.name,
+      state: s.state as SummaryService["state"],
+    };
+    if (s.allocated_ports && Object.keys(s.allocated_ports).length > 0) {
+      out.ports = s.allocated_ports;
+    }
+    return out;
+  });
+
+  // Infer a single user-facing URL per service:
+  //   - owned single-port (`default` key) → `http://localhost:<port>`
+  //   - any service with exactly one allocated port → that port
+  //   - services with multiple ports (e.g. supabase with 6 ports) get
+  //     omitted because there's no "the" port — the user already sees
+  //     the port map in the services table.
+  const urls: SummaryUrl[] = [];
+  for (const s of input.services) {
+    const ports = s.allocated_ports;
+    if (!ports) continue;
+    const entries = Object.entries(ports);
+    if (entries.length !== 1) continue;
+    const [, port] = entries[0];
+    urls.push({ service: s.name, url: `http://localhost:${port}` });
+  }
+
+  const next: SummaryHint[] = [
+    { cmd: "lich logs", description: "follow stack logs" },
+    { cmd: "lich down", description: "stop the stack" },
+  ];
+
+  return {
+    title: "stack up",
+    elapsedMs: input.elapsedMs,
+    lines: [
+      `stack_id: ${input.stackId}`,
+      `worktree: ${input.worktreeName}`,
+    ],
+    services,
+    urls: urls.length > 0 ? urls : undefined,
+    next,
+  };
 }
 
 // ---------------------------------------------------------------------------
