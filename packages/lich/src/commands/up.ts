@@ -74,6 +74,7 @@ import {
   type InterpolationContext,
 } from "../config/interpolation.js";
 import { waitForLogMatch } from "../ready/log-match.js";
+import { LogTail } from "../logs/tail.js";
 import { buildGraph, validateGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
 import {
@@ -917,7 +918,21 @@ async function waitReady(
     const logPath = isOwned
       ? serviceLogPath(worktree.stack_id, name)
       : serviceLogPath(worktree.stack_id, name);
-    await waitForLogMatch({ logPath, pattern, signal });
+    // Plan 4 Task 4: waitForLogMatch now subscribes to a shared LogTail
+    // rather than opening its own poll loop. Per the plan, the orchestrator
+    // will eventually keep one LogTail per owned service in a stack-level
+    // registry so fail_when, capture, and the dashboard can all share it
+    // (Task 14). For now we construct a tail just-in-time here and stop it
+    // when the wait settles — same observable behavior as the previous
+    // self-tailing implementation, but the future-extension wiring lives
+    // on the LogTail primitive.
+    const tail = new LogTail({ logPath, signal });
+    await tail.start();
+    try {
+      await waitForLogMatch({ tail, pattern, signal });
+    } finally {
+      await tail.stop();
+    }
     return;
   }
 

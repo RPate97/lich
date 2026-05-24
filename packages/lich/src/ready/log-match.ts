@@ -1,168 +1,188 @@
 /**
- * log_match ready evaluator.
+ * log_match ready evaluator — refactored to consume a {@link LogTail}.
  *
- * Tails a service's per-service log file (the supervisor writes one per
- * owned service to disk) and resolves when a line matching `pattern` is
- * observed. Plan 1 is pass/fail only — Plan 4 will add `capture:`
- * (named-group extraction).
+ * Plan 4 introduced the `LogTail` primitive (`packages/lich/src/logs/tail.ts`)
+ * to fan one physical log file out to N logical consumers: `ready_when.log_match`,
+ * `fail_when.log_match`, `ready_when.capture`, and (Plan 5) the dashboard live
+ * tail. Each of those consumers used to need its own poll loop, its own read
+ * fd, and its own line-splitting state. Plan 4 Task 4 finishes that cleanup by
+ * removing this file's standalone poll loop and re-expressing it as a
+ * subscriber on a caller-supplied `LogTail`.
  *
- * Strategy: poll `stat` on the log path on a short interval. If the file
- * has grown since the last read, read the new bytes from the previous
- * offset, split into lines, and test each complete line against the
- * regex. A trailing partial line (no terminating newline) is buffered
- * across ticks so the pattern only ever matches complete lines.
+ * ### Behavior contract (preserved from the standalone implementation)
  *
- * If the file doesn't exist yet (the service may not have produced any
- * output, or hasn't started), poll until it appears.
+ * Resolves when a line matching `pattern` is observed. Rejects with an error
+ * whose message contains "aborted" if the caller's `signal` fires (or is
+ * already aborted at entry). The supplied `tail` is the I/O surface; this
+ * function only inspects lines it produces.
  *
- * The supplied AbortSignal cancels the polling loop and any in-flight
- * read; on abort the returned promise rejects with an Error whose
- * message contains "aborted".
+ * Regex compilation is the caller's responsibility — `validate` compiles the
+ * user-supplied pattern up front so syntax errors surface at config load, not
+ * at ready-check time.
  *
- * Regex compilation is the caller's responsibility — `validate` compiles
- * the user-supplied pattern up front so syntax errors surface at config
- * load, not at ready-check time.
+ * ### Retroactive match (the new piece)
+ *
+ * `up.ts` will spawn an owned service, construct a `LogTail`, then call
+ * `waitForLogMatch`. The supervisor may already have written some bytes — and
+ * possibly the matching ready line — into the log between spawn and our
+ * subscription. Subscribing via `tail.onLine(...)` only sees NEW lines, so we
+ * could miss a ready line that landed during that startup window.
+ *
+ * To close the window, we check `tail.buffer.split(/\r?\n/)` against `pattern`
+ * BEFORE subscribing. Any complete line already in the buffer that matches
+ * wins immediately. If nothing in the buffer matches, we subscribe to new
+ * lines and wait for the first match (or abort).
+ *
+ * Note that `tail.buffer` is the accumulator the `LogTail` populates on each
+ * read — it contains every byte the LogTail has read since `start()`, with the
+ * trailing partial line included verbatim. That partial line is excluded by
+ * the `split(/\r?\n/)` filter below (we only consider complete-newline-terminated
+ * lines) because the `LogTail`'s `onLine()` subscriber contract is "complete
+ * lines only"; we want our retroactive scan to honor the same rule.
+ *
+ * ### Why this no longer opens its own fd
+ *
+ * Before Plan 4 Task 4 this file ran its own `setInterval` + `stat` + `open`
+ * + `read` loop. That worked, but it meant every Plan 4 consumer (fail_when,
+ * capture, dashboard) would duplicate the same machinery and re-open the same
+ * file N times per poll tick. `LogTail` owns the read side now; this file
+ * owns the regex-matching side. Each does one thing.
  */
 
-import { open, stat } from "node:fs/promises";
+import type { LogTail } from "../logs/tail.js";
 
 export interface LogMatchReadySpec {
-  /** Absolute path to the log file to watch. */
-  logPath: string;
+  /**
+   * The shared LogTail for this service's log. The caller (`up.ts`) is
+   * responsible for constructing, starting, and ultimately stopping the
+   * tail — we just subscribe to it. Multiple watchers (fail_when, capture)
+   * subscribe to the same instance.
+   */
+  tail: LogTail;
   /**
    * Compiled regex. Tested against each complete line (newline stripped).
    * Caller compiles ahead of time so validate can catch syntax errors.
    */
   pattern: RegExp;
   /**
-   * Poll interval in ms. Default 100. Faster than http/tcp because
-   * file-system polling is cheap.
+   * Optional AbortSignal to cancel the wait. On fire, the returned promise
+   * rejects with an Error whose message contains "aborted". Subscribing to
+   * the tail is cleaned up on either path (match or abort) so the LogTail
+   * doesn't accumulate dead subscribers.
    */
-  intervalMs?: number;
-  /** Optional AbortSignal to cancel the polling loop. */
   signal?: AbortSignal;
 }
 
-const DEFAULT_INTERVAL_MS = 100;
-
 /**
- * Returns a Promise that resolves when a line matching `pattern` is
- * observed in the log file. Rejects if the supplied AbortSignal fires.
+ * Returns a Promise that resolves when a line matching `pattern` is observed
+ * via `spec.tail`. Rejects if the supplied `signal` fires.
+ *
+ * Lines already in `spec.tail.buffer` at call time are inspected first — see
+ * the file-level docstring's "Retroactive match" section for why this matters.
+ * If nothing in the buffer matches, we subscribe via `tail.onLine(...)` and
+ * resolve on the first matching new line.
+ *
+ * Cleanup contract: whichever way the promise settles (resolve on match,
+ * reject on abort, or pre-aborted at entry), the subscription is removed from
+ * the LogTail before the promise settles. This keeps the LogTail's subscriber
+ * set bounded across the orchestrator's lifetime.
  */
-export async function waitForLogMatch(spec: LogMatchReadySpec): Promise<void> {
-  const intervalMs = spec.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const outerSignal = spec.signal;
+export function waitForLogMatch(spec: LogMatchReadySpec): Promise<void> {
+  const { tail, pattern, signal } = spec;
 
-  if (outerSignal?.aborted) {
-    throw new Error("aborted");
-  }
-
-  let offset = 0;
-  // Trailing partial-line buffer: a chunk of bytes that didn't end with
-  // a newline; we hold it so the next tick can finish the line before
-  // testing against the regex.
-  let pending = "";
-
-  // Loop forever (no timeout in Plan 1). Each tick:
-  //   1. stat the file (ENOENT → file not yet present; sleep + retry)
-  //   2. if size > offset → open, read the new bytes, close
-  //   3. split into complete lines (carry partial)
-  //   4. test each line; resolve on first match
-  //   5. sleep intervalMs
-  // Abort can fire at any point — both during reads and during the sleep.
-  while (true) {
-    if (outerSignal?.aborted) {
-      throw new Error("aborted");
-    }
-
-    let size: number | null = null;
-    try {
-      const st = await stat(spec.logPath);
-      size = st.size;
-    } catch (err) {
-      // ENOENT is expected before the service starts writing. Any other
-      // error is also non-fatal — just keep polling. If abort fired
-      // mid-stat, surface it.
-      if (outerSignal?.aborted) {
-        throw new Error("aborted");
-      }
-    }
-
-    if (size !== null && size > offset) {
-      // Read the new bytes.
-      const length = size - offset;
-      const buf = Buffer.allocUnsafe(length);
-      const handle = await open(spec.logPath, "r");
-      try {
-        const { bytesRead } = await handle.read(buf, 0, length, offset);
-        offset += bytesRead;
-
-        if (bytesRead > 0) {
-          const chunk = buf.slice(0, bytesRead).toString("utf8");
-          pending += chunk;
-
-          // Split on newline. Everything before the last newline is a
-          // set of complete lines; anything after is a partial we carry.
-          const lastNewline = pending.lastIndexOf("\n");
-          if (lastNewline >= 0) {
-            const complete = pending.slice(0, lastNewline);
-            pending = pending.slice(lastNewline + 1);
-
-            // Split off the complete portion line-by-line. `split('\n')`
-            // on the complete portion gives us each line cleanly (no
-            // trailing empty element since we stripped the final '\n').
-            // Use `split(/\r?\n/)` so CRLF logs aren't matched with a
-            // stray '\r' at the end of the line.
-            const lines = complete.split(/\r?\n/);
-            for (const line of lines) {
-              if (spec.pattern.test(line)) {
-                await handle.close();
-                return;
-              }
-            }
-          }
-        }
-      } finally {
-        // `close` may throw if we already closed above on match — wrap.
-        try {
-          await handle.close();
-        } catch {
-          // already closed
-        }
-      }
-    }
-
-    // If the file shrunk (rotation) we don't try to handle it in Plan 1.
-    // The supervisor doesn't rotate; if size < offset somehow we leave
-    // the offset alone and wait for it to grow past `offset` again,
-    // which is conservative but safe.
-
-    await sleep(intervalMs, outerSignal);
-  }
-}
-
-/**
- * Sleep for `ms` milliseconds, returning early (rejecting with "aborted")
- * if the supplied signal fires.
- */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    // Pre-aborted: reject synchronously after the microtask boundary so
+    // callers can `await` without observing a thenable that resolves
+    // mid-construction. Matches the standalone implementation's behavior.
     if (signal?.aborted) {
       reject(new Error("aborted"));
       return;
     }
 
-    const timer = setTimeout(() => {
-      if (signal) signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
+    // unsubscribeLine is set after we register the line subscriber below.
+    // It's invoked from settle() to remove our callback from the tail's
+    // subscriber set. `null` before subscription is meaningful: it lets
+    // settle() know there's nothing to remove yet (e.g. retroactive match
+    // path that resolves before subscribing).
+    let unsubscribeLine: (() => void) | null = null;
+    // onAbort is captured so we can `removeEventListener` it on settle.
+    // Otherwise a long-lived AbortSignal (the orchestrator's) would keep a
+    // reference to this closure for every log_match wait we ever did.
+    let onAbort: (() => void) | null = null;
+    let settled = false;
 
-    const onAbort = () => {
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener("abort", onAbort);
-      reject(new Error("aborted"));
+    /**
+     * Single-shot termination path. Calls every cleanup hook exactly once,
+     * then invokes the supplied disposition. Designed so the subscriber
+     * callback, the abort listener, and the buffer-scan path all funnel
+     * through the same teardown — no chance of resolving twice, no chance
+     * of leaving a subscriber dangling on a tail that's still alive.
+     */
+    const settle = (kind: "ok" | "abort"): void => {
+      if (settled) return;
+      settled = true;
+
+      if (unsubscribeLine !== null) {
+        unsubscribeLine();
+        unsubscribeLine = null;
+      }
+      if (signal !== undefined && onAbort !== null) {
+        signal.removeEventListener("abort", onAbort);
+        onAbort = null;
+      }
+
+      if (kind === "ok") {
+        resolve();
+      } else {
+        reject(new Error("aborted"));
+      }
     };
 
-    signal?.addEventListener("abort", onAbort, { once: true });
+    // Wire abort handling first so a signal that fires synchronously
+    // during our retroactive buffer scan (unlikely, but a sibling
+    // promise that aborts on microtask zero would otherwise sneak past)
+    // gets caught here rather than landing on the subscriber.
+    if (signal !== undefined) {
+      onAbort = () => settle("abort");
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    // Retroactive scan: any complete line already buffered by the tail
+    // BEFORE we subscribed gets a chance to match. The trailing partial
+    // line (no terminating newline) is excluded by `split(/\r?\n/)` only
+    // emitting elements separated by complete newlines — the final
+    // element after a trailing partial is still a possibly-incomplete
+    // line, so we deliberately only test elements that have a successor
+    // in the array (i.e. they were followed by a newline in the buffer).
+    //
+    // Concretely: for buffer "a\nb\nc" (no trailing newline), split
+    // produces ["a", "b", "c"]. Only "a" and "b" are complete (followed
+    // by `\n` in the source); "c" is partial and excluded from the
+    // retroactive scan. The LogTail's `onLine` will emit "c" later, once
+    // the next `\n` arrives, so we'll see it then.
+    const buffered = tail.buffer;
+    if (buffered.length > 0) {
+      const lines = buffered.split(/\r?\n/);
+      // Iterate up to length-1: the final element is the (possibly
+      // empty) tail after the last `\n`. If the buffer ends with `\n`,
+      // that tail is "" and there's nothing to test. If the buffer ends
+      // mid-line, that tail is a partial line we shouldn't match against
+      // (the `onLine` subscriber will see it when it's complete).
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (pattern.test(lines[i]!)) {
+          settle("ok");
+          return;
+        }
+      }
+    }
+
+    // No retroactive match. Subscribe to new lines. Each line emission is
+    // tested in registration order — first match wins.
+    unsubscribeLine = tail.onLine((line) => {
+      if (settled) return; // defensive: stop() races against subscriber fan-out
+      if (pattern.test(line)) {
+        settle("ok");
+      }
+    });
   });
 }
