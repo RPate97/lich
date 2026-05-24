@@ -59,6 +59,15 @@ interface StackRow {
   uptime_seconds: number;
   services: Array<Pick<ServiceSnapshot, "name" | "kind" | "state">>;
   primary_url?: string;
+  /**
+   * Profile this stack was started under, surfaced verbatim from
+   * `state.json`'s `active_profile`. Omitted (and absent from the JSON
+   * output) when the snapshot has no profile recorded — e.g. a stack
+   * brought up against a yaml with no `profiles` section, or a pre-Plan-3
+   * snapshot. Plan 3 Task 19 (LEV-393) added this to the wire format so
+   * e2e tests + the eventual dashboard can confirm which profile is live.
+   */
+  active_profile?: string;
   // Derived counts (kept off the JSON wire intentionally — tools can compute
   // them from `services`).
   ready_count: number;
@@ -117,6 +126,7 @@ function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
       state: s.state,
     })),
     primary_url: pickPrimaryUrl(services),
+    active_profile: snap.active_profile,
     ready_count,
     total_count,
     failed_count,
@@ -192,6 +202,10 @@ function renderJson(rows: StackRow[]): string {
       services: r.services,
     };
     if (r.primary_url) obj.primary_url = r.primary_url;
+    // Only emit `active_profile` when the snapshot recorded one — leaving the
+    // field out (rather than serializing `null`) keeps the wire format stable
+    // for pre-Plan-3 stacks and for configs without a `profiles` section.
+    if (r.active_profile !== undefined) obj.active_profile = r.active_profile;
     return obj;
   });
   return JSON.stringify(payload, null, 2);

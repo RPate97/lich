@@ -270,6 +270,20 @@ interface UpState {
    * the default `during_startup` label, which is the correct categorization.
    */
   stageRefs: Map<string, LifecycleStage>;
+  /**
+   * Plan 3: name of the profile this `lich up` is running under, or undefined
+   * when no profile was active (yaml has no `profiles` section). Propagated
+   * into every `writeStateSnapshot` call so `state.json` carries
+   * `active_profile`, which `lich stacks`, `lich down`, and the eventual
+   * dashboard re-read to know which profile is live. Set once at state
+   * construction (right after profile resolution) and never mutated;
+   * flipping mid-run would lie about what's actually running. Threaded
+   * through here per Task 15's wiring sketch — Task 19 (LEV-393) lands this
+   * minimum plumbing so the active_profile flows snapshot → stacks --json;
+   * Task 15 (LEV-389) layers on the rest (lifecycle composition, env
+   * resolution, LICH_PROFILE injection).
+   */
+  activeProfile?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +485,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       capturedValues: {},
       exitWatchers: new Map(),
       stageRefs: new Map(),
-      // LEV-389 (Plan 3 Task 15): persist the active profile name so every
+      // LEV-389 (Plan 3 Task 15) [+ LEV-393]: persist the active profile name so every
       // `writeStateSnapshot` call (including the first one at Step 6) emits
       // `active_profile` into state.json. Undefined when no profile is in
       // play; the snapshot field is optional and omitted in that case (see
@@ -2391,6 +2405,13 @@ async function writeStateSnapshot(state: UpState): Promise<void> {
     status: state.status,
     started_at: state.startedAt,
     services: [...state.services.values()],
+    // Plan 3 (LEV-393): persist the active profile name so `lich stacks`,
+    // `lich down`, and the eventual dashboard can re-read it. Optional —
+    // omitted when the yaml has no `profiles` section. The snapshot's
+    // `active_profile` is what flows through the `stacks --json` wire
+    // format and what `down.ts` reads to compose profile-scoped
+    // `before_down` entries.
+    active_profile: state.activeProfile,
   };
   // LEV-389 (Plan 3 Task 15): persist the active profile name. Only set the
   // field when one is active — pre-Plan-3 snapshots and no-profile stacks

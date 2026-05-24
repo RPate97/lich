@@ -17,6 +17,8 @@ export interface StackSnapshot {
   status: string;
   started_at: string;
   services: ServiceSnapshot[];
+  /** Plan 3: profile this stack was started under, when one was active. */
+  active_profile?: string;
 }
 
 /**

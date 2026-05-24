@@ -378,6 +378,62 @@ describe("runStacks — primary_url", () => {
 });
 
 // ---------------------------------------------------------------------------
+// active_profile surfacing — Plan 3 Task 19 (LEV-393)
+//
+// The snapshot's `active_profile` field MUST flow through to the JSON wire
+// when set, and MUST be absent when unset (preserving the wire format for
+// pre-Plan-3 stacks and configs without a `profiles` section). The pretty
+// renderer's column layout doesn't expose the field yet — Plan 5's
+// dashboard is the canonical surface for it — but the JSON path is the
+// machine-readable contract that e2e tests (and any future tooling) rely
+// on, so we pin it here.
+// ---------------------------------------------------------------------------
+
+describe("runStacks — active_profile (json wire format)", () => {
+  it("includes active_profile in the JSON when the snapshot recorded one", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "id-prof",
+        worktree_name: "with-profile",
+        active_profile: "dev",
+        services: [{ name: "api", kind: "owned", state: "ready" }],
+      }),
+    );
+
+    const { sink, out } = makeSink();
+    const result = await runStacks({ out, json: true });
+    expect(result.exitCode).toBe(0);
+
+    const [entry] = JSON.parse(sink.text());
+    expect(entry.active_profile).toBe("dev");
+  });
+
+  it("omits active_profile from the JSON when the snapshot has none", async () => {
+    // Pre-Plan-3 snapshots (and yamls with no `profiles` section) carry no
+    // `active_profile`. The JSON output must omit the key entirely rather
+    // than emit `"active_profile": null` — that keeps the wire format
+    // stable for tools that grep for the field's presence.
+    await writeSnapshot(
+      snap({
+        stack_id: "id-noprof",
+        worktree_name: "no-profile",
+        services: [{ name: "api", kind: "owned", state: "ready" }],
+      }),
+    );
+
+    const { sink, out } = makeSink();
+    const result = await runStacks({ out, json: true });
+    expect(result.exitCode).toBe(0);
+
+    const text = sink.text();
+    const [entry] = JSON.parse(text);
+    // Use `in` rather than `=== undefined` so a serialized `null` would
+    // also fail — the contract is the key must be ABSENT.
+    expect("active_profile" in entry).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Uptime formatting
 // ---------------------------------------------------------------------------
 
