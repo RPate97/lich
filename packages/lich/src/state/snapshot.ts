@@ -35,6 +35,22 @@ export interface ServiceSnapshot {
   started_at?: string;
   /** Process id; only meaningful for owned services. */
   pid?: number;
+  /**
+   * Human-readable explanation of why this service is in the `failed` state.
+   * Only meaningful — and only persisted to `state.json` — when `state ===
+   * "failed"`. Populated by the failure formatter (Plan 4 Task 9 / Task 14).
+   * Older snapshots written before Plan 4 don't carry this field; readers
+   * must tolerate its absence.
+   */
+  failure_reason?: string;
+  /**
+   * Last N (typically 20) lines of the service's log captured at the moment
+   * of failure, newline-stripped, oldest-first. Only persisted when `state
+   * === "failed"`. A `string[]` rather than a joined string so each line
+   * renders as a clean JSON array element in `state.json` and downstream
+   * consumers (dashboard in Plan 5) don't have to re-split.
+   */
+  failure_log_tail?: string[];
 }
 
 export type StackStatus =
@@ -79,6 +95,29 @@ export async function readSnapshot(
 }
 
 /**
+ * Strips failure fields from any service whose state is not `failed` so the
+ * on-disk `state.json` stays clean. Callers in upstream code (notably the
+ * up orchestrator) may carry transient failure metadata on snapshot objects
+ * that they later overwrite when recovering — we don't want stale failure
+ * fields to leak into state.json for healthy services.
+ *
+ * Returns a shallow-copied snapshot with sanitized services. The input is
+ * never mutated.
+ */
+function sanitizeForWrite(snapshot: StackSnapshot): StackSnapshot {
+  return {
+    ...snapshot,
+    services: snapshot.services.map((svc) => {
+      if (svc.state === "failed") return svc;
+      if (svc.failure_reason === undefined && svc.failure_log_tail === undefined)
+        return svc;
+      const { failure_reason: _r, failure_log_tail: _t, ...rest } = svc;
+      return rest;
+    }),
+  };
+}
+
+/**
  * Writes a snapshot atomically.
  *
  * Strategy: serialize, write to `<stackDir>/state.json.<random>.tmp`,
@@ -87,10 +126,15 @@ export async function readSnapshot(
  * file but the destination `state.json` is untouched. The rename itself
  * is atomic on any sane filesystem, so a concurrent reader either sees
  * the old contents or the new contents — never half a document.
+ *
+ * Per-service `failure_reason` and `failure_log_tail` fields are only
+ * persisted when the service's `state` is `"failed"`. See
+ * {@link sanitizeForWrite}.
  */
 export async function writeSnapshot(snapshot: StackSnapshot): Promise<void> {
   // Throw eagerly on bad input — keeps the tmp-file path off-disk.
-  const serialized = JSON.stringify(snapshot, null, 2) + "\n";
+  const serialized =
+    JSON.stringify(sanitizeForWrite(snapshot), null, 2) + "\n";
 
   await ensureStackDir(snapshot.stack_id);
 
