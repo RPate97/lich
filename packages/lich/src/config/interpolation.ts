@@ -10,16 +10,23 @@
  * profile is allowed to exist as long as nothing in the resolved env
  * actually pulls it.
  *
- * Plan 4 will extend the supported reference set to include
- * `${owned.<name>.captured.<key>}` (regex captures from log streams).
+ * Plan 4 (LEV-361, Task 12) extends the supported reference set to
+ * include `${owned.<name>.captured.<key>}` — regex-captured values pulled
+ * from a service's log stream after `ready_when` fires. The engine itself
+ * is unchanged in shape: capture values live alongside `port`/`ports` on
+ * the per-owned-service context entry, and the resolver routes through
+ * an extra branch when the third segment is `captured`. The capture
+ * values are populated at runtime by `src/commands/up.ts` (Task 14) from
+ * the output of `src/ready/capture.ts` (Task 6).
  *
- * Supported reference shapes (Plan 1):
+ * Supported reference shapes:
  *   ${worktree.name}                    -> ctx.worktree.name
  *   ${worktree.id}                      -> ctx.worktree.id
  *   ${worktree.path}                    -> ctx.worktree.path
  *   ${services.<name>.host_port}        -> ctx.services[name].host_port
  *   ${owned.<name>.port}                -> ctx.owned[name].port
  *   ${owned.<name>.ports.<key>}         -> ctx.owned[name].ports[key]
+ *   ${owned.<name>.captured.<key>}      -> ctx.owned[name].captured[key]
  *
  * Escape sequence:
  *   $$ -> literal $
@@ -43,7 +50,18 @@ export interface InterpolationContext {
   services: Record<string, { host_port?: number }>;
   owned: Record<
     string,
-    { port?: number; ports?: Record<string, number> }
+    {
+      port?: number;
+      ports?: Record<string, number>;
+      /**
+       * Plan-4 captured values keyed by the capture name declared in
+       * `owned.<name>.ready_when.capture`. Populated at runtime once a
+       * service's ready_when fires; absent on the context entry until
+       * then. Resolving `${owned.<name>.captured.<key>}` reads from
+       * this map.
+       */
+      captured?: Record<string, string>;
+    }
   >;
 }
 
@@ -85,6 +103,7 @@ const SUPPORTED_SHAPES = [
   "services.<name>.host_port",
   "owned.<name>.port",
   "owned.<name>.ports.<key>",
+  "owned.<name>.captured.<key>",
 ];
 
 function unknownShape(ref: string, source: string | undefined): never {
@@ -218,6 +237,55 @@ function resolveReference(
         );
       }
       return String(port);
+    }
+
+    // Plan-4 (LEV-361): ${owned.<name>.captured.<key>}
+    //
+    // Captured values come from `ready_when.capture.<key>` regexes run
+    // against the service's log buffer after ready fires. Resolution
+    // happens at env-interpolation time, by which point Task-14 wiring
+    // in up.ts has populated `ctx.owned[name].captured[key]`.
+    //
+    // Two distinct unresolved-error branches:
+    //   1. The named owned service has no captured map at all — either
+    //      it has no `ready_when.capture` configured, OR ready hasn't
+    //      fired yet (e.g. an earlier-level service referring to a
+    //      later-level service). Diagnostic mentions both possibilities.
+    //   2. The map is present but the specific key is missing — capture
+    //      didn't include that key (a typo or unused capture).
+    if (rest.length === 3 && rest[1] === "captured") {
+      const name = rest[0];
+      const key = rest[2];
+      const owned = ctx.owned[name];
+      if (!owned) {
+        unresolved(
+          fullRef,
+          `no owned service named "${name}" in runtime context`,
+          source,
+        );
+      }
+      const captured = owned.captured;
+      if (!captured) {
+        unresolved(
+          fullRef,
+          `owned service "${name}" has no captured values yet ` +
+            `(does it declare \`ready_when.capture\`? has its ` +
+            `ready_when fired? captures only become available after ` +
+            `the producing service is ready)`,
+          source,
+        );
+      }
+      // `in` (not `key in captured && captured[key] !== undefined`):
+      // we accept empty-string capture matches as legitimate values.
+      if (!(key in captured)) {
+        unresolved(
+          fullRef,
+          `capture "${key}" is not declared on owned service "${name}" ` +
+            `(check \`owned.${name}.ready_when.capture\` for the key)`,
+          source,
+        );
+      }
+      return captured[key];
     }
 
     unknownShape(fullRef, source);

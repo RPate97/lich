@@ -37,6 +37,25 @@ function ctx(overrides: Partial<InterpolationContext> = {}): InterpolationContex
       // An owned service with neither port nor ports — to exercise the
       // "not allocated yet" branches:
       empty: {},
+      // Plan-4: an owned service that has captured values from its
+      // ready_when.capture extraction.
+      tunnel: {
+        captured: {
+          url: "https://abc-def.trycloudflare.com",
+          token: "secret-123",
+        },
+      },
+      // Plan-4: an owned service with ports AND captures — for the
+      // "both worlds" case proving the merge in resolve.ts works.
+      both: {
+        port: 9000,
+        captured: { region: "us-west-2" },
+      },
+      // Plan-4: empty captured map — a service that declared
+      // ready_when.capture but happened to have zero matches; not a
+      // real-world case but the engine should treat it as
+      // "no key 'X' declared" rather than crashing.
+      capturedEmpty: { captured: {} },
     },
     ...overrides,
   };
@@ -154,6 +173,145 @@ describe("interpolateString — owned.<name>.ports.<key>", () => {
     // `web` has `port`, not `ports`
     expect(() =>
       interpolateString("${owned.web.ports.api}", ctx()),
+    ).toThrow(InterpolationError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan-4 (LEV-361): owned.<name>.captured.<key>
+// ---------------------------------------------------------------------------
+
+describe("interpolateString — owned.<name>.captured.<key>", () => {
+  it("resolves ${owned.X.captured.Y} against ctx.owned.X.captured.Y", () => {
+    expect(interpolateString("${owned.tunnel.captured.url}", ctx())).toBe(
+      "https://abc-def.trycloudflare.com",
+    );
+    expect(
+      interpolateString("${owned.tunnel.captured.token}", ctx()),
+    ).toBe("secret-123");
+  });
+
+  it("interpolates inside a URL alongside other refs", () => {
+    expect(
+      interpolateString(
+        "tunnel=${owned.tunnel.captured.url} wt=${worktree.name}",
+        ctx(),
+      ),
+    ).toBe(
+      "tunnel=https://abc-def.trycloudflare.com wt=feature-x",
+    );
+  });
+
+  it("resolves captures alongside ports on the same service", () => {
+    // `both` has `port: 9000` AND `captured: { region: "us-west-2" }`.
+    expect(interpolateString("${owned.both.port}", ctx())).toBe("9000");
+    expect(interpolateString("${owned.both.captured.region}", ctx())).toBe(
+      "us-west-2",
+    );
+  });
+
+  it("throws InterpolationError with a useful message when the capture key is missing", () => {
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${owned.tunnel.captured.missing}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.reference).toBe("${owned.tunnel.captured.missing}");
+    // Message names the missing key + the owning service, and points
+    // the user at the source of truth (`ready_when.capture`).
+    expect(err!.message).toContain('"missing"');
+    expect(err!.message).toContain('"tunnel"');
+    expect(err!.message).toContain("ready_when.capture");
+  });
+
+  it("differentiates between a missing service vs a missing capture key", () => {
+    // Missing SERVICE: "no owned service named X"
+    let err1: InterpolationError | undefined;
+    try {
+      interpolateString("${owned.ghost.captured.foo}", ctx());
+    } catch (e) {
+      err1 = e as InterpolationError;
+    }
+    expect(err1).toBeInstanceOf(InterpolationError);
+    expect(err1!.message).toContain('no owned service named "ghost"');
+    // Does NOT mention `ready_when.capture` — the diagnostic is
+    // strictly about the unknown service, not where to declare the
+    // missing capture. (The word "captured" appears in the original
+    // reference, but the error message proper does not pivot to it.)
+    expect(err1!.message).not.toContain("ready_when.capture");
+
+    // Missing CAPTURE KEY: different message identifying the key.
+    let err2: InterpolationError | undefined;
+    try {
+      interpolateString("${owned.tunnel.captured.gone}", ctx());
+    } catch (e) {
+      err2 = e as InterpolationError;
+    }
+    expect(err2).toBeInstanceOf(InterpolationError);
+    expect(err2!.message).toContain('"gone"');
+    expect(err2!.message).toContain('"tunnel"');
+    expect(err2!.message).toContain("ready_when.capture");
+    // The two error messages must be visibly distinct so users can
+    // tell the cases apart.
+    expect(err1!.message).not.toBe(err2!.message);
+  });
+
+  it("throws when the owned service has no captured map at all", () => {
+    // `web` has port but no `captured` — distinct from "captured exists
+    // but key missing". Message tells the user to check
+    // `ready_when.capture` / wait for ready.
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${owned.web.captured.url}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message).toContain("no captured values yet");
+    expect(err!.message).toContain('"web"');
+  });
+
+  it("throws on missing key when captured map exists but is empty", () => {
+    // `capturedEmpty.captured = {}` — service declared the capture
+    // pipeline but no value extracted. The "map present, key missing"
+    // branch fires (not the "no captured values yet" branch).
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString(
+        "${owned.capturedEmpty.captured.anything}",
+        ctx(),
+      );
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message).toContain('"anything"');
+    expect(err!.message).toContain("ready_when.capture");
+    expect(err!.message).not.toContain("no captured values yet");
+  });
+
+  it("treats an empty-string capture value as a valid resolution (does not throw)", () => {
+    // Edge case: a regex with an optional group may legitimately
+    // produce an empty string. The interpolation engine must accept
+    // it as a valid value (returning "") rather than treating the
+    // key as missing — that decision lives in the engine, NOT in
+    // capture extraction.
+    const c = ctx({
+      owned: {
+        ...ctx().owned,
+        emptyVal: { captured: { x: "" } },
+      },
+    });
+    expect(interpolateString("${owned.emptyVal.captured.x}", c)).toBe("");
+  });
+
+  it("rejects malformed captured shapes (rest.length !== 3)", () => {
+    // `${owned.tunnel.captured}` — missing the key segment — falls
+    // through to the generic unknown-shape error.
+    expect(() =>
+      interpolateString("${owned.tunnel.captured}", ctx()),
     ).toThrow(InterpolationError);
   });
 });

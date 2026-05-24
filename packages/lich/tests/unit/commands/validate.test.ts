@@ -299,7 +299,80 @@ describe("runValidate", () => {
     expect(res.exitCode).toBe(0);
   });
 
-  it("reports a clearer error for ${owned.X.captured.Y} references (Plan 4 feature)", async () => {
+  // -------------------------------------------------------------------------
+  // Plan-4 (LEV-361) Task 12: ${owned.X.captured.Y} reference validation
+  //
+  // The earlier "deferral" message (LEV-337) was a stub — this task
+  // replaces it with real validation against declared captures.
+  // -------------------------------------------------------------------------
+
+  it("accepts ${owned.X.captured.Y} when X.ready_when.capture declares Y", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  TOKEN: "\${owned.api.captured.AUTH_TOKEN}"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    ready_when:\n` +
+        `      log_match: "started"\n` +
+        `      capture:\n` +
+        `        AUTH_TOKEN: "token=([a-z0-9]+)"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    const ies = (res.report.errors ?? []).filter((e) => e.kind === "interp");
+    expect(ies).toEqual([]);
+  });
+
+  it("flags ${owned.X.captured.Y} when X.ready_when.capture doesn't declare Y", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  TOKEN: "\${owned.api.captured.MISSING}"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    ready_when:\n` +
+        `      log_match: "started"\n` +
+        `      capture:\n` +
+        `        AUTH_TOKEN: "token=([a-z0-9]+)"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const ie = res.report.errors!.find((e) => e.kind === "interp");
+    expect(ie).toBeDefined();
+    expect(ie!.message).toContain("unknown capture");
+    expect(ie!.message).toContain('"MISSING"');
+    expect(ie!.message).toContain('"api"');
+  });
+
+  it("suggests close-match capture key on typo", async () => {
+    // `auth_tokn` is one edit away from `auth_token` -> Levenshtein
+    // surfaces it. Exercises the `did you mean` branch shared with
+    // other reference checks.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  TOKEN: "\${owned.api.captured.auth_tokn}"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    ready_when:\n` +
+        `      log_match: "started"\n` +
+        `      capture:\n` +
+        `        auth_token: "token=([a-z0-9]+)"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const ie = res.report.errors!.find((e) => e.kind === "interp");
+    expect(ie).toBeDefined();
+    expect(ie!.message).toContain('"auth_tokn"');
+    expect(ie!.message).toContain("did you mean");
+    expect(ie!.message).toContain('"auth_token"');
+  });
+
+  it("flags ${owned.X.captured.Y} when X doesn't declare ready_when.capture at all", async () => {
     const p = writeYaml(
       "lich.yaml",
       `version: "1"\n` +
@@ -310,14 +383,26 @@ describe("runValidate", () => {
     expect(res.exitCode).toBe(1);
     const ie = res.report.errors!.find((e) => e.kind === "interp");
     expect(ie).toBeDefined();
-    expect(ie!.message).toContain("Plan-4");
-    expect(ie!.message).toContain("failure-surfacing");
-    expect(ie!.message).toContain("${owned.api.captured.AUTH_TOKEN}");
-    // Includes the list of currently supported reference shapes.
-    expect(ie!.message).toContain("worktree.*");
-    expect(ie!.message).toContain("services.<name>.host_port");
-    expect(ie!.message).toContain("owned.<name>.port");
-    expect(ie!.message).toContain("owned.<name>.ports.<key>");
+    expect(ie!.message).toContain("does not declare");
+    expect(ie!.message).toContain("ready_when.capture");
+    expect(ie!.message).toContain('"api"');
+  });
+
+  it("flags ${owned.X.captured.Y} when X is not a declared owned service", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `env:\n  TOKEN: "\${owned.ghost.captured.AUTH_TOKEN}"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const ie = res.report.errors!.find((e) => e.kind === "interp");
+    expect(ie).toBeDefined();
+    expect(ie!.message).toContain("unknown owned service");
+    expect(ie!.message).toContain('"ghost"');
+    // Levenshtein-based suggestion for the close typo `ghost` -> `api`?
+    // The names are too far apart — no `did you mean`. Skip that assert.
   });
 
   // -------------------------------------------------------------------------

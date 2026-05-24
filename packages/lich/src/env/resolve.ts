@@ -65,6 +65,20 @@ export interface ResolveEnvForServiceInput {
     /** Owned service name -> either { port } or { ports: { key: port } }. */
     owned: Record<string, { port?: number; ports?: Record<string, number> }>;
   };
+  /**
+   * Plan-4 (LEV-361) captured values from owned services'
+   * `ready_when.capture` extractions, keyed by owned-service name. Each
+   * inner record maps capture-key -> matched-string. Populated by the
+   * `up` orchestrator (Task 14) as services become ready in dependency
+   * order, so later levels see captures from earlier levels.
+   *
+   * Optional — callers that haven't run any owned services through
+   * capture (validate, env-only flows, tests) may omit this and the
+   * interpolation context will simply have no `captured` maps. Any
+   * `${owned.<name>.captured.<key>}` reference in that state surfaces
+   * an InterpolationError per the engine's rules.
+   */
+  capturedValues?: Record<string, Record<string, string>>;
   /** Process env (defaults to `process.env` at call time if omitted). */
   processEnv?: NodeJS.ProcessEnv;
   /** Project root cwd used for relative env_files paths AND for env_from cwd default. */
@@ -154,6 +168,9 @@ function autoInjects(worktree: Worktree): Record<string, string> {
 function buildInterpolationContext(
   worktree: Worktree,
   allocatedPorts: ResolveEnvForServiceInput["allocatedPorts"],
+  capturedValues:
+    | ResolveEnvForServiceInput["capturedValues"]
+    | undefined,
 ): InterpolationContext {
   const services: InterpolationContext["services"] = {};
   for (const [name, ports] of Object.entries(allocatedPorts.compose)) {
@@ -167,11 +184,26 @@ function buildInterpolationContext(
   }
 
   const owned: InterpolationContext["owned"] = {};
+  // Seed every entry from the port map so port references still work for
+  // services that haven't captured anything.
   for (const [name, entry] of Object.entries(allocatedPorts.owned)) {
     owned[name] = {
       port: entry.port,
       ports: entry.ports,
     };
+  }
+  // Layer in captured values (Plan-4): may include services not in the
+  // port map (an owned service without a declared port still gets
+  // capture support), so iterate over capturedValues independently and
+  // merge or create entries as needed.
+  if (capturedValues) {
+    for (const [name, captured] of Object.entries(capturedValues)) {
+      const existing = owned[name] ?? {};
+      owned[name] = {
+        ...existing,
+        captured,
+      };
+    }
   }
 
   return {
@@ -304,7 +336,11 @@ export async function resolveEnvForService(
   });
 
   // 9. Interpolate every value against the runtime context.
-  const ctx = buildInterpolationContext(input.worktree, input.allocatedPorts);
+  const ctx = buildInterpolationContext(
+    input.worktree,
+    input.allocatedPorts,
+    input.capturedValues,
+  );
   const interpolated = interpolateRecord(
     merged,
     ctx,
@@ -335,6 +371,10 @@ export async function resolveTopLevelEnv(
     projectRoot: input.projectRoot,
   });
 
-  const ctx = buildInterpolationContext(input.worktree, input.allocatedPorts);
+  const ctx = buildInterpolationContext(
+    input.worktree,
+    input.allocatedPorts,
+    input.capturedValues,
+  );
   return interpolateRecord(merged, ctx, "env:top-level");
 }

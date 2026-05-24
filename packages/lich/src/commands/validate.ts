@@ -557,23 +557,60 @@ function validateRefBody(
       }
       return;
     }
-    // Plan-4 deferral: ${owned.X.captured.Y} is a planned feature
-    // (failure-surfacing / capture pipeline). The validator catches it here
-    // with a clearer message than the generic "unknown reference" so users
-    // aren't misled into thinking they mistyped. Plan 4 will remove this
-    // special case once captures are implemented.
+    // Plan-4 (LEV-361) Task 12: ${owned.<name>.captured.<key>}.
+    //
+    // Captures are declared on the producing service as
+    // `owned.<name>.ready_when.capture.<key>: <regex>`. A reference
+    // is valid iff:
+    //   1. The named owned service exists.
+    //   2. That service declares `ready_when.capture` at all.
+    //   3. The referenced key is one of the declared capture keys.
+    //
+    // The runtime engine (config/interpolation.ts) will fail with a
+    // similar message if the capture hasn't been populated yet, but
+    // validate catches structural mistakes (unknown service, missing
+    // capture block, typo'd key) before `lich up` ever runs.
+    //
+    // This block REPLACES the earlier "Plan-4 deferral" stub (LEV-337)
+    // which used to report this shape as unsupported.
     if (rest.length === 3 && rest[1] === "captured") {
-      errors.push({
-        kind: "interp",
-        location,
-        message: `${fullRef} is a Plan-4 (failure-surfacing) feature; supported references today: worktree.*, services.<name>.host_port, owned.<name>.port, owned.<name>.ports.<key>`,
-      });
+      const name = rest[0];
+      const key = rest[2];
+      if (!ownedNames.has(name)) {
+        const suggestion = suggest(name, [...ownedNames]);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references unknown owned service "${name}"${hint}`,
+        });
+        return;
+      }
+      const svc = config.owned?.[name];
+      const capture = svc?.ready_when?.capture;
+      if (!capture) {
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references a captured value but owned service "${name}" does not declare \`ready_when.capture\``,
+        });
+        return;
+      }
+      if (!(key in capture)) {
+        const suggestion = suggest(key, Object.keys(capture));
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references unknown capture "${key}" on owned service "${name}"${hint}`,
+        });
+      }
       return;
     }
     errors.push({
       kind: "interp",
       location,
-      message: `unknown reference ${fullRef} (expected \${owned.<name>.port} or \${owned.<name>.ports.<key>})`,
+      message: `unknown reference ${fullRef} (expected \${owned.<name>.port}, \${owned.<name>.ports.<key>}, or \${owned.<name>.captured.<key>})`,
     });
     return;
   }
