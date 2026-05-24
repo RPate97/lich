@@ -271,6 +271,40 @@ const ownedServiceSchema = {
 // runtime
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// commands (user-defined; Plan 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single user-defined command entry. Plan 2 introduces `commands:` as a
+ * strictly-shaped top-level section; this schema validates one entry.
+ *
+ * Required: `cmd`. Optional: `cwd`, `env_group`, `env`, `help`.
+ *
+ * `additionalProperties: false` ensures typos like `helps:` or `command:`
+ * are caught at validate time rather than silently ignored at runtime.
+ *
+ * NOTE: this schema does NOT enforce "command name cannot shadow a built-in"
+ * — that's a `lich validate` reference check (Plan 2 Task 14), because the
+ * list of built-ins lives in `commands/index.ts` and schemas shouldn't
+ * import from sibling modules.
+ *
+ * Spec source: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`,
+ * section 4 (`commands`).
+ */
+const userCommandSchema = {
+  type: "object",
+  properties: {
+    cmd: { type: "string" },
+    cwd: { type: "string" },
+    env_group: { type: "string" },
+    env: envMapSchema,
+    help: { type: "string" },
+  },
+  required: ["cmd"],
+  additionalProperties: false,
+} as const;
+
 const runtimeSchema = {
   type: "object",
   properties: {
@@ -315,9 +349,18 @@ export const schema = {
     lifecycle: topLevelLifecycleSchema,
 
     // ----- Sections owned by later plans — accept-as-opaque for now. -----
-    // Plan 2 will tighten env_groups + commands.
+    // Plan 2 will tighten env_groups (Task 2). Task 3 tightens commands.
     env_groups: { type: "object", additionalProperties: true },
-    commands: { type: "object", additionalProperties: true },
+    /**
+     * User-defined commands (Plan 2 Task 3). Strict: keys are command
+     * names (free-form strings; `:` and `/` are intentionally allowed so
+     * names like `test:e2e` and `db/psql` work), values match
+     * {@link userCommandSchema}.
+     */
+    commands: {
+      type: "object",
+      additionalProperties: userCommandSchema,
+    },
     // Plan 3 will tighten profiles.
     profiles: { type: "object", additionalProperties: true },
   },

@@ -145,14 +145,100 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
-  it("accepts unknown keys inside an opaque-future section (commands)", () => {
+  it("validates a config with one user-defined command", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
       commands: {
-        anything: { whatever: true, deeply: { nested: [1, 2, 3] } },
+        foo: { cmd: "echo hi", help: "say hi" },
       },
     });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("validates a user-defined command with every optional field", () => {
+    // cwd, env_group, env, help all permitted alongside the required cmd.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      commands: {
+        "test:e2e": {
+          cmd: "pnpm test:e2e",
+          cwd: "apps/web",
+          env_group: "stack",
+          env: { CI: "1" },
+          help: "Run the e2e suite.",
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("requires cmd on every user-defined command", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      commands: {
+        bad: { cwd: "x" }, // missing cmd
+      },
+    });
+    expect(ok).toBe(false);
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          e.keyword === "required" &&
+          /cmd/.test(JSON.stringify(e.params ?? {}))
+      )
+    ).toBe(true);
+  });
+
+  it("rejects unknown property inside a user-defined command", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      commands: {
+        foo: {
+          cmd: "echo hi",
+          // Typo: should be `help`.
+          helps: "say hi",
+        },
+      },
+    });
+    expect(ok).toBe(false);
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          /additional/i.test(e.keyword) ||
+          /must NOT have additional properties/i.test(e.message ?? "")
+      )
+    ).toBe(true);
+  });
+
+  it("accepts user-defined command names containing `:` or `/`", () => {
+    // The schema must NOT regex-constrain property names; commands like
+    // `test:e2e` and `db/psql` are common shorthand.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      commands: {
+        "test:e2e": { cmd: "pnpm test:e2e" },
+        "db/psql": { cmd: 'psql "$DATABASE_URL"' },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
     expect(ok).toBe(true);
   });
 
