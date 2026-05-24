@@ -11,6 +11,13 @@ owned:
     cwd: .
     oneshot: true
     stop_cmd: supabase stop
+    env:
+      # Per-worktree supabase project_id so parallel lich stacks don't
+      # collide on the same set of docker containers. The supabase CLI
+      # honors this env var at runtime, overriding supabase/config.toml's
+      # project_id. ${worktree.id} is the 12-hex-char stable hash of the
+      # worktree's absolute path.
+      SUPABASE_PROJECT_ID: "dogfood-${worktree.id}"
     ports:
       api: { env: SUPABASE_API_PORT }
       db: { env: SUPABASE_DB_PORT }
@@ -39,7 +46,9 @@ owned:
     port: { env: PORT }
     depends_on: [api]
     ready_when:
-      log_match: "ready in"
+      # Next.js dev server responds 200 on / once compilation finishes.
+      # More robust than log-matching framework cosmetic output.
+      http_get: /
       timeout: 60s
 
 env:
