@@ -1,5 +1,5 @@
 /**
- * TypeScript types for a parsed lich.yaml (Plan 1 + Plan 2 subset).
+ * TypeScript types for a parsed lich.yaml (Plan 1 + Plan 2 + Plan 3 subset).
  *
  * These types mirror the JSON Schema in `./schema.ts` — hand-rolled rather
  * than generated, both because the schema is small and because we want
@@ -11,12 +11,11 @@
  * Plan-2 scope: `env_groups`, `commands` (now strict shapes — see
  * `EnvGroupDef` and `UserCommandDef` below).
  *
- * Sections owned by later plans (`profiles`) are still typed as opaque
- * records here. Plan 3 will replace that placeholder.
+ * Plan-3 scope: `profiles` (now a strict shape — see `ProfileDef` below).
  *
- * Likewise a handful of fields *inside* services/owned that belong to later
- * plans (`ready_when.capture`, `ready_when.timeout`, `fail_when`) are
- * typed permissively here and will be tightened in Plan 4.
+ * A handful of fields *inside* services/owned that belong to later plans
+ * (`ready_when.capture`, `ready_when.timeout`, `fail_when`) are typed
+ * permissively here and will be tightened in Plan 4.
  *
  * Source-of-truth for field names and semantics:
  *   docs/superpowers/specs/2026-05-23-lich-v1-design.md (section 4).
@@ -319,6 +318,113 @@ export interface UserCommandDef {
 }
 
 // ---------------------------------------------------------------------------
+// profiles (Plan 3 — named slices of the stack)
+// ---------------------------------------------------------------------------
+
+/**
+ * A user-defined profile. Plan 3 introduces `profiles:` as a top-level
+ * config section; this interface types one entry inside that map.
+ *
+ * A profile is a named slice of the stack. It defines:
+ *   - which services + owned processes start under that slice (`services`,
+ *     `owned`),
+ *   - what env those processes run with (`env`, `env_files`, `env_from`,
+ *     layered between top-level and per-service per spec section 4),
+ *   - what lifecycle hooks fire alongside the top-level hooks (`lifecycle`).
+ *
+ * Profile resolution computes the union of services/owned across the
+ * `extends` chain (parents first, then this profile; deduplicated while
+ * preserving declared order), layers env per-key (later parent in the list
+ * wins, then the child overrides), and composes lifecycle (parents-first
+ * for `before_up` / `after_up`; LIFO for `before_down`).
+ *
+ * Exactly zero or one profile in the map may set `default: true`. `lich up`
+ * with no positional argument activates the default profile; `lich up <name>`
+ * activates the named profile explicitly. `lich validate` rejects multiple-
+ * default configs.
+ *
+ * Services and owned that are NOT in any profile's resolved set never start;
+ * `lich validate` emits a non-fatal warning for each.
+ *
+ * Spec source: `docs/superpowers/specs/2026-05-23-lich-v1-design.md`,
+ * section 4 (`profiles`).
+ */
+export interface ProfileDef {
+  /**
+   * Compose-service names (keys in top-level `services:`) that this profile
+   * includes. Order matters only for reproducibility — the dep graph computes
+   * its own topo order. Names must reference a declared compose service;
+   * `lich validate` rejects unresolved names.
+   */
+  services?: string[];
+  /**
+   * Owned-service names (keys in top-level `owned:`) that this profile
+   * includes. Same reference rules as `services`.
+   */
+  owned?: string[];
+  /**
+   * Name(s) of profile(s) to inherit from.
+   *
+   * Single string form (`extends: base`): inherit from one parent profile.
+   *
+   * Array form (`extends: [a, b]`): inherit from multiple parents, in the
+   * declared order. The resolver walks `a` first, then `b`, then this
+   * profile — so `b`'s values overlay `a`'s for env keys, and the child
+   * overlays both. Services and owned lists are unioned (deduplicated)
+   * across the chain in declared order, parents first.
+   *
+   * Per spec section 4: "extends: optional profile name (or list of names)".
+   * Array form lets a profile compose its behavior from multiple base
+   * profiles — useful for orthogonal axes (e.g. `extends: [dev, with-tunnel]`
+   * to layer tunnel-only env on top of the dev profile).
+   *
+   * Unlike `EnvGroupDef.extends` (single-string only — see note there), the
+   * profile form accepts multiple parents because the per-key env layering
+   * rule disambiguates collisions deterministically (later parent wins).
+   */
+  extends?: string | string[];
+  /**
+   * When `true`, this profile is what `lich up` (no argument) activates.
+   * Exactly zero or one profile in the `profiles:` map may set this; `lich
+   * validate` rejects multiple-default configs.
+   */
+  default?: boolean;
+  /**
+   * Profile-scoped env literals. Layered between the top-level env and any
+   * per-service env per spec section 4's precedence list. Keys here win
+   * over top-level keys of the same name; per-service env keys win over
+   * these.
+   */
+  env?: EnvMap;
+  /**
+   * Profile-scoped dotenv file paths. Concatenated after the top-level
+   * `env_files` list (so profile entries win on key collision) and before
+   * per-service `env_files`.
+   */
+  env_files?: EnvFiles;
+  /**
+   * Profile-scoped `env_from` entries. Same layering position as
+   * `env_files`: applied after top-level and before per-service.
+   */
+  env_from?: EnvFrom;
+  /**
+   * Profile-scoped lifecycle hooks. Uses the SAME shape as
+   * {@link TopLevelLifecycle}: `before_up`, `after_up`, `before_down`
+   * (no `before_start` / `after_ready` — those are per-service only).
+   *
+   * Composition with top-level lifecycle is order-sensitive:
+   *   - `before_up` / `after_up`: top-level entries run first, then profile.
+   *   - `before_down`: profile entries run first, then top-level (LIFO —
+   *     undo profile specialization before tearing down the base).
+   *
+   * Long-form `{cmd, env_group}` entries continue to work — they resolve
+   * via the same `resolveEnvGroup` callback Plan 2 wired into the
+   * lifecycle executor.
+   */
+  lifecycle?: TopLevelLifecycle;
+}
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -344,7 +450,14 @@ export interface LichConfig {
    */
   commands?: Record<string, UserCommandDef>;
 
-  // ----- Sections owned by later plans — opaque placeholders for now. -----
-  /** Plan 3 will replace this. */
-  profiles?: Record<string, unknown>;
+  /**
+   * Named profiles (Plan 3). Keyed by profile name; values are
+   * {@link ProfileDef} entries. Exactly zero or one entry may set
+   * `default: true`; `lich up` (no argument) activates that default,
+   * while `lich up <name>` activates the named profile explicitly.
+   *
+   * When this map is absent or empty, no profile is active and every
+   * declared service / owned process is started (Plan 1 behavior).
+   */
+  profiles?: Record<string, ProfileDef>;
 }
