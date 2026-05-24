@@ -40,6 +40,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -211,7 +212,7 @@ owned:
     // The sentinel must contain the URL the producer printed — proves the
     // capture flowed from producer's log buffer through the interpolation
     // context into consumer's env.
-    const sentinelContent = await Bun.file(sentinel).text();
+    const sentinelContent = readFileSync(sentinel, "utf8");
     expect(sentinelContent).toBe("http://localhost:8765");
   }, 20_000);
 });
