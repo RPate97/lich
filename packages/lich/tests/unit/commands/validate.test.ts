@@ -440,4 +440,198 @@ describe("runValidate", () => {
     expect(names).toContain("commands.down");
     expect(names).not.toContain("commands.test:e2e");
   });
+
+  // -------------------------------------------------------------------------
+  // env_group reference resolution (Plan 2 Task 16 — LEV-336)
+  // -------------------------------------------------------------------------
+
+  it("refuses commands.X.env_group pointing at undeclared group", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n` +
+        `  foo:\n    cmd: echo bar\n    env_group: ghost\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('env_group "ghost"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("not declared");
+    expect(refErr!.location).toContain("/commands/foo/env_group");
+  });
+
+  it("refuses lifecycle.after_up entry env_group pointing at undeclared group", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `lifecycle:\n` +
+        `  after_up:\n` +
+        `    - cmd: "./scripts/sync.sh"\n` +
+        `      env_group: missing\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('env_group "missing"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.location).toContain("/lifecycle/after_up/0/env_group");
+  });
+
+  it("refuses owned.svc.lifecycle entry env_group pointing at undeclared group", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    lifecycle:\n` +
+        `      after_ready:\n` +
+        `        - cmd: "./scripts/post-start.sh"\n` +
+        `          env_group: nope\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('env_group "nope"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.location).toContain(
+      "/owned/api/lifecycle/after_ready/0/env_group",
+    );
+  });
+
+  it("refuses env_groups.X.extends pointing at undeclared group", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  child:\n` +
+        `    extends: nonexistent\n` +
+        `    env:\n      K: v\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('env_group "nonexistent"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.location).toContain("/env_groups/child/extends");
+  });
+
+  it("accepts env_group: stack universally (built-in is always valid)", async () => {
+    // Verify across all four surfaces: commands, top-level lifecycle,
+    // per-service lifecycle, and env_groups.extends — even with NO
+    // env_groups: section declared at all.
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    lifecycle:\n` +
+        `      after_ready:\n` +
+        `        - cmd: "./scripts/post-start.sh"\n` +
+        `          env_group: stack\n` +
+        `lifecycle:\n` +
+        `  after_up:\n` +
+        `    - cmd: "./scripts/migrate.sh"\n` +
+        `      env_group: stack\n` +
+        `commands:\n` +
+        `  foo:\n    cmd: echo bar\n    env_group: stack\n` +
+        `env_groups:\n` +
+        `  derived:\n    extends: stack\n    env:\n      K: v\n`,
+    );
+    const res = await run({ path: p });
+    // No env_group ref errors should appear (other categories may still emit;
+    // but our `ref` errors should not mention env_group).
+    const envGroupRefErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "ref" && e.message.includes("env_group"),
+    );
+    expect(envGroupRefErrs).toEqual([]);
+    expect(res.exitCode).toBe(0);
+  });
+
+  it("suggests close-match names on typo", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  "infisical-prod":\n` +
+        `    env:\n      SECRET: shh\n` +
+        `commands:\n` +
+        `  sync:\n` +
+        `    cmd: "./scripts/sync.sh"\n` +
+        `    env_group: "infisical-prdo"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErr = res.report.errors!.find(
+      (e) => e.kind === "ref" && e.message.includes('"infisical-prdo"'),
+    );
+    expect(refErr).toBeDefined();
+    expect(refErr!.message).toContain("infisical-prod");
+    expect(refErr!.message).toContain("did you mean");
+  });
+
+  it("resolves env_group references to user-declared groups (no error)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `env_groups:\n` +
+        `  isolated-tools:\n` +
+        `    env:\n      TOOL_MODE: standalone\n` +
+        `commands:\n` +
+        `  check:\n` +
+        `    cmd: "printenv TOOL_MODE"\n` +
+        `    env_group: isolated-tools\n`,
+    );
+    const res = await run({ path: p });
+    const envGroupRefErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "ref" && e.message.includes("env_group"),
+    );
+    expect(envGroupRefErrs).toEqual([]);
+    expect(res.exitCode).toBe(0);
+  });
+
+  it("reports every unresolved env_group reference across all surfaces", async () => {
+    // Sanity-check: when multiple surfaces have bad refs, every one is
+    // reported (we don't short-circuit on the first error).
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n` +
+        `  api:\n` +
+        `    cmd: echo hi\n` +
+        `    lifecycle:\n` +
+        `      after_ready:\n` +
+        `        - cmd: x\n          env_group: ghostA\n` +
+        `lifecycle:\n` +
+        `  after_up:\n` +
+        `    - cmd: y\n      env_group: ghostB\n` +
+        `commands:\n` +
+        `  foo:\n    cmd: z\n    env_group: ghostC\n` +
+        `env_groups:\n` +
+        `  child:\n    extends: ghostD\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const refErrs = (res.report.errors ?? []).filter(
+      (e) => e.kind === "ref" && e.message.includes("env_group"),
+    );
+    // All four bad refs should be flagged.
+    expect(refErrs.length).toBe(4);
+    const flagged = refErrs.map((e) => e.message).join(" | ");
+    expect(flagged).toContain('"ghostA"');
+    expect(flagged).toContain('"ghostB"');
+    expect(flagged).toContain('"ghostC"');
+    expect(flagged).toContain('"ghostD"');
+  });
 });

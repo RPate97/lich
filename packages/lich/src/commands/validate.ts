@@ -133,6 +133,8 @@ export async function runValidate(
       // LEV-334 (Plan 2 Task 14): refuse user-defined commands whose
       // name shadows a built-in.
       checkCommandShadowing(config, resolvedPath, errors);
+      // LEV-336 (Plan 2 Task 16): every env_group reference must resolve.
+      checkEnvGroupReferences(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
@@ -596,6 +598,130 @@ function checkCommandShadowing(
           `commands.${name} shadows the built-in 'lich ${name}' — ` +
           `pick a different name (try '${name}:run' or similar)`,
       });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// env_group reference checks (Plan 2 Task 16 — LEV-336)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every `env_group:` reference in the config must resolve to either the
+ * built-in `"stack"` group or a name declared in `config.env_groups`.
+ *
+ * Source surfaces walked:
+ *   1. `config.commands.<name>.env_group`
+ *   2. `config.lifecycle.<phase>[i].env_group` (long-form entries only)
+ *   3. `config.owned.<svc>.lifecycle.<phase>[i].env_group` (per-service)
+ *   4. `config.env_groups.<name>.extends` (parent references, excluding `"stack"`)
+ *
+ * Unresolved references emit `{ kind: "ref", ... }` with a Levenshtein-based
+ * "did you mean" suggestion when one is within edit distance ~2 of an existing
+ * group name.
+ *
+ * Note: the built-in `"stack"` is always valid, even when no `env_groups`
+ * section is present in the config.
+ *
+ * This check is intentionally isolated from `checkInterpolations` and other
+ * existing reference checks to keep the merge surface clean while sibling
+ * Plan 2 tasks land in `validate.ts` in parallel.
+ */
+function checkEnvGroupReferences(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  // Set of declared user groups (built-in "stack" is always valid; we do
+  // NOT include it in this set because we want to be able to suggest user-
+  // defined names on typos without "stack" dominating the Levenshtein hits).
+  const declaredGroups = new Set(Object.keys(config.env_groups ?? {}));
+
+  // Helper: report an unresolved reference. `valid` is the suggestion pool —
+  // declared user groups + "stack" — so the suggester can hint at the
+  // built-in if the user typed something like "stcak".
+  const suggestPool = [...declaredGroups, "stack"];
+  const reportUnresolved = (name: string, location: string): void => {
+    const suggestion = suggest(name, suggestPool);
+    const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+    errors.push({
+      kind: "ref",
+      location,
+      message: `env_group "${name}" not declared${hint}`,
+    });
+  };
+
+  // Helper: validate a single env_group reference. Returns silently if the
+  // name resolves; otherwise pushes a ref error.
+  const checkRef = (name: string, location: string): void => {
+    if (name === "stack") return; // built-in always valid
+    if (declaredGroups.has(name)) return;
+    reportUnresolved(name, location);
+  };
+
+  // ---- 1. commands.<name>.env_group --------------------------------------
+  for (const [cmdName, cmd] of Object.entries(config.commands ?? {})) {
+    if (cmd && typeof cmd.env_group === "string") {
+      checkRef(
+        cmd.env_group,
+        `${path} (/commands/${cmdName}/env_group)`,
+      );
+    }
+  }
+
+  // ---- 2. lifecycle.<phase>[i].env_group (top-level) ---------------------
+  const topLifecycle = config.lifecycle;
+  if (topLifecycle) {
+    for (const phase of ["before_up", "after_up", "before_down"] as const) {
+      const entries = topLifecycle[phase];
+      if (!entries) continue;
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        // Shorthand (string) entries have no env_group; skip.
+        if (typeof entry === "string") continue;
+        if (entry && typeof entry.env_group === "string") {
+          checkRef(
+            entry.env_group,
+            `${path} (/lifecycle/${phase}/${i}/env_group)`,
+          );
+        }
+      }
+    }
+  }
+
+  // ---- 3. owned.<svc>.lifecycle.<phase>[i].env_group ---------------------
+  for (const [svcName, svc] of Object.entries(config.owned ?? {})) {
+    const svcLifecycle = svc?.lifecycle;
+    if (!svcLifecycle) continue;
+    for (const phase of [
+      "before_start",
+      "after_ready",
+      "before_down",
+    ] as const) {
+      const entries = svcLifecycle[phase];
+      if (!entries) continue;
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (typeof entry === "string") continue;
+        if (entry && typeof entry.env_group === "string") {
+          checkRef(
+            entry.env_group,
+            `${path} (/owned/${svcName}/lifecycle/${phase}/${i}/env_group)`,
+          );
+        }
+      }
+    }
+  }
+
+  // ---- 4. env_groups.<name>.extends --------------------------------------
+  // A user group's `extends` may name "stack" (the built-in terminator) or
+  // another declared user group. Anything else is unresolved.
+  for (const [groupName, group] of Object.entries(config.env_groups ?? {})) {
+    if (group && typeof group.extends === "string") {
+      checkRef(
+        group.extends,
+        `${path} (/env_groups/${groupName}/extends)`,
+      );
     }
   }
 }
