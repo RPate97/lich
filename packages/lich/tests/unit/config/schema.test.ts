@@ -42,6 +42,78 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
+  // -------------------------------------------------------------------------
+  // Plan 2 Task 27 — focused conformance assertions for env_groups + commands.
+  //
+  // These mirror the most load-bearing shapes the dogfood-stack yaml relies
+  // on, in minimal form. If any of these starts failing, the schema and the
+  // dogfood yaml have drifted apart — fix the schema, not the yaml (the
+  // dogfood-stack is the source-of-truth for what lich must handle).
+  // -------------------------------------------------------------------------
+
+  it("validates a config with one env_groups entry and one commands entry that uses it", () => {
+    // Mirrors the dogfood-stack pattern of `tools:env-check` using
+    // `isolated-tools`: a user-defined env_group + a user-defined command
+    // whose `env_group` field references that group by name.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      env_groups: {
+        "isolated-tools": {
+          process_env: false,
+          env: { TOOL_MODE: "standalone" },
+        },
+      },
+      commands: {
+        "tools:env-check": {
+          cmd: "printenv TOOL_MODE",
+          env_group: "isolated-tools",
+          help: "Diagnostic for isolated env_group resolution.",
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("rejects a config with env_groups.stack (reserved)", () => {
+    // The built-in `stack` group is reserved and cannot be redeclared. The
+    // schema's `propertyNames` constraint forbids it at parse time so this
+    // never reaches the resolver.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      env_groups: {
+        stack: { env: { OOPS: "1" } },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("rejects a config with a command missing the required cmd field", () => {
+    // `cmd` is the one required field on a user-defined command — without
+    // it the dispatcher has nothing to run.
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      commands: {
+        broken: { help: "no cmd" }, // missing required `cmd`
+      },
+    });
+    expect(ok).toBe(false);
+    const errors = validate.errors ?? [];
+    expect(
+      errors.some(
+        (e) =>
+          e.keyword === "required" &&
+          /cmd/.test(JSON.stringify(e.params ?? {}))
+      )
+    ).toBe(true);
+  });
+
   it("accepts a minimal valid config (version + one owned service)", () => {
     const validate = compile();
     const ok = validate({
