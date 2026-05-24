@@ -45,7 +45,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, realpathSync, type WriteStream } from "node:fs";
 
 /** Spec for one owned service the supervisor will spawn. */
 export interface OwnedServiceSpec {
@@ -175,6 +175,47 @@ const STOP_CMD_TIMEOUT_MS = 30_000;
 const ONESHOT_TAIL_BYTES = 2_048;
 
 /**
+ * Compute the canonical-case real path for `cwd` so it can be injected as
+ * `PWD` into the spawned child's env.
+ *
+ * Why this exists: on macOS with case-insensitive APFS, if the user enters
+ * the worktree via a wrong-case prefix (`cd /users/ryan/...` instead of
+ * `cd /Users/ryan/...`), `process.cwd()` faithfully reports the lowercase
+ * form they typed. The kernel doesn't care — both resolve to the same
+ * inode — but any downstream tool that does case-sensitive string matching
+ * on paths breaks. The motivating example is Docker Desktop's shared-folder
+ * enforcement: its `FilesharingDirectories` list contains `/Users` (capital);
+ * a bind-mount request with `/users` is rejected ("path is not shared from
+ * the host"). The supabase CLI (Go) builds its bind-mount path from `$PWD`,
+ * inheriting the lowercase form from the user's shell, and supabase start
+ * fails. See LEV-300.
+ *
+ * The fix layers two pieces of canonicalization, both deliberate:
+ *
+ *   1. `realpathSync.native` (libc's `realpath(3)`) — this resolves symlinks
+ *      AND canonicalizes case on macOS. The JS-only `realpathSync` does NOT
+ *      canonicalize case here; it returns whatever case the input had. We
+ *      need the native variant specifically.
+ *
+ *   2. Best-effort with the original `cwd` as fallback. If `cwd` doesn't
+ *      exist yet (which is rare but possible — e.g. a future hook that
+ *      pre-creates it on the way down to spawn), we still want to spawn
+ *      and let the child's own error reporting surface the issue, rather
+ *      than throwing here. The lowercase-PWD bug is still a bug in that
+ *      case, but it's strictly less bad than failing the spawn for a
+ *      missing dir we'd have happily passed through before this fix.
+ *
+ * Returns the canonical-case absolute path the child should see as `$PWD`.
+ */
+function canonicalizePwd(cwd: string): string {
+  try {
+    return realpathSync.native(cwd);
+  } catch {
+    return cwd;
+  }
+}
+
+/**
  * Spawn one owned service.
  *
  * Throws synchronously only for argument-validation issues (which currently
@@ -203,6 +244,11 @@ export async function startOwnedService(
   // Layer the port injection(s) on top of the caller's env. The caller's
   // env already represents the full resolved env pipeline; we only add the
   // port binding(s) here because it's the one piece the supervisor owns.
+  //
+  // We also overwrite `PWD` with the canonical-case realpath of `cwd` (see
+  // `canonicalizePwd` above for the LEV-300 rationale). This last write is
+  // intentionally placed AFTER `spec.env` so a user-supplied PWD in the
+  // resolved env can't accidentally re-introduce a wrong-case path.
   const portEnv: NodeJS.ProcessEnv = {};
   if (spec.portEnvVar && spec.port !== undefined) {
     portEnv[spec.portEnvVar] = String(spec.port);
@@ -212,7 +258,11 @@ export async function startOwnedService(
       portEnv[envVar] = String(port);
     }
   }
-  const env: NodeJS.ProcessEnv = { ...spec.env, ...portEnv };
+  const env: NodeJS.ProcessEnv = {
+    ...spec.env,
+    ...portEnv,
+    PWD: canonicalizePwd(spec.cwd),
+  };
 
   const child: ChildProcess = spawn("/bin/sh", ["-c", spec.cmd], {
     cwd: spec.cwd,
@@ -410,6 +460,10 @@ async function runStopCmd(
 
   // Recompute the port-injected env so the stop_cmd sees the same ports as
   // the start cmd did. Cheaper to rebuild than to thread the value through.
+  // Includes the same `PWD` canonicalization as the start path so teardown
+  // tools (e.g. `supabase stop`) construct bind-mount paths consistent with
+  // those the start side used — otherwise docker may fail to locate the
+  // resources to stop. See `canonicalizePwd` for the LEV-300 rationale.
   const portEnv: NodeJS.ProcessEnv = {};
   if (spec.portEnvVar && spec.port !== undefined) {
     portEnv[spec.portEnvVar] = String(spec.port);
@@ -419,7 +473,11 @@ async function runStopCmd(
       portEnv[envVar] = String(port);
     }
   }
-  const env: NodeJS.ProcessEnv = { ...spec.env, ...portEnv };
+  const env: NodeJS.ProcessEnv = {
+    ...spec.env,
+    ...portEnv,
+    PWD: canonicalizePwd(spec.cwd),
+  };
 
   const child = spawn("/bin/sh", ["-c", spec.stopCmd], {
     cwd: spec.cwd,

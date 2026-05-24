@@ -10,7 +10,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -205,5 +206,95 @@ describe("startOwnedService — stop()", () => {
 
     // Should resolve without throwing, without trying to signal.
     await expect(handle.stop()).resolves.toBeUndefined();
+  });
+});
+
+describe("startOwnedService — PWD canonicalization (LEV-300)", () => {
+  /**
+   * Regression: on macOS with case-insensitive APFS, the user can enter the
+   * worktree via a wrong-case prefix (`cd /users/ryan/...` vs `cd /Users/...`).
+   * `process.cwd()` faithfully reports the lowercase form they typed; the
+   * kernel doesn't care because both resolve to the same inode. But any
+   * downstream tool that does case-sensitive string matching on paths breaks
+   * — most painfully, Docker Desktop's shared-folder enforcement rejects a
+   * bind-mount with `/users/...` because its FilesharingDirectories list
+   * has `/Users/...`. The supabase CLI (Go) builds bind-mount paths from
+   * `$PWD`, inheriting the lowercase form from the parent shell, and
+   * `supabase start` fails.
+   *
+   * The supervisor's contract (verified below): regardless of what case
+   * variant or symlink the caller passes as `cwd`, the spawned child's
+   * `$PWD` MUST equal `realpathSync.native(cwd)` — the canonical, symlink-
+   * resolved, case-canonical absolute path.
+   *
+   * We use a symlink test rather than a case test because symlinks behave
+   * the same on macOS, Linux, and CI Linux runners — the case dimension
+   * only exists on case-insensitive filesystems. The supervisor code path
+   * is the same in both cases (a single call to `realpathSync.native`).
+   */
+  it("injects PWD as the canonical realpath of cwd (symlink resolution proof)", async () => {
+    // ARRANGE: a real directory + a symlink pointing at it. The symlink path
+    // is a "different but valid" name for the same inode — exactly the
+    // shape that triggers the LEV-300 bug on macOS.
+    const realDir = await mkdtemp(join(tmpdir(), "lich-pwd-real-"));
+    const linkPath = realDir + "-link";
+    await symlink(realDir, linkPath);
+
+    // Sanity-precondition for the assertion: the symlink path and its
+    // canonical realpath are NOT string-equal. If they were, the test
+    // wouldn't be exercising the bug. (Realistically this never fires; the
+    // assertion documents the precondition.)
+    const canonical = realpathSync.native(linkPath);
+    expect(canonical).not.toBe(linkPath);
+
+    const name = "pwd-symlink-svc";
+    try {
+      const handle = await startOwnedService({
+        name,
+        cmd: "printenv PWD",
+        cwd: linkPath,
+        // Pre-populate PWD with the symlink (uncanonical) form, mirroring
+        // what the user's parent shell would inherit if they `cd`d via the
+        // symlink. Without the fix this leaks straight into the child.
+        env: { PWD: linkPath },
+        logPath: serviceLogPath(STACK_ID, name),
+      });
+
+      await handle.exited;
+      const log = await readLog(name);
+      const printed = log.trim();
+
+      // The spawned child must see the canonical realpath, not the
+      // symlinked input. `printenv PWD` reads the env value as-is (no
+      // shell intervention possible).
+      expect(printed).toBe(canonical);
+      expect(printed).not.toBe(linkPath);
+    } finally {
+      await rm(linkPath, { force: true });
+      await rm(realDir, { recursive: true, force: true });
+    }
+  });
+
+  it("the canonical PWD overrides any PWD the caller provided in spec.env", async () => {
+    // Reinforces the layering: spec.env may carry a PWD inherited from
+    // the parent shell (or planted by a future env_groups feature). The
+    // supervisor's override is the last write, so even if the resolved
+    // env contains a stale/wrong PWD, the spawned child sees the right one.
+    const name = "pwd-override-svc";
+    const handle = await startOwnedService({
+      name,
+      cmd: "printenv PWD",
+      cwd: homeDir,
+      env: { PWD: "/this/value/should/be/discarded" },
+      logPath: serviceLogPath(STACK_ID, name),
+    });
+
+    await handle.exited;
+    const log = await readLog(name);
+    const printed = log.trim();
+    const expected = realpathSync.native(homeDir);
+
+    expect(printed).toBe(expected);
+    expect(printed).not.toContain("discarded");
   });
 });
