@@ -39,10 +39,16 @@ import { join } from "node:path";
 import { parseConfig } from "../config/parse.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import { release } from "../ports/allocator.js";
-import { readSnapshot, writeSnapshot } from "../state/snapshot.js";
+import {
+  readSnapshot,
+  rebuildAllocatedPorts,
+  writeSnapshot,
+  type StackSnapshot,
+} from "../state/snapshot.js";
 import { stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { down as composeDown, type RunnerCtx } from "../compose/runner.js";
+import { resolveEnvForService } from "../env/resolve.js";
 import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { buildGraph, type NodeDecl } from "../deps/graph.js";
@@ -221,6 +227,8 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
           svcSnap.pid,
           ownedDef,
           worktree,
+          config,
+          snap,
           input.signal,
         );
       } catch (err) {
@@ -340,11 +348,38 @@ async function stopOwnedService(
   pid: number | undefined,
   ownedDef: OwnedService | undefined,
   worktree: Worktree,
+  config: LichConfig | null,
+  snapshot: StackSnapshot,
   signal?: AbortSignal,
 ): Promise<void> {
   // stop_cmd takes priority — used by self-managing tools (e.g. supabase).
   if (ownedDef?.stop_cmd) {
-    await runStopCmd(ownedDef.stop_cmd, worktree.path);
+    // Resolve per-service env via the same pipeline `up.ts` used to start
+    // the service. This is non-negotiable for any stop_cmd that addresses
+    // external state by an interpolated identifier (supabase project_id,
+    // namespaced docker container names, etc. — see LEV-310). If the
+    // resolver throws (env_from shell-out failure, missing dotenv, etc.)
+    // we fall back to process.env and surface a warning so teardown still
+    // makes forward progress.
+    let stopEnv: NodeJS.ProcessEnv = process.env;
+    if (config) {
+      try {
+        stopEnv = await resolveEnvForService({
+          config,
+          service: { kind: "owned", name },
+          worktree,
+          allocatedPorts: rebuildAllocatedPorts(snapshot),
+          projectRoot: worktree.path,
+        });
+      } catch {
+        // Best-effort: a failed env resolve falls back to process.env so
+        // the stop_cmd at least runs. The user already gets a warning in
+        // the surrounding catch block at the call site if this throws
+        // again (it shouldn't — process.env is always valid).
+        stopEnv = process.env;
+      }
+    }
+    await runStopCmd(ownedDef.stop_cmd, worktree.path, stopEnv);
     return;
   }
 
@@ -397,18 +432,21 @@ async function stopOwnedService(
  * regardless; the warning is the "stop_cmd exited <code>" string the
  * caller pushes if it cares.)
  *
- * We construct the env as `process.env` rather than re-running the full env
- * resolution pipeline — the spec/contract calls this out: "best-effort env
- * reconstruction; not a full re-resolve since we don't need the full
- * pipeline." The stop_cmd typically wraps a CLI that talks to externally
- * managed resources (supabase stop, docker stop), where the missing
- * interpolated values are unlikely to matter for teardown.
+ * Per-service env resolved via the same pipeline used at startup, so
+ * stop_cmd addresses the same external state the service was started with.
+ * (LEV-310: without this, e.g. `supabase stop` would target the default
+ * project_id rather than the worktree-tagged one, leaving the actual
+ * containers running.)
  */
-async function runStopCmd(stopCmd: string, cwd: string): Promise<void> {
+async function runStopCmd(
+  stopCmd: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
   await new Promise<void>((resolve) => {
     const child = spawn("/bin/sh", ["-c", stopCmd], {
       cwd,
-      env: process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
 

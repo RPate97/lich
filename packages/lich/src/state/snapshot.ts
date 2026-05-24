@@ -106,3 +106,82 @@ export async function writeSnapshot(snapshot: StackSnapshot): Promise<void> {
     throw err;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Restore helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape that {@link resolveEnvForService} expects for `allocatedPorts`. Kept
+ * structurally compatible with the type defined in `env/resolve.ts` — both
+ * are inlined rather than imported because `state/` shouldn't depend on
+ * `env/` (state is foundational; env layers on top).
+ */
+export interface AllocatedPorts {
+  /** Compose service name -> logical port name -> host port. */
+  compose: Record<string, Record<string, number>>;
+  /** Owned service name -> either { port } or { ports: { key: port } }. */
+  owned: Record<string, { port?: number; ports?: Record<string, number> }>;
+}
+
+/**
+ * Rebuild the {@link AllocatedPorts} shape from a {@link StackSnapshot}.
+ *
+ * `up.ts` flattens allocator output into per-service `allocated_ports` maps
+ * on disk (a single `Record<string, number>` per service, regardless of
+ * kind). Down/nuke need the original two-shape structure to feed
+ * `resolveEnvForService` so stop_cmd sees the same env the service was
+ * started with. This is the inverse of the per-service flattening that
+ * happens in `up.ts` lines 290-302.
+ *
+ * Conventions baked in:
+ *   - Compose service `allocated_ports` is the inner per-port map directly
+ *     (key = logical port name, value = host port).
+ *   - Owned service `allocated_ports` carries `default` as the single
+ *     primary port (matching how `up.ts` writes `entry.port` under
+ *     `m.default`). Any other keys came from the multi-port `entry.ports`
+ *     and are routed back into `owned[name].ports`.
+ *
+ * Services with no `allocated_ports` are omitted from the result — they
+ * had nothing to allocate at up time, so there's nothing for the
+ * interpolation context to expose. Services in the snapshot that aren't
+ * owned/compose (shouldn't exist by current types, but defensive) are
+ * silently skipped.
+ */
+export function rebuildAllocatedPorts(
+  snapshot: StackSnapshot,
+): AllocatedPorts {
+  const compose: AllocatedPorts["compose"] = {};
+  const owned: AllocatedPorts["owned"] = {};
+
+  for (const svc of snapshot.services) {
+    const ports = svc.allocated_ports;
+    if (!ports || Object.keys(ports).length === 0) continue;
+
+    if (svc.kind === "compose") {
+      // Compose: the snapshot already stores the inner per-port map.
+      compose[svc.name] = { ...ports };
+    } else if (svc.kind === "owned") {
+      // Owned: `up.ts` writes the single-port value under the `default`
+      // key and folds multi-port entries in alongside. Reverse it: pull
+      // `default` out as `port`, everything else into `ports`.
+      const entry: { port?: number; ports?: Record<string, number> } = {};
+      const extras: Record<string, number> = {};
+      let hasExtras = false;
+      for (const [key, value] of Object.entries(ports)) {
+        if (key === "default") {
+          entry.port = value;
+        } else {
+          extras[key] = value;
+          hasExtras = true;
+        }
+      }
+      if (hasExtras) entry.ports = extras;
+      if (entry.port !== undefined || entry.ports !== undefined) {
+        owned[svc.name] = entry;
+      }
+    }
+  }
+
+  return { compose, owned };
+}

@@ -571,6 +571,69 @@ owned:
 });
 
 // ---------------------------------------------------------------------------
+// stop_cmd env carries the per-service resolved env, not bare process.env
+// (LEV-310)
+//
+// Before LEV-310 down.ts spawned stop_cmd with `env: process.env`, so
+// worktree-derived values (e.g. supabase project_id interpolated as
+// `dogfood-${worktree.id}`) never made it through and stop_cmd targeted
+// the wrong external state — leaving the actual worktree-tagged containers
+// running. This test asserts the env handed to stop_cmd contains the
+// resolved value that matches the worktree.
+// ---------------------------------------------------------------------------
+
+describe("runDown — stop_cmd env carries worktree-derived values (LEV-310)", () => {
+  it("passes SUPABASE_PROJECT_ID resolved from ${worktree.id} into stop_cmd env", async () => {
+    const sentinel = join(projectDir, "supabase.project");
+
+    writeYaml(`
+version: "1"
+owned:
+  supabase:
+    cmd: "true"
+    oneshot: true
+    env:
+      SUPABASE_PROJECT_ID: "p-\${worktree.id}"
+    stop_cmd: "printf '%s' \\"\${SUPABASE_PROJECT_ID}\\" > ${shellQuote(sentinel)}"
+`);
+
+    // Compute the worktree id that resolveEnvForService will plug into
+    // the env literal — same helper up.ts uses, deterministic from the
+    // realpath of the project dir.
+    const wt = detectWorktree(projectDir);
+    const expected = `p-${wt.id}`;
+
+    const stackId = await seedSnapshot({
+      services: [
+        {
+          name: "supabase",
+          kind: "owned",
+          state: "stopped",
+          // Use a pid we expect to be dead so the SIGTERM path is a
+          // silent no-op — the only way the sentinel gets the right
+          // value is via stop_cmd seeing the resolved env.
+          pid: 2_147_483_641,
+        },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    // The sentinel must contain the worktree-derived value, NOT the
+    // literal `${worktree.id}` placeholder and NOT empty (which would
+    // be the pre-LEV-310 behavior with `env: process.env`).
+    expect(existsSync(sentinel)).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(sentinel, "utf8")).toBe(expected);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.status).toBe("stopped");
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
 // Second call → no-op
 // ---------------------------------------------------------------------------
 

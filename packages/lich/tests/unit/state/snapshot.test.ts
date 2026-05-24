@@ -6,6 +6,7 @@ import { stackDir } from "../../../src/state/directory.js";
 import {
   type StackSnapshot,
   readSnapshot,
+  rebuildAllocatedPorts,
   writeSnapshot,
 } from "../../../src/state/snapshot.js";
 
@@ -122,5 +123,134 @@ describe("atomic write", () => {
     // No tmp leftover.
     const entries = readdirSync(stackDir("s1"));
     expect(entries.filter((e) => e.endsWith(".tmp"))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rebuildAllocatedPorts (LEV-310)
+//
+// The inverse of how up.ts flattens allocator output into per-service
+// allocated_ports maps. Down/nuke call this to rebuild the structured shape
+// resolveEnvForService expects when re-resolving a service's env for
+// stop_cmd.
+// ---------------------------------------------------------------------------
+
+describe("rebuildAllocatedPorts", () => {
+  it("reconstructs owned-only single-port allocations under .owned[name].port", () => {
+    const snap: StackSnapshot = {
+      stack_id: "owned-single-aaa",
+      worktree_name: "owned-single",
+      worktree_path: "/tmp/owned-single",
+      status: "up",
+      started_at: "2026-05-24T00:00:00.000Z",
+      services: [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          // up.ts writes the single-port entry under the `default` key.
+          allocated_ports: { default: 4000 },
+        },
+      ],
+    };
+
+    const allocated = rebuildAllocatedPorts(snap);
+
+    expect(allocated.compose).toEqual({});
+    expect(allocated.owned).toEqual({
+      api: { port: 4000 },
+    });
+  });
+
+  it("reconstructs compose-only allocations under .compose[name][portKey]", () => {
+    const snap: StackSnapshot = {
+      stack_id: "compose-only-bbb",
+      worktree_name: "compose-only",
+      worktree_path: "/tmp/compose-only",
+      status: "up",
+      started_at: "2026-05-24T00:00:00.000Z",
+      services: [
+        {
+          name: "postgres",
+          kind: "compose",
+          state: "ready",
+          // Compose snapshot stores the inner port map directly.
+          allocated_ports: { POSTGRES_HOST_PORT: 54321 },
+        },
+        {
+          name: "redis",
+          kind: "compose",
+          state: "ready",
+          allocated_ports: { REDIS_HOST_PORT: 6379, REDIS_METRICS_PORT: 9121 },
+        },
+      ],
+    };
+
+    const allocated = rebuildAllocatedPorts(snap);
+
+    expect(allocated.owned).toEqual({});
+    expect(allocated.compose).toEqual({
+      postgres: { POSTGRES_HOST_PORT: 54321 },
+      redis: { REDIS_HOST_PORT: 6379, REDIS_METRICS_PORT: 9121 },
+    });
+  });
+
+  it("handles a mixed stack with owned multi-port + compose + a port-less service", () => {
+    const snap: StackSnapshot = {
+      stack_id: "mixed-ccc",
+      worktree_name: "mixed",
+      worktree_path: "/tmp/mixed",
+      status: "up",
+      started_at: "2026-05-24T00:00:00.000Z",
+      services: [
+        // Owned single-port (only `default`).
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          allocated_ports: { default: 4000 },
+        },
+        // Owned multi-port (no `default`).
+        {
+          name: "edge",
+          kind: "owned",
+          state: "ready",
+          allocated_ports: { http: 8080, grpc: 50051 },
+        },
+        // Compose with one port.
+        {
+          name: "postgres",
+          kind: "compose",
+          state: "ready",
+          allocated_ports: { POSTGRES_HOST_PORT: 54321 },
+        },
+        // Owned with no ports at all — must be omitted from the result.
+        {
+          name: "worker",
+          kind: "owned",
+          state: "ready",
+        },
+        // Compose with an empty port map — also omitted.
+        {
+          name: "static",
+          kind: "compose",
+          state: "ready",
+          allocated_ports: {},
+        },
+      ],
+    };
+
+    const allocated = rebuildAllocatedPorts(snap);
+
+    expect(allocated.compose).toEqual({
+      postgres: { POSTGRES_HOST_PORT: 54321 },
+    });
+    expect(allocated.owned).toEqual({
+      api: { port: 4000 },
+      edge: { ports: { http: 8080, grpc: 50051 } },
+    });
+    // Port-less services don't appear in either bucket.
+    expect(allocated.owned.worker).toBeUndefined();
+    expect(allocated.compose.static).toBeUndefined();
   });
 });

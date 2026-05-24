@@ -42,13 +42,20 @@ import { down as composeDown, type RunnerCtx } from "../compose/runner.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { parseConfig } from "../config/parse.js";
 import type { LichConfig } from "../config/types.js";
+import { resolveEnvForService } from "../env/resolve.js";
 import { release } from "../ports/allocator.js";
 import {
   listStacks,
   removeStackDir,
   stackDir,
 } from "../state/directory.js";
-import { readSnapshot, type ServiceSnapshot } from "../state/snapshot.js";
+import {
+  readSnapshot,
+  rebuildAllocatedPorts,
+  type ServiceSnapshot,
+  type StackSnapshot,
+} from "../state/snapshot.js";
+import { hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -189,12 +196,44 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
   // containers / external state stores the stop_cmd knows how to clean up.
   // PID-based kills (step 3 below) can't reach those resources.
   if (config !== null) {
+    // Reconstruct the worktree shape from the snapshot. We don't call
+    // detectWorktree here because nuke runs across stacks lich didn't
+    // necessarily start in this process — the worktree dir may have
+    // moved, been renamed, or be entirely gone. The deterministic
+    // sanitizeName/hashPath helpers reproduce the same Worktree fields
+    // up.ts originally computed, which is what resolveEnvForService and
+    // its interpolation context need.
+    const worktree: Worktree = reconstructWorktree(snap);
+    const allocatedPorts = rebuildAllocatedPorts(snap);
+
     for (const svc of snap.services) {
       if (svc.kind !== "owned") continue;
       const stopCmd = config.owned?.[svc.name]?.stop_cmd;
       if (typeof stopCmd !== "string" || stopCmd.length === 0) continue;
+
+      // Resolve per-service env via the same pipeline up.ts used at
+      // startup, so stop_cmd addresses the same external state the
+      // service was started with (LEV-310: supabase project_id and
+      // similar). Fall back to process.env on env resolve failure so
+      // teardown still runs — better to attempt the stop_cmd with
+      // partial env than skip it entirely.
+      let stopEnv: NodeJS.ProcessEnv = process.env;
       try {
-        const result = await runStopCmd(stopCmd, snap.worktree_path);
+        stopEnv = await resolveEnvForService({
+          config,
+          service: { kind: "owned", name: svc.name },
+          worktree,
+          allocatedPorts,
+          projectRoot: snap.worktree_path,
+        });
+      } catch (err) {
+        warnings.push(
+          `service ${svc.name} resolve env (fell back to process.env): ${errorMessage(err)}`,
+        );
+      }
+
+      try {
+        const result = await runStopCmd(stopCmd, snap.worktree_path, stopEnv);
         if (result.exitCode !== 0) {
           warnings.push(
             `service ${svc.name} stop_cmd exited ${result.exitCode}`,
@@ -285,15 +324,20 @@ const STOP_CMD_TIMEOUT_MS = 30_000;
  * down ever needs richer per-service env handling. If both helpers grow
  * complex, factor into `owned/teardown.ts`; for now ~30 lines of
  * duplication is the right trade-off.
+ *
+ * Per-service env resolved via the same pipeline used at startup, so
+ * stop_cmd addresses the same external state the service was started
+ * with (LEV-310).
  */
 async function runStopCmd(
   stopCmd: string,
   cwd: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<{ exitCode: number | null }> {
   return new Promise((resolve) => {
     const child = spawn("/bin/sh", ["-c", stopCmd], {
       cwd,
-      env: process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -485,6 +529,32 @@ async function confirm(
  */
 function isTTY(stdin: NodeJS.ReadableStream): boolean {
   return Boolean((stdin as NodeJS.ReadableStream & { isTTY?: boolean }).isTTY);
+}
+
+// ---------------------------------------------------------------------------
+// Worktree reconstruction
+// ---------------------------------------------------------------------------
+
+/**
+ * Synthesize a {@link Worktree} from a {@link StackSnapshot}.
+ *
+ * `lich nuke` may run against stacks lich didn't start in this process —
+ * the worktree directory may have moved, been renamed, or be entirely
+ * gone. We can't call `detectWorktree` (which walks the filesystem from
+ * a cwd looking for lich.yaml) safely from inside nuke; the snapshot
+ * holds everything we need to rebuild the Worktree shape using the same
+ * deterministic helpers (`sanitizeName`, `hashPath`) `up.ts` used at
+ * startup time. Since both are pure functions of `worktree_name` / path,
+ * the synthesized `id` matches the original whenever the original
+ * `worktree_path` is reproduced on disk (which the snapshot stores).
+ */
+function reconstructWorktree(snapshot: StackSnapshot): Worktree {
+  return {
+    name: sanitizeName(snapshot.worktree_name),
+    id: hashPath(snapshot.worktree_path),
+    path: snapshot.worktree_path,
+    stack_id: snapshot.stack_id,
+  };
 }
 
 // ---------------------------------------------------------------------------

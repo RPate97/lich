@@ -769,6 +769,79 @@ owned:
 });
 
 // ---------------------------------------------------------------------------
+// stop_cmd env carries the per-service resolved env, not bare process.env
+// (LEV-310)
+//
+// Before LEV-310 nuke.ts spawned stop_cmd with `env: process.env`, so a
+// service whose stop_cmd uses an interpolated value (e.g. supabase
+// `SUPABASE_PROJECT_ID: "p-${worktree.id}"`) addressed the wrong external
+// state. This test asserts the env handed to stop_cmd contains the
+// resolved worktree-derived value.
+// ---------------------------------------------------------------------------
+
+describe("runNuke — stop_cmd env carries worktree-derived values (LEV-310)", () => {
+  it("passes SUPABASE_PROJECT_ID resolved from ${worktree.id} into stop_cmd env", async () => {
+    const { hashPath, sanitizeName } = await import(
+      "../../../src/worktree/detect.js"
+    );
+
+    const projectDir = makeProjectDir(
+      "supa-leak",
+      `version: "1"
+owned:
+  supabase:
+    cmd: "true"
+    oneshot: true
+    env:
+      SUPABASE_PROJECT_ID: "p-\${worktree.id}"
+    stop_cmd: "printf '%s' \\"\${SUPABASE_PROJECT_ID}\\" > ${shellQuote(join(home, "supabase.project"))}"
+`,
+    );
+
+    // Compute the same worktree id resolveEnvForService will use — nuke
+    // reconstructs the Worktree from the snapshot via
+    // hashPath(worktree_path), so we mirror that here for the expected
+    // value.
+    const expectedId = hashPath(projectDir);
+    const expected = `p-${expectedId}`;
+    const sanitized = sanitizeName("supa-leak");
+
+    await writeSnapshot(
+      snap({
+        stack_id: `${sanitized}-${expectedId.slice(0, 8)}`,
+        worktree_name: "supa-leak",
+        worktree_path: projectDir,
+        services: [
+          {
+            name: "supabase",
+            kind: "owned",
+            state: "stopped",
+            // Dead pid: SIGTERM path is a no-op; sentinel value can only
+            // come from stop_cmd seeing the resolved env.
+            pid: 2_147_483_641,
+          },
+        ],
+      }),
+    );
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].status).toBe("nuked");
+
+    // Sentinel must contain the worktree-derived value, NOT the literal
+    // `${worktree.id}` placeholder and NOT empty (which would be the
+    // pre-LEV-310 behavior).
+    const sentinelPath = join(home, "supabase.project");
+    expect(existsSync(sentinelPath)).toBe(true);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(sentinelPath, "utf8")).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Idempotency (LEV-309 acceptance criterion)
 // ---------------------------------------------------------------------------
 
