@@ -37,6 +37,7 @@
 
 import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
+import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import { allocate, release } from "../ports/allocator.js";
@@ -313,6 +314,28 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     });
     envPhase.end("ok");
 
+    // Build a closure over the active config + worktree + allocatedPorts so
+    // lifecycle entries with long-form `{ cmd, env_group }` can resolve the
+    // requested group on demand. Plan 1 wired the seam (executor.ts /
+    // per-service.ts both accept this callback); Plan 2 Task 13 fills it in.
+    //
+    // Passing the bare {@link resolveEnvGroup} export directly wouldn't work:
+    // the lifecycle executor's contract is `(name: string) => Promise<env>`,
+    // so we close over the surrounding context once and hand back a
+    // single-arg callback. The result type is `Record<string, string>`,
+    // which satisfies `NodeJS.ProcessEnv` (the latter is a record of
+    // optional strings — every string is also an "optional string").
+    const lifecycleResolveEnvGroup = (
+      name: string,
+    ): Promise<NodeJS.ProcessEnv> =>
+      resolveEnvGroup({
+        name,
+        config,
+        worktree,
+        allocatedPorts,
+        projectRoot: worktree.path,
+      });
+
     // ---- Step 6: state dir + initial state.json ---------------------------
     await ensureStackDir(worktree.stack_id);
     await writeStateSnapshot(state);
@@ -369,6 +392,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           entries: config.lifecycle.before_up,
           cwd: worktree.path,
           env: topLevelEnv,
+          resolveEnvGroup: lifecycleResolveEnvGroup,
         });
       } catch (err) {
         phase.end("fail");
@@ -416,6 +440,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             state: state!,
             output,
             signal,
+            resolveEnvGroup: lifecycleResolveEnvGroup,
           }),
         ),
       );
@@ -473,6 +498,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           entries: config.lifecycle.after_up,
           cwd: worktree.path,
           env: topLevelEnv,
+          resolveEnvGroup: lifecycleResolveEnvGroup,
         });
       } catch (err) {
         phase.end("fail");
@@ -571,6 +597,13 @@ interface StartOneInput {
   state: UpState;
   output: Output;
   signal: AbortSignal | undefined;
+  /**
+   * Closure that resolves a named env_group on demand (Plan 2 Task 13).
+   * Threaded through so per-service `before_start` and `after_ready`
+   * entries with long-form `{ cmd, env_group }` can pick up the requested
+   * group's env instead of always inheriting `topLevelEnv`.
+   */
+  resolveEnvGroup: (name: string) => Promise<NodeJS.ProcessEnv>;
 }
 
 /**
@@ -607,6 +640,7 @@ async function startOneService(input: StartOneInput): Promise<void> {
         entries: lifecycle.before_start,
         cwd: input.worktree.path,
         env: input.topLevelEnv,
+        resolveEnvGroup: input.resolveEnvGroup,
       });
     }
 
@@ -631,6 +665,7 @@ async function startOneService(input: StartOneInput): Promise<void> {
         entries: lifecycle.after_ready,
         cwd: input.worktree.path,
         env: input.topLevelEnv,
+        resolveEnvGroup: input.resolveEnvGroup,
       });
     }
 

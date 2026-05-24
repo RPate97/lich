@@ -207,6 +207,63 @@ lifecycle:
     const svcMtime = readFileMtime(svcSentinel);
     expect(beforeMtime).toBeLessThanOrEqual(svcMtime);
   }, 15_000);
+
+  /**
+   * Plan 2 Task 13 (LEV-333): the lifecycle executor's `resolveEnvGroup`
+   * seam (left as throw-if-undefined in Plan 1) must now resolve real
+   * env_groups. Long-form lifecycle entries with `env_group:` ran against
+   * the named group's env, not `topLevelEnv`.
+   *
+   * Load-bearing assertion: an `after_up` entry that prints `$VAR` produces
+   * the env_group's value, not the top-level env's value. Before this task
+   * shipped, the executor threw "env_group not supported in Plan 1".
+   */
+  it("long-form lifecycle entries resolve env_group via groups resolver", async () => {
+    const marker = join(projectDir, "after.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+
+    // The top-level `env: { VAR: "from-top-level" }` deliberately collides
+    // with the env_group's `VAR: "from-demo-group"`. If the long-form
+    // entry's env_group wiring is missing, the executor falls back to
+    // topLevelEnv and the marker contains "from-top-level". With wiring
+    // in place, the marker contains "from-demo-group".
+    //
+    // The shell pattern `printf %s "$VAR" > <marker>` writes exactly the
+    // VAR contents with no trailing newline, so the test can assert on an
+    // exact string match.
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+env:
+  VAR: "from-top-level"
+env_groups:
+  demo:
+    env:
+      VAR: "from-demo-group"
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+lifecycle:
+  after_up:
+    - cmd: ${JSON.stringify(`printf %s "$VAR" > ${marker}`)}
+      env_group: "demo"
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf8")).toBe("from-demo-group");
+  }, 15_000);
 });
 
 describe("runUp — failures", () => {
