@@ -1,3 +1,4 @@
+import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 import { runInitSync } from "./init.js";
 import { runValidate } from "./validate.js";
 import { runUp } from "./up.js";
@@ -150,4 +151,27 @@ export type CommandName = keyof typeof COMMANDS;
 
 export function isCommand(name: string): name is CommandName {
   return name in COMMANDS;
+}
+
+// Fail-fast: keep BUILTIN_COMMAND_NAMES (used by validate.ts to refuse
+// user commands that shadow a built-in) in sync with the COMMANDS map.
+// A missing handler — or a name in COMMANDS not in the list — is a
+// programming bug, not a runtime condition.
+{
+  const handlerNames = new Set(Object.keys(COMMANDS));
+  const listNames = new Set<string>(BUILTIN_COMMAND_NAMES);
+  for (const n of BUILTIN_COMMAND_NAMES) {
+    if (!handlerNames.has(n)) {
+      throw new Error(
+        `BUILTIN_COMMAND_NAMES lists "${n}" but COMMANDS has no handler for it`,
+      );
+    }
+  }
+  for (const n of handlerNames) {
+    if (!listNames.has(n)) {
+      throw new Error(
+        `COMMANDS has handler "${n}" not present in BUILTIN_COMMAND_NAMES`,
+      );
+    }
+  }
 }

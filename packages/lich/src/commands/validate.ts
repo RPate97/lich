@@ -35,6 +35,7 @@ import { parseConfig, type ParseError } from "../config/parse.js";
 import { buildGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
 import type { EnvMap, LichConfig } from "../config/types.js";
+import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,7 +59,15 @@ export interface ValidateOptions {
 
 export interface ValidationError {
   /** Coarse error category. */
-  kind: "io" | "yaml" | "schema" | "ref" | "cycle" | "regex" | "interp";
+  kind:
+    | "io"
+    | "yaml"
+    | "schema"
+    | "ref"
+    | "cycle"
+    | "regex"
+    | "interp"
+    | "shadow";
   /** Source location — `<file>:<line>:<col>` when available, else just `<file>`. */
   location: string;
   /** Human-readable message, ready to print. */
@@ -121,6 +130,9 @@ export async function runValidate(
       checkDependsOnAndCycles(config, resolvedPath, errors);
       checkRegexes(config, resolvedPath, errors);
       checkInterpolations(config, resolvedPath, errors);
+      // LEV-334 (Plan 2 Task 14): refuse user-defined commands whose
+      // name shadows a built-in.
+      checkCommandShadowing(config, resolvedPath, errors);
       summary = computeSummary(config);
     }
   }
@@ -548,6 +560,44 @@ function validateRefBody(
     location,
     message: `unknown reference ${fullRef} (supported: worktree.*, services.<name>.host_port, owned.<name>.port, owned.<name>.ports.<key>)`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// LEV-334 — Built-in command shadowing (Plan 2 Task 14)
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse user-defined `commands.<name>` entries whose name collides with a
+ * built-in command. Built-ins always win on conflict at runtime (the CLI
+ * router dispatches built-ins before user commands), so a shadow declaration
+ * is dead config that would silently never run — surface it at validate time
+ * with a clear message and a suggested rename.
+ *
+ * The list of built-in names lives in `commands/builtin-names.ts` rather than
+ * being read off the `COMMANDS` map in `commands/index.ts` to avoid an ESM
+ * circular import (`index.ts` already imports `runValidate` from this
+ * module).
+ */
+function checkCommandShadowing(
+  config: LichConfig,
+  path: string,
+  errors: ValidationError[],
+): void {
+  const userCommands = config.commands;
+  if (!userCommands) return;
+
+  const builtins = new Set<string>(BUILTIN_COMMAND_NAMES);
+  for (const name of Object.keys(userCommands)) {
+    if (builtins.has(name)) {
+      errors.push({
+        kind: "shadow",
+        location: path,
+        message:
+          `commands.${name} shadows the built-in 'lich ${name}' — ` +
+          `pick a different name (try '${name}:run' or similar)`,
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

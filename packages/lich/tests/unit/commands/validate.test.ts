@@ -357,4 +357,87 @@ describe("runValidate", () => {
     expect(parsed.errors).toBeUndefined();
     expect(parsed.summary).toBeDefined();
   });
+
+  // -------------------------------------------------------------------------
+  // LEV-334 (Plan 2 Task 14): user commands shadowing built-ins
+  // -------------------------------------------------------------------------
+
+  it("refuses a user command named 'up'", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n  up:\n    cmd: "echo nope"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const shadowErr = res.report.errors!.find((e) => e.kind === "shadow");
+    expect(shadowErr).toBeDefined();
+    expect(shadowErr!.message).toContain("commands.up");
+    expect(shadowErr!.message).toContain("'lich up'");
+    expect(shadowErr!.message).toContain("'up:run'");
+  });
+
+  it("refuses a user command named 'validate'", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n  validate:\n    cmd: "echo nope"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const shadowErr = res.report.errors!.find((e) => e.kind === "shadow");
+    expect(shadowErr).toBeDefined();
+    expect(shadowErr!.message).toContain("commands.validate");
+    expect(shadowErr!.message).toContain("'lich validate'");
+  });
+
+  it("accepts user commands with `:` separators that don't collide with built-ins", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n` +
+        `  up:run:\n    cmd: "echo run"\n` +
+        `  tools:env-check:\n    cmd: "printenv"\n` +
+        `  db:psql:\n    cmd: "psql"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    expect(res.report.ok).toBe(true);
+  });
+
+  it("accepts a command named 'test:e2e' (from dogfood-stack)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n  test:e2e:\n    cmd: "echo running e2e"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(0);
+    expect(res.report.ok).toBe(true);
+  });
+
+  it("reports every shadowing user command (multiple offenders)", async () => {
+    const p = writeYaml(
+      "lich.yaml",
+      `version: "1"\n` +
+        `owned:\n  api:\n    cmd: echo hi\n` +
+        `commands:\n` +
+        `  up:\n    cmd: "echo a"\n` +
+        `  down:\n    cmd: "echo b"\n` +
+        `  test:e2e:\n    cmd: "echo ok"\n`,
+    );
+    const res = await run({ path: p });
+    expect(res.exitCode).toBe(1);
+    const shadowErrs = res.report.errors!.filter((e) => e.kind === "shadow");
+    // Two shadowing entries, one accepted entry -> two shadow errors.
+    expect(shadowErrs).toHaveLength(2);
+    const names = shadowErrs.map((e) => e.message).join("\n");
+    expect(names).toContain("commands.up");
+    expect(names).toContain("commands.down");
+    expect(names).not.toContain("commands.test:e2e");
+  });
 });
