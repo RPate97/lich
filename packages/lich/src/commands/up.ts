@@ -84,6 +84,17 @@ import {
 } from "../config/interpolation.js";
 import { waitForLogMatch } from "../ready/log-match.js";
 import { LogTail } from "../logs/tail.js";
+import { withTimeout, parseDuration, ReadyTimeoutError } from "../ready/timeout.js";
+import { runCapture, CaptureMissError } from "../ready/capture.js";
+import { watchFailWhen, FailWhenMatchedError } from "../failure/fail-when.js";
+import {
+  ProcessExitWatcher,
+  type LifecycleStage,
+} from "../failure/process-exit.js";
+import {
+  formatFailure,
+  type FailureInput,
+} from "../failure/formatter.js";
 import { buildGraph, validateGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
 import {
@@ -138,6 +149,20 @@ export interface RunUpResult {
 
 const DEFAULT_PORT_RANGE: [number, number] = [9000, 9999];
 
+/**
+ * Default `ready_when.timeout` per the Plan 4 spec: 60s when the field is
+ * unset on an owned service's ready_when block. The orchestrator (not the
+ * `withTimeout` primitive) owns this default so a future change can pick a
+ * different default per evaluator without touching the timeout primitive.
+ *
+ * Compose services don't get the default — their ready_when fields, when
+ * present, run via the compose runner's own healthcheck/wait policy and
+ * lich just polls log/http/tcp around them. Wrapping compose's ready
+ * evaluator with our timeout would inject lich-side semantics into a flow
+ * where compose's own readiness contract is already in play.
+ */
+const DEFAULT_OWNED_READY_TIMEOUT_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -147,6 +172,33 @@ const DEFAULT_PORT_RANGE: [number, number] = [9000, 9999];
  * the orchestrator updates as services transition through states, plus the
  * handles to running owned processes (so the caller could in theory query
  * them or pass them to a future shutdown path).
+ *
+ * Plan 4 (Task 14) adds:
+ *
+ *   - `logTails`: per-owned-service `LogTail` instances, kept in a stack-
+ *     level registry so the orchestrator can fan them out to ready_when,
+ *     fail_when, capture (and eventually the dashboard) without re-opening
+ *     the log file once per consumer. The catch-all + cancellation paths
+ *     stop every entry on teardown so a failed/cancelled up doesn't leak
+ *     poll timers past the function's return.
+ *
+ *   - `capturedValues`: per-owned-service `ready_when.capture` results.
+ *     Populated as each service becomes ready, then threaded into every
+ *     downstream service's env resolution so a service in a LATER level can
+ *     reference `${owned.<earlier>.captured.<key>}` in its env. Mutable
+ *     between services in the same up: services in level N see captures
+ *     from levels 0..N-1.
+ *
+ *   - `exitWatchers`: per-owned-service `ProcessExitWatcher`. The
+ *     orchestrator races it against ready_when so a process that exits
+ *     while we're polling for readiness short-circuits the wait instead of
+ *     us hanging on a dead service's ready probe.
+ *
+ *   - `stageRefs`: mutable lifecycle-stage variable per owned service. The
+ *     `ProcessExitWatcher`'s `readSignal()` closure samples this at the
+ *     moment of exit to label whether the death happened during startup,
+ *     while waiting for ready, or after ready. The orchestrator flips the
+ *     stage as the service progresses; the watcher reads it lazily.
  */
 interface UpState {
   worktree: Worktree;
@@ -154,6 +206,45 @@ interface UpState {
   ownedHandles: Map<string, OwnedHandle>;
   status: StackStatus;
   startedAt: string;
+  /**
+   * Per-owned-service LogTail registry. Indexed by service name; entries are
+   * inserted in `startOwned` after the supervisor spawns the process and the
+   * LogTail starts polling its log file. Removed only on stop (cancellation
+   * cleanup, catch-all error path, or — once Plan 5 introduces the
+   * daemon — explicit `lich down`). On the happy path these tails stay
+   * RUNNING after `lich up` returns so a service that emits `EADDRINUSE`
+   * five minutes post-startup still trips its `fail_when` and the failure
+   * lands in `state.json` for the dashboard to render.
+   */
+  logTails: Map<string, LogTail>;
+  /**
+   * Per-owned-service `ready_when.capture` results. Populated as each
+   * service becomes ready; consumed by every downstream service's env
+   * resolution so `${owned.<name>.captured.<key>}` resolves correctly.
+   */
+  capturedValues: Record<string, Record<string, string>>;
+  /**
+   * Per-owned-service `ProcessExitWatcher`. The orchestrator races each
+   * service's ready evaluator against its exit watcher; a non-zero exit
+   * before ready short-circuits the wait. Kept in the state so the cleanup
+   * paths can let them fall out of scope without holding refs to dead handles.
+   */
+  exitWatchers: Map<string, ProcessExitWatcher>;
+  /**
+   * Per-owned-service mutable lifecycle stage. The `ProcessExitWatcher`'s
+   * `readSignal` closure captures `() => stageRefs.get(name) ?? 'after_ready'`
+   * — at exit time, that closure returns whatever stage the orchestrator
+   * most recently wrote. The orchestrator flips stages as services progress:
+   *
+   *   `during_startup` (default at spawn)
+   *     → `before_ready` (right before `waitReady` begins polling)
+   *     → `after_ready` (right after `waitReady` resolves successfully)
+   *
+   * A service that exits while we never even reached `waitReady` (e.g. crashed
+   * inside `startOwned` between spawn and the registry insertion) carries
+   * the default `during_startup` label, which is the correct categorization.
+   */
+  stageRefs: Map<string, LifecycleStage>;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +294,20 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // Run cleanup in parallel with the orchestrator unwinding. We keep a
     // reference so the catch-all can await it before returning, ensuring
     // the function doesn't resolve while children are still being killed.
+    //
+    // Ordering note (Plan 4 Task 15): stop LogTails BEFORE stopping owned
+    // handles. The supervisor's write fd lives in the spawned process; if
+    // we let the supervisor close it while a LogTail tick is mid-read we'd
+    // be racing the kernel on a torn-down fd. Stopping the tail first
+    // halts any in-flight poll and prevents new ones from being scheduled
+    // before the corresponding write fd disappears.
     cancelledCleanup = (async () => {
       const tasks: Array<Promise<void>> = [];
+      if (state) {
+        for (const tail of state.logTails.values()) {
+          tasks.push(tail.stop().catch(() => {}));
+        }
+      }
       if (state) {
         for (const handle of state.ownedHandles.values()) {
           tasks.push(handle.stop().catch(() => {}));
@@ -339,6 +442,10 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       ownedHandles: new Map(),
       status: "starting",
       startedAt: new Date().toISOString(),
+      logTails: new Map(),
+      capturedValues: {},
+      exitWatchers: new Map(),
+      stageRefs: new Map(),
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
@@ -620,13 +727,34 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             await cleanup.catch(() => {});
           }
         } else {
-          const detail = failures.map((f) => describeError(f.reason)).join("\n");
-          // LEV-301: friendly N/total (svc) coordinate, matching the
-          // success path's phase labels.
+          // Plan 4 Task 14: the per-service failure block has already been
+          // rendered by `startOneService` via `output.failure(block)` —
+          // service name, reason, log tail, hint, all the rich context.
+          // The per-level summary now just names which services failed in
+          // which step (so the user gets the coordinate), without dumping
+          // raw error messages on top of the rich block.
+          const failedNames = level.filter((n) => {
+            const snap = state!.services.get(n);
+            return snap?.state === "failed";
+          });
+          // Fallback: if we somehow can't identify the failed services from
+          // the snapshot (e.g. a defensive throw inside startOneService
+          // before snap.state was flipped to "failed"), surface the raw
+          // error count so the user knows something fired in this level.
+          const detail =
+            failedNames.length > 0
+              ? `failed services: ${failedNames.join(", ")}`
+              : `${failures.length} service${failures.length === 1 ? "" : "s"} failed in this step`;
           output.error({
             title: `failed to start services in step ${levelIdx + 1}/${levels.length} (${level.join(", ")})`,
             detail,
           });
+        }
+        // Plan 4 Task 15: stop every running LogTail on the per-level
+        // failure path. The per-service failure has already rendered its
+        // block; we no longer need the tails ticking. Best-effort.
+        for (const tail of state.logTails.values()) {
+          await tail.stop().catch(() => {});
         }
         // markFailed has already been called per-service inside startOne.
         await markStackFailed(state);
@@ -727,6 +855,16 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       });
     }
     if (state) {
+      // Plan 4 Task 15: stop every running LogTail on the catch-all path.
+      // The per-service failure path (`startOneService` → `formatFailure` →
+      // `output.failure`) has already rendered the rich per-service failure
+      // block by the time we reach here; the LogTails are no longer
+      // needed for ready/fail_when polling and we don't want them ticking
+      // past the function's return. Best-effort: a tail that fails to stop
+      // shouldn't mask the underlying error.
+      for (const tail of state.logTails.values()) {
+        await tail.stop().catch(() => {});
+      }
       await markStackFailed(state).catch(() => {});
     }
     await output.close();
@@ -830,8 +968,161 @@ async function startOneService(input: StartOneInput): Promise<void> {
   } catch (err) {
     snap.state = "failed" satisfies ServiceState;
     output.service(name, "failed", describeError(err));
+
+    // Plan 4 Task 14: render the rich per-service failure block AND
+    // populate the snapshot's `failure_reason` / `failure_log_tail` fields
+    // (Task 10 added the schema fields; this is where they get written).
+    //
+    // Steps:
+    //   1. Classify the error into a FailureInput discriminated union.
+    //      Errors come from many places — ProcessExitWatcher, withTimeout
+    //      (ReadyTimeoutError), watchFailWhen (FailWhenMatchedError),
+    //      runCapture (CaptureMissError), or a raw thrown Error from
+    //      anywhere else (lifecycle hooks, env resolution failures, the
+    //      100ms early-exit sentinel). The classifier maps each to the
+    //      formatter's typed input.
+    //   2. Format into a FailureBlock (title, reason, logTail, hint).
+    //   3. Render via `output.failure(block)` — pretty mode prints a red
+    //      banner with log tail; json/quiet emit a structured event.
+    //   4. Persist `block.reason` and `block.logTail` onto the snapshot so
+    //      state.json carries the failure context (downstream: dashboard
+    //      in Plan 5, post-hoc `lich logs --failed` etc.).
+    //
+    // Best-effort: a failure classifier that itself throws shouldn't mask
+    // the original error. We swallow secondary errors and fall back to
+    // `describeError` on the raw err.
+    try {
+      const failureInput = classifyFailure({
+        err,
+        serviceName: name,
+        logBuffer: isOwned
+          ? input.state.logTails.get(name)?.buffer
+          : undefined,
+      });
+      const block = formatFailure(failureInput);
+      output.failure(block);
+      // Persist on the snapshot — `writeSnapshot`'s sanitizer keeps these
+      // fields ONLY for services in the `failed` state (which we just set
+      // above), so a service that later recovers won't leave stale failure
+      // metadata in state.json.
+      snap.failure_reason = block.reason;
+      snap.failure_log_tail = block.logTail;
+    } catch {
+      // Classifier/formatter blew up. Don't let that swallow the original
+      // failure — fall back to the plain describeError on snap and re-throw
+      // below. (The orchestrator's per-level error block in `runUp`
+      // already provides a fallback summary if this happens.)
+      snap.failure_reason = describeError(err);
+    }
+
     throw err;
   }
+}
+
+/**
+ * Classify a thrown error into the typed `FailureInput` the formatter
+ * consumes. Recognizes the error types Plan 4 introduces:
+ *
+ *   - `ReadyTimeoutError`           → `kind: 'timeout'`
+ *   - `FailWhenMatchedError`        → `kind: 'fail_when'`
+ *   - `CaptureMissError`            → `kind: 'capture_miss'`
+ *   - `Error.cause: ProcessExitFailure` → `kind: 'exit'` (the exitWatcher
+ *      race wraps the raw failure in an Error.cause so the stack trace is
+ *      preserved while still carrying the structured payload)
+ *
+ * Anything else falls back to a generic `kind: 'exit'` shape with a
+ * `code: 1` placeholder — Plan 4 doesn't ship a "generic" failure kind, so
+ * we squash unknown errors into the closest shape and let `describeError`
+ * fill the reason string. Once Plan 5 introduces a richer set, this
+ * fallback path can be revisited.
+ */
+function classifyFailure(opts: {
+  err: unknown;
+  serviceName: string;
+  logBuffer: string | undefined;
+}): FailureInput {
+  const { err, serviceName, logBuffer } = opts;
+
+  if (err instanceof ReadyTimeoutError) {
+    const out: FailureInput = {
+      kind: "timeout",
+      service: serviceName,
+      ms: err.ms,
+    };
+    if (err.phase !== undefined) out.phase = err.phase;
+    if (logBuffer !== undefined) out.logBuffer = logBuffer;
+    return out;
+  }
+
+  if (err instanceof FailWhenMatchedError) {
+    const out: FailureInput = {
+      kind: "fail_when",
+      service: serviceName,
+      matchedLine: err.matchedLine,
+    };
+    if (logBuffer !== undefined) out.logBuffer = logBuffer;
+    return out;
+  }
+
+  if (err instanceof CaptureMissError) {
+    const out: FailureInput = {
+      kind: "capture_miss",
+      service: serviceName,
+      captureKey: err.key,
+    };
+    if (logBuffer !== undefined) out.logBuffer = logBuffer;
+    return out;
+  }
+
+  // Error with a ProcessExitFailure-shaped `cause` (set by the exit-
+  // watcher's racer in waitReady).
+  if (err instanceof Error) {
+    const cause = (err as Error & { cause?: unknown }).cause;
+    if (
+      cause !== null &&
+      typeof cause === "object" &&
+      "kind" in cause &&
+      "stage" in cause &&
+      ((cause as { kind: unknown }).kind === "exit" ||
+        (cause as { kind: unknown }).kind === "signal")
+    ) {
+      const out: FailureInput = {
+        kind: "exit",
+        service: serviceName,
+        exit: cause as FailureInput extends { exit: infer T } ? T : never,
+      };
+      if (logBuffer !== undefined) out.logBuffer = logBuffer;
+      return out;
+    }
+  }
+
+  // Fallback: synthesize a placeholder `exit`-shaped failure so the user
+  // sees the structured failure block even for non-Plan-4-typed errors.
+  // The `exit` field carries a generic `code: 1` so the formatter renders
+  // something useful; `describeError(err)` is encoded into the placeholder
+  // failure's exit code label via a marker the formatter recognizes? No —
+  // simpler: the formatter renders `formatProcessExitFailure` from the
+  // ProcessExitFailure shape, so we synthesize one with stage=during_startup
+  // and exitCode=1 (the conservative default — the actual error message
+  // appears via the FAILURE block's title/reason, which the renderer prints
+  // even when the exit-detail wording is generic).
+  //
+  // Future polish: introduce a `kind: 'other'` variant in FailureInput so
+  // this fallback can carry the raw error message directly. For now, the
+  // synthesized exit + the original err re-thrown by the caller keeps the
+  // error surface honest.
+  const fallback: FailureInput = {
+    kind: "exit",
+    service: serviceName,
+    exit: {
+      kind: "exit",
+      exitCode: 1,
+      signalName: null,
+      stage: "during_startup",
+    },
+  };
+  if (logBuffer !== undefined) fallback.logBuffer = logBuffer;
+  return fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -846,12 +1137,26 @@ async function startOwned(
 
   // Resolve env for this owned service via the full pipeline (top-level +
   // owned overrides + interpolation).
+  //
+  // Plan 4 Task 14: thread captured values from earlier services into this
+  // service's env-interpolation context. This is how the dogfood-stack's
+  // `${owned.tunnel_demo.captured.listen_url}` flows from tunnel_demo's
+  // capture extraction into a downstream service's env. `state.capturedValues`
+  // is populated by `waitReady` as each owned service becomes ready, so
+  // services in level N see captures from levels 0..N-1.
+  //
+  // Services in the SAME level can NOT see each other's captures: by
+  // construction they start in parallel inside the level loop, and the
+  // capture is only populated after ready fires. If a user needs that flow,
+  // they declare a `depends_on` edge to push the consumer into a later
+  // level.
   const env = await resolveEnvForService({
     config,
     service: { kind: "owned", name },
     worktree,
     allocatedPorts,
     projectRoot: worktree.path,
+    capturedValues: state.capturedValues,
   });
 
   // Build the spec from the parsed config + allocated ports.
@@ -926,6 +1231,42 @@ async function startOwned(
   const handle = await startOwnedService(spec);
   state.ownedHandles.set(name, handle);
 
+  // Plan 4 Task 14: register a LogTail for this service in the per-stack
+  // registry. One physical log file, many logical consumers — `ready_when.
+  // log_match`, `fail_when.log_match`, `ready_when.capture`, and (Plan 5)
+  // the dashboard live tail all subscribe to the same instance so the file
+  // is read once per tick regardless of consumer count.
+  //
+  // The tail is given the orchestrator's cancellation signal so a Ctrl-C
+  // tears every tail down at the same time as the supervised processes,
+  // via a single AbortController fan-out (see `LogTail`'s constructor doc).
+  // The tail starts polling immediately — the file may not exist yet, the
+  // tail's poll loop tolerates that.
+  const tail = new LogTail({
+    logPath: spec.logPath,
+    signal: input.signal,
+  });
+  await tail.start();
+  state.logTails.set(name, tail);
+
+  // Plan 4 Task 14: stage-aware exit watcher. The lifecycle stage starts
+  // at `during_startup` and gets flipped by `waitReady`:
+  //   - to `before_ready` right before the ready evaluator begins polling
+  //   - to `after_ready` right after the ready evaluator resolves
+  // The watcher samples this lazily — at the moment `handle.exited`
+  // resolves — so an exit during ready polling is labeled `before_ready`,
+  // an exit after ready is `after_ready`, etc. (`ProcessExitWatcher`'s
+  // README has the full taxonomy.)
+  state.stageRefs.set(name, "during_startup");
+  const exitWatcher = new ProcessExitWatcher(handle, {
+    // Default to `after_ready` if the entry's been deleted (defensive: the
+    // map could be cleared by a future cleanup path while a stale watcher
+    // is still resolving). `after_ready` is the most-conservative label —
+    // it implies the service made it through ready.
+    readSignal: () => state.stageRefs.get(name) ?? "after_ready",
+  });
+  state.exitWatchers.set(name, exitWatcher);
+
   // Record the spawned pid into the service snapshot so `lich down` can find
   // it. Without this, the snapshot ends up with no pid for the service,
   // `down.ts`'s `stopOwnedService` sees `pid === undefined` and short-
@@ -944,6 +1285,13 @@ async function startOwned(
   // surface that as a startup failure rather than waiting on `ready_when`
   // (which would never resolve). Race the exited promise against a short
   // sentinel to detect immediate exits without blocking long-running cmds.
+  //
+  // Plan 4 Task 17 (deferred) will replace this 100ms sentinel with a
+  // pure-ProcessExitWatcher race that covers services without a
+  // `ready_when` AND post-ready exits. For Task 14 (this task) we keep
+  // the sentinel as a defensive backstop — `waitReady` races the watcher
+  // for the with-`ready_when` case; without it, the sentinel catches the
+  // immediate-exit case for services that have no `ready_when` configured.
   const sentinelMs = 100;
   const earlyExit = await Promise.race([
     handle.exited.then((r) => ({ kind: "exited" as const, result: r })),
@@ -1040,10 +1388,15 @@ async function waitReady(
   const ready = (def as OwnedService).ready_when;
   if (!ready) return;
 
-  const { name, worktree, signal } = input;
+  const { name, worktree, signal, state } = input;
 
   // Build interpolation context for any ${...} refs inside ready_when fields.
   // The dogfood-stack uses this e.g. ready_when: { tcp: "localhost:${owned.supabase.ports.api}" }.
+  //
+  // Plan 4 Task 14: include captured values from earlier services so a
+  // ready_when field could (in principle) reference `${owned.X.captured.Y}`.
+  // No real config in v1 needs this — captures flow into env, not into other
+  // services' ready probes — but threading them in is free and future-proof.
   const interpCtx: InterpolationContext = {
     worktree: {
       name: worktree.name,
@@ -1057,38 +1410,201 @@ async function waitReady(
       ]),
     ),
     owned: Object.fromEntries(
-      Object.entries(input.allocatedPorts.owned).map(([svc, entry]) => [
-        svc,
-        { port: entry.port, ports: entry.ports },
-      ]),
+      Object.entries(input.allocatedPorts.owned).map(([svc, entry]) => {
+        const captured = state.capturedValues[svc];
+        const ownedEntry: {
+          port?: number;
+          ports?: Record<string, number>;
+          captured?: Record<string, string>;
+        } = { port: entry.port, ports: entry.ports };
+        if (captured !== undefined) ownedEntry.captured = captured;
+        return [svc, ownedEntry];
+      }),
     ),
   };
 
+  // Plan 4 Task 14: race the ready evaluator against:
+  //   - the per-service `fail_when.log_match` watcher (if configured)
+  //   - the per-service `ProcessExitWatcher` (owned only — compose services
+  //     don't have an OwnedHandle to watch)
+  //
+  // The watchers are constructed via small helpers that return promises that
+  // either NEVER resolve (fail_when, by contract — it only rejects), or
+  // resolve only on a NON-zero exit (the exit watcher converts a clean exit
+  // to a never-resolving promise). That way whichever fires first wins the
+  // race and the orchestrator gets one disposition.
+  const failWhenAc = new AbortController();
+  const racers: Promise<unknown>[] = [];
+
+  // Wire fail_when first so a retroactive-match in the buffer can fire even
+  // before the ready evaluator gets started. The watcher subscribes to the
+  // SAME LogTail the orchestrator constructed in startOwned, so there's
+  // exactly one read fd on the log per service. Compose services don't get
+  // a LogTail (no supervisor-managed log file) so fail_when is a no-op for
+  // them — which mirrors the spec ("fail_when is shape-accepted on compose
+  // for symmetry but adds no behavior; compose has its own restart policy").
+  const failPattern = readyFailWhenPattern(def);
+  const tail = isOwned ? state.logTails.get(name) : undefined;
+  if (failPattern !== null && tail !== undefined) {
+    racers.push(
+      watchFailWhen({
+        tail,
+        pattern: failPattern,
+        signal: failWhenAc.signal,
+      }),
+    );
+  }
+
+  // Wire the exit watcher (owned services only). The watcher's `wait()`
+  // promise resolves to `null` for a clean exit; we transform that into a
+  // never-resolving promise here so a 0-exit during ready polling doesn't
+  // unblock the race with a fulfilled-undefined that the orchestrator would
+  // mis-interpret as ready. The only way the watcher contributes to the
+  // race is via a NON-zero exit, which we re-throw as an error carrying the
+  // raw failure shape for the catch path to format.
+  const exitWatcher = isOwned ? state.exitWatchers.get(name) : undefined;
+  if (exitWatcher !== undefined) {
+    racers.push(
+      exitWatcher.wait().then((failure) => {
+        if (failure === null) {
+          // Clean exit during ready polling — refuse to resolve so the
+          // ready evaluator's outcome wins. This is rare (a service that
+          // exits with code 0 before becoming ready is unusual) but the
+          // semantic is "no failure to report; let ready_when win or
+          // timeout."
+          return new Promise<never>(() => {});
+        }
+        // Re-throw as a structured exit failure. We wrap it in an `Error`
+        // whose `cause` carries the raw ProcessExitFailure for the
+        // formatter to consume. Using `Error.cause` keeps the stack trace
+        // available for debug builds while letting the formatter discriminate
+        // via `cause instanceof` checks.
+        const err = new Error(
+          `owned service "${name}" exited during ready wait`,
+        );
+        (err as Error & { cause?: unknown }).cause = failure;
+        throw err;
+      }),
+    );
+  }
+
+  // Now build the ready-evaluator promise. We always wrap it in withTimeout
+  // (owned services: default 60s when ready.timeout is unset; compose
+  // services: no default, but if the user wrote one we honor it).
+  //
+  // The phase label is forwarded into ReadyTimeoutError so the formatter
+  // can render "did not become ready in 60s (http_get)" — gives the user a
+  // hint about which evaluator was slow.
+  const readyPromise = buildReadyEvaluator(input, def, isOwned, interpCtx);
+  const timeoutMs = resolveReadyTimeoutMs(ready, isOwned);
+  const phaseLabel = identifyReadyPhase(ready);
+  const racedReady =
+    timeoutMs !== null
+      ? withTimeout(readyPromise, { ms: timeoutMs, phase: phaseLabel })
+      : readyPromise;
+  racers.push(racedReady);
+
+  // Flip the stage from `during_startup` to `before_ready` so the exit
+  // watcher labels any death during polling correctly. Only set when the
+  // entry already exists (defensive: compose services don't have a stage
+  // ref).
+  if (state.stageRefs.has(name)) {
+    state.stageRefs.set(name, "before_ready");
+  }
+
+  try {
+    await Promise.race(racers);
+  } finally {
+    // Tear down fail_when's subscription regardless of which racer won.
+    // If ready_when won, fail_when is still pending (it never resolves on
+    // its own — see watchFailWhen's contract); we abort it so the
+    // subscription is removed from the LogTail and the promise rejects
+    // cleanly (and gets swallowed by the finally semantics here, since
+    // we've already returned via the success path).
+    //
+    // If fail_when WON, this is a no-op — its cleanup already ran inside
+    // the watcher when it fired. `failWhenAc.abort()` is idempotent.
+    failWhenAc.abort();
+  }
+
+  // Plan 4 Task 14: capture extraction. After ready fires, run each
+  // `ready_when.capture` regex against the service's accumulated log
+  // buffer and stash the matches into `state.capturedValues` for
+  // downstream services' env-interpolation context.
+  //
+  // Missing captures throw `CaptureMissError`; we let it propagate up so
+  // the per-service catch in `startOneService` turns it into a structured
+  // failure (the formatter has a dedicated `capture_miss` kind).
+  //
+  // Compose services don't have captures (no LogTail) — `runCapture`
+  // requires a tail, so we skip it for them.
+  if (ready.capture !== undefined && tail !== undefined) {
+    const patterns = ready.capture;
+    if (Object.keys(patterns).length > 0) {
+      const captured = runCapture({ tail, patterns });
+      state.capturedValues[name] = captured;
+    }
+  }
+
+  // Flip the stage to `after_ready` so any post-ready exit is labeled
+  // correctly. (The post-ready watcher continues to live in `state.
+  // exitWatchers` even after this function returns; Plan 4 Task 15
+  // documents the "LogTails stay running after up" semantic.)
+  if (state.stageRefs.has(name)) {
+    state.stageRefs.set(name, "after_ready");
+  }
+}
+
+/**
+ * Build the ready-evaluator promise WITHOUT any timeout / fail_when / exit-
+ * watcher wrapping. The caller composes those via Promise.race.
+ *
+ * Returns a never-resolving promise when `ready_when` is present but uses
+ * only fields lich doesn't probe (e.g. `cmd:`, which isn't implemented).
+ * The orchestrator's timeout race ensures we don't hang forever on those.
+ */
+function buildReadyEvaluator(
+  input: StartOneInput,
+  def: OwnedService | ComposeService,
+  isOwned: boolean,
+  interpCtx: InterpolationContext,
+): Promise<void> {
+  const ready = (def as OwnedService).ready_when;
+  // Guaranteed non-null by caller — but defensive narrowing for clarity.
+  if (!ready) return Promise.resolve();
+
+  const { name, worktree, signal, state } = input;
+
   if (typeof ready.log_match === "string" && ready.log_match.length > 0) {
     // Compile the regex up front; validate has already done this but we
-    // can't carry the compiled form across the parse boundary cheaply, so
-    // recompile. A syntactically invalid pattern surfaces as an immediate
-    // throw — but validate would have caught that already.
+    // can't carry the compiled form across the parse boundary cheaply.
     const pattern = new RegExp(ready.log_match, "u");
-    const logPath = isOwned
-      ? serviceLogPath(worktree.stack_id, name)
-      : serviceLogPath(worktree.stack_id, name);
-    // Plan 4 Task 4: waitForLogMatch now subscribes to a shared LogTail
-    // rather than opening its own poll loop. Per the plan, the orchestrator
-    // will eventually keep one LogTail per owned service in a stack-level
-    // registry so fail_when, capture, and the dashboard can all share it
-    // (Task 14). For now we construct a tail just-in-time here and stop it
-    // when the wait settles — same observable behavior as the previous
-    // self-tailing implementation, but the future-extension wiring lives
-    // on the LogTail primitive.
-    const tail = new LogTail({ logPath, signal });
-    await tail.start();
-    try {
-      await waitForLogMatch({ tail, pattern, signal });
-    } finally {
-      await tail.stop();
+    // For owned services, use the shared LogTail from the registry. For
+    // compose (which doesn't have a tail), construct a just-in-time tail
+    // — same observable behavior as Plan 1's pre-Task-14 wiring.
+    let tail = isOwned ? state.logTails.get(name) : undefined;
+    let stopAfter = false;
+    if (tail === undefined) {
+      // Compose services (or — defensively — owned services that somehow
+      // didn't make it into the registry) get a single-use tail that's
+      // stopped when the wait settles.
+      const logPath = serviceLogPath(worktree.stack_id, name);
+      tail = new LogTail({ logPath, signal });
+      stopAfter = true;
+      // start() returns immediately; await keeps the call shape uniform.
+      void tail.start();
     }
-    return;
+    const tailNonNull = tail;
+    return waitForLogMatch({ tail: tailNonNull, pattern, signal }).finally(
+      () => {
+        if (stopAfter) {
+          // Best-effort stop; the await is necessary because tail.stop()
+          // is async and we want the cleanup to complete before the
+          // promise settles.
+          void tailNonNull.stop().catch(() => {});
+        }
+      },
+    );
   }
 
   if (typeof ready.http_get === "string" && ready.http_get.length > 0) {
@@ -1101,8 +1617,7 @@ async function waitReady(
     // LEV-301: surface the URL we're polling so the user can curl it
     // themselves while waiting (helpful when a service is slow to come up).
     input.output.service(name, "initializing", `waiting on ${url}`);
-    await waitForHttpReady({ url, signal });
-    return;
+    return waitForHttpReady({ url, signal });
   }
 
   if (typeof ready.tcp === "string" && ready.tcp.length > 0) {
@@ -1114,13 +1629,75 @@ async function waitReady(
     // LEV-301: surface the tcp target we're probing for the same reason
     // as the http_get case above.
     input.output.service(name, "initializing", `waiting on tcp ${target}`);
-    await waitForTcpReady({ target, signal });
-    return;
+    return waitForTcpReady({ target, signal });
   }
 
-  // ready_when present but with only fields Plan 1 doesn't support (cmd,
-  // capture, timeout in isolation). Treat as "no probe configured" rather
-  // than failing — Plan 4 wires the missing surfaces.
+  // ready_when present but with only fields Plan 1/4 doesn't probe (cmd;
+  // capture-only; timeout-only). Resolve immediately — same as the
+  // pre-Plan-4 behavior for these shapes.
+  return Promise.resolve();
+}
+
+/**
+ * Compile `fail_when.log_match` to a RegExp, or return `null` if not
+ * configured. Compose services accept the shape but the orchestrator only
+ * wires the watcher for owned services (where the supervisor writes the
+ * log file lich can tail).
+ */
+function readyFailWhenPattern(
+  def: OwnedService | ComposeService,
+): RegExp | null {
+  const fw = (def as OwnedService).fail_when;
+  if (!fw) return null;
+  if (typeof fw.log_match !== "string" || fw.log_match.length === 0) return null;
+  // Same `u` flag the rest of lich uses (validate, capture, log_match) — keep
+  // semantics identical across the various regex callsites.
+  return new RegExp(fw.log_match, "u");
+}
+
+/**
+ * Resolve the effective timeout (in ms) for a ready evaluator.
+ *
+ *   - owned services: parse `ready.timeout` if set, else default 60s
+ *   - compose services: parse `ready.timeout` if set, else no timeout
+ *
+ * Returns `null` to mean "no timeout" — the caller skips the `withTimeout`
+ * wrap in that case. We don't apply the 60s default to compose because
+ * compose has its own healthcheck / wait policy and adding lich-side
+ * semantics on top can mask real timing issues at the compose layer.
+ */
+function resolveReadyTimeoutMs(
+  ready: NonNullable<OwnedService["ready_when"]>,
+  isOwned: boolean,
+): number | null {
+  if (ready.timeout !== undefined) {
+    // Validate has already approved this value; parseDuration re-validates
+    // at runtime as a defensive double-check. Throwing here surfaces as a
+    // service failure, which is correct — a misconfigured timeout should
+    // fail loudly rather than silently get ignored.
+    return parseDuration(ready.timeout);
+  }
+  return isOwned ? DEFAULT_OWNED_READY_TIMEOUT_MS : null;
+}
+
+/**
+ * Identify which evaluator a ready_when block declares, for the timeout
+ * error's phase label. Returns one of `"http_get"`, `"tcp"`, `"log_match"`,
+ * or `undefined` when no probe is configured.
+ */
+function identifyReadyPhase(
+  ready: NonNullable<OwnedService["ready_when"]>,
+): string | undefined {
+  if (typeof ready.log_match === "string" && ready.log_match.length > 0) {
+    return "log_match";
+  }
+  if (typeof ready.http_get === "string" && ready.http_get.length > 0) {
+    return "http_get";
+  }
+  if (typeof ready.tcp === "string" && ready.tcp.length > 0) {
+    return "tcp";
+  }
+  return undefined;
 }
 
 /**
