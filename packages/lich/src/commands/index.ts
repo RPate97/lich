@@ -94,9 +94,18 @@ const upHandler: CommandHandler = async (ctx) => {
     : ctx.argv.quiet
       ? "quiet"
       : "pretty";
+  // LEV-391 (Plan 3 Task 17): the first positional after `up` is the optional
+  // profile name. `lich up dev:env-override` → `{ profile: "dev:env-override" }`;
+  // `lich up` → `{ profile: undefined }`. `runUp` resolves the default profile
+  // itself when undefined (Task 13 / LEV-387 wired the lookup). Non-string
+  // values are coerced to undefined defensively — mri parses positionals as
+  // strings, so this only guards against future router changes.
+  const positional = ctx.argv._[0];
+  const profile = typeof positional === "string" ? positional : undefined;
   const result = await runUp({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
+    profile,
   });
   return { ok: result.exitCode === 0, message: "" };
 };
