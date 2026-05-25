@@ -688,6 +688,15 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         worktree,
         allocatedPorts,
         projectRoot: worktree.path,
+        // LEV-455: thread the active profile so lifecycle entries using
+        // `env_group: stack` see profile-scoped env overrides + LICH_PROFILE.
+        // After LEV-454, `resolveEnvGroup` accepts `profile` and threads it
+        // down to the `stack` terminator, which forwards it into
+        // `resolveTopLevelEnv` (where the profile env layer overlays on top
+        // of the top-level env). Without this line, long-form lifecycle
+        // entries like `{ cmd: ..., env_group: stack }` would silently see
+        // only the top-level env even under an active profile.
+        profile: resolvedProfile ?? undefined,
       });
 
     // ---- Step 6: state dir + initial state.json ---------------------------

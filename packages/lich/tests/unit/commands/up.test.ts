@@ -1465,6 +1465,100 @@ lifecycle:
 });
 
 // ---------------------------------------------------------------------------
+// LEV-455 (Plan 3 follow-up): the `lifecycleResolveEnvGroup` closure in
+// up.ts didn't pass `profile:` through to `resolveEnvGroup`. After LEV-454
+// added the parameter to the resolver, the call site here still omitted it,
+// so long-form lifecycle entries with `env_group: stack` saw only the
+// top-level env — profile env overrides + `LICH_PROFILE` were invisible to
+// those entries.
+//
+// Load-bearing assertion: with a profile that overrides `VAR`, a long-form
+// `after_up` entry using `env_group: stack` writes the profile's value to a
+// marker. Pre-fix, it wrote the top-level value (or LICH_PROFILE was empty).
+// ---------------------------------------------------------------------------
+describe("runUp — LEV-455: lifecycle env_group resolves with active profile", () => {
+  it("long-form lifecycle entry with `env_group: stack` sees profile-scoped env override", async () => {
+    const marker = join(projectDir, "after_up.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+env:
+  VAR: "from-top-level"
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+    env:
+      VAR: "from-profile"
+lifecycle:
+  after_up:
+    - cmd: ${JSON.stringify(`printf %s "$VAR" > ${marker}`)}
+      env_group: "stack"
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    // Profile override wins over top-level. Pre-LEV-455 this read
+    // "from-top-level" because the lifecycle env_group resolver didn't
+    // receive `profile:`.
+    expect(readFileSync(marker, "utf8")).toBe("from-profile");
+  }, 15_000);
+
+  it("LICH_PROFILE is set in long-form lifecycle entries using `env_group: stack`", async () => {
+    const marker = join(projectDir, "lich_profile.marker");
+    const svcSentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(readyServiceCmd(svcSentinel))}
+    ready_when:
+      log_match: "READY"
+profiles:
+  dev:
+    default: true
+    owned: [svc]
+lifecycle:
+  after_up:
+    - cmd: ${JSON.stringify(`printf %s "$LICH_PROFILE" > ${marker}`)}
+      env_group: "stack"
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    // LICH_PROFILE is auto-injected by `resolveTopLevelEnv` when a profile
+    // is active. Pre-LEV-455 this was empty because the lifecycle path
+    // didn't pass the profile through.
+    expect(readFileSync(marker, "utf8")).toBe("dev");
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
 // Local helpers
 // ---------------------------------------------------------------------------
 
