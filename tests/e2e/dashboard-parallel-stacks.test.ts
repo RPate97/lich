@@ -106,6 +106,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -116,6 +117,9 @@ import { runLich } from "./helpers/lich.js";
 import { waitForStackStatus } from "./helpers/state.js";
 import { waitForDaemonRunning } from "./helpers/daemon.js";
 import { fetchDashboardJson } from "./helpers/dashboard-fetch.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Wire-format types — mirror `packages/lich/src/daemon/dashboard/stacks-view.ts`'s
@@ -229,6 +233,21 @@ let stackB: StackCopy | null = null;
 /** Captured during setup-a so setup-b + assertions can verify singleton. */
 let daemonInfo: { pid: number; url: string } | null = null;
 
+/**
+ * Pick a unique proxy port for this test process so we don't fight with
+ * sibling agents/daemons holding 3300 (the spec default the user-facing
+ * docs prescribe). Same pattern as `tests/e2e/friendly-urls.test.ts`:
+ * derive from PID so concurrent vitest forks under the new fast pool
+ * don't collide on the same port. Range 50000-60000 sits well clear of
+ * the spec default and of common dev ports (8080, 8443, etc.).
+ */
+function pickProxyPort(): number {
+  return 50_000 + (process.pid % 10_000);
+}
+
+/** Captured during setup-a so setup-b + assertions share it. */
+let proxyPort: number | null = null;
+
 // ---------------------------------------------------------------------------
 // Live progress logger — this is the heaviest e2e test in the suite (two
 // full dogfood-stack ups = postgres pull + boot * 2). Without progress
@@ -257,8 +276,9 @@ function lichUp(cwd: string): ReturnType<typeof runLich> {
   return runLich(["up", "--no-browser"], {
     cwd,
     env: { LICH_HOME: lichHome! },
-    // up against the dogfood stack is heavy; give it 5 minutes per call.
-    timeout: 300_000,
+    // dev:fast brings up api + web on the host in ~3s. 60s is huge
+    // headroom for slow CI; bigger than that just masks regressions.
+    timeout: 60_000,
   });
 }
 
@@ -339,6 +359,17 @@ function readStateForWorktree(
  * of how the client got there, so the behavior is identical to what a
  * real browser would observe.
  *
+ * Why `http.request` rather than `fetch`: Node's WHATWG `fetch`
+ * implementation (undici) treats `Host` as a forbidden header and
+ * silently strips it — the proxy then sees `Host: 127.0.0.1:3300` and
+ * 404s because that hostname isn't in its routing table. The
+ * lower-level `http.request` API doesn't enforce that restriction and
+ * passes the explicit `Host` through verbatim, which is what every
+ * production HTTP client (curl, browsers via their own internal
+ * stacks) does. Confirmed via:
+ *   $ node -e "fetch(url, { headers: { Host: '...' }}).then(...)"  // 404
+ *   $ node -e "http.request({ headers: { Host: '...' }}, ...).end()"  // 200
+ *
  * `proxyPort` defaults to 3300, which matches the daemon's default when
  * no `runtime.proxy_port` is set in the yaml — the dogfood-stack doesn't
  * pin it, so 3300 is correct.
@@ -347,16 +378,38 @@ async function fetchViaProxy(
   proxyPort: number,
   friendlyHostname: string,
   path: string,
-): Promise<Response> {
-  return fetch(`http://127.0.0.1:${proxyPort}${path}`, {
-    headers: {
-      // Include the explicit `:port` suffix in the Host header so it
-      // matches what a real browser would send when the user typed the
-      // friendly URL with its port. The proxy strips the `:port` before
-      // routing, so the exact value doesn't matter beyond "looks like a
-      // browser-shaped Host header." We pass the proxy port for clarity.
-      host: `${friendlyHostname}:${proxyPort}`,
-    },
+): Promise<{ status: number; text: () => Promise<string> }> {
+  const http = await import("node:http");
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: proxyPort,
+        path,
+        method: "GET",
+        headers: {
+          // Include the explicit `:port` suffix in the Host header so it
+          // matches what a real browser would send when the user typed
+          // the friendly URL with its port. The proxy strips the `:port`
+          // before routing, so the exact value doesn't matter beyond
+          // "looks like a browser-shaped Host header."
+          Host: `${friendlyHostname}:${proxyPort}`,
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          resolve({
+            status: res.statusCode ?? 0,
+            text: async () => body,
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
   });
 }
 
@@ -402,6 +455,7 @@ afterAll(() => {
   stackB = null;
   lichHome = null;
   daemonInfo = null;
+  proxyPort = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -450,11 +504,40 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
         install: true,
       });
 
+      // Pin `runtime.proxy_port` in BOTH copied lich.yamls so the daemon
+      // binds OUR port rather than the spec default 3300. Under the new
+      // fast pool (maxForks > 1) and on dev machines with stray daemons
+      // already on 3300, the default would silently route our test
+      // requests to whatever daemon happens to own 3300 — which has no
+      // routes for our test stacks and returns 404. Same pattern as
+      // tests/e2e/friendly-urls.test.ts.
+      //
+      // dogfood-stack already has a `runtime: { proxy_port: 3300, ... }`
+      // block — we do an in-place substitution rather than append (YAML
+      // duplicate-key error). The regex matches the literal `proxy_port:`
+      // line under the existing block.
+      proxyPort = pickProxyPort();
+      for (const stack of [stackA, stackB]) {
+        const yamlPath = join(stack.path, "lich.yaml");
+        const orig = readFileSync(yamlPath, "utf8");
+        const updated = orig.replace(
+          /(\n\s*)proxy_port:\s*\d+/,
+          `$1proxy_port: ${proxyPort}`,
+        );
+        if (updated === orig) {
+          throw new Error(
+            `failed to substitute proxy_port in ${yamlPath} — did the dogfood-stack stop pinning runtime.proxy_port?`,
+          );
+        }
+        writeFileSync(yamlPath, updated, "utf8");
+      }
+      step(`pinned proxy_port=${proxyPort} in both lich.yamls`);
+
       // First `lich up` spawns the daemon as a side effect (writes
       // `<LICH_HOME>/daemon.pid` and `daemon.url`, starts the dashboard
       // server + proxy server + state watcher). The summary line
       // `Dashboard: <url>` confirms the daemon launched.
-      step("lich up A --no-browser (postgres pull + boot ~5-10s)");
+      step("lich up A --no-browser (dev:fast — api + web on host)");
       const upA = lichUp(stackA.path);
       if (upA.exitCode !== 0) {
         throw new Error(
@@ -469,6 +552,22 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       step(
         `A up (stack_id=${stateA!.stack_id}, worktree=${stateA!.worktree_name})`,
       );
+
+      // dev:fast profile sentinel: A's api /health should report db: stub.
+      // Catches silent drift if the default profile ever flips back to dev.
+      // Probe via `lich urls --raw` (localhost URLs) to dodge the friendly-
+      // URL routing race under dev:fast's sub-3s startup.
+      const urlsA = runLich(["urls", "--raw"], {
+        cwd: stackA.path,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsA.exitCode).toBe(0);
+      const parsedA = parseLichUrls(urlsA.stdout);
+      const apiUrlA = parsedA.api;
+      expect(apiUrlA, `expected api url for A in: ${urlsA.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrlA}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrlA!, "stub");
+      step("A api /health reports db: stub");
 
       // Wait for daemon: after A's up, the daemon should be alive and
       // its PID + URL files present. Generous 30s timeout to cover the
@@ -485,7 +584,7 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       );
       step(`daemon up: pid=${daemonInfo.pid} url=${daemonInfo.url}`);
     },
-    /* timeout */ 600_000,
+    /* timeout */ 90_000,
   );
 
   it(
@@ -547,8 +646,24 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
         `daemon PID should be unchanged after B's up; was ${daemonInfo!.pid}, now ${daemonAfterB.pid}`,
       ).toBe(daemonInfo!.pid);
       step("daemon unchanged — singleton contract holds");
+
+      // dev:fast profile sentinel for B too: B's api /health should also
+      // report db: stub. Asserting per-stack catches a hypothetical
+      // regression where the second `lich up` accidentally inherits a
+      // different profile via env leakage.
+      const urlsB = runLich(["urls", "--raw"], {
+        cwd: stackB!.path,
+        env: { LICH_HOME: lichHome! },
+      });
+      expect(urlsB.exitCode).toBe(0);
+      const parsedB = parseLichUrls(urlsB.stdout);
+      const apiUrlB = parsedB.api;
+      expect(apiUrlB, `expected api url for B in: ${urlsB.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrlB}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrlB!, "stub");
+      step("B api /health reports db: stub");
     },
-    /* timeout */ 600_000,
+    /* timeout */ 90_000,
   );
 
   it(
@@ -558,13 +673,13 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       expect(stackA, "stackA — setup must have run").not.toBeNull();
       expect(stackB, "stackB — setup must have run").not.toBeNull();
 
-      // The default proxy port the daemon binds when no
-      // `runtime.proxy_port` is pinned in the yaml. The dogfood-stack
-      // doesn't pin it, so this is what both stacks will use. If a
-      // future change makes the default configurable, this constant
-      // should be derived from the daemon's `daemon.url` or from a
-      // per-stack config read; for now the spec mandates 3300.
-      const proxyPort = 3300;
+      // proxy port pinned in setup-a (PID-derived, see pickProxyPort).
+      // Under parallel test execution multiple daemons can compete for
+      // 3300; the per-test pin makes ours unique. The 3300 default still
+      // applies to real user invocations of `lich up` (the test just
+      // overrides it for isolation).
+      expect(proxyPort, "proxyPort — setup-a must have run").not.toBeNull();
+      const pp = proxyPort!;
 
       // Re-read both states so the assertion phase works against fresh
       // snapshots (the watcher may have caused additional writes after
@@ -704,6 +819,48 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       // but it's free to re-assert here).
       expect(apiEntryA!.upstream_url).not.toBe(apiEntryB!.upstream_url);
 
+      // ---- Wait for proxy routing to register BOTH stacks' api routes --
+      // The daemon's proxy maintains an in-memory routing table sourced from
+      // each stack's state.routing block (Plan 5 Task 11). The watcher
+      // refreshes that table on a debounce after each state.json write —
+      // under dev:fast's sub-3s startup the table may not be populated for
+      // both stacks by the time we get here, even though /api/stacks has
+      // caught up to status:up (the dashboard cache and proxy routing
+      // table are independent pieces of state). Poll the proxy directly
+      // until both friendly URLs return 200 — that proves the routing
+      // table has both entries. Mirrors LEV-466's polling pattern but for
+      // the proxy rather than the dashboard cache.
+      step("waiting for proxy routing to register both A + B api routes");
+      const routingReadyDeadline = Date.now() + 10_000;
+      let lastStatusA = 0;
+      let lastStatusB = 0;
+      while (Date.now() < routingReadyDeadline) {
+        try {
+          const ra = await fetchViaProxy(
+            pp,
+            `${apiEntryA!.hostname}.lich.localhost`,
+            "/health",
+          );
+          lastStatusA = ra.status;
+          const rb = await fetchViaProxy(
+            pp,
+            `${apiEntryB!.hostname}.lich.localhost`,
+            "/health",
+          );
+          lastStatusB = rb.status;
+          if (ra.status === 200 && rb.status === 200) break;
+        } catch {
+          // transient fetch error → retry until the outer deadline
+        }
+        await new Promise<void>((r) => setTimeout(r, 100));
+      }
+      if (Date.now() >= routingReadyDeadline) {
+        throw new Error(
+          `timeout waiting for proxy to route both stacks' api; ` +
+            `last A status=${lastStatusA}, last B status=${lastStatusB}`,
+        );
+      }
+
       // ---- Sentinel #3: each friendly URL hits its own upstream --------
       // Curl each api's friendly URL via the proxy with the `Host`-header
       // override pattern (connect to 127.0.0.1:<proxyPort>, set Host)
@@ -736,7 +893,7 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
 
       step(`probing A via proxy Host:${friendlyHostA}`);
       const resProxyA = await fetchViaProxy(
-        proxyPort,
+        pp,
         friendlyHostA,
         "/health",
       );
@@ -748,7 +905,7 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
 
       step(`probing B via proxy Host:${friendlyHostB}`);
       const resProxyB = await fetchViaProxy(
-        proxyPort,
+        pp,
         friendlyHostB,
         "/health",
       );
@@ -796,7 +953,7 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       // any real stack on disk).
       step("probing nonexistent friendly hostname (expect 404)");
       const resMiss = await fetchViaProxy(
-        proxyPort,
+        pp,
         "api.nonexistent-worktree-xyz.lich.localhost",
         "/health",
       );
