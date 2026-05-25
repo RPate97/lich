@@ -109,6 +109,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Fail loudly (not skip) — the binary is OUR
@@ -230,7 +233,7 @@ describe("profile env override (Plan 3 Task 22)", () => {
 
     it(
       "(setup) brings up the dogfood-stack under the dev profile",
-      () => {
+      async () => {
         fix = makeFixture("profiles-env-override-dev");
         const upResult = runLich(["up", "dev"], {
           cwd: fix.stackPath,
@@ -249,6 +252,26 @@ describe("profile env override (Plan 3 Task 22)", () => {
           );
         }
         didUp = true;
+
+        // Probe /health and verify db: "live" — catches accidental profile
+        // drift loudly at setup time. If the dispatcher ever lost the "dev"
+        // arg above (default flip, env leak), this fails with a clear
+        // message instead of silently passing with stub data.
+        //
+        // `urls --raw` returns the localhost upstream (http://127.0.0.1:<port>)
+        // rather than the friendly URL via the daemon proxy. The friendly URL
+        // routing can race the proxy's bind / route-table refresh after up;
+        // raw probes the api server directly and avoids that race.
+        const urlsResult = runLich(["urls", "--raw"], {
+          cwd: fix.stackPath,
+          env: { LICH_HOME: fix.lichHome },
+        });
+        expect(urlsResult.exitCode).toBe(0);
+        const urls = parseLichUrls(urlsResult.stdout);
+        const apiUrl = urls.api;
+        expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+        await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 30_000 });
+        await expectDbMode(apiUrl!, "live");
       },
       /* timeout */ 300_000,
     );
@@ -322,7 +345,7 @@ describe("profile env override (Plan 3 Task 22)", () => {
 
     it(
       "(setup) brings up the dogfood-stack under the dev:env-override profile",
-      () => {
+      async () => {
         fix = makeFixture("profiles-env-override-override");
         const upResult = runLich(["up", "dev:env-override"], {
           cwd: fix.stackPath,
@@ -345,6 +368,35 @@ describe("profile env override (Plan 3 Task 22)", () => {
           // eslint-disable-next-line no-console
           console.warn(
             `lich up dev:env-override exited ${upResult.exitCode} (expected; api can't reach bogus DB). Continuing to env-resolution assertion.`,
+          );
+        }
+
+        // Best-effort /health + expectDbMode("live") — the api server
+        // listens on its port regardless of DATABASE_URL reachability
+        // (`new SQL(url)` is lazy), so /health should respond. dev:env-override
+        // extends dev so DATABASE_URL is non-empty → dbAvailable() is true
+        // → /health.db is "live". We swallow probe failures because the
+        // primary assertion in the next it() block is what this test
+        // actually proves; expectDbMode is a sanity sentinel, not the
+        // load-bearing check.
+        try {
+          const urlsResult = runLich(["urls", "--raw"], {
+            cwd: fix.stackPath,
+            env: { LICH_HOME: fix.lichHome },
+          });
+          if (urlsResult.exitCode === 0) {
+            const urls = parseLichUrls(urlsResult.stdout);
+            const apiUrl = urls.api;
+            if (apiUrl) {
+              await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 15_000 });
+              await expectDbMode(apiUrl, "live");
+            }
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `expectDbMode("live") sentinel skipped (api may not be ready under dev:env-override):`,
+            err,
           );
         }
       },
