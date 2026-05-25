@@ -1088,6 +1088,54 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       const friendlyDashboardUrl = `http://lich.localhost:${dashboardProxyPort}/`;
       const suffix = alreadyRunning ? " (daemon was already running)" : "";
       output.info(`Dashboard: ${friendlyDashboardUrl}${suffix}`);
+
+      // LEV-480: wait for the daemon's in-memory routing table to
+      // reflect this stack's friendly hostnames before `lich up` returns.
+      //
+      // The watcher refreshes the routing table on a 100ms debounce
+      // after state.json changes — under fast stacks (~3s startup)
+      // `lich up` would return BEFORE the debounce fired, so a test
+      // probing the proxy immediately would 404 on its own friendly URL.
+      // Fix: POST /api/routing/reload to force an immediate re-scan
+      // (bypassing the debounce), then GET /api/routing and verify
+      // every expected hostname is live.
+      //
+      // Best-effort: a daemon that doesn't expose /api/routing (older
+      // build, test that swapped in a fake server, network glitch) is
+      // tolerated — we log a single-line warning and continue. The
+      // stack is already up; failing here would mislead the user about
+      // why the start "didn't work."
+      //
+      // Skipped entirely when this stack declares no routing entries
+      // (rare: every service had `port: false`, or the active profile
+      // selected no port-binding services). Polling for an empty set
+      // would always pass after the first reload.
+      //
+      // The routing API is on the daemon's RAW URL (not the friendly
+      // one) since the proxy itself doesn't proxy `/api/routing` — the
+      // dashboard server hosts it directly. `url` here is the raw
+      // daemon URL from ensureDaemonRunning.
+      const expectedHostnames = (state.routing ?? []).map((r) =>
+        r.hostname.toLowerCase(),
+      );
+      if (expectedHostnames.length > 0) {
+        // LICH_ROUTING_WAIT_TIMEOUT_MS lets unit tests shorten the
+        // worst-case wait (the timeout path otherwise hangs for the
+        // default 5s on every test that exercises it). Production uses
+        // the default and the env var is undocumented.
+        const overrideTimeout = process.env.LICH_ROUTING_WAIT_TIMEOUT_MS;
+        const overrideTimeoutNum = overrideTimeout
+          ? Number(overrideTimeout)
+          : NaN;
+        await waitForRoutingReady({
+          dashboardUrl: url,
+          expectedHostnames,
+          warn: (msg) => output.info(`[lich] warning: ${msg}`),
+          ...(Number.isFinite(overrideTimeoutNum)
+            ? { timeoutMs: overrideTimeoutNum }
+            : {}),
+        });
+      }
     } catch (err) {
       // Daemon spawn failure (binary missing, URL-file timeout, etc.)
       // does NOT propagate. The stack is already `up` — failing the up
@@ -2838,4 +2886,166 @@ function stringifyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
     if (typeof v === "string") out[k] = v;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// LEV-480: wait-for-routing
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link waitForRoutingReady}.
+ */
+interface WaitForRoutingOpts {
+  /**
+   * Dashboard URL the daemon advertises (e.g. `http://127.0.0.1:54321`).
+   * The new `/api/routing` + `POST /api/routing/reload` endpoints sit
+   * under this base URL.
+   */
+  dashboardUrl: string;
+  /**
+   * Lowercased friendly hostnames this stack just declared. Each must
+   * appear in the daemon's routing-table snapshot before we consider the
+   * routing "ready." Empty arrays are a programmer error — the caller
+   * is expected to skip the call entirely in that case.
+   */
+  expectedHostnames: string[];
+  /**
+   * Sink for the single warning line we emit on timeout or transport
+   * failure. The caller routes this to `output.info` so the message
+   * lands in the same channel as the "Dashboard: ..." line above.
+   */
+  warn: (msg: string) => void;
+  /**
+   * Maximum time to wait for the routing table to reflect every
+   * expected hostname. Default 5_000ms. Tests pass a smaller value
+   * so the timeout path doesn't drag on.
+   */
+  timeoutMs?: number;
+  /**
+   * Poll interval between GET /api/routing checks. Default 50ms —
+   * snappy enough that the typical 100ms debounce window resolves
+   * in one or two polls, slow enough that we don't burn CPU.
+   */
+  pollIntervalMs?: number;
+}
+
+/**
+ * LEV-480: poll the daemon's `/api/routing` endpoint until every
+ * expected hostname is present, or a timeout elapses.
+ *
+ * Why this exists: the routing table is rebuilt from disk via the
+ * daemon's chokidar watcher, which has a 100ms trailing-edge debounce.
+ * Under fast stacks (~3s startup) `lich up` would return BEFORE the
+ * debounce fired, so a test probing the proxy immediately would 404 on
+ * its own friendly URL. This helper:
+ *
+ *   1. POSTs `/api/routing/reload` to force an immediate re-scan
+ *      (bypassing the debounce). Best-effort — failures are tolerated.
+ *   2. GETs `/api/routing` and verifies every entry in
+ *      `expectedHostnames` appears. Polls with backoff until the
+ *      deadline.
+ *   3. On timeout: logs a single-line warning via `warn` and returns
+ *      cleanly. The stack is already up; we never fail `lich up` over
+ *      a missing routing entry (the proxy is a UX nicety, not a
+ *      correctness gate).
+ *
+ * The fetch surface uses Node's `fetch` (Bun's polyfill) directly —
+ * no helpers, no retries beyond the outer polling loop. Transport
+ * errors inside the loop just get retried until the deadline.
+ */
+async function waitForRoutingReady(opts: WaitForRoutingOpts): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 50;
+  const base = opts.dashboardUrl.replace(/\/$/, "");
+
+  // ---- 1. Force-reload (best effort) -----------------------------------
+  // POST /api/routing/reload. Triggers an immediate rebuild bypassing
+  // the watcher's debounce. A failed POST is tolerated — the GET poll
+  // below will keep checking, and the debounced watcher will eventually
+  // fire on its own. The only real cost of skipping the reload is a
+  // longer wait (up to one debounce window) before the GET succeeds.
+  try {
+    const reloadRes = await fetch(`${base}/api/routing/reload`, {
+      method: "POST",
+    });
+    // 204 (success), 503 (no routing table — older daemon, fake server),
+    // or 500 (transient FS error). 503 is the only case where the GET
+    // below can't possibly succeed; bail out with a warning so the user
+    // knows why the post-up routing wait is being skipped.
+    if (reloadRes.status === 503) {
+      // Drain body so we don't leak the connection.
+      await reloadRes.text().catch(() => {});
+      opts.warn(
+        "daemon does not expose /api/routing (older build?); skipping routing-ready wait",
+      );
+      return;
+    }
+    // Drain body for status codes we don't act on.
+    await reloadRes.text().catch(() => {});
+  } catch {
+    // Transport error — the GET below will still try and may eventually
+    // succeed if the daemon recovers. No-op here.
+  }
+
+  // ---- 2. Poll GET /api/routing ----------------------------------------
+  const deadline = Date.now() + timeoutMs;
+  const expected = new Set(opts.expectedHostnames.map((h) => h.toLowerCase()));
+
+  let lastSeen: string[] = [];
+  let lastErr: string | null = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${base}/api/routing`);
+      if (res.status === 200) {
+        // Parsed shape: Array<{ hostname: string; upstream_url: string }>.
+        // We only care about the hostnames; ignore everything else.
+        const body = (await res.json()) as Array<{ hostname?: unknown }>;
+        const seen = new Set<string>();
+        for (const entry of body) {
+          if (typeof entry.hostname === "string") {
+            seen.add(entry.hostname.toLowerCase());
+          }
+        }
+        lastSeen = [...seen];
+
+        // Every expected hostname must be present.
+        let allPresent = true;
+        for (const hostname of expected) {
+          if (!seen.has(hostname)) {
+            allPresent = false;
+            break;
+          }
+        }
+        if (allPresent) return;
+      } else {
+        // 503 = daemon doesn't expose routing table; not going to recover.
+        if (res.status === 503) {
+          await res.text().catch(() => {});
+          opts.warn(
+            "daemon does not expose /api/routing (older build?); skipping routing-ready wait",
+          );
+          return;
+        }
+        lastErr = `GET /api/routing returned ${res.status}`;
+        await res.text().catch(() => {});
+      }
+    } catch (err) {
+      lastErr = (err as Error).message;
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  // ---- 3. Timeout: warn and continue -----------------------------------
+  // Compute the missing hostnames for a useful diagnostic. The stack is
+  // already up; the proxy may catch up shortly. The user can still hit
+  // raw URLs (per the success summary's `urls` block).
+  const missing = [...expected].filter((h) => !lastSeen.includes(h));
+  const detail = lastErr ? ` (last error: ${lastErr})` : "";
+  opts.warn(
+    `routing for this stack did not appear in daemon's table within ${timeoutMs}ms; ` +
+      `missing: ${missing.join(", ")}${detail}. ` +
+      `Friendly URLs may 404 until the daemon catches up — raw localhost URLs work immediately.`,
+  );
 }

@@ -65,6 +65,7 @@ import { LogTail } from "../../logs/tail.js";
 import { runLichAction, type ActionResult } from "./actions.js";
 import { loadStacksView, type StackView } from "./stacks-view.js";
 import type { StackSnapshot } from "../../state/snapshot.js";
+import type { RoutingTable } from "../proxy/routing.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -142,6 +143,63 @@ export interface DashboardServerOpts {
     worktreePath: string,
     action: "down" | "restart",
   ) => Promise<ActionResult>;
+  /**
+   * LEV-480: the proxy's in-memory {@link RoutingTable}, shared from the
+   * daemon. When set, the dashboard exposes:
+   *
+   *   - `GET /api/routing` — returns the current table as a list of
+   *     `{ hostname, upstream_url }` entries. Used by `lich up` to
+   *     poll-and-wait for this stack's routing to land in the proxy
+   *     (fixes the race where `lich up` returned before the watcher's
+   *     debounce fired). Also used by the `lich routing` debug command.
+   *   - `POST /api/routing/reload` — forces an immediate re-scan of
+   *     `<stateRoot>/<stack>/state.json` files into the routing table,
+   *     bypassing the watcher's 100ms debounce window. `lich up` calls
+   *     this right after writing its final state.json so the proxy
+   *     reflects the latest disk state without waiting on chokidar.
+   *
+   * Optional for backward compatibility — tests that don't care about
+   * routing can pass `undefined` and the endpoints return 503. The
+   * daemon always passes a real table; tests for the routing endpoints
+   * pass either a real {@link RoutingTable} or a structural fake.
+   */
+  routingTable?: RoutingTableHandle;
+}
+
+/**
+ * LEV-480: the slice of {@link RoutingTable} the dashboard server needs
+ * to surface the `/api/routing` endpoint and trigger reloads.
+ *
+ * Structurally compatible with the real {@link RoutingTable} from
+ * `daemon/proxy/routing.ts` (it has `entries`, `reload`, etc.). A
+ * separate interface lets unit tests inject a minimal fake without
+ * pulling in the full filesystem-scanning implementation.
+ *
+ * We expose `entries()` rather than the raw `Map` so the dashboard can
+ * iterate without reaching into private state — and so a future
+ * implementation that paginates / filters doesn't break the contract.
+ */
+export interface RoutingTableHandle {
+  /**
+   * Snapshot the current routing table. Returns an array of entries
+   * sorted by hostname for deterministic output (the table itself is a
+   * Map; ordering would otherwise be insertion-order, which makes
+   * snapshot tests brittle).
+   *
+   * Matches {@link RoutingTable.list} exactly so the daemon can pass
+   * the real table without an adapter.
+   */
+  list(): Array<{ hostname: string; upstream_url: string }>;
+  /**
+   * Force a re-scan of every `state.json` under the state root and
+   * rebuild the in-memory table. Used by `POST /api/routing/reload` to
+   * bypass the watcher's debounce window so `lich up` can return with
+   * routing already live.
+   *
+   * Matches {@link RoutingTable.reload} exactly so the daemon can pass
+   * a thunk that closes over the stateRoot.
+   */
+  reload(): Promise<void>;
 }
 
 /**
@@ -248,6 +306,78 @@ export async function startDashboardServer(
     // -- API surface --
     if (path === "/api/stacks") {
       return jsonResponse(cache);
+    }
+
+    // -- LEV-480: routing table introspection + force-reload ----------------
+    //
+    // `GET /api/routing` returns the proxy's current in-memory routing
+    // table as a sorted list. `lich up` polls this after writing its
+    // final state.json to confirm the proxy has picked up this stack's
+    // routes — closes the race where `lich up` returned before the
+    // watcher's debounce fired. `lich routing` (the debug command) also
+    // reads this for human-readable output.
+    //
+    // `POST /api/routing/reload` forces an immediate re-scan, bypassing
+    // the watcher's 100ms debounce. `lich up` POSTs this once after its
+    // final state.json write so the routing table is live by the time
+    // the GET poll starts.
+    //
+    // Both endpoints return 503 if the daemon was started without a
+    // `routingTable` (only happens in unit tests that don't care about
+    // routing — production always passes one).
+    if (path === "/api/routing") {
+      if (req.method !== "GET") {
+        return methodNotAllowed("GET");
+      }
+      if (!opts.routingTable) {
+        return new Response(
+          JSON.stringify({
+            error: "routing table not configured on this daemon",
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
+      }
+      return jsonResponse(opts.routingTable.list());
+    }
+
+    if (path === "/api/routing/reload") {
+      if (req.method !== "POST") {
+        return methodNotAllowed("POST");
+      }
+      if (!opts.routingTable) {
+        return new Response(
+          JSON.stringify({
+            error: "routing table not configured on this daemon",
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
+      }
+      // Best-effort: a reload failure (transient FS error) returns
+      // 500 with the message so the caller can decide whether to retry.
+      // The actual reload promise IS awaited so the response only fires
+      // when the rebuild is done — that's exactly the contract `lich up`
+      // needs: when this returns 204, the table reflects the latest
+      // on-disk state.
+      try {
+        await opts.routingTable.reload();
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            error: `routing reload failed: ${(err as Error).message}`,
+          }),
+          {
+            status: 500,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
+      }
+      return new Response(null, { status: 204 });
     }
 
     // /api/stacks/:id, /api/stacks/:id/services/:service,

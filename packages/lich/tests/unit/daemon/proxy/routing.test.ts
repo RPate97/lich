@@ -427,3 +427,76 @@ describe("RoutingTable.reload — status filter", () => {
     expect(table.size()).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 10. LEV-480: RoutingTable.list() — snapshot for diagnostic use
+// ---------------------------------------------------------------------------
+
+describe("RoutingTable.list — diagnostic snapshot", () => {
+  it("returns an empty array when the table has no entries", async () => {
+    const table = new RoutingTable();
+    await table.reload(stateRoot);
+    expect(table.list()).toEqual([]);
+  });
+
+  it("returns entries sorted by hostname for deterministic output", async () => {
+    // Write three stacks so the underlying Map's insertion order is
+    // NOT already alphabetical (postgres first, then api, then web).
+    // The list() result MUST be sorted by hostname regardless of
+    // insertion order — `lich routing` and snapshot tests rely on it.
+    writeStateJson("stack-3", {
+      status: "up",
+      routing: [
+        {
+          hostname: "postgres.feature-x",
+          upstream_url: "http://127.0.0.1:9003",
+        },
+      ],
+    });
+    writeStateJson("stack-1", {
+      status: "up",
+      routing: [
+        { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9001" },
+      ],
+    });
+    writeStateJson("stack-2", {
+      status: "up",
+      routing: [
+        { hostname: "web.feature-x", upstream_url: "http://127.0.0.1:9002" },
+      ],
+    });
+
+    const table = new RoutingTable();
+    await table.reload(stateRoot);
+
+    const list = table.list();
+    expect(list).toEqual([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9001" },
+      { hostname: "postgres.feature-x", upstream_url: "http://127.0.0.1:9003" },
+      { hostname: "web.feature-x", upstream_url: "http://127.0.0.1:9002" },
+    ]);
+  });
+
+  it("returns a copy — subsequent reload() does not mutate a previously-returned list", async () => {
+    writeStateJson("stack-1", {
+      status: "up",
+      routing: [
+        { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9001" },
+      ],
+    });
+
+    const table = new RoutingTable();
+    await table.reload(stateRoot);
+    const snapshot = table.list();
+    expect(snapshot).toHaveLength(1);
+
+    // Now clear the on-disk state and reload — the in-memory table
+    // becomes empty, but the previously-captured snapshot stays.
+    writeStateJson("stack-1", { status: "stopped", routing: [] });
+    await table.reload(stateRoot);
+    expect(table.size()).toBe(0);
+    // Snapshot didn't mutate under the caller.
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0].hostname).toBe("api.feature-x");
+  });
+});

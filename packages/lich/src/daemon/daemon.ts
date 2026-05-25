@@ -482,10 +482,25 @@ export async function runDaemon(
   // clean up the watcher + PID file we've already started, then return
   // a non-zero exit code so the parent observes the failure.
   try {
+    // LEV-480: pass the proxy's routing table to the dashboard so the
+    // new `/api/routing` + `POST /api/routing/reload` endpoints can
+    // surface (and reset) the proxy's in-memory state. `lich up` polls
+    // GET /api/routing after writing its state.json to confirm the
+    // routing has been picked up — closes the race where `lich up`
+    // returned before the watcher's 100ms debounce fired.
+    //
+    // The handle we pass is a minimal adapter over the real table so the
+    // dashboard never sees the underlying Map directly. `reload()` is
+    // closured over `stateRoot` so the dashboard doesn't need to know
+    // where on disk the state lives.
     dashboardServer = await startDashboardServer({
       port: 0,
       stateRoot,
       uiDir: opts.uiDir,
+      routingTable: {
+        list: () => routingTable.list(),
+        reload: () => routingTable.reload(stateRoot),
+      },
     });
   } catch (err) {
     log(out, `dashboard failed to start: ${(err as Error).message}`);

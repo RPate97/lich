@@ -596,3 +596,212 @@ async function waitFor<T>(
   }
   return value;
 }
+
+// ---------------------------------------------------------------------------
+// LEV-480: GET /api/routing + POST /api/routing/reload
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal in-memory fake of {@link RoutingTableHandle}. Tests build their
+ * own routing entries up front and assert that the dashboard surfaces
+ * them as-is (and that POST /api/routing/reload triggers the right hook).
+ */
+function makeFakeRoutingTable(
+  initial: Array<{ hostname: string; upstream_url: string }> = [],
+): {
+  handle: {
+    list(): Array<{ hostname: string; upstream_url: string }>;
+    reload(): Promise<void>;
+  };
+  /** Replace the entries the next `list()` call returns. */
+  set(entries: Array<{ hostname: string; upstream_url: string }>): void;
+  /** Number of times `reload()` has been called. */
+  reloadCount(): number;
+  /** Make the next `reload()` call reject with this error. */
+  failNextReloadWith(err: Error): void;
+} {
+  let entries = initial;
+  let reloads = 0;
+  let nextReloadError: Error | null = null;
+  return {
+    handle: {
+      list: () => entries,
+      reload: async () => {
+        reloads++;
+        if (nextReloadError !== null) {
+          const e = nextReloadError;
+          nextReloadError = null;
+          throw e;
+        }
+      },
+    },
+    set(next) {
+      entries = next;
+    },
+    reloadCount: () => reloads,
+    failNextReloadWith(err) {
+      nextReloadError = err;
+    },
+  };
+}
+
+describe("dashboard server — GET /api/routing", () => {
+  it("returns the routing table entries when routingTable is configured", async () => {
+    const fake = makeFakeRoutingTable([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+      { hostname: "web.feature-x", upstream_url: "http://127.0.0.1:9015" },
+    ]);
+
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+
+    const res = await fetch(url("/api/routing"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+      { hostname: "web.feature-x", upstream_url: "http://127.0.0.1:9015" },
+    ]);
+  });
+
+  it("returns 503 when routingTable is not configured", async () => {
+    server = await startDashboardServer({ port: 0, stateRoot });
+    const res = await fetch(url("/api/routing"));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toHaveProperty("error");
+  });
+
+  it("returns 405 on non-GET", async () => {
+    const fake = makeFakeRoutingTable([]);
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+    const res = await fetch(url("/api/routing"), { method: "DELETE" });
+    expect(res.status).toBe(405);
+  });
+
+  it("returns an empty array when the table has no entries", async () => {
+    const fake = makeFakeRoutingTable([]);
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+    const res = await fetch(url("/api/routing"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("reflects mutations after the table updates (subsequent fetch sees new entries)", async () => {
+    const fake = makeFakeRoutingTable([]);
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+
+    let res = await fetch(url("/api/routing"));
+    expect(await res.json()).toEqual([]);
+
+    fake.set([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+    ]);
+
+    res = await fetch(url("/api/routing"));
+    expect(await res.json()).toEqual([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+    ]);
+  });
+});
+
+describe("dashboard server — POST /api/routing/reload", () => {
+  it("invokes routingTable.reload() and returns 204", async () => {
+    const fake = makeFakeRoutingTable([]);
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+
+    expect(fake.reloadCount()).toBe(0);
+    const res = await fetch(url("/api/routing/reload"), { method: "POST" });
+    expect(res.status).toBe(204);
+    expect(fake.reloadCount()).toBe(1);
+  });
+
+  it("returns 503 when routingTable is not configured", async () => {
+    server = await startDashboardServer({ port: 0, stateRoot });
+    const res = await fetch(url("/api/routing/reload"), { method: "POST" });
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 405 on non-POST", async () => {
+    const fake = makeFakeRoutingTable([]);
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+    const res = await fetch(url("/api/routing/reload"));
+    expect(res.status).toBe(405);
+  });
+
+  it("returns 500 with the error message when reload() throws", async () => {
+    const fake = makeFakeRoutingTable([]);
+    fake.failNextReloadWith(new Error("boom"));
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: fake.handle,
+    });
+
+    const res = await fetch(url("/api/routing/reload"), { method: "POST" });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/boom/);
+  });
+
+  it("awaits reload() so a follow-up GET observes the new state", async () => {
+    // Simulate the real watcher pattern: reload() rebuilds the table from
+    // some source the test controls. The dashboard contract is that POST
+    // /api/routing/reload doesn't return until reload() resolves, so a
+    // GET right after MUST see the updated entries.
+    let source: Array<{ hostname: string; upstream_url: string }> = [];
+    const handle = {
+      list: () => source,
+      reload: async () => {
+        // Pretend reload is async — a real reload() reads files etc.
+        await new Promise<void>((r) => setTimeout(r, 25));
+        source = [
+          { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+        ];
+      },
+    };
+
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      routingTable: handle,
+    });
+
+    // Before reload: empty.
+    let res = await fetch(url("/api/routing"));
+    expect(await res.json()).toEqual([]);
+
+    // Trigger reload — must complete before the POST returns.
+    res = await fetch(url("/api/routing/reload"), { method: "POST" });
+    expect(res.status).toBe(204);
+
+    // After reload: the entries the reload() callback wrote are visible.
+    res = await fetch(url("/api/routing"));
+    expect(await res.json()).toEqual([
+      { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
+    ]);
+  });
+});

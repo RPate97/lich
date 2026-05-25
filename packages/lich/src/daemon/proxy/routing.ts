@@ -221,4 +221,25 @@ export class RoutingTable {
   size(): number {
     return this.entries.size;
   }
+
+  /**
+   * LEV-480: snapshot the current routing table as a sorted array.
+   *
+   * The dashboard's `GET /api/routing` endpoint and the `lich routing`
+   * debug command both call this to render the proxy's current state.
+   * Sorted by hostname for deterministic output — snapshot-style tests
+   * (and `lich routing`'s human-readable table) rely on stable ordering.
+   *
+   * Returns a copy, not a live view of the underlying Map. A subsequent
+   * `reload()` does not affect the returned array; callers can keep it
+   * across awaits without seeing it mutate under them.
+   */
+  list(): Array<{ hostname: string; upstream_url: string }> {
+    const out: Array<{ hostname: string; upstream_url: string }> = [];
+    for (const [hostname, upstream_url] of this.entries) {
+      out.push({ hostname, upstream_url });
+    }
+    out.sort((a, b) => a.hostname.localeCompare(b.hostname));
+    return out;
+  }
 }
