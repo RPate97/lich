@@ -304,7 +304,12 @@ describe("lich up — fail_when.log_match (Plan 4 Task 20)", () => {
       // is generous — LogTail polls at 100ms so fail_when typically fires
       // within ~200ms of the echoed line; the rest of the budget covers
       // binary startup, yaml parse, supervisor spawn, and shutdown.
-      const upResult = runLich(["up"], {
+      //
+      // `--no-browser` is defensive: this test's `up` exits 1 before any
+      // service reaches ready, so the daemon never spawns and no browser
+      // is opened either way. Keeping the flag matches the convention
+      // applied across the migrated suite for consistency.
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
         timeout: 15_000,
