@@ -294,25 +294,94 @@ describe("profile env override (Plan 3 Task 22)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 2: `lich up dev:env-override` — gated.
+  // Test 2: `lich up dev:env-override` — un-gated after LEV-454 + LEV-455.
   //
-  // GATED via `it.todo` pending the `lich exec`/`lich env` wiring that
-  // reads `active_profile` from the stack snapshot and threads a
-  // ResolvedProfile through to `resolveEnvGroup → resolveStackGroup →
-  // resolveTopLevelEnv`. The underlying machinery accepts a profile (Plan
-  // 3 Task 6, LEV-380); only the snapshot → ResolvedProfile threading on
-  // the exec/env side is missing.
+  // LEV-454 wired `lich exec`/`lich env` to read `active_profile` from the
+  // snapshot and thread a ResolvedProfile through to `resolveEnvGroup →
+  // resolveStackGroup → resolveTopLevelEnv`. LEV-455 did the same for
+  // lifecycle env_group resolution. With both fixes landed, `lich exec`
+  // against a stack up'd under `dev:env-override` sees the profile's
+  // overridden DATABASE_URL (`postgresql://postgres:test@db.test.example.com:5432/postgres`)
+  // rather than the top-level localhost value.
   //
-  // Once that wiring lands, the test body to un-gate is exactly the
-  // dev-profile test above with these two substitutions:
-  //   - `runLich(["up", "dev"], ...)` → `runLich(["up", "dev:env-override"], ...)`
-  //   - `expect(result.stdout).toMatch(/postgresql:\/\/postgres:postgres@localhost:\d+\/postgres/)`
-  //       → `expect(result.stdout).toContain("postgresql://postgres:test@db.test.example.com:5432/postgres")`
-  //   - `expect(result.stdout).not.toContain("db.test.example.com")`
-  //       → `expect(result.stdout).not.toContain("postgres@localhost:")`
-  // See file-level JSDoc "Known wiring gap" for the full rationale.
+  // The dev:env-override profile intentionally points at a non-resolving
+  // hostname — the test asserts on `lich exec`'s view of the resolved env,
+  // NOT on actually opening a DB connection. The api service that depends
+  // on the bogus URL may not become fully ready; we tolerate that and only
+  // require the env-resolution surface to work. The 180s up timeout is
+  // generous to ride out api retries before the test eyeballs `lich exec`.
   // -----------------------------------------------------------------------
-  it.todo(
-    "dev:env-override profile resolves DATABASE_URL to the profile override (pending lich exec/env profile-awareness wiring)",
-  );
+  describe("dev:env-override profile: DATABASE_URL = profile override (db.test.example.com)", () => {
+    let fix: Fixture | null = null;
+    let didUp = false;
+
+    it(
+      "(setup) brings up the dogfood-stack under the dev:env-override profile",
+      () => {
+        fix = makeFixture("profiles-env-override-override");
+        const upResult = runLich(["up", "dev:env-override"], {
+          cwd: fix.stackPath,
+          env: { LICH_HOME: fix.lichHome },
+          // Same heavy-up budget as test 1: supabase first-pull dominates.
+          // api will likely fail ready_when because its DB pointer is
+          // intentionally bogus; we accept any exit (0 or non-zero) and let
+          // the assertion in the next it() block check what actually got
+          // resolved into the spawned cmd's env. didUp guards the teardown
+          // path either way.
+          timeout: 240_000,
+        });
+        // Mark didUp regardless of exit so teardown runs.
+        didUp = true;
+        // We don't throw on non-zero exit: a partial-up still writes the
+        // snapshot with `active_profile`, which is what `lich exec` needs.
+        // If the snapshot doesn't get written at all, the next test will
+        // surface that loudly via exec exit-code or missing-state error.
+        if (upResult.exitCode !== 0) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `lich up dev:env-override exited ${upResult.exitCode} (expected; api can't reach bogus DB). Continuing to env-resolution assertion.`,
+          );
+        }
+      },
+      /* timeout */ 300_000,
+    );
+
+    it("lich exec resolves DATABASE_URL to the profile-override hostname (db.test.example.com)", () => {
+      const fix2 = fix!;
+      const result = runLich(
+        ["exec", "--", "sh", "-c", "echo $DATABASE_URL"],
+        {
+          cwd: fix2.stackPath,
+          env: { LICH_HOME: fix2.lichHome },
+        },
+      );
+      if (result.exitCode !== 0) {
+        // eslint-disable-next-line no-console
+        console.error("lich exec stdout:", result.stdout);
+        // eslint-disable-next-line no-console
+        console.error("lich exec stderr:", result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      // The override URL from `examples/dogfood-stack/lich.yaml`'s
+      // `dev:env-override.env.DATABASE_URL`. Verbatim — no interpolation
+      // happens on this value because the override is a literal string.
+      expect(result.stdout).toContain(
+        "postgresql://postgres:test@db.test.example.com:5432/postgres",
+      );
+      // Sanity: the dev-profile URL must NOT bleed through. If profile
+      // threading regresses, this catches a cross-wire bug where the
+      // top-level value showed through.
+      expect(result.stdout).not.toContain("postgres@localhost:");
+    });
+
+    it(
+      "(teardown) nuke + remove tmpdirs",
+      () => {
+        if (fix) teardownFixture(fix, didUp);
+        fix = null;
+        didUp = false;
+      },
+      /* timeout */ 180_000,
+    );
+  });
 });
