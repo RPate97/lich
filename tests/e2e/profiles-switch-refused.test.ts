@@ -85,6 +85,20 @@
  * logs, and profiles-named e2e tests) rather than beforeAll/afterAll so
  * each step gets a generous per-it timeout — Bun's default hook timeout
  * is too tight for any teardown that needs more than a few seconds.
+ *
+ * Pool classification (e2e-suite-solid-and-fast design): FAST.
+ *   - Synthetic yaml with a sleep-based owned service; no docker, no
+ *     postgres, no DATABASE_URL, no /health probe — nothing that the
+ *     dev:fast default flip affects. The `dev` profile referenced in the
+ *     `lich up dev` calls is THIS test's own synthetic profile, not the
+ *     dogfood-stack's `dev`.
+ *   - No expectDbMode call because the test never hits /health; the
+ *     refuse-mid-flight contract is exercised purely through state.json
+ *     and `lich stacks --json`.
+ *   - No service-name array assertions to flip from
+ *     `["api", "postgres", "tunnel_demo", "web"]` to `["api", "web"]`.
+ *   - Runs in parallel forks without conflict because each describe owns
+ *     its own LICH_HOME via `makeFixture`.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
