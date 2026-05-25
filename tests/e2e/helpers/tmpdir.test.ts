@@ -21,9 +21,10 @@ describe("copyExampleToTmpdir", () => {
     expect(existsSync(join(path, "lich.yaml"))).toBe(true);
     expect(existsSync(join(path, "apps/api/src/index.ts"))).toBe(true);
     // db/ directory replaced supabase/ in LEV-463 when raw postgres
-    // (compose.yaml) took over from the supabase CLI.
+    // took over from the supabase CLI. (LEV-477 then re-inlined the
+    // postgres service definition back into lich.yaml — the standalone
+    // compose.yaml workaround is gone.)
     expect(existsSync(join(path, "db/migrations/01_init.sql"))).toBe(true);
-    expect(existsSync(join(path, "compose.yaml"))).toBe(true);
 
     const yaml = readFileSync(join(path, "lich.yaml"), "utf8");
     expect(yaml).toContain("owned:");
