@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { runLich } from "./lich.js";
 
-const repoRoot = resolve(import.meta.dir, "../../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 
 beforeAll(() => {

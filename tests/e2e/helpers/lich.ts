@@ -1,7 +1,10 @@
 import { spawnSync, spawn, type ChildProcess } from "node:child_process";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(import.meta.dir, "../../..");
+// Portable across Bun and Node/vitest. See helpers/tmpdir.ts for the
+// rationale — previously this used the Bun-only `import.meta.dir`.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const LICH_BINARY = resolve(repoRoot, "packages/lich/dist/lich");
 
 export interface RunLichResult {

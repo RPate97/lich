@@ -1,7 +1,8 @@
 import { mkdtempSync, cpSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Copy an example app to a fresh tmpdir so e2e tests can mutate it
@@ -30,7 +31,10 @@ export function copyExampleToTmpdir(
   path: string;
   cleanup: () => void;
 } {
-  const repoRoot = resolve(import.meta.dir, "../../..");
+  // Portable across Bun (where `import.meta.dir` works) and Node/vitest
+  // (which only supports `import.meta.url`). The previous Bun-only form
+  // broke when vitest collected this module's tests.
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const sourcePath = join(repoRoot, "examples", exampleName);
 
   const prefix = opts.prefix ?? `lich-e2e-${exampleName}-`;
