@@ -90,6 +90,17 @@
  * into `it()` lets us pass real per-step timeouts. Same pattern as
  * tests/e2e/exec.test.ts, tests/e2e/env-groups-isolation.test.ts,
  * tests/e2e/logs.test.ts.
+ *
+ * Pool classification (e2e-suite-solid-and-fast design): FAST.
+ *   - Synthetic yaml with a sleep-based `idle` owned service; no docker,
+ *     no postgres, no DATABASE_URL, no /health probe. The `dev:env-override`
+ *     in the `lich up dev:env-override` call is THIS test's own synthetic
+ *     profile, not the dogfood-stack's.
+ *   - No expectDbMode call (no /health probe; the LICH_PROFILE wiring is
+ *     verified through `lich exec` + `lich env stack` instead).
+ *   - No service-name array updates and nothing postgres-specific to drop.
+ *   - Runs in parallel forks without conflict — each test owns its own
+ *     LICH_HOME.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
