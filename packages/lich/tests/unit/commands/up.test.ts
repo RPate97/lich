@@ -1271,6 +1271,199 @@ owned:
   }, 15_000);
 });
 
+/**
+ * LEV-453: lifecycle hooks see per-owned-service port env vars.
+ *
+ * Background: an owned service declaring `port: { env: NAME }` or `ports: {
+ * key: { env: NAME } }` gets `NAME=<allocated-port>` injected by the
+ * supervisor at spawn time — but the supervisor only runs for owned
+ * services, NOT for lifecycle hooks. Before this fix, `runLifecycle` was
+ * called with bare `topLevelEnv` (which only carries `env:` literals +
+ * env_files + env_from), so a `before_up` / `after_up` hook that read those
+ * port env vars would see them unset. Concretely: dogfood-stack's
+ * `after_up: ["supabase migration up"]` reads supabase/config.toml which
+ * references the port env vars via `port = "env(SUPABASE_DB_SHADOW_PORT)"`;
+ * unset vars cause supabase's config parser to bail.
+ *
+ * Mirrored fix to commit 0b803ea (LEV-320) which solved the analogous
+ * problem for `stop_cmd` in down/nuke.
+ *
+ * Strategy: declare an owned service with a port env var, capture each
+ * lifecycle hook's view of that env to a sentinel file, assert the sentinel
+ * shows the allocated port number rather than the empty/unset string.
+ */
+describe("runUp — LEV-453: lifecycle hooks see per-owned-service port env vars", () => {
+  it("before_up env carries singular-port env var (port: { env: NAME })", async () => {
+    const sentinel = join(projectDir, "before-port.dump");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19500, 19600]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    port: { env: MY_SVC_PORT }
+    ready_when:
+      log_match: "READY"
+lifecycle:
+  before_up:
+    - cmd: ${JSON.stringify(`printf %s "$MY_SVC_PORT" > ${sentinel}`)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(sentinel)).toBe(true);
+    // Sentinel contents are the literal value of MY_SVC_PORT at the moment
+    // the before_up hook ran. Before LEV-453, this would be an empty
+    // string. After the fix it's the allocated port number in [19500,
+    // 19600].
+    const dumped = readFileSync(sentinel, "utf8");
+    expect(dumped).toMatch(/^\d+$/);
+    const port = Number(dumped);
+    expect(port).toBeGreaterThanOrEqual(19500);
+    expect(port).toBeLessThanOrEqual(19600);
+  }, 15_000);
+
+  it("after_up env carries singular-port env var (port: { env: NAME })", async () => {
+    const sentinel = join(projectDir, "after-port.dump");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19500, 19600]
+owned:
+  svc:
+    cmd: "echo READY; sleep 30"
+    port: { env: MY_SVC_PORT }
+    ready_when:
+      log_match: "READY"
+lifecycle:
+  after_up:
+    - cmd: ${JSON.stringify(`printf %s "$MY_SVC_PORT" > ${sentinel}`)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(sentinel)).toBe(true);
+    const dumped = readFileSync(sentinel, "utf8");
+    expect(dumped).toMatch(/^\d+$/);
+    const port = Number(dumped);
+    expect(port).toBeGreaterThanOrEqual(19500);
+    expect(port).toBeLessThanOrEqual(19600);
+  }, 15_000);
+
+  it("before_up + after_up envs carry multi-port env vars (ports: { key: { env: NAME } })", async () => {
+    // Mirrors the dogfood-stack supabase shape: one owned service exposes
+    // multiple logical ports via the plural `ports:` block, each with its
+    // own env var. Both `before_up` and `after_up` should see every named
+    // port env var bound to a real allocated number.
+    const beforeDump = join(projectDir, "before-multi.dump");
+    const afterDump = join(projectDir, "after-multi.dump");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19700, 19800]
+owned:
+  multi:
+    cmd: "echo READY; sleep 30"
+    ports:
+      api: { env: API_PORT }
+      db: { env: DB_PORT }
+    ready_when:
+      log_match: "READY"
+lifecycle:
+  before_up:
+    - cmd: ${JSON.stringify(`printf "API=%s DB=%s" "$API_PORT" "$DB_PORT" > ${beforeDump}`)}
+  after_up:
+    - cmd: ${JSON.stringify(`printf "API=%s DB=%s" "$API_PORT" "$DB_PORT" > ${afterDump}`)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+
+    for (const sentinel of [beforeDump, afterDump]) {
+      expect(existsSync(sentinel)).toBe(true);
+      const dumped = readFileSync(sentinel, "utf8");
+      const m = dumped.match(/^API=(\d+) DB=(\d+)$/);
+      expect(m, `sentinel ${sentinel} contents: ${JSON.stringify(dumped)}`).not.toBeNull();
+      const api = Number(m![1]);
+      const db = Number(m![2]);
+      expect(api).toBeGreaterThanOrEqual(19700);
+      expect(api).toBeLessThanOrEqual(19800);
+      expect(db).toBeGreaterThanOrEqual(19700);
+      expect(db).toBeLessThanOrEqual(19800);
+      expect(api).not.toBe(db);
+    }
+  }, 15_000);
+
+  it("lifecycle env merges port vars across multiple owned services", async () => {
+    // Two owned services, each declaring its own port env var. Both port
+    // vars must surface in the lifecycle env — the enrichment can't be
+    // scoped to a single service.
+    const sentinel = join(projectDir, "merge.dump");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19900, 19999]
+owned:
+  alpha:
+    cmd: "echo READY; sleep 30"
+    port: { env: ALPHA_PORT }
+    ready_when:
+      log_match: "READY"
+  beta:
+    cmd: "echo READY; sleep 30"
+    port: { env: BETA_PORT }
+    ready_when:
+      log_match: "READY"
+lifecycle:
+  after_up:
+    - cmd: ${JSON.stringify(`printf "A=%s B=%s" "$ALPHA_PORT" "$BETA_PORT" > ${sentinel}`)}
+`);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(sentinel)).toBe(true);
+    const dumped = readFileSync(sentinel, "utf8");
+    const m = dumped.match(/^A=(\d+) B=(\d+)$/);
+    expect(m, `sentinel contents: ${JSON.stringify(dumped)}`).not.toBeNull();
+    const a = Number(m![1]);
+    const b = Number(m![2]);
+    expect(a).toBeGreaterThanOrEqual(19900);
+    expect(a).toBeLessThanOrEqual(19999);
+    expect(b).toBeGreaterThanOrEqual(19900);
+    expect(b).toBeLessThanOrEqual(19999);
+    expect(a).not.toBe(b);
+  }, 15_000);
+});
+
 // ---------------------------------------------------------------------------
 // Local helpers
 // ---------------------------------------------------------------------------

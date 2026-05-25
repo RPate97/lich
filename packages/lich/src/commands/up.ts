@@ -774,6 +774,23 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       ...(config.lifecycle?.before_up ?? []),
       ...(resolvedProfile?.lifecycle.before_up ?? []),
     ];
+    // LEV-453: enrich the lifecycle env with per-owned-service port env vars
+    // (`SUPABASE_DB_PORT=9000` etc.). These live OUTSIDE the env pipeline —
+    // `resolveTopLevelEnv` only knows about `env:` literals + env_files +
+    // env_from; per-port env vars are normally injected by the supervisor
+    // at spawn time for each owned service from the yaml's `port:`/`ports:`
+    // blocks. Lifecycle hooks (`before_up`/`after_up`) never go through the
+    // supervisor, so without this enrichment they'd run with the port vars
+    // unset. Dogfood's `after_up: ["supabase migration up"]` reads
+    // supabase/config.toml's `port = "env(SUPABASE_DB_SHADOW_PORT)"` and
+    // fails to parse the literal string as uint16 — same failure mode as
+    // LEV-320 (down/nuke), mirrored here. See commit 0b803ea for the
+    // analogous fix on stop_cmd.
+    const lifecycleEnv = enrichEnvWithOwnedPorts(
+      topLevelEnv,
+      config,
+      allocatedPorts,
+    );
     if (beforeUpEntries.length > 0) {
       const phase = output.phase("before_up");
       try {
@@ -781,7 +798,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           phase: "before_up",
           entries: beforeUpEntries,
           cwd: worktree.path,
-          env: topLevelEnv,
+          env: lifecycleEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
         });
       } catch (err) {
@@ -922,7 +939,13 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           phase: "after_up",
           entries: afterUpEntries,
           cwd: worktree.path,
-          env: topLevelEnv,
+          // LEV-453: see the before_up enrichment above. `lifecycleEnv`
+          // layers per-owned-service port env vars on top of `topLevelEnv`
+          // so `after_up` hooks (e.g. dogfood's `supabase migration up`)
+          // can resolve `port = "env(SUPABASE_DB_SHADOW_PORT)"` in
+          // supabase/config.toml against the allocated port number rather
+          // than the un-substituted literal.
+          env: lifecycleEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
         });
       } catch (err) {
@@ -2246,6 +2269,61 @@ function portDescriptorEnv(desc: PortDescriptor): string | undefined {
     return desc.env;
   }
   return undefined;
+}
+
+/**
+ * LEV-453: build the env that lifecycle hooks (`before_up` / `after_up`) run
+ * with by layering per-owned-service port env vars on top of the supplied
+ * base env. Mirrors what the supervisor injects per-service at spawn time
+ * from the yaml's `port:`/`ports:` blocks paired with allocator output.
+ *
+ * Without this, lifecycle hooks see `topLevelEnv` (which only carries
+ * `env:` literals + env_files + env_from output) and per-port env vars like
+ * `SUPABASE_DB_SHADOW_PORT` are absent — so a hook that runs a tool which
+ * reads its config from those vars (`supabase migration up` reads
+ * `supabase/config.toml` containing `port = "env(SUPABASE_DB_SHADOW_PORT)"`)
+ * fails to parse the un-substituted literal as a uint16 and bails out.
+ *
+ * This is the same fix shape as `injectOwnedPortEnv` in `state/snapshot.ts`
+ * (commit 0b803ea, LEV-320 for down/nuke's stop_cmd) but operating against
+ * the AllocatedPorts shape we already have in-memory during `up` rather
+ * than re-deriving it from a snapshot. Returns a new object; does not
+ * mutate the input env. Owned services without an `env:` on their port
+ * declaration are silently skipped.
+ */
+function enrichEnvWithOwnedPorts(
+  env: NodeJS.ProcessEnv,
+  config: LichConfig,
+  allocatedPorts: AllocatedPorts,
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+
+  for (const [svcName, svcDef] of Object.entries(config.owned ?? {})) {
+    if (!svcDef) continue;
+    const allocatedForOwned = allocatedPorts.owned[svcName];
+    if (!allocatedForOwned) continue;
+
+    // Single-port shape: `port: { env: VAR }`.
+    if (svcDef.port !== undefined) {
+      const envVar = portDescriptorEnv(svcDef.port);
+      if (envVar && allocatedForOwned.port !== undefined) {
+        out[envVar] = String(allocatedForOwned.port);
+      }
+    }
+
+    // Multi-port shape: `ports: { logical: { env: VAR } }`.
+    if (svcDef.ports) {
+      for (const [logical, desc] of Object.entries(svcDef.ports)) {
+        const envVar = portDescriptorEnv(desc);
+        const port = allocatedForOwned.ports?.[logical];
+        if (envVar && port !== undefined) {
+          out[envVar] = String(port);
+        }
+      }
+    }
+  }
+
+  return out;
 }
 
 /**
