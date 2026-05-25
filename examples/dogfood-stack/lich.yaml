@@ -5,6 +5,15 @@
 
 version: "1"
 
+runtime:
+  # Plan 1: auto picks docker / podman / nerdctl from PATH. Pinned
+  # explicitly to document the dogfood-stack's expectation; `auto` is
+  # the default but having the block here exercises the runtime parser.
+  compose_cli: auto
+  # The daemon's reverse proxy port (Plan 5). 3300 is also the default;
+  # pinning makes friendly URLs deterministic across test environments.
+  proxy_port: 3300
+
 owned:
   supabase:
     cmd: supabase start
