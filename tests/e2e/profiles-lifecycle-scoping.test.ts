@@ -96,6 +96,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Fail-loud — the binary is OUR code; a broken
@@ -203,8 +206,8 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
   let didUp = false;
 
   it(
-    "(setup) brings up the dogfood-stack under the default `dev` profile",
-    () => {
+    "(setup) brings up the dogfood-stack under the `dev` profile",
+    async () => {
       fix = makeFixture("profiles-lifecycle-dev");
 
       // Progress logger — writes to stderr so the user sees what phase
@@ -216,7 +219,7 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
         process.stderr.write(`  [+${elapsed}s] ${label}\n`);
       };
 
-      step("lich up (runs after_up: psql migration + seed)");
+      step("lich up dev (runs after_up: psql migration + seed)");
       // Mark didUp=true BEFORE invoking up — even a partial up (e.g.
       // postgres container started but the after_up hook failed) leaves
       // the container and owned PIDs behind that need `lich nuke` to
@@ -224,7 +227,11 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       // failure would leak resources because teardown's `if (didUp)` gate
       // would be false. nuke is idempotent against partial state.
       didUp = true;
-      const upResult = runLich(["up"], {
+      // Explicit "dev" profile arg: the e2e suite's default flipped to
+      // dev:fast (no postgres). This test exercises postgres + after_up
+      // migration/seed and lives in the compose pool — see
+      // tests/e2e/_pool-manifest.ts.
+      const upResult = runLich(["up", "dev"], {
         cwd: fix.stackPath,
         env: { LICH_HOME: fix.lichHome },
         // up against the full dogfood stack: postgres pulls fast (~5MB
@@ -242,6 +249,27 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
         );
       }
       step("lich up exit 0 — after_up hooks completed");
+
+      // Probe /health and verify db: "live" — catches accidental profile
+      // drift loudly at setup time. If the dispatcher ever lost the "dev"
+      // arg above (default flip, env leak), this fails with a clear
+      // message instead of silently passing with stub data.
+      //
+      // `urls --raw` returns the localhost upstream (http://127.0.0.1:<port>)
+      // rather than the friendly URL via the daemon proxy. The friendly URL
+      // routing can race the proxy's bind / route-table refresh after up;
+      // raw probes the api server directly and avoids that race.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: fix.stackPath,
+        env: { LICH_HOME: fix.lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      step(`probing api /health (${apiUrl})`);
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 30_000 });
+      await expectDbMode(apiUrl!, "live");
     },
     /* timeout */ 300_000,
   );
@@ -294,7 +322,7 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       // to the resolved DATABASE_URL.
       expect(result.exitCode).toBe(0);
 
-      // Why we assert count >= 3 — the load-bearing detail of this test:
+      // Why we assert count == 3 — the load-bearing detail of this test:
       //
       // Raw postgres (LEV-463 swap; was supabase) has no auto-seed: the
       // bare `postgres:16-alpine` container starts an empty DB. Schema
@@ -307,7 +335,7 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       //     it didn't run, count is 0 and this assertion fires.
       //
       // The DISCRIMINATOR between "lich after_up ran" and "lich silently
-      // dropped the profile-scoped lifecycle" is therefore count >= 3:
+      // dropped the profile-scoped lifecycle" is therefore count == 3:
       //   - If lich's after_up was silently skipped (Plan 3 regression
       //     where `up.ts` drops the profile's lifecycle list, the bug
       //     this test guards against), the migration never ran either —
@@ -316,16 +344,19 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       //     would be 0.
       //   - If lich's after_up ran, count is exactly 3.
       //
-      // We use `>=` rather than `===` to be robust against future seed
-      // expansions (adding more rows is still a passing signal — the
-      // regression we care about is the hook NOT running at all).
+      // Previously this used `>= 3` to tolerate the default anonymous
+      // postgres volume persisting rows across lich down/up cycles. With
+      // the compose tmpfs mount (e2e suite solid+fast design Section 8),
+      // postgres data is ephemeral per up/down cycle, so we can tighten
+      // to `== 3` — exactly the rows the seed planted.
       const count = parseInt(result.stdout.trim(), 10);
       expect(
         count,
-        `psql returned "${result.stdout.trim()}" — expected an integer ≥ 3 ` +
-          `(3 from after_up's psql -f db/seed.sql); count of 0 would mean ` +
-          `lich silently dropped the profile-scoped after_up seed step.`,
-      ).toBeGreaterThanOrEqual(3);
+        `psql returned "${result.stdout.trim()}" — expected exactly 3 ` +
+          `(3 rows from after_up's psql -f db/seed.sql against an ephemeral ` +
+          `tmpfs-backed postgres); count of 0 would mean lich silently ` +
+          `dropped the profile-scoped after_up seed step.`,
+      ).toBe(3);
     },
     /* timeout */ 60_000,
   );

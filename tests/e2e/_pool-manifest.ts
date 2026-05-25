@@ -16,4 +16,5 @@ export const COMPOSE_REQUIRED: readonly string[] = [
   "env-groups-isolation.test.ts",
   "lifecycle-env-group.test.ts",
   "profiles-env-override.test.ts",
+  "profiles-lifecycle-scoping.test.ts",
 ] as const;
