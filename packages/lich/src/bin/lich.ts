@@ -19,8 +19,15 @@ const argv = mri(process.argv.slice(2), {
   // are nuke flags (LEV-311 for rescue); `json` is shared across
   // commands that support structured output. `raw` is the `lich urls`
   // escape hatch (LEV-419) that switches output back to direct upstream
-  // URLs from the Plan-5 friendly-URL default.
-  boolean: ["version", "help", "json", "yes", "rescue", "raw"],
+  // URLs from the Plan-5 friendly-URL default. `browser` (negated as
+  // `--no-browser`) is the `lich up` opt-out for the daemon auto-start
+  // hook's browser-open side effect (LEV-411, Plan 5 Task 9): mri parses
+  // `--no-browser` into `{ browser: false }`, so the upHandler reads
+  // `ctx.argv.browser === false` and forwards `noBrowser: true` into
+  // `runUp`. Listing the canonical `browser` half here keeps mri's
+  // `no-*` parsing predictable (without it mri may swallow a trailing
+  // positional as the flag's value).
+  boolean: ["version", "help", "json", "yes", "rescue", "raw", "browser"],
   // Declare `env-group` as a string option so mri parses `--env-group=foo`
   // (and the space-separated `--env-group foo`) into `{ "env-group": "foo" }`
   // without trying to swallow it as a boolean. Used by `lich exec` (LEV-330)

@@ -39,6 +39,13 @@ import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
+// LEV-411 (Plan 5 Task 9): daemon auto-start hook called once the stack
+// flips to `status: up`. The hook is idempotent and silent on the warm
+// path (daemon already running → ~10ms short-circuit); the cold path
+// spawns the daemon detached so it outlives `lich up` and serves the
+// dashboard + reverse proxy for every stack on the machine. Wrapped in
+// try/catch so a daemon failure NEVER fails an otherwise-successful up.
+import { ensureDaemonRunning } from "../daemon/auto-start.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import { allocate, release } from "../ports/allocator.js";
 import { resolveComposeCli, type ComposeCli } from "../compose/detect.js";
@@ -141,6 +148,20 @@ export interface RunUpInput {
    * unchanged from Plan 1.
    */
   profile?: string;
+  /**
+   * LEV-411 (Plan 5 Task 9): suppress the daemon's browser-open side
+   * effect on first-spawn. The dashboard URL is still printed in the
+   * post-success info line either way — only the platform `open` /
+   * `xdg-open` invocation is gated. Defaults to `false` (open browser).
+   *
+   * Threaded through to `ensureDaemonRunning({ openBrowser: !noBrowser })`.
+   * Opening the browser on every `lich up` would be hostile UX, so this
+   * gate already only fires on the FIRST `lich up` of a daemon session —
+   * subsequent invocations short-circuit on the already-running daemon
+   * regardless of `noBrowser`. The flag is here for the cold-start case
+   * (CI, scripted runs) where the browser-open isn't wanted at all.
+   */
+  noBrowser?: boolean;
 }
 
 export interface RunUpResult {
@@ -999,6 +1020,56 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // `buildRoutingEntries` for the hostname convention.
     state.routing = buildRoutingEntries(state);
     await writeStateSnapshot(state);
+
+    // ---- Plan 5 Task 9 (LEV-411): ensure the daemon is running ------------
+    // The daemon hosts the dashboard + reverse proxy for the entire
+    // machine (one daemon serves every parallel stack). We call it AFTER
+    // the success snapshot lands so the watcher sees the freshly-written
+    // `routing` block on its first read — without that ordering, a fast
+    // daemon start could observe the pre-routing snapshot and have to
+    // wait for the debounced refresh to catch up.
+    //
+    // Failures here NEVER fail the up: the stack is ready, the dashboard
+    // is a nicety. A timeout, missing binary, or browser-open glitch
+    // surfaces as an info-line warning and the up exits 0. The user can
+    // still hit raw URLs (per the success summary's `urls` block); the
+    // friendly URLs and dashboard show up the moment a future `lich up`
+    // (or a manual `lich-daemon` spawn) gets the daemon running.
+    //
+    // The proxy port is read from `config.runtime.proxy_port` so users
+    // who pin it in yaml get the same port the daemon will bind. When
+    // unset, `ensureDaemonRunning` and the daemon itself both default to
+    // 3300 — we just don't forward an undefined value.
+    const noBrowser = input.noBrowser ?? false;
+    const configuredProxyPort = config.runtime?.proxy_port;
+    try {
+      const lichHomeEnv = process.env.LICH_HOME;
+      const ensureOpts: Parameters<typeof ensureDaemonRunning>[0] = {
+        openBrowser: !noBrowser,
+      };
+      if (lichHomeEnv !== undefined) ensureOpts.lichHome = lichHomeEnv;
+      if (typeof configuredProxyPort === "number") {
+        ensureOpts.proxyPort = configuredProxyPort;
+      }
+      const { url, alreadyRunning } = await ensureDaemonRunning(ensureOpts);
+      // Surface the dashboard URL on a single info line so the user sees
+      // where to point their browser even if the auto-open was suppressed
+      // (or failed silently). The "already running" suffix gives a hint
+      // that the daemon is shared with other worktrees — relevant for
+      // parallel-stack workflows where a second `lich up` should NOT be
+      // surprising the user with a fresh dashboard pop-up.
+      const suffix = alreadyRunning ? " (daemon was already running)" : "";
+      output.info(`Dashboard: ${url}${suffix}`);
+    } catch (err) {
+      // Daemon spawn failure (binary missing, URL-file timeout, etc.)
+      // does NOT propagate. The stack is already `up` — failing the up
+      // here would mislead the user about why the start "didn't work."
+      // Print a one-line warning and continue to the success summary.
+      output.info(
+        `[lich] warning: daemon auto-start failed: ${(err as Error).message}`,
+      );
+    }
+    // ---- Plan 5 Task 9 END ------------------------------------------------
 
     // LEV-301: emit a structured success summary — services with their
     // allocated ports, reachable URLs (raw `http://localhost:<port>`),

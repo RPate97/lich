@@ -103,10 +103,19 @@ const upHandler: CommandHandler = async (ctx) => {
   // strings, so this only guards against future router changes.
   const positional = ctx.argv._[0];
   const profile = typeof positional === "string" ? positional : undefined;
+  // LEV-411 (Plan 5 Task 9): `--no-browser` opts out of the daemon's
+  // browser-open side effect. mri parses `--no-browser` into
+  // `{ browser: false }` (the `browser` boolean is declared in
+  // `bin/lich.ts`); anything other than the explicit `false` keeps the
+  // default (open browser on first daemon spawn). The dashboard URL is
+  // still printed regardless — `--no-browser` only suppresses the
+  // open-in-browser side effect.
+  const noBrowser = ctx.argv.browser === false;
   const result = await runUp({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
     profile,
+    noBrowser,
   });
   return { ok: result.exitCode === 0, message: "" };
 };
