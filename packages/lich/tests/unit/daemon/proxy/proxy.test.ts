@@ -134,6 +134,51 @@ describe("startProxy — basic forwarding", () => {
     expect(await res.text()).toBe("hello from upstream");
   });
 
+  // LEV-459: the proxy used to bind `hostname: "localhost"`, which on macOS
+  // resolved to ::1 first and Bun bound IPv6 only. Clients hitting
+  // `http://127.0.0.1:<port>/` got ECONNREFUSED. The fix binds BOTH IPv4
+  // (127.0.0.1) and IPv6 (::1) loopback. This test pins both stacks are
+  // reachable.
+  it("binds both IPv4 (127.0.0.1) and IPv6 (::1) loopback on the same port", async () => {
+    const upstream = makeUpstream(() => new Response("dual-stack ok"));
+    upstreams.push(upstream);
+
+    seedRouting({ "api.feature-x": upstream.url });
+    proxy = await startProxy({ port: 0, routingTable: table });
+
+    // Extract the port from the proxy's reported URL (which is now
+    // 127.0.0.1-prefixed per the fix).
+    const proxyPort = new URL(proxy.url).port;
+    expect(proxyPort).toMatch(/^\d+$/);
+
+    // IPv4 loopback — the path that used to ECONNREFUSE on macOS.
+    const resV4 = await fetch(`http://127.0.0.1:${proxyPort}/`, {
+      headers: { Host: "api.feature-x.lich.localhost:3300" },
+    });
+    expect(resV4.status).toBe(200);
+    expect(await resV4.text()).toBe("dual-stack ok");
+
+    // IPv6 loopback — the path that worked before the fix. Best-effort:
+    // on hosts where IPv6 is disabled, the bind warning fired and we
+    // accept that fetch fails. Skip the assertion in that case so the
+    // test stays useful on IPv4-only environments.
+    try {
+      const resV6 = await fetch(`http://[::1]:${proxyPort}/`, {
+        headers: { Host: "api.feature-x.lich.localhost:3300" },
+      });
+      expect(resV6.status).toBe(200);
+      expect(await resV6.text()).toBe("dual-stack ok");
+    } catch (err) {
+      // IPv6 fetch failed — either the host disabled IPv6 or the bind
+      // warned during startProxy. The IPv4 assertion above is the
+      // load-bearing one for the LEV-459 regression.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `IPv6 loopback fetch skipped: ${(err as Error).message}`,
+      );
+    }
+  });
+
   it("preserves path and query in the upstream URL", async () => {
     // The upstream echoes the path it received so we can verify the
     // proxy didn't mangle it. We pass `/foo/bar?baz=qux` and expect

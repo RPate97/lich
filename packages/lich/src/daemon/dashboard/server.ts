@@ -380,23 +380,43 @@ export async function startDashboardServer(
   };
 
   // ----- 4. Bind the server ----------------------------------------------
-  const server = Bun.serve({
+  // LEV-459: bind BOTH IPv4 (127.0.0.1) and IPv6 (::1) loopback. Same
+  // rationale as the proxy server: `hostname: "localhost"` binds whichever
+  // family the OS prefers (macOS chooses ::1), then `curl http://127.0.0.1`
+  // gets ECONNREFUSED. We bind IPv4 first to lock in the port, then mirror
+  // it on IPv6. IPv6 is best-effort — if `::1` fails (host has IPv6
+  // disabled), log + continue with IPv4 only.
+  const serverV4 = Bun.serve({
     port: opts.port ?? 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     fetch: handler,
   });
 
-  const url = `http://localhost:${server.port}`;
+  let serverV6: ReturnType<typeof Bun.serve> | null = null;
+  try {
+    serverV6 = Bun.serve({
+      port: serverV4.port,
+      hostname: "::1",
+      fetch: handler,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `dashboard: IPv6 loopback bind on [::1]:${serverV4.port} failed (${(err as Error).message}); IPv4 only`,
+    );
+  }
+
+  const url = `http://127.0.0.1:${serverV4.port}`;
 
   // ----- 5. Stop() — idempotent shutdown ---------------------------------
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
-    // `true` forces in-flight requests to drop. Tests expect prompt
-    // teardown — the watcher should have already debounced any
-    // refreshes by the time we shut down.
-    server.stop(true);
+    // `true` forces in-flight requests to drop. Both servers stopped
+    // together.
+    serverV4.stop(true);
+    serverV6?.stop(true);
     // Wait for the OS socket to release. Without this, a test that
     // immediately re-binds the same port sees EADDRINUSE.
     await new Promise<void>((r) => setTimeout(r, 0));

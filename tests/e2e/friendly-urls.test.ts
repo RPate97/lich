@@ -304,24 +304,21 @@ function findStackId(lichHome: string): string | null {
 
 /**
  * Fetch a request through the proxy with an explicit `Host` header. We
- * connect to `localhost:<proxyPort>` (where the proxy is actually bound)
- * but tell the proxy we're hitting `<hostHeader>` — exactly what a
- * browser hitting `http://<friendly-host>:<proxy-port>/` would send over
- * the wire after DNS resolves `*.lich.localhost` to loopback.
+ * connect to `127.0.0.1:<proxyPort>` (where the proxy is bound — LEV-459
+ * binds both IPv4 and IPv6 loopback) but tell the proxy we're hitting
+ * `<hostHeader>` — exactly what a browser hitting
+ * `http://<friendly-host>:<proxy-port>/` would send over the wire after
+ * DNS resolves `*.lich.localhost` to loopback.
  *
- * Why `localhost` instead of `127.0.0.1`: the proxy uses
- * `Bun.serve({ hostname: "localhost" })` (see proxy.ts), which on macOS
- * binds the IPv6 address `::1` only (because macOS resolves `localhost`
- * to `::1` first). A fetch to `127.0.0.1` would get connection-refused
- * because nothing is bound on the IPv4 loopback. Using `localhost`
- * matches whatever address family Bun picked.
+ * Why explicit `Host` injection (rather than relying on `*.lich.localhost`
+ * DNS): shields the test from environment-specific quirks in `*.localhost`
+ * resolution (some glibc resolvers / Docker DNS / corporate VPN configs
+ * intercept `*.localhost` before the libc stub resolver applies RFC 6761).
+ * Bun's `fetch` honors the explicit `Host` override.
  *
- * This is the same pattern the proxy's unit tests use (`fetchVia` in
- * `packages/lich/tests/unit/daemon/proxy/proxy.test.ts`) and it shields
- * the test from environment-specific quirks in `*.localhost` resolution
- * (some glibc resolvers / Docker DNS / corporate VPN configs intercept
- * `*.localhost` before the libc stub resolver applies RFC 6761). Bun's
- * `fetch` honors the explicit `Host` override.
+ * Earlier this helper used `http://localhost:<port>` to dodge the IPv6-only
+ * bind bug; LEV-459 fixed that (proxy now binds both stacks), so 127.0.0.1
+ * is the safe explicit choice now.
  */
 async function fetchViaProxy(
   proxyPort: number,
@@ -334,7 +331,7 @@ async function fetchViaProxy(
   // (`buildClientResponse` now strips `content-encoding`/`content-length`
   // since Bun's `fetch` already decompressed upstream gzip). This used to
   // force `Accept-Encoding: identity` to dodge that bug; no longer needed.
-  return fetch(`http://localhost:${proxyPort}${path}`, { headers });
+  return fetch(`http://127.0.0.1:${proxyPort}${path}`, { headers });
 }
 
 /**

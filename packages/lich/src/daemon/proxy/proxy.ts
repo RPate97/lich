@@ -312,23 +312,51 @@ export async function startProxy(opts: ProxyOpts): Promise<{
     return buildClientResponse(upstreamRes);
   };
 
-  const server = Bun.serve({
+  // LEV-459: bind BOTH IPv4 (127.0.0.1) and IPv6 (::1) loopback so
+  // clients hitting `http://127.0.0.1:<port>/` and `http://[::1]:<port>/`
+  // both reach the proxy. `hostname: "localhost"` (which we used to use)
+  // resolves to whichever family the OS prefers — on macOS that's `::1`,
+  // and a `curl http://127.0.0.1:<port>` then fails with ECONNREFUSED.
+  //
+  // We deliberately don't use `hostname: "0.0.0.0"` (would dual-stack
+  // bind on Linux but violates the spec's "loopback only" security
+  // guarantee — `0.0.0.0` accepts off-host connections).
+  //
+  // Sequence: bind IPv4 first to lock in the port (when `opts.port === 0`
+  // the OS picks one), read `serverV4.port`, then bind IPv6 on that same
+  // port. IPv6 bind is best-effort — if the host has IPv6 disabled, we
+  // log a warning and keep going with IPv4-only.
+  const serverV4 = Bun.serve({
     port: opts.port,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     fetch: handler,
   });
+  actualPort = serverV4.port;
 
-  actualPort = server.port;
+  let serverV6: ReturnType<typeof Bun.serve> | null = null;
+  try {
+    serverV6 = Bun.serve({
+      port: actualPort,
+      hostname: "::1",
+      fetch: handler,
+    });
+  } catch (err) {
+    // IPv6 disabled, or some other bind failure on `::1`. Log + continue
+    // — IPv4 loopback is the more common path and is now bound.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `proxy: IPv6 loopback bind on [::1]:${actualPort} failed (${(err as Error).message}); IPv4 only`,
+    );
+  }
 
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
     // `true` = stop in flight requests as well (don't drain — tests
-    // expect prompt teardown). Bun's `server.stop(force)` returns void
-    // synchronously, but follow up with a microtask so the underlying
-    // socket close finishes before the next test connects.
-    server.stop(true);
+    // expect prompt teardown). Both servers must be stopped together.
+    serverV4.stop(true);
+    serverV6?.stop(true);
     // Give the OS a tick to release the socket so a subsequent
     // `fetch` to the same port immediately observes connection-refused
     // rather than a stale connection. Empirically reliable.
@@ -352,7 +380,10 @@ export async function startProxy(opts: ProxyOpts): Promise<{
   }
 
   return {
-    url: `http://localhost:${actualPort}`,
+    // LEV-459: report the IPv4 URL — even though we also bind ::1, the
+    // explicit 127.0.0.1 URL is the safest default for callers and dodges
+    // the `localhost`-resolution-order issue that prompted this fix.
+    url: `http://127.0.0.1:${actualPort}`,
     stop,
   };
 }
