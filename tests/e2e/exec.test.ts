@@ -118,7 +118,11 @@ describe("lich exec (Plan 2 Task 20)", () => {
         lichHome: home,
       };
 
-      const upResult = runLich(["up"], {
+      // Explicit "dev" profile — exec test 1 asserts on DATABASE_URL's
+      // resolved value, which is only set under profiles that run postgres.
+      // dev:fast (the new default) intentionally has DATABASE_URL empty
+      // (api gracefully 503s on /api/things, see apps/api/src/db.ts).
+      const upResult = runLich(["up", "dev", "--no-browser"], {
         cwd: fixture.stackPath,
         env: { LICH_HOME: fixture.lichHome },
         timeout: 240_000,
