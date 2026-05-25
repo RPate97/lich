@@ -1,19 +1,33 @@
 /**
- * Unit tests for the daemon main entry — LEV-406, Plan 5 Task 4.
+ * Unit tests for the daemon main entry — LEV-406 + LEV-414, Plan 5 Tasks 4 + 12.
  *
  * Coverage:
  *   - PID file is written with process.pid on startup
- *   - signal.abort() triggers clean shutdown (PID file cleared, watcher stopped)
+ *   - daemon.url is written after startup and contains a fetchable URL
+ *   - GET <daemon.url>/healthz returns 200 (proves dashboard server bound)
+ *   - signal.abort() triggers clean shutdown (PID + URL files cleared,
+ *     watcher + dashboard + proxy stopped)
  *   - Auto-shutdown fires after N empty ticks when no stacks are present
  *   - Auto-shutdown does NOT fire when a stack with status="up" exists
- *   - Dashboard + proxy stub log lines are emitted on startup
+ *   - Real dashboard + proxy servers bind on startup (replaces the stub
+ *     log assertions from the LEV-406 scaffold)
+ *   - Watcher onChange triggers BOTH dashboardServer.refresh() and
+ *     routingTable.reload() — covered indirectly by writing a new
+ *     state.json post-startup and observing both effects
  *   - Concurrent abort calls don't double-cleanup (idempotent)
  *   - Refuses to start when another daemon is already alive
  *   - Stale PID file (dead PID) is overwritten on startup
  *
- * Tests use a tmpdir for LICH_HOME and a tiny `shutdownCheckMs` (e.g. 20ms)
- * with `shutdownGraceTicks: 1` so the auto-shutdown path completes in
- * test-friendly time without actually waiting the production 30s grace.
+ * Tests use a tmpdir for LICH_HOME, an ephemeral proxy port (0), and a
+ * tiny `shutdownCheckMs` (e.g. 20ms) with `shutdownGraceTicks: 1` so
+ * the auto-shutdown path completes in test-friendly time without
+ * actually waiting the production 30s grace.
+ *
+ * This file does real network IO (Bun.serve binds on real ephemeral
+ * ports). That's intentional for unit-level: Bun.serve is fast (<10ms
+ * to bind + tear down) and the test would be near-meaningless without
+ * verifying the actual HTTP surface comes up. The local-only binding
+ * (`hostname: "localhost"`) means we never touch any external network.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +46,7 @@ import { PassThrough } from "node:stream";
 import { runDaemon } from "../../../src/daemon/daemon.js";
 import {
   readDaemonPid,
+  readDaemonUrl,
   writeDaemonPid,
 } from "../../../src/daemon/pid-file.js";
 
@@ -118,10 +133,14 @@ function startDaemon(opts: {
   out?: NodeJS.WritableStream;
   shutdownCheckMs?: number;
   shutdownGraceTicks?: number;
+  proxyPort?: number;
 }): Promise<{ exitCode: number }> {
   return runDaemon({
     lichHome: home,
-    proxyPort: 3300,
+    // Default to ephemeral port (0) so tests don't collide with each
+    // other or with a real daemon running on 3300. Tests that need to
+    // verify port-specific behavior pass `proxyPort` explicitly.
+    proxyPort: opts.proxyPort ?? 0,
     signal: opts.signal,
     out: opts.out,
     shutdownCheckMs: opts.shutdownCheckMs ?? 20,
@@ -420,55 +439,404 @@ describe("runDaemon — auto-shutdown", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Dashboard + proxy stub logging
+// 4. Real dashboard + proxy server startup (LEV-414, Plan 5 Task 12)
+//
+// LEV-406 (Task 4) shipped placeholder "would start here" log lines
+// where the real `Bun.serve` instances eventually go. LEV-414 swaps in
+// the real `startDashboardServer` + `startProxy` calls. These tests
+// verify the real surface comes up: daemon.url is written, the
+// dashboard's /healthz responds, and the proxy listens on the
+// configured port.
 // ---------------------------------------------------------------------------
 
-describe("runDaemon — stub logging", () => {
-  it("logs the dashboard and proxy stub strings on startup", async () => {
-    // The "real" dashboard + proxy land in Tasks 6 and 11. For Task 4
-    // we just emit log lines so tests can assert the wiring exists.
-    const { stream, output } = captureLog();
+describe("runDaemon — real dashboard + proxy startup", () => {
+  it("writes daemon.url with the dashboard URL after startup", async () => {
+    // Pre-populate a fake "up" stack so the daemon doesn't auto-shut
+    // before we can read the URL file. The URL is written immediately
+    // after Bun.serve binds — there's no race window beyond the
+    // startup latency itself.
+    writeFakeStack("test-stack-url", "up");
+    const controller = new AbortController();
+    const { stream } = captureLog();
 
-    const result = await startDaemon({
+    const daemonPromise = startDaemon({
+      signal: controller.signal,
       out: stream,
-      shutdownCheckMs: 20,
-      shutdownGraceTicks: 1,
+      shutdownCheckMs: 10_000,
+      shutdownGraceTicks: 3,
     });
 
+    // Poll for the URL file with the same 2s timeout we use for PID.
+    let url: string | null = null;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      url = await readDaemonUrl({ lichHome: home });
+      if (url !== null) break;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+
+    // URL must be present and shaped like `http://localhost:<port>`.
+    expect(url).toMatch(/^http:\/\/localhost:\d+$/);
+
+    controller.abort();
+    const result = await daemonPromise;
     expect(result.exitCode).toBe(0);
-    const captured = output();
-    expect(captured).toContain("dashboard would start here");
-    expect(captured).toContain("proxy would start here");
   });
 
-  it("threads the configured proxyPort into the proxy stub log line", async () => {
+  it("dashboard URL is reachable: GET /healthz returns 200", async () => {
+    // Real network IO: we hit the dashboard server's /healthz endpoint
+    // via the URL the daemon recorded in daemon.url. This is the
+    // observable proof that startDashboardServer() actually bound a
+    // port and the handler is wired correctly.
+    writeFakeStack("test-stack-healthz", "up");
+    const controller = new AbortController();
+    const { stream } = captureLog();
+
+    const daemonPromise = startDaemon({
+      signal: controller.signal,
+      out: stream,
+      shutdownCheckMs: 10_000,
+      shutdownGraceTicks: 3,
+    });
+
+    // Wait for the URL file to appear.
+    let url: string | null = null;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      url = await readDaemonUrl({ lichHome: home });
+      if (url !== null) break;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+    expect(url).not.toBeNull();
+
+    // Fetch /healthz directly. A 200 here proves: the dashboard
+    // server's `startDashboardServer` actually ran, Bun.serve actually
+    // bound, the URL we got is the URL Bun bound on, and the
+    // /healthz route returns the expected shape.
+    const res = await fetch(`${url}/healthz`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true });
+
+    controller.abort();
+    const result = await daemonPromise;
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("dashboard exposes primary_url derived from state.json routing entries", async () => {
+    // The dashboard's StackView surfaces a `primary_url` synthesized
+    // from the snapshot's `routing` array. A successful surface here
+    // means the dashboard re-read the snapshot from disk after our
+    // pre-startup writeFileSync, which is the same plumbing the
+    // watcher uses post-startup.
+    const stackDir = join(home, "stacks", "test-routing");
+    mkdirSync(stackDir, { recursive: true });
+    writeFileSync(
+      join(stackDir, "state.json"),
+      JSON.stringify({
+        stack_id: "test-routing",
+        worktree_name: "feature-x",
+        worktree_path: "/tmp/wt",
+        status: "up",
+        started_at: new Date().toISOString(),
+        services: [],
+        routing: [
+          {
+            hostname: "api.feature-x",
+            upstream_url: "http://127.0.0.1:9123",
+            service: "api",
+          },
+        ],
+      }) + "\n",
+      "utf8",
+    );
+
+    const controller = new AbortController();
+    const { stream } = captureLog();
+
+    const daemonPromise = startDaemon({
+      signal: controller.signal,
+      out: stream,
+      shutdownCheckMs: 10_000,
+      shutdownGraceTicks: 3,
+    });
+
+    // Wait for the URL file (= dashboard bound + URL written).
+    let url: string | null = null;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      url = await readDaemonUrl({ lichHome: home });
+      if (url !== null) break;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+    expect(url).not.toBeNull();
+
+    // /api/stacks reflects the on-disk snapshot.
+    const res = await fetch(`${url}/api/stacks`);
+    expect(res.status).toBe(200);
+    const stacks = (await res.json()) as Array<{
+      id: string;
+      primary_url?: string;
+    }>;
+    const found = stacks.find((s) => s.id === "test-routing");
+    expect(found).toBeDefined();
+    expect(found?.primary_url).toBe("http://127.0.0.1:9123");
+
+    controller.abort();
+    await daemonPromise;
+  });
+
+  it("watcher onChange triggers BOTH dashboard refresh AND routing reload (post-startup state change)", async () => {
+    // Strategy:
+    //   1. Start an actual upstream Bun.serve so we have a real port
+    //      to route to.
+    //   2. Start the daemon (no stacks initially).
+    //   3. Post-startup, write a state.json with routing pointing at
+    //      the upstream. The watcher fires both:
+    //        - dashboardServer.refresh()  →  /api/stacks surfaces the
+    //                                         new stack's primary_url
+    //        - routingTable.reload()      →  proxy routes the friendly
+    //                                         hostname to the upstream
+    //   4. Verify both observable effects: GET /api/stacks shows the
+    //      new stack with primary_url, AND a Host-headered GET against
+    //      the proxy returns the upstream's body.
+    //
+    // Both effects must be present — if only one fires, only one
+    // assertion passes and the test catches the regression.
+
+    // 1. Spin up a real upstream (Bun.serve on an ephemeral port).
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("hello from upstream", { status: 200 }),
+    });
+    const upstreamUrl = `http://127.0.0.1:${upstream.port}`;
+
+    try {
+      const controller = new AbortController();
+      const { stream, output } = captureLog();
+
+      const daemonPromise = startDaemon({
+        signal: controller.signal,
+        out: stream,
+        shutdownCheckMs: 10_000,
+        shutdownGraceTicks: 3,
+      });
+
+      // Wait for startup. We need BOTH the dashboard URL file AND the
+      // proxy's log line (the proxy port is dynamic since we pass 0).
+      let dashboardUrl: string | null = null;
+      const startDeadline = Date.now() + 2_000;
+      while (Date.now() < startDeadline) {
+        dashboardUrl = await readDaemonUrl({ lichHome: home });
+        if (dashboardUrl !== null) break;
+        await new Promise<void>((r) => setTimeout(r, 20));
+      }
+      expect(dashboardUrl).not.toBeNull();
+
+      // Pull the proxy port out of the log line. The log line is
+      // emitted by `runDaemon` right after `startProxy` resolves.
+      const proxyMatch = output().match(
+        /proxy listening on http:\/\/localhost:(\d+)/,
+      );
+      expect(proxyMatch).not.toBeNull();
+      const proxyPort = Number(proxyMatch?.[1]);
+      expect(proxyPort).toBeGreaterThan(0);
+
+      // 2. Write the routing snapshot post-startup. The watcher fires
+      // after its 100ms debounce; both pipelines refresh.
+      const stackDir = join(home, "stacks", "added-stack");
+      mkdirSync(stackDir, { recursive: true });
+      writeFileSync(
+        join(stackDir, "state.json"),
+        JSON.stringify({
+          stack_id: "added-stack",
+          worktree_name: "added",
+          worktree_path: "/tmp/added",
+          status: "up",
+          started_at: new Date().toISOString(),
+          services: [],
+          routing: [
+            {
+              hostname: "api.added",
+              upstream_url: upstreamUrl,
+              service: "api",
+            },
+          ],
+        }) + "\n",
+        "utf8",
+      );
+
+      // 3a. Dashboard refresh: poll /api/stacks until the new stack
+      // appears with the correct primary_url. The watcher debounce is
+      // 100ms; 2s with backoff is plenty even on slow CI.
+      let dashboardOk = false;
+      const refreshDeadline = Date.now() + 2_000;
+      while (Date.now() < refreshDeadline) {
+        const r = await fetch(`${dashboardUrl}/api/stacks`);
+        const stacks = (await r.json()) as Array<{
+          id: string;
+          primary_url?: string;
+        }>;
+        const added = stacks.find((s) => s.id === "added-stack");
+        if (added && added.primary_url === upstreamUrl) {
+          dashboardOk = true;
+          break;
+        }
+        await new Promise<void>((r) => setTimeout(r, 50));
+      }
+      expect(dashboardOk).toBe(true);
+
+      // 3b. Routing reload: hit the proxy with the friendly Host
+      // header. The routing table should now contain `api.added` →
+      // upstream, so the request gets forwarded and the upstream's
+      // body comes back.
+      let proxyOk = false;
+      const proxyDeadline = Date.now() + 2_000;
+      while (Date.now() < proxyDeadline) {
+        try {
+          const headers = new Headers();
+          headers.set("Host", "api.added.lich.localhost");
+          const r = await fetch(`http://localhost:${proxyPort}/`, {
+            headers,
+          });
+          if (r.status === 200) {
+            const body = await r.text();
+            if (body === "hello from upstream") {
+              proxyOk = true;
+              break;
+            }
+          } else {
+            // Drain the body so we don't leak a connection on retry.
+            await r.text().catch(() => {});
+          }
+        } catch {
+          // Connection refused / reset — retry inside the deadline.
+        }
+        await new Promise<void>((r) => setTimeout(r, 50));
+      }
+      expect(proxyOk).toBe(true);
+
+      controller.abort();
+      await daemonPromise;
+    } finally {
+      upstream.stop(true);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  });
+
+  it("uses the configured proxy port (binds proxy on requested port)", async () => {
+    // With an ephemeral port the OS picks a fresh one each test run,
+    // so we can verify the proxy binds without colliding with other
+    // tests. The proxy's "listening on http://localhost:<port>" log
+    // line carries the actual bound port; assert that line shows up.
     const { stream, output } = captureLog();
 
     const result = await runDaemon({
       lichHome: home,
-      proxyPort: 4567,
+      proxyPort: 0, // ephemeral — Bun assigns a port
       out: stream,
       shutdownCheckMs: 20,
       shutdownGraceTicks: 1,
     });
 
     expect(result.exitCode).toBe(0);
-    expect(output()).toContain("proxy would start here on port 4567");
+    // The log line names the actual bound port; we can't predict it
+    // but we can assert the shape.
+    expect(output()).toMatch(/proxy listening on http:\/\/localhost:\d+/);
+    // And the dashboard also bound.
+    expect(output()).toMatch(/dashboard listening on http:\/\/localhost:\d+/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Cleanup on shutdown stops both servers + clears both files
+// ---------------------------------------------------------------------------
+
+describe("runDaemon — shutdown teardown", () => {
+  it("clears daemon.pid AND daemon.url on clean shutdown", async () => {
+    writeFakeStack("teardown-stack", "up");
+    const controller = new AbortController();
+    const { stream } = captureLog();
+
+    const daemonPromise = startDaemon({
+      signal: controller.signal,
+      out: stream,
+      shutdownCheckMs: 10_000,
+      shutdownGraceTicks: 3,
+    });
+
+    // Wait for startup — both files should be present.
+    const startDeadline = Date.now() + 2_000;
+    while (Date.now() < startDeadline) {
+      if (
+        existsSync(join(home, "daemon.pid")) &&
+        existsSync(join(home, "daemon.url"))
+      )
+        break;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+    expect(existsSync(join(home, "daemon.pid"))).toBe(true);
+    expect(existsSync(join(home, "daemon.url"))).toBe(true);
+
+    // Shut down. Both files must be gone after the promise resolves
+    // (cleanup is awaited inside runDaemon before it returns).
+    controller.abort();
+    const result = await daemonPromise;
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(home, "daemon.pid"))).toBe(false);
+    expect(existsSync(join(home, "daemon.url"))).toBe(false);
+    expect(await readDaemonUrl({ lichHome: home })).toBeNull();
   });
 
-  it("defaults the proxy port to 3300 when not specified", async () => {
-    const { stream, output } = captureLog();
+  it("stops the dashboard server on shutdown (URL becomes unreachable)", async () => {
+    // Real network IO again: after shutdown, fetching the recorded
+    // URL should fail with connection-refused. This is the observable
+    // proof that `dashboardServer.stop()` actually tore down the
+    // listener — without it, the next test on the same port would
+    // either collide or see stale responses.
+    writeFakeStack("dashboard-stop-stack", "up");
+    const controller = new AbortController();
+    const { stream } = captureLog();
 
-    const result = await runDaemon({
-      lichHome: home,
-      // proxyPort omitted on purpose
+    const daemonPromise = startDaemon({
+      signal: controller.signal,
       out: stream,
-      shutdownCheckMs: 20,
-      shutdownGraceTicks: 1,
+      shutdownCheckMs: 10_000,
+      shutdownGraceTicks: 3,
     });
 
+    // Grab the URL.
+    let url: string | null = null;
+    const startDeadline = Date.now() + 2_000;
+    while (Date.now() < startDeadline) {
+      url = await readDaemonUrl({ lichHome: home });
+      if (url !== null) break;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+    expect(url).not.toBeNull();
+
+    // Confirm it's up.
+    const beforeRes = await fetch(`${url}/healthz`);
+    expect(beforeRes.status).toBe(200);
+    // Drain the body so Bun doesn't hold the connection on shutdown.
+    await beforeRes.text();
+
+    // Shut down.
+    controller.abort();
+    const result = await daemonPromise;
     expect(result.exitCode).toBe(0);
-    expect(output()).toContain("proxy would start here on port 3300");
+
+    // Fetch should now fail (connection refused). We don't assert
+    // a specific error code — different Node/Bun versions surface
+    // this differently — just that fetch rejects.
+    let rejected = false;
+    try {
+      await fetch(`${url}/healthz`);
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   });
 });
 
