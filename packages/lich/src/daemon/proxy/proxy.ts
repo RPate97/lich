@@ -54,13 +54,21 @@
  * See RFC 9110 § 7.6.1.
  */
 
+import { createHash } from "node:crypto";
+
 import type { RoutingTable } from "./routing.js";
 
 export interface ProxyOpts {
   /**
    * TCP port to listen on. Pass `0` for an ephemeral port (read it
    * back via the returned `url`). Tests use `0` to avoid colliding
-   * with real daemons; production uses `runtime.proxy_port`.
+   * with real daemons; production uses `runtime.proxy_port` (or the
+   * worktree-derived default per {@link deriveProxyPort}).
+   *
+   * If the requested port is already taken (EADDRINUSE), the proxy
+   * automatically falls back to `0` (OS-assigned) and logs a warning.
+   * This keeps multi-worktree workflows working when two stacks
+   * happen to resolve to the same preferred port — see LEV-479.
    */
   port: number;
   /**
@@ -76,6 +84,56 @@ export interface ProxyOpts {
    * teardown.
    */
   signal?: AbortSignal;
+}
+
+/**
+ * Lower (inclusive) bound for the worktree-derived proxy port range.
+ * Picked to sit above common dev-server ports (3000, 5173, 8080, 8443)
+ * and the typical ephemeral-port range macOS uses for outbound connects
+ * (49152-65535 nominally, but most outbound picks land higher). Keeping
+ * the range away from those buckets minimizes collisions with stacks
+ * that pin their own friendly ports inside lich.yaml.
+ */
+const DERIVE_PROXY_PORT_LO = 30_000;
+
+/** Upper (exclusive) bound for the derived range — see {@link DERIVE_PROXY_PORT_LO}. */
+const DERIVE_PROXY_PORT_HI = 50_000;
+
+/** Span size for modulo bucketing (20_000 candidate ports). */
+const DERIVE_PROXY_PORT_SPAN = DERIVE_PROXY_PORT_HI - DERIVE_PROXY_PORT_LO;
+
+/**
+ * Derive a stable proxy port from an opaque worktree-scoped identity
+ * string. Same input always yields the same port (stable across
+ * `lich down` / `lich up` cycles); different inputs almost certainly
+ * yield different ports.
+ *
+ * Range: 30000-49999 (~20000 buckets). The birthday-paradox collision
+ * threshold for that bucket size is ~167 simultaneous worktrees — well
+ * above the 1-10 a single user typically has live at once. When a
+ * collision DOES happen (the second daemon's preferred port is already
+ * bound by the first), {@link startProxy}'s EADDRINUSE fallback kicks
+ * the loser onto an OS-assigned port — see LEV-479 Option A.
+ *
+ * The identity is hashed with SHA-256 rather than something cheaper
+ * (FNV, fnv1a32) because we don't need speed here — this runs once per
+ * daemon startup — and SHA-256's avalanche properties keep nearby paths
+ * (`~/.lich-a` vs `~/.lich-b`) in completely different buckets, which
+ * matters for the multi-checkout case the issue describes.
+ *
+ * @param identity Stable per-daemon identity (typically LICH_HOME or a
+ *   worktree id). Empty / undefined identities fall back to the lower
+ *   bound so the function is total — but callers SHOULD pass a real
+ *   identity; the empty-string fallback exists so misuse fails loudly
+ *   with port collisions rather than crashes.
+ */
+export function deriveProxyPort(identity: string): number {
+  const hash = createHash("sha256").update(identity).digest();
+  // Two bytes (16 bits = 0-65535) is more than enough resolution to map
+  // into our 20000-bucket span via modulo. Reading the first two bytes
+  // big-endian gives a stable cross-platform value.
+  const rawSpan = hash.readUInt16BE(0);
+  return DERIVE_PROXY_PORT_LO + (rawSpan % DERIVE_PROXY_PORT_SPAN);
 }
 
 /**
@@ -326,11 +384,38 @@ export async function startProxy(opts: ProxyOpts): Promise<{
   // the OS picks one), read `serverV4.port`, then bind IPv6 on that same
   // port. IPv6 bind is best-effort — if the host has IPv6 disabled, we
   // log a warning and keep going with IPv4-only.
-  const serverV4 = Bun.serve({
-    port: opts.port,
-    hostname: "127.0.0.1",
-    fetch: handler,
-  });
+  //
+  // LEV-479 Option A: if the preferred port is already in use, fall back
+  // to OS-assigned (port: 0). Multi-worktree workflows can have two
+  // daemons resolve to the same preferred port (either by both pinning
+  // the same value or by hash collision in `deriveProxyPort`); the
+  // first-to-bind wins and the loser shifts to an ephemeral port. We
+  // log a warning so a debugging operator can see the shift.
+  let serverV4: ReturnType<typeof Bun.serve>;
+  try {
+    serverV4 = Bun.serve({
+      port: opts.port,
+      hostname: "127.0.0.1",
+      fetch: handler,
+    });
+  } catch (err) {
+    // Only EADDRINUSE triggers the fallback. Other bind failures
+    // (EACCES on a privileged port, ENOTSOCK from a corrupted state)
+    // are real configuration errors and should propagate.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EADDRINUSE" || opts.port === 0) {
+      throw err;
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `proxy: preferred port ${opts.port} already in use; falling back to OS-assigned port (set runtime.proxy_port or LICH_PROXY_PORT to pin a specific port)`,
+    );
+    serverV4 = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: handler,
+    });
+  }
   // `Bun.serve`'s `.port` is typed `number | undefined` (it's undefined
   // for unix-socket servers), but we always pass a numeric port, so it's
   // always a number here. Assert to satisfy the typechecker.

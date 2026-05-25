@@ -6,8 +6,9 @@
  * with `detached: true` + `unref()` so the daemon outlives the parent
  * CLI invocation. The shim itself does almost nothing — it parses two
  * env vars (LICH_HOME for state isolation in tests, LICH_PROXY_PORT
- * for the reverse-proxy bind port) and delegates to `runDaemon` from
- * `src/daemon/daemon.ts`.
+ * for the reverse-proxy bind port — see LEV-479 for the precedence
+ * order vs. lich.yaml's `runtime.proxy_port`) and delegates to
+ * `runDaemon` from `src/daemon/daemon.ts`.
  *
  * The daemon's own signal handlers (SIGTERM/SIGINT, installed inside
  * `runDaemon`) drive the graceful shutdown path; this shim doesn't
@@ -31,8 +32,10 @@ import { runDaemon } from "../daemon/daemon.js";
 const lichHome = process.env.LICH_HOME;
 const proxyPortRaw = process.env.LICH_PROXY_PORT;
 // Parse the env var only when present; an empty/unset value falls
-// through to `runDaemon`'s default (3300). parseInt with NaN-guard so
-// a bogus value (`LICH_PROXY_PORT=foo`) doesn't silently coerce to 0.
+// through to `runDaemon`'s default — which (post-LEV-479) is a stable
+// worktree-derived port in 30000-50000, NOT the legacy hardcoded 3300.
+// parseInt with NaN-guard so a bogus value (`LICH_PROXY_PORT=foo`)
+// doesn't silently coerce to 0.
 let proxyPort: number | undefined;
 if (proxyPortRaw && proxyPortRaw.length > 0) {
   const parsed = parseInt(proxyPortRaw, 10);

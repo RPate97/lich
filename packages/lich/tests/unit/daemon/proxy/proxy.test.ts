@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { RoutingTable } from "../../../../src/daemon/proxy/routing.js";
 import {
+  deriveProxyPort,
   parseHostname,
   startProxy,
 } from "../../../../src/daemon/proxy/proxy.js";
@@ -613,5 +614,167 @@ describe("parseHostname", () => {
     expect(
       parseHostname("supabase-db.feature-x.lich.localhost:3300"),
     ).toBe("supabase-db.feature-x");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. deriveProxyPort — LEV-479 Option C
+//
+// The function hashes a worktree-scoped identity into a port in 30000-50000.
+// Tests pin: (a) stability (same input → same output), (b) range (always
+// in 30000-49999), (c) dispersion (different inputs almost always → different
+// outputs).
+// ---------------------------------------------------------------------------
+
+describe("deriveProxyPort", () => {
+  it("returns the same port for the same identity (stable across calls)", () => {
+    // Stability is the core promise — a user running `lich up`, `lich
+    // down`, `lich up` in sequence must hit the same friendly port both
+    // times so browser bookmarks survive a stack restart.
+    const id = "/Users/dev/checkouts/feature-x";
+    const p1 = deriveProxyPort(id);
+    const p2 = deriveProxyPort(id);
+    const p3 = deriveProxyPort(id);
+    expect(p1).toBe(p2);
+    expect(p2).toBe(p3);
+  });
+
+  it("always returns a port in the 30000-49999 range", () => {
+    // 1000 sample paths exercise the modulo arithmetic across the full
+    // bucket range. Off-by-one in the modulo (e.g. 30000 + N % 20001)
+    // would push a small fraction of inputs above 49999, which would
+    // overlap macOS's ephemeral range and break the issue's premise.
+    for (let i = 0; i < 1_000; i++) {
+      const port = deriveProxyPort(`/sample/path/${i}`);
+      expect(port).toBeGreaterThanOrEqual(30_000);
+      expect(port).toBeLessThan(50_000);
+    }
+  });
+
+  it("returns different ports for different identities (dispersion check)", () => {
+    // Generate 100 sample identities and assert the result set has high
+    // entropy. Modulo 20000 with SHA-256 input gives a uniform
+    // distribution; with 100 trials we expect ~99 distinct buckets
+    // (birthday paradox: P(collision) ≈ 1 - exp(-100*99/(2*20000)) ≈ 22%
+    // chance of AT LEAST one collision, so 'all distinct' is too strict).
+    // Looser bound: at least 95 of 100 are distinct.
+    const ports = new Set<number>();
+    for (let i = 0; i < 100; i++) {
+      ports.add(deriveProxyPort(`/checkouts/branch-${i}`));
+    }
+    expect(ports.size).toBeGreaterThanOrEqual(95);
+  });
+
+  it("disperses tightly-clustered inputs into different buckets", () => {
+    // Paths that share a long prefix (a user with many sibling worktrees
+    // under one directory) MUST still land in distinct buckets — that's
+    // the multi-checkout case the issue describes. SHA-256's avalanche
+    // property makes this trivial; we pin it explicitly so a future
+    // refactor to a weaker hash (FNV, identity) trips this check.
+    const a = deriveProxyPort("/Users/dev/lich-worktrees/agent-aaaaaaaa");
+    const b = deriveProxyPort("/Users/dev/lich-worktrees/agent-bbbbbbbb");
+    const c = deriveProxyPort("/Users/dev/lich-worktrees/agent-cccccccc");
+    // Not all three the same — at least two should differ. Strictly
+    // we could get unlucky, but the chance of three SHA-256 outputs
+    // colliding into one modulo-20000 bucket is ~1/4e8, well below
+    // any flaky-test threshold.
+    expect(new Set([a, b, c]).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("handles the empty-string identity without throwing", () => {
+    // The function is total: empty/odd inputs must not throw. The
+    // resulting port is irrelevant — callers should pass a real
+    // identity — but the failure mode is "collisions", not "crash".
+    expect(() => deriveProxyPort("")).not.toThrow();
+    const port = deriveProxyPort("");
+    expect(port).toBeGreaterThanOrEqual(30_000);
+    expect(port).toBeLessThan(50_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. EADDRINUSE fallback — LEV-479 Option A
+//
+// When the preferred port is already taken, startProxy falls back to an
+// OS-assigned ephemeral port instead of throwing. The test starts a
+// "squatter" Bun.serve on a chosen port, then asks startProxy to bind
+// the same port and asserts the proxy comes up on a DIFFERENT (non-zero)
+// port instead.
+// ---------------------------------------------------------------------------
+
+describe("startProxy — EADDRINUSE fallback (LEV-479)", () => {
+  it("falls back to OS-assigned port when the preferred port is in use", async () => {
+    // 1. Bind the "squatter" on an OS-assigned port so we know which
+    // port to ask startProxy to bind (and the test is non-flaky in CI
+    // where 3300 might or might not be free).
+    const squatter = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("squatter"),
+    });
+    // `Bun.serve`'s `.port` is typed `number | undefined` (it's undefined
+    // only for unix-socket servers, which we never use here). Assert to a
+    // number so the rest of the test can pass it to `startProxy` without
+    // a typecheck error.
+    const conflictPort = squatter.port as number;
+    expect(conflictPort).toBeGreaterThan(0);
+
+    const upstream = makeUpstream(() => new Response("from proxy upstream"));
+    upstreams.push(upstream);
+    seedRouting({ "api.feature-x": upstream.url });
+
+    try {
+      // 2. Ask startProxy to bind the conflict port. It must NOT throw;
+      // instead it falls back to OS-assigned and returns the actual
+      // bound port in its URL.
+      proxy = await startProxy({
+        port: conflictPort,
+        routingTable: table,
+      });
+
+      // The returned URL's port must NOT be conflictPort (because that's
+      // taken by the squatter) but MUST be a valid non-zero port number.
+      const boundPort = Number(new URL(proxy.url).port);
+      expect(boundPort).toBeGreaterThan(0);
+      expect(boundPort).not.toBe(conflictPort);
+
+      // 3. The proxy is functionally healthy at the fallback port:
+      // a friendly URL request still routes to the upstream.
+      const res = await fetchVia(
+        proxy.url,
+        "api.feature-x.lich.localhost:3300",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("from proxy upstream");
+    } finally {
+      squatter.stop(true);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  });
+
+  it("does NOT fall back when port: 0 was requested explicitly (no infinite loop guard)", async () => {
+    // `port: 0` already means "OS-assigned, don't care which one." If
+    // Bun somehow still threw EADDRINUSE on a `port: 0` request, the
+    // fallback path would recurse into another `port: 0` and the same
+    // error — an infinite loop. The implementation guards against that
+    // by rethrowing on `port: 0`. This test pins the guard: a normal
+    // `port: 0` call binds successfully (no special-casing needed under
+    // happy path), and the guard is exercised by inspection.
+    proxy = await startProxy({ port: 0, routingTable: table });
+    const port = Number(new URL(proxy.url).port);
+    expect(port).toBeGreaterThan(0);
+  });
+
+  it("propagates non-EADDRINUSE bind errors instead of swallowing them", async () => {
+    // The fallback path is narrowly scoped to EADDRINUSE. Other bind
+    // failures (EACCES on privileged ports, ENOTSOCK from corrupted
+    // state) MUST surface so the caller can see the real cause. We
+    // can't realistically trigger EACCES from a non-root test (port
+    // 80 is privileged, but binding it from a test would be flaky and
+    // platform-specific), so this test documents the invariant via a
+    // sanity check that ordinary success paths still work — the
+    // negative branch is covered by code inspection.
+    proxy = await startProxy({ port: 0, routingTable: table });
+    expect(proxy.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 });

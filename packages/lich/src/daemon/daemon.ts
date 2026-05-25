@@ -12,7 +12,9 @@
  *      (`auto-start.ts`) polls this file so `lich up` can print the URL
  *      in its summary block.
  *   2. Host the reverse-proxy server on the configured `runtime.proxy_port`
- *      (default 3300). Browsers reach `http://<service>.<worktree>.lich.localhost:3300/`;
+ *      (`runtime.proxy_port` from the active stack's lich.yaml, or a
+ *      worktree-derived port in 30000-50000 when unset — see LEV-479).
+ *      Browsers reach `http://<service>.<worktree>.lich.localhost:<port>/`;
  *      the proxy routes by Host header to the right per-stack upstream.
  *   3. Watch the state directory for stack changes and re-fan that
  *      signal to BOTH servers — the dashboard invalidates its cached
@@ -49,8 +51,9 @@
  *
  *   - Dashboard: ephemeral port (`port: 0`), URL recorded in
  *     `daemon.url`. This is what the user clicks.
- *   - Proxy: fixed port (default 3300), URL is implicit in every
- *     friendly URL (`http://api.<worktree>.lich.localhost:3300/`).
+ *   - Proxy: preferred port from lich.yaml (or worktree-derived default,
+ *     LEV-479), URL is implicit in every friendly URL
+ *     (`http://api.<worktree>.lich.localhost:<port>/`).
  *
  * The URL file records ONLY the dashboard URL because that's the
  * canonical "open this in your browser" target. The proxy's port is
@@ -112,7 +115,7 @@ import {
 } from "./pid-file.js";
 import { StateWatcher } from "./watcher.js";
 import { startDashboardServer, type DashboardServer } from "./dashboard/server.js";
-import { startProxy } from "./proxy/proxy.js";
+import { deriveProxyPort, startProxy } from "./proxy/proxy.js";
 import { RoutingTable } from "./proxy/routing.js";
 import { readSnapshot, type StackStatus } from "../state/snapshot.js";
 
@@ -142,9 +145,22 @@ export interface RunDaemonOpts {
   lichHome?: string;
 
   /**
-   * Port the reverse proxy binds on. Default 3300 per the spec. Pass
-   * `0` in tests to let the OS pick an ephemeral port and avoid
-   * colliding with whatever real daemons may be running on 3300.
+   * Preferred port the reverse proxy binds on. When set (either via
+   * `runtime.proxy_port` in lich.yaml propagated through the auto-start
+   * hook, or via the `LICH_PROXY_PORT` env var), this is the port the
+   * daemon tries first. When unset, the daemon derives a stable per-
+   * worktree port from the resolved LICH_HOME via {@link deriveProxyPort}
+   * — same LICH_HOME always yields the same port, different LICH_HOMEs
+   * almost certainly yield different ones (LEV-479 Option C).
+   *
+   * If the preferred port is already taken, the proxy falls back to an
+   * OS-assigned port and logs a warning (LEV-479 Option A). The proxy
+   * URL is then implicit in the dashboard's `daemon.url` file rather
+   * than statically derivable, but friendly URLs continue to work
+   * because consumers read the bound port from the daemon state.
+   *
+   * Pass `0` in tests to force ephemeral port allocation up front
+   * (skips the derive + fallback path).
    */
   proxyPort?: number;
 
@@ -238,6 +254,31 @@ function resolveStateRoot(lichHome: string | undefined): string {
 }
 
 /**
+ * Resolve the daemon's identity string for {@link deriveProxyPort}
+ * — same resolution order as {@link resolveStateRoot} but returns the
+ * LICH_HOME ROOT (no `/stacks` suffix) so the derivation is stable
+ * across schema changes to the on-disk layout.
+ *
+ * The identity is whatever directory the daemon's PID/URL files land in:
+ *
+ *   1. Explicit `opts.lichHome` (used by tests and the auto-start hook)
+ *   2. `LICH_HOME` environment variable
+ *   3. `~/.lich` (production default)
+ *
+ * Two daemons with the same identity collide on the same derived port;
+ * two daemons with different identities almost certainly don't. The
+ * multi-worktree case the issue describes (two test forks, two
+ * checkouts) lands in (1) or (2) with distinct tmpdirs, so the derived
+ * ports diverge.
+ */
+function resolveLichHomeIdentity(lichHome: string | undefined): string {
+  if (lichHome && lichHome.length > 0) return lichHome;
+  const env = process.env.LICH_HOME;
+  if (env && env.length > 0) return env;
+  return join(homedir(), ".lich");
+}
+
+/**
  * Count how many stacks under `stateRoot` have an "alive" status in
  * their `state.json`. Used by the auto-shutdown loop to decide whether
  * to tick the empty-counter forward or reset it.
@@ -314,7 +355,29 @@ export async function runDaemon(
   opts: RunDaemonOpts = {},
 ): Promise<RunDaemonResult> {
   const out = opts.out ?? process.stdout;
-  const proxyPort = opts.proxyPort ?? 3300;
+  // LEV-479: proxy-port precedence (high → low):
+  //   1. Explicit `opts.proxyPort` — set by the auto-start hook from
+  //      `LICH_PROXY_PORT` env var (Option B) or `runtime.proxy_port`
+  //      from lich.yaml (Option B, explicit). When `0` is passed it
+  //      stays `0` (ephemeral; tests rely on this).
+  //   2. Worktree-derived port — stable hash of the resolved LICH_HOME
+  //      path. Same worktree → same port across down/up cycles
+  //      (Option C, zero-config default).
+  //
+  // If the resolved port is then already taken at bind time,
+  // `startProxy` falls back to an OS-assigned port (Option A).
+  let proxyPort: number;
+  if (opts.proxyPort !== undefined) {
+    proxyPort = opts.proxyPort;
+  } else {
+    // Use the resolved LICH_HOME (explicit arg → env → ~/.lich) as the
+    // derivation identity. Different worktrees with their own LICH_HOME
+    // (the test isolation pattern, also the multi-checkout case the
+    // issue describes) deterministically pick different ports. The same
+    // home directory always picks the same port across runs.
+    const identity = resolveLichHomeIdentity(opts.lichHome);
+    proxyPort = deriveProxyPort(identity);
+  }
   const shutdownCheckMs = opts.shutdownCheckMs ?? DEFAULT_SHUTDOWN_CHECK_MS;
   const shutdownGraceTicks =
     opts.shutdownGraceTicks ?? DEFAULT_SHUTDOWN_GRACE_TICKS;
@@ -365,10 +428,13 @@ export async function runDaemon(
   });
 
   // ---- 5. Start the reverse proxy ------------------------------------
-  // Bind on the configured port (default 3300, or 0 for tests). A bind
-  // failure here is non-fatal — the dashboard can still surface stack
-  // state and the user can fall back to `lich urls --raw`. We log a
-  // warning and continue without a proxy handle.
+  // Bind on the configured port (explicit via opts.proxyPort, or
+  // worktree-derived default per LEV-479, or 0 for tests). `startProxy`
+  // itself handles the EADDRINUSE fallback to an OS-assigned port; a
+  // bind failure escaping that fallback is non-fatal here — the
+  // dashboard can still surface stack state and the user can fall back
+  // to `lich urls --raw`. We log a warning and continue without a proxy
+  // handle.
   let proxy: { url: string; stop(): Promise<void> } | null = null;
   try {
     proxy = await startProxy({ port: proxyPort, routingTable });

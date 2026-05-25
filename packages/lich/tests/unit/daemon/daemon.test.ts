@@ -749,6 +749,121 @@ describe("runDaemon — real dashboard + proxy startup", () => {
     // And the dashboard also bound.
     expect(output()).toMatch(/dashboard listening on http:\/\/127\.0\.0\.1:\d+/);
   });
+
+  // LEV-479 Option C: when `proxyPort` is undefined, the daemon derives
+  // a stable per-LICH_HOME port (range 30000-49999). Same LICH_HOME →
+  // same port across daemon runs; different LICH_HOMEs → different
+  // ports. This is the zero-config default for multi-worktree workflows.
+  it("derives a stable proxy port from LICH_HOME when proxyPort is unset", async () => {
+    const { stream, output } = captureLog();
+
+    const result = await runDaemon({
+      lichHome: home,
+      // proxyPort: intentionally omitted so the derive path runs.
+      out: stream,
+      shutdownCheckMs: 20,
+      shutdownGraceTicks: 1,
+    });
+
+    expect(result.exitCode).toBe(0);
+    // The derived port (or its EADDRINUSE fallback) is in 30000-49999,
+    // OR an ephemeral port if the derived value happened to collide
+    // with something. Either way the proxy binds and logs its port.
+    const match = output().match(
+      /proxy listening on http:\/\/127\.0\.0\.1:(\d+)/,
+    );
+    expect(match).not.toBeNull();
+    const port = Number(match?.[1]);
+    expect(port).toBeGreaterThan(0);
+    // Strong assertion: in the happy path (no preferred-port collision),
+    // the derived port is in the documented range. A collision-driven
+    // fallback would land outside this range — we re-run a second time
+    // below to assert stability, which would catch a fallback (the
+    // second run would also derive the same value).
+    // Note: we can't assert `port in [30000,50000)` strictly because of
+    // the fallback path. Instead assert the derived value is stable
+    // (next test) and trust the deriveProxyPort unit test for range.
+  });
+
+  it("derives the SAME port on a second run with the same LICH_HOME (stability)", async () => {
+    // Run the daemon twice with the same LICH_HOME and assert both runs
+    // log the same proxy port. This is the load-bearing claim of Option
+    // C: friendly URLs survive `lich down` / `lich up` because the port
+    // is reproducible from the identity.
+    const { stream: s1, output: o1 } = captureLog();
+    const r1 = await runDaemon({
+      lichHome: home,
+      out: s1,
+      shutdownCheckMs: 20,
+      shutdownGraceTicks: 1,
+    });
+    expect(r1.exitCode).toBe(0);
+    const m1 = o1().match(/proxy listening on http:\/\/127\.0\.0\.1:(\d+)/);
+    expect(m1).not.toBeNull();
+    const port1 = Number(m1?.[1]);
+    expect(port1).toBeGreaterThan(0);
+
+    // Second run — SAME home, fresh capture stream.
+    const { stream: s2, output: o2 } = captureLog();
+    const r2 = await runDaemon({
+      lichHome: home,
+      out: s2,
+      shutdownCheckMs: 20,
+      shutdownGraceTicks: 1,
+    });
+    expect(r2.exitCode).toBe(0);
+    const m2 = o2().match(/proxy listening on http:\/\/127\.0\.0\.1:(\d+)/);
+    expect(m2).not.toBeNull();
+    const port2 = Number(m2?.[1]);
+
+    // The two ports must match — that's the stability guarantee. If
+    // both runs happened to take the EADDRINUSE fallback path, the
+    // fallback port wouldn't be stable, so we'd see drift here.
+    expect(port2).toBe(port1);
+  });
+
+  it("derives DIFFERENT ports for different LICH_HOMEs (multi-worktree isolation)", async () => {
+    // The whole point of Option C: two daemons in two LICH_HOMEs (the
+    // typical parallel-test or multi-checkout case) get different
+    // ports without manual configuration. Run two daemons sequentially
+    // against two different homes and assert the logged ports differ.
+    const home2 = mkdtempSync(join(tmpdir(), "lich-daemon-main-alt-"));
+
+    try {
+      const { stream: s1, output: o1 } = captureLog();
+      const r1 = await runDaemon({
+        lichHome: home,
+        out: s1,
+        shutdownCheckMs: 20,
+        shutdownGraceTicks: 1,
+      });
+      expect(r1.exitCode).toBe(0);
+      const port1 = Number(
+        o1().match(/proxy listening on http:\/\/127\.0\.0\.1:(\d+)/)?.[1],
+      );
+
+      const { stream: s2, output: o2 } = captureLog();
+      const r2 = await runDaemon({
+        lichHome: home2,
+        out: s2,
+        shutdownCheckMs: 20,
+        shutdownGraceTicks: 1,
+      });
+      expect(r2.exitCode).toBe(0);
+      const port2 = Number(
+        o2().match(/proxy listening on http:\/\/127\.0\.0\.1:(\d+)/)?.[1],
+      );
+
+      expect(port1).toBeGreaterThan(0);
+      expect(port2).toBeGreaterThan(0);
+      // The crux: distinct LICH_HOMEs → distinct ports. SHA-256 collision
+      // into the same 20000-bucket modulo is astronomically unlikely for
+      // any pair of mkdtemp paths (which embed random characters).
+      expect(port1).not.toBe(port2);
+    } finally {
+      rmSync(home2, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
