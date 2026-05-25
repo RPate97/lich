@@ -98,6 +98,14 @@
  * STATUS: this test depends on LEV-414 (daemon wires the real dashboard
  * server) + LEV-417 (stacks-view passes through failure_reason +
  * failure_log_tail). Both are landed at the time of writing.
+ *
+ * Pool classification (2026-05-25 e2e-suite-solid-and-fast migration): FAST.
+ * No `expectDbMode` call: this test overwrites `lich.yaml` with the failing
+ * variant which defines its own `dev` profile + a single `broken` service.
+ * There IS no api service to probe — the whole stack is one cmd that exits
+ * non-zero. expectDbMode would be a no-op (or worse, a hang on a nonexistent
+ * api URL). The profile-drift catch this helper provides only matters for
+ * tests running against the real dogfood-stack profiles.
  */
 
 import {
