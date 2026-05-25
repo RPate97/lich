@@ -54,7 +54,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runLich } from "./helpers/lich.js";
 import { readStateJson } from "./helpers/state.js";
@@ -63,7 +64,7 @@ import { readStateJson } from "./helpers/state.js";
 // Build the binary up front (same pattern as the other e2e suites).
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 
 beforeAll(() => {

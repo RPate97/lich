@@ -101,7 +101,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runLich } from "./helpers/lich.js";
 
@@ -110,7 +111,7 @@ import { runLich } from "./helpers/lich.js";
 // code, and a broken build is a real bug to surface.
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 
 beforeAll(() => {

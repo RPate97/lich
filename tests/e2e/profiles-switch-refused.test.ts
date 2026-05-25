@@ -91,7 +91,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runLich } from "./helpers/lich.js";
 
@@ -101,7 +102,7 @@ import { runLich } from "./helpers/lich.js";
 // basic-up.test.ts, profiles-named.test.ts, and failure-process-exit.test.ts.
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 
 beforeAll(() => {

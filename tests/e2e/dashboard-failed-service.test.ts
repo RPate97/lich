@@ -118,7 +118,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
@@ -164,7 +165,7 @@ interface StackView {
 // daemon — see the file-level doc comment, item 4).
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 const lichDaemonBinary = resolve(repoRoot, "packages/lich/dist/lich-daemon");
 

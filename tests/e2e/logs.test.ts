@@ -33,13 +33,14 @@ import { describe, it, expect, afterAll } from "vitest";
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LICH_BINARY = resolve(repoRoot, "packages/lich/dist/lich");
 
 // ---------------------------------------------------------------------------

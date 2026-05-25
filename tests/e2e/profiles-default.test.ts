@@ -49,7 +49,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
@@ -59,7 +60,7 @@ import { runLich } from "./helpers/lich.js";
 // build is a real bug, not something to skip past.
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 
 beforeAll(() => {

@@ -25,13 +25,14 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { runLich } from "./helpers/lich.js";
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 
-const REPO_ROOT = resolve(import.meta.dir, "../..");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LICH_BINARY = resolve(REPO_ROOT, "packages/lich/dist/lich");
 
 // ---------------------------------------------------------------------------

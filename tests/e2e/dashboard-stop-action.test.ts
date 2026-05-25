@@ -102,7 +102,8 @@ import {
 } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
@@ -134,7 +135,7 @@ interface ActionResult {
 // the action endpoint can't function end to end.
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
 const lichDaemonBinary = resolve(repoRoot, "packages/lich/dist/lich-daemon");
 

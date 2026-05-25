@@ -42,7 +42,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { runLich } from "./helpers/lich.js";
 
@@ -53,9 +54,9 @@ import { runLich } from "./helpers/lich.js";
 // exists.
 // ---------------------------------------------------------------------------
 
-const repoRoot = resolve(import.meta.dir, "../..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const lichBinary = resolve(repoRoot, "packages/lich/dist/lich");
-const fixturesDir = resolve(import.meta.dir, "fixtures/invalid-yamls");
+const fixturesDir = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/invalid-yamls");
 
 beforeAll(() => {
   if (existsSync(lichBinary)) return;
