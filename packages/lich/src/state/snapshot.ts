@@ -61,6 +61,28 @@ export type StackStatus =
   | "stopped"
   | "failed";
 
+/**
+ * One entry in the per-stack routing table consumed by the Plan 5 daemon's
+ * reverse proxy. Each entry maps a friendly hostname (no port, no
+ * `.lich.localhost` suffix — the proxy adds that) to the upstream URL the
+ * proxy should forward to.
+ *
+ * The `service` field is informational: the dashboard uses it to label which
+ * service owns the route, but the proxy itself routes purely by `hostname`.
+ *
+ * Entries are written by `lich up` after the stack is ready (Task 8) and
+ * cleared by `lich down` on teardown (Task 10). The proxy reads them via the
+ * shared filesystem watcher — there's no IPC.
+ */
+export interface RoutingEntry {
+  /** e.g. `"api.feature-x"` or `"supabase-db.feature-x"`. */
+  hostname: string;
+  /** e.g. `"http://127.0.0.1:9014"`. */
+  upstream_url: string;
+  /** Name of the service that owns this route — informational. */
+  service: string;
+}
+
 export interface StackSnapshot {
   stack_id: string;
   worktree_name: string;
@@ -78,6 +100,20 @@ export interface StackSnapshot {
    * absence — old snapshots written before Plan 3 don't carry the field.
    */
   active_profile?: string;
+  /**
+   * Friendly-URL routing entries for the Plan 5 daemon's reverse proxy.
+   * Populated by `lich up` once the stack is ready and cleared by `lich
+   * down` on teardown. Omitted entirely on pre-Plan-5 snapshots and on
+   * stacks that have no allocated host ports.
+   *
+   * Note the field is preserved verbatim by `sanitizeForWrite` — including
+   * empty arrays, which carry a different meaning than `undefined`:
+   *   - `undefined`: this snapshot predates routing (or routing was never set).
+   *   - `[]`: routing is actively empty (e.g. the stack was just torn down,
+   *     so the proxy should serve no routes for it).
+   * Readers and the proxy must respect that distinction.
+   */
+  routing?: RoutingEntry[];
 }
 
 function snapshotPath(stackId: string): string {
