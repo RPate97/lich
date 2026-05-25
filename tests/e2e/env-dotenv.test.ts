@@ -7,7 +7,7 @@
  *      Running `lich env stack` after `lich up` prints the resolved stack
  *      env as dotenv. The dogfood-stack's `DATABASE_URL` is interpolated
  *      with the actual allocated postgres port (digits, not the literal
- *      `${owned.supabase.ports.db}` token). The auto-injected
+ *      `${services.postgres.host_port}` token). The auto-injected
  *      `LICH_WORKTREE` and `LICH_STACK_ID` also appear, proving the
  *      built-in stack adapter produced a complete map.
  *
@@ -33,12 +33,13 @@
  * Together these pin the user-facing contract for `lich env`.
  *
  * Why `lich up` before `lich env`?
- *   The dogfood-stack's `stack` env references `${owned.supabase.ports.db}`
- *   etc. — those refs only resolve after the supabase service has been
- *   allocated ports (which happens during `lich up`). Tests 1, 2, and 3
- *   all benefit from a live stack, so we amortize one up/down across all
- *   four tests. Test 4 doesn't strictly need the stack but runs on the
- *   shared fixture for consistency.
+ *   The dogfood-stack's `stack` env references
+ *   `${services.postgres.host_port}` etc. — those refs only resolve after
+ *   the postgres service has been allocated a host port (which happens
+ *   during `lich up`). Tests 1, 2, and 3 all benefit from a live stack,
+ *   so we amortize one up/down across all four tests. Test 4 doesn't
+ *   strictly need the stack but runs on the shared fixture for
+ *   consistency.
  *
  * Isolation:
  *   - tmpdir copy of dogfood-stack (never the repo's real one).
@@ -51,10 +52,10 @@
  *   - tmpdir + LICH_HOME removed in the (teardown) `it()` block.
  *
  * Setup/teardown live in `it()` blocks rather than beforeAll/afterAll
- * because Bun's hook timeout default (5s) is too tight for the supabase
- * up/down dance, and Bun doesn't accept a per-hook timeout argument the
- * way vitest does. Putting them in `it()` blocks lets us pass a real
- * timeout per step. Tests run in declaration order. Same pattern as
+ * because Bun's hook timeout default (5s) is too tight for the up/down
+ * dance, and Bun doesn't accept a per-hook timeout argument the way
+ * vitest does. Putting them in `it()` blocks lets us pass a real timeout
+ * per step. Tests run in declaration order. Same pattern as
  * tests/e2e/env-groups-isolation.test.ts and tests/e2e/logs.test.ts.
  */
 
@@ -169,11 +170,11 @@ describe("lich env <group> (Plan 2 Task 21)", () => {
     }
     expect(result.exitCode).toBe(0);
     // DATABASE_URL must contain the actual allocated postgres port (digits),
-    // not the literal `${owned.supabase.ports.db}` token. Digits between `:`
-    // and `/postgres` prove the interpolation flowed through end-to-end with
-    // allocated ports populated.
+    // not the literal `${services.postgres.host_port}` token. Digits between
+    // `:` and `/dogfood` prove the interpolation flowed through end-to-end
+    // with allocated ports populated.
     expect(result.stdout).toMatch(
-      /^DATABASE_URL=postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/postgres$/m,
+      /^DATABASE_URL=postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/dogfood$/m,
     );
     // The built-in stack adapter auto-injects these — verify both made it
     // into the dotenv output.
@@ -218,7 +219,7 @@ describe("lich env <group> (Plan 2 Task 21)", () => {
     // round-tripping through `source`. Proves dotenv quoting handles `:`,
     // `/`, and `@` correctly.
     expect(bashResult.stdout).toMatch(
-      /^postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/postgres$/m,
+      /^postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/dogfood$/m,
     );
   });
 

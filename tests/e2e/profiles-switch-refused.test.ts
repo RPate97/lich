@@ -39,12 +39,12 @@
  *   exercises the same code path as the full dogfood stack.
  *
  *   Using a synthetic yaml keeps this test:
- *     - Hermetic: no docker, no supabase CLI version dependency, no
- *       network. The test relies only on the lich binary and a shell.
- *     - Fast: sub-10s per case versus 3+ minutes for the dogfood-stack.
- *     - Decoupled from unrelated environmental issues: a flaky supabase
- *       lifecycle hook (e.g. `supabase migration up` failing on certain
- *       CLI versions) cannot cause this test to misreport.
+ *     - Hermetic: no docker, no network. The test relies only on the
+ *       lich binary and a shell.
+ *     - Fast: sub-10s per case versus 30s+ for the dogfood-stack.
+ *     - Decoupled from unrelated environmental issues: a flaky lifecycle
+ *       hook (e.g. the psql migration failing on cert mismatch) cannot
+ *       cause this test to misreport.
  *
  *   The owned service is a single `sleep 600` — it stays alive for 10
  *   minutes, well past the test's runtime. No ports, no deps, no
@@ -151,7 +151,7 @@ interface StacksJsonRow {
 
 /**
  * Minimal yaml that exercises the refuse-mid-flight contract without any
- * docker or supabase dependency. Two profiles:
+ * docker dependency. Two profiles:
  *
  *   - `dev` (default: true) — runs the `keepalive` service.
  *   - `dev:env-override` (extends: dev) — same service set, an env override.
@@ -211,7 +211,7 @@ interface Fixture {
  * Build a fresh fixture: a tmpdir with the `REFUSE_TEST_YAML` written as
  * `lich.yaml`, plus a separate per-test LICH_HOME. Mirrors the
  * `failure-process-exit.test.ts` pattern of writing a synthetic yaml,
- * minus the example-copy (we don't need apps/ or supabase/ siblings).
+ * minus the example-copy (we don't need apps/ or db/ siblings).
  */
 function makeFixture(prefix: string): Fixture {
   const stackPath = mkdtempSync(join(tmpdir(), `lich-e2e-${prefix}-`));

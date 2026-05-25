@@ -6,7 +6,7 @@
   "scripts": {
     "dev:web": "cd apps/web && bun run dev",
     "dev:api": "cd apps/api && bun run dev",
-    "migrate": "supabase migration up",
-    "seed": "psql \"$DATABASE_URL\" -f supabase/seed.sql"
+    "migrate": "psql \"$DATABASE_URL\" -f db/migrations/01_init.sql",
+    "seed": "psql \"$DATABASE_URL\" -f db/seed.sql"
   }
 }

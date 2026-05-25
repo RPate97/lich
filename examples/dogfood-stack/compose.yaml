@@ -1,0 +1,23 @@
+# Compose file for the dogfood-stack's postgres service.
+#
+# Lich's compose override generator (packages/lich/src/compose/override.ts)
+# only writes per-stack port bindings + env overrides — it doesn't emit
+# the service definition itself. Compose needs a base file with the
+# `image:` + healthcheck. This is that file.
+#
+# Lich's per-stack override file (auto-generated under
+# `~/.lich/stacks/<id>/compose.override.yaml`) layers on top of this and
+# supplies the host-port binding + any per-stack env values resolved from
+# the lich.yaml's `env:` block.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dogfood
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"]
+      interval: 1s
+      timeout: 1s
+      retries: 30

@@ -34,23 +34,23 @@
  * Why a synthetic yaml instead of dogfood-stack:
  *   The Linear task spec recommends "dogfood for the with-profile case
  *   since dogfood has both profiles defined." In practice the dogfood
- *   stack's `dev` profile depends on `supabase migration up` succeeding in
+ *   stack's `dev` profile depends on the psql migration succeeding in
  *   `after_up`, which is environment-flaky (port conflicts with other
  *   stacks the user may be running), and its `dev:env-override` profile
- *   overrides `DATABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` to non-resolving
- *   hostnames such that the web service's `ready_when: http_get: /` fails
- *   (the React page errors out fetching API data the unreachable DB can't
- *   serve). Neither failure mode is relevant to the LICH_PROFILE wiring —
- *   they're orthogonal dogfood-stack quirks.
+ *   overrides `DATABASE_URL` to a non-resolving hostname such that the
+ *   web service's `ready_when: http_get: /` fails (the React page errors
+ *   out fetching API data the unreachable DB can't serve). Neither
+ *   failure mode is relevant to the LICH_PROFILE wiring — they're
+ *   orthogonal dogfood-stack quirks.
  *
  *   The contract under test is purely "the active profile name surfaces
  *   in the stack env." A 12-line synthetic yaml with a single sleep-based
  *   owned service exercises the same code path (resolveProfile →
  *   resolveEnvGroup → resolveTopLevelEnv → autoInjects → LICH_PROFILE
  *   injection → exec/env consumes the snapshot's `active_profile`) WITHOUT
- *   depending on supabase, docker, the dogfood DB schema, the dogfood web
- *   service, or any first-pull image latency. The test runs in seconds,
- *   not minutes, and is hermetic against the user's parallel work.
+ *   depending on docker, the dogfood DB schema, the dogfood web service,
+ *   or any first-pull image latency. The test runs in seconds, not
+ *   minutes, and is hermetic against the user's parallel work.
  *
  *   When dogfood-stack's `dev:env-override` becomes self-consistent (see
  *   Plan 3 Task 18's deferred follow-up about per-profile depends_on
@@ -136,8 +136,8 @@ beforeAll(() => {
 // ---------------------------------------------------------------------------
 // Synthetic yaml fixture: minimal stack that exists ONLY to exercise the
 // LICH_PROFILE wiring. One owned service that just sleeps (no real workload)
-// so the up completes in seconds without any docker / supabase dependency.
-// Two profiles so the resolver has to pick the requested one, mirroring the
+// so the up completes in seconds without any docker dependency. Two
+// profiles so the resolver has to pick the requested one, mirroring the
 // dogfood-stack's profile shape without inheriting its environmental flakes.
 // ---------------------------------------------------------------------------
 

@@ -20,21 +20,20 @@
  *      disk before the orchestrator tore the service down.
  *
  * Why overwrite the lich.yaml rather than append to it:
- *   The dogfood-stack's default `dev` profile includes `supabase`, `api`,
+ *   The dogfood-stack's default `dev` profile includes `postgres`, `api`,
  *   `web`, and `tunnel_demo`. Per-level `Promise.allSettled` semantics in
  *   `up.ts` wait for every service in a level to settle before failing the
  *   step, so adding a bad service to the existing yaml would force the
- *   test to wait for supabase's image-pull (90s+ on cold cache) just to
- *   reach the failure assertion. Overwriting with a minimal yaml that
- *   declares only the bad service keeps the failure path under 5s while
- *   still exercising the same code path the dogfood demo uses
- *   (LogTail → watchFailWhen → formatFailure → output.failure →
- *   writeStateSnapshot).
+ *   test to wait for the docker pull just to reach the failure assertion.
+ *   Overwriting with a minimal yaml that declares only the bad service
+ *   keeps the failure path under 5s while still exercising the same code
+ *   path the dogfood demo uses (LogTail → watchFailWhen → formatFailure
+ *   → output.failure → writeStateSnapshot).
  *
  *   We still copy the dogfood-stack to tmpdir (rather than `mkdtempSync` +
  *   write a bare `lich.yaml`) so the test exercises the realistic case
  *   where lich starts in a worktree-shaped directory; the unused
- *   `apps/` / `supabase/` siblings are harmless because nothing in the
+ *   `apps/` / `db/` siblings are harmless because nothing in the
  *   replacement yaml references them.
  *
  * Output routing — checked against the binary:
@@ -48,8 +47,8 @@
  * Cleanup contract:
  *   - `lich down` runs in `afterEach` even when the test body throws. The
  *     bad service is `sleep 99999`, which the supervisor kills via the
- *     owned-service process-group SIGTERM cycle. No supabase / docker is
- *     started in the minimal yaml, so down completes quickly.
+ *     owned-service process-group SIGTERM cycle. No docker is started in
+ *     the minimal yaml, so down completes quickly.
  *   - Tmpdir + LICH_HOME removed in afterEach.
  *
  * Bun-hook timeout dodge:
@@ -128,7 +127,7 @@ let fixture: Fixture | null = null;
 
 /**
  * Build a fresh fixture: a tmpdir copy of the dogfood-stack with its
- * `lich.yaml` overwritten by `yaml`. The original `apps/` / `supabase/`
+ * `lich.yaml` overwritten by `yaml`. The original `apps/` / `db/`
  * children are untouched — they're unreferenced by the replacement yaml,
  * just inert siblings.
  */

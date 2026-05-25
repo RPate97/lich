@@ -1,11 +1,12 @@
 # Lich Dogfood Stack
 
-A real Next + Express + Supabase application used as lich's failing test case.
+A real Next + Express + Postgres application used as lich's failing test case.
 
 ## Stack
 - **Web (Next.js):** `apps/web/` — page that lists "things"
-- **API (Express):** `apps/api/` — `/api/things` reads from Supabase
-- **DB (Supabase):** `supabase/` — Postgres + auth + storage via Supabase CLI
+- **API (Express):** `apps/api/` — `/api/things` reads from Postgres via `Bun.sql`
+- **DB (Postgres):** `compose.yaml` + `db/` — `postgres:16-alpine` compose service,
+  with migrations + seed in `db/`
 
 ## Running by hand (without lich)
 
@@ -13,10 +14,10 @@ A real Next + Express + Supabase application used as lich's failing test case.
 # 1. Install deps
 bun install
 
-# 2. Start Supabase (will allocate its own ports by default)
-supabase start
+# 2. Start Postgres (compose)
+docker compose up -d
 
-# 3. Run migrations + seed
+# 3. Wait for healthy, then run migrations + seed
 bun run migrate
 bun run seed
 

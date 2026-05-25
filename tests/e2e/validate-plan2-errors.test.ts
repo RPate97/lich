@@ -29,8 +29,8 @@
  *   - JSON output always goes to STDOUT (regardless of `ok`).
  *   These tests assert on whichever stream the output actually lands on.
  *
- * Speed: these fixtures are pure config — no `lich up`, no docker, no
- * supabase. Each test should finish in well under a second.
+ * Speed: these fixtures are pure config — no `lich up`, no docker. Each
+ * test should finish in well under a second.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";

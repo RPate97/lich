@@ -23,8 +23,8 @@
  *
  * Why a synthetic minimal yaml (not the dogfood-stack):
  *   - The dogfood-stack's `tunnel_demo` synthetic service is the right shape,
- *     but `lich up dev` brings supabase + api + web + tunnel_demo and runs
- *     the supabase migrate/seed lifecycle. The capture pipeline doesn't need
+ *     but `lich up dev` brings postgres + api + web + tunnel_demo and runs
+ *     the psql migrate/seed lifecycle. The capture pipeline doesn't need
  *     any of that — it only needs two owned services with a depends_on edge
  *     and a captured value crossing it.
  *   - A focused yaml (just tunnel_demo + consumer) brings the test down from

@@ -56,19 +56,19 @@
  *   hang: ... }` ... add `hang` to the dev profile". Two practical problems
  *   block the literal recipe:
  *
- *     (a) The dogfood `dev` profile starts supabase (whose own
- *         `ready_when.timeout` is 120s) in the same dep level as `hang`
+ *     (a) The dogfood `dev` profile starts postgres (whose container
+ *         startup takes a few seconds) in the same dep level as `hang`
  *         (both have no `depends_on`). The orchestrator's per-level
  *         `Promise.allSettled` means the level only resolves after BOTH
- *         services complete — `hang` rejects at 3s, but supabase needs
- *         30-60s+ on a warm host or 120s if its readiness check itself
- *         times out. That blows the "~10s wall-clock budget" the
- *         implementation note explicitly calls out.
+ *         services complete — `hang` rejects at 3s, but waiting for
+ *         postgres adds noise and (pre-LEV-463) supabase added much more.
+ *         That blows the "~10s wall-clock budget" the implementation note
+ *         explicitly calls out.
  *
- *     (b) The dogfood `env:` block uses `${owned.supabase.ports.*}` /
- *         `${owned.api.port}` interpolations that the top-level env
+ *     (b) The dogfood `env:` block uses `${services.postgres.host_port}`
+ *         / `${owned.api.port}` interpolations that the top-level env
  *         resolver (`resolveTopLevelEnv` in `env/resolve.ts`) eagerly
- *         interpolates BEFORE per-service startup. With supabase / api
+ *         interpolates BEFORE per-service startup. With postgres / api
  *         excluded from a custom profile, those references throw at the
  *         resolve-env step and `lich up` never reaches the timeout path.
  *         The profile-env override layer that would normally mask
@@ -84,13 +84,13 @@
  *   real binary, a real owned-service spawn, real LogTail wiring, real
  *   `withTimeout` firing, real `formatFailure` block, real `state.json`
  *   persistence. The dogfood directory structure (`apps/web`,
- *   `apps/api`, `supabase/`) ships unchanged because the minimal yaml
- *   doesn't reference any of it — `lich up` only sees the two services
- *   the minimal yaml declares.
+ *   `apps/api`, `db/`) ships unchanged because the minimal yaml doesn't
+ *   reference any of it — `lich up` only sees the two services the
+ *   minimal yaml declares.
  *
  * Prerequisites: none beyond the lich binary itself. No docker, no
- * supabase CLI, no node_modules — the two synthetic owned services are
- * pure `sh -c '...'` lifecycles.
+ * node_modules — the two synthetic owned services are pure
+ * `sh -c '...'` lifecycles.
  *
  * Isolation: tmpdir copy + per-test `LICH_HOME` ensure no leakage into the
  * user's real `~/.lich` and no collision with other e2e tests.

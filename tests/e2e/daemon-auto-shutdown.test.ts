@@ -18,15 +18,15 @@
  *      (`cleanupPromise` in `daemon.ts` calls `clearDaemonPid` /
  *      `clearDaemonUrl`).
  *
- * Total time budget for the slow path: ~3-4 minutes
- *   - setup (lich up): ~60-180s (supabase cold-pull dominates)
+ * Total time budget for the slow path: ~2 minutes
+ *   - setup (lich up): ~10-30s (LEV-463 postgres swap; was ~60-180s)
  *   - lich down: ~15-30s
  *   - daemon auto-shutdown grace: ~30-45s (30s loop + buffer for I/O
  *     + state propagation)
  *
- * Heavy test — requires docker + supabase CLI v2+ on the host. Without
- * those `lich up` fails loudly with the actual underlying error (same
- * contract as basic-up.test.ts; LEV-314).
+ * Heavy test — requires docker on the host (LEV-463 dropped the supabase
+ * CLI prerequisite). Without docker `lich up` fails loudly with the actual
+ * underlying error (same contract as basic-up.test.ts; LEV-314).
  *
  * Per the plan: "It's tempting to expose a `--shutdown-timeout-ms` flag
  * on `lich-daemon` for tests to use shorter intervals. RESIST — tests
@@ -222,9 +222,9 @@ describe("lich daemon auto-shutdown", () => {
 
       // ---- ACT 1: lich up --no-browser -------------------------------------
       // `--no-browser` is critical so CI doesn't try to spawn Chrome. The
-      // up timeout is generous because supabase cold-pull dominates the
-      // first run.
-      step("lich up --no-browser (supabase cold-pull ~30-90s)");
+      // up timeout is generous; postgres pulls fast post-LEV-463 but the
+      // headroom covers slow CI boxes.
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -347,7 +347,8 @@ describe("lich daemon auto-shutdown", () => {
       step("auto-shutdown verified end-to-end");
     },
     // 10-minute per-test budget. Breakdown:
-    //   - lich up (supabase cold-pull): up to 4 min
+    //   - lich up (postgres pull + boot, LEV-463): ~10-30s typical, up
+    //     to 4 min on slow CI
     //   - daemon-running assertion: <30s
     //   - lich down: ~30s
     //   - daemon auto-shutdown wait: up to 60s

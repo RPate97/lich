@@ -8,9 +8,9 @@
  *   1. `lich exec runs an arbitrary command with the stack env`
  *      With the stack up, `lich exec sh -c 'echo $DATABASE_URL'` resolves
  *      the stack env_group and the child sees the interpolated
- *      `postgresql://postgres:postgres@localhost:<digits>/postgres`. The
+ *      `postgresql://postgres:postgres@localhost:<digits>/dogfood`. The
  *      digits prove port allocation ran — not just literal pass-through of
- *      `${owned.supabase.ports.db}`.
+ *      `${services.postgres.host_port}`.
  *
  *   2. `--env-group=<X> overrides the default stack group`
  *      `lich exec --env-group=isolated-tools sh -c 'echo $TOOL_MODE-$DATABASE_URL'`
@@ -24,12 +24,13 @@
  *      Verified without the stack running because it never gets that far.
  *
  * Why the stack must be up for tests 1 + 2:
- *   The dogfood-stack's top-level `env` references `${owned.supabase.ports.db}`
- *   and `${owned.api.port}`. Those refs only resolve once allocator state has
- *   been written by `lich up`. Test 3 is the only one that doesn't need a
- *   live stack — but we still keep it on the same fixture because the
- *   up/down dance dominates suite cost and amortizing it over three tests
- *   is much cheaper than a separate suite.
+ *   The dogfood-stack's top-level `env` references
+ *   `${services.postgres.host_port}` and `${owned.api.port}`. Those refs
+ *   only resolve once allocator state has been written by `lich up`. Test
+ *   3 is the only one that doesn't need a live stack — but we still keep
+ *   it on the same fixture because the up/down dance dominates suite cost
+ *   and amortizing it over three tests is much cheaper than a separate
+ *   suite.
  *
  * Isolation:
  *   - tmpdir copy of dogfood-stack (never the repo's real one).
@@ -161,11 +162,11 @@ describe("lich exec (Plan 2 Task 20)", () => {
       console.error("lich exec stderr:", result.stderr);
     }
     expect(result.exitCode).toBe(0);
-    // The literal prefix; the trailing `<digits>/postgres` proves port
+    // The literal prefix; the trailing `<digits>/dogfood` proves port
     // allocation ran end-to-end (the un-interpolated form would still
-    // contain the literal `${owned.supabase.ports.db}`).
+    // contain the literal `${services.postgres.host_port}`).
     expect(result.stdout).toMatch(
-      /postgresql:\/\/postgres:postgres@localhost:\d+\/postgres/,
+      /postgresql:\/\/postgres:postgres@localhost:\d+\/dogfood/,
     );
   });
 

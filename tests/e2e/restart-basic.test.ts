@@ -3,7 +3,7 @@
  *
  * Verifies the whole-stack restart contract end-to-end:
  *
- *   1. `lich up` brings the stack up (api + supabase + web + tunnel_demo).
+ *   1. `lich up` brings the stack up (api + postgres + web + tunnel_demo).
  *   2. `lich restart` tears the stack down and brings it back up in one
  *      shot — same stack_id, fresh PIDs, services serve traffic again.
  *   3. `lich down` cleans everything up.
@@ -16,14 +16,13 @@
  * Per the LEV-421 acceptance criteria: `lich urls` still shows the same
  * stack with new PIDs after restart.
  *
- * Runtime budget: ~10 minutes. A restart is up-down-up; the first up
- * pulls/starts supabase (~30-90s on cold images), down is ~30s, the
- * second up reuses warm images (~30-60s). Even on a slow CI box this
- * lands well inside 10 min.
+ * Runtime budget: ~10 minutes. A restart is up-down-up; with postgres
+ * replacing supabase (LEV-463) the cold-pull dominates ~5-10s, down ~2s,
+ * second up ~3s — easily under the budget even on slow CI.
  *
- * Heavy test; requires docker + supabase CLI v2+ on the host. Without
- * them the first `lich up` will fail loudly with the actual underlying
- * error — same contract as `basic-up.test.ts` (LEV-314).
+ * Heavy test; requires docker on the host. Without it the first `lich
+ * up` will fail loudly with the actual underlying error — same contract
+ * as `basic-up.test.ts` (LEV-314).
  */
 
 import {
@@ -208,9 +207,9 @@ describe("lich restart against dogfood-stack", () => {
       };
 
       // ---- ACT 1: lich up ---------------------------------------------
-      // Generous timeout: first run pulls supabase images, which can take
-      // a couple of minutes cold.
-      step("lich up #1 (cold supabase pull ~30-90s)");
+      // Generous timeout — postgres pulls fast (~5MB alpine image) but
+      // the budget covers slow CI boxes.
+      step("lich up #1 (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -240,6 +239,9 @@ describe("lich restart against dogfood-stack", () => {
       // endpoint post-restart, so this is a precondition.
       const apiBefore = snapBefore.services.find((s) => s.name === "api");
       expect(apiBefore?.state).toBe("ready");
+      // For owned services with `port: { env: PORT }`, the allocator stores
+      // the single port under the key `default`. (Compose services with a
+      // single port use the logical port key from the `ports:` block.)
       const apiPortBefore = apiBefore?.allocated_ports?.default;
       expect(
         apiPortBefore,
@@ -265,10 +267,9 @@ describe("lich restart against dogfood-stack", () => {
 
       // ---- ACT 2: lich restart -----------------------------------------
       // Restart is up+down+up so 5+ min timeout — second up benefits
-      // from warm images, but supabase migrations still re-run if the
-      // dogfood stack declared them in after_up. 6 min budget covers
-      // teardown + warm restart on a slow box.
-      step("lich restart (down + up; warm supabase ~30-60s)");
+      // from warm postgres images and the after_up psql hooks re-run
+      // quickly. 6 min budget covers teardown + warm restart on a slow box.
+      step("lich restart (down + up; warm postgres ~3-5s)");
       const restartResult = runLich(["restart"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -368,7 +369,7 @@ describe("lich restart against dogfood-stack", () => {
       expect(urlsResult.exitCode).toBe(0);
       const urls = parseLichUrls(urlsResult.stdout);
       expect(Object.keys(urls).sort()).toEqual(
-        expect.arrayContaining(["api", "supabase", "web"]),
+        expect.arrayContaining(["api", "postgres", "web"]),
       );
       step("post-restart assertions complete");
 
@@ -388,9 +389,9 @@ describe("lich restart against dogfood-stack", () => {
       expect(downSnap?.status).toBe("stopped");
       step("lich down complete; stack stopped");
     },
-    // 10-minute per-test budget: cold pull (~90s) + first up (~60s) +
-    // restart down (~30s) + restart up warm (~60s) + final down (~30s) +
-    // headroom for slow CI. The default 120s is wildly too tight.
+    // 10-minute per-test budget: postgres pulls fast (~5MB alpine) so the
+    // happy path lands well under 1 minute. Headroom for slow CI and the
+    // restart up-down-up sequence keeps the 10-minute ceiling.
     600_000,
   );
 });

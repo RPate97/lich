@@ -64,7 +64,7 @@
  *   `tools:env-check` runs under `isolated-tools` which has no
  *   `${owned.X.port}` refs). But the dispatcher always resolves the
  *   command's `env_group` before running, and the `stack` group (the
- *   default) does reference `${owned.supabase.ports.db}`. Even though
+ *   default) does reference `${services.postgres.host_port}`. Even though
  *   `test:e2e` doesn't declare `env_group:` (so it falls back to
  *   `stack`), having the stack up means the resolver finds allocated
  *   ports and the dispatch succeeds. Bringing the stack up once across
@@ -81,10 +81,10 @@
  *   - tmpdir + LICH_HOME removed in the same block.
  *   - Setup and teardown live in `it()` blocks rather than
  *     beforeAll/afterAll because Bun's hook timeout default (5s) is too
- *     tight for the supabase up/down dance, and Bun doesn't accept a
- *     per-hook timeout the way vitest does. Tests run in declaration
- *     order, so (setup) → real assertions → (teardown) is preserved.
- *     Same pattern as `tests/e2e/env-groups-isolation.test.ts` and
+ *     tight for the up/down dance, and Bun doesn't accept a per-hook
+ *     timeout the way vitest does. Tests run in declaration order, so
+ *     (setup) → real assertions → (teardown) is preserved. Same pattern
+ *     as `tests/e2e/env-groups-isolation.test.ts` and
  *     `tests/e2e/logs.test.ts`.
  */
 

@@ -87,8 +87,9 @@
  *
  * ## Runtime budget
  *
- * ~5 minutes (mostly the cold-supabase pull on first run). The friendly-
- * URL probes themselves are sub-millisecond once the stack is up.
+ * ~5 minutes (LEV-463 swapped supabase for postgres so cold first-run is
+ * ~10s instead of ~90s). The friendly-URL probes themselves are sub-
+ * millisecond once the stack is up.
  */
 
 import {
@@ -393,9 +394,9 @@ describe("friendly URL reverse proxy against dogfood-stack", () => {
       fixture = makeFixture(proxyPort);
       const { stackPath, lichHome } = fixture;
 
-      // Live progress logger — the heavy step is `lich up` (cold supabase
-      // pull) which can be silent for ~30-90s on first run. Surface what
-      // phase the test is in so a hang is obvious. Matches the pattern from
+      // Live progress logger — `lich up` is the heaviest step but postgres
+      // pulls fast (~5MB alpine image, LEV-463 swap). Surface what phase
+      // the test is in so a hang is obvious. Matches the pattern from
       // basic-up.test.ts, daemon-auto-shutdown.test.ts, and the other
       // dashboard tests.
       const t0 = Date.now();
@@ -409,7 +410,7 @@ describe("friendly URL reverse proxy against dogfood-stack", () => {
       // (the daemon would still open it without the flag — LEV-411). The
       // dashboard server AND the proxy server both start regardless; the
       // flag only affects the auto-open side effect.
-      step("lich up --no-browser (cold supabase pull ~30-90s)");
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -617,9 +618,9 @@ describe("friendly URL reverse proxy against dogfood-stack", () => {
     },
     // Per-test override: 5 minutes — same shape as basic-up,
     // dashboard-stack-detail, and the other dogfood-stack-based tests.
-    // The cold supabase pull on first run is the bottleneck; subsequent
-    // runs hit warm images and complete in under a minute. The proxy
-    // probes themselves are sub-millisecond once the stack is up.
+    // Postgres pulls fast (~5MB alpine, LEV-463 swap) so even cold first-
+    // run is sub-minute, but the headroom is kept for slow CI boxes. The
+    // proxy probes themselves are sub-millisecond once the stack is up.
     300_000,
   );
 });

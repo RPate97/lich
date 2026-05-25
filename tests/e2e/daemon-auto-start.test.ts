@@ -24,8 +24,8 @@
  *   1. (setup) `lich up --no-browser` against a tmpdir copy of the
  *      dogfood-stack, with LICH_HOME pointed at a fresh mkdtempSync.
  *      `--no-browser` opts out of `open <url>`, not out of the daemon —
- *      the daemon must still start. Timeout: 300s (supabase first-pull
- *      cold + boot of the full stack).
+ *      the daemon must still start. Timeout: 300s (postgres pull + boot
+ *      is fast post-LEV-463; headroom kept for slow CI boxes).
  *   2. (assert) `waitForDaemonRunning(<LICH_HOME>)` resolves with both
  *      daemon.pid and daemon.url written AND the recorded PID alive
  *      (signal-0 probe). Then `fetch(<url>/healthz)` returns 200 —
@@ -46,9 +46,10 @@
  *     same way every other lich subsystem does (see pid-file.ts §"All
  *     functions honor LICH_HOME environment variable for test isolation").
  *
- * Heavy test; requires docker + supabase CLI v2+ on the host. Without
- * them the first `lich up` fails loudly with the actual underlying error
- * — same contract as basic-up.test.ts (LEV-314).
+ * Heavy test; requires docker on the host (LEV-463 dropped the supabase
+ * CLI prerequisite). Without docker the first `lich up` fails loudly with
+ * the actual underlying error — same contract as basic-up.test.ts
+ * (LEV-314).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -145,7 +146,7 @@ afterAll(() => {
 
 // ---------------------------------------------------------------------------
 // Live progress logger — this is one of the slower e2e tests in the suite
-// (full dogfood-stack up = supabase pull + boot). Without progress lines
+// (full dogfood-stack up = postgres pull + boot). Without progress lines
 // the user stares at silence for minutes wondering whether anything's wrong.
 // ---------------------------------------------------------------------------
 
@@ -181,7 +182,7 @@ describe("daemon auto-start on first `lich up`", () => {
       // The daemon itself MUST still start — `--no-browser` only
       // suppresses the auto-open, not the spawn. See `commands/up.ts`
       // Plan 5 Task 9 block: `ensureDaemonRunning({ openBrowser: !noBrowser })`.
-      step("lich up --no-browser (supabase first-pull ~30-90s)");
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -190,8 +191,8 @@ describe("daemon auto-start on first `lich up`", () => {
       if (upResult.exitCode !== 0) {
         // Surface stdout+stderr so a failed up gives a real diagnostic;
         // otherwise the next assertion fails with "timeout waiting for
-        // daemon" and the actual cause (docker not running, supabase CLI
-        // missing, etc.) stays hidden.
+        // daemon" and the actual cause (docker not running, port
+        // conflicts, etc.) stays hidden.
         throw new Error(
           `lich up failed (exit ${upResult.exitCode})\n` +
             `--- stdout ---\n${upResult.stdout}\n` +

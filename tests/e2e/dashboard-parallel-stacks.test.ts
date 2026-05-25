@@ -74,18 +74,19 @@
  *   4. (teardown) lich nuke --yes (tears down both stacks AND the
  *      shared daemon), tmpdir cleanups.
  *
- * Resource budget: TWO full dogfood stacks (each = Supabase + api + web +
- * tunnel_demo, plus a cold supabase pull on first run). Expect ~5-7
- * minutes total. The setup-a / setup-b `it` blocks use 600s timeouts to
- * absorb the worst case without flaking on slow CI hosts. Per the task
- * description, "this is the HEAVIEST e2e test in the suite."
+ * Resource budget: TWO full dogfood stacks (each = postgres + api + web +
+ * tunnel_demo, with the postgres alpine image pulling fast). Per LEV-463
+ * the supabase → postgres swap cut total cold-startup substantially.
+ * The setup-a / setup-b `it` blocks use 600s timeouts to absorb the worst
+ * case without flaking on slow CI hosts. Per the task description,
+ * "this is the HEAVIEST e2e test in the suite."
  *
  * STATUS (2026-05-24): LEV-414 landed — the daemon wires both the
  * dashboard server and the proxy into its main loop — so this test should
  * be functional in a clean docker environment. Docker contention (too
- * many stacks already running, supabase failing to allocate its
- * containers under load) is the most likely failure mode; if it surfaces,
- * the test fails loudly with the underlying error rather than faking the
+ * many stacks already running, postgres failing to allocate its container
+ * under load) is the most likely failure mode; if it surfaces, the test
+ * fails loudly with the underlying error rather than faking the
  * assertion. Same contract as `parallel-stacks.test.ts` and
  * `basic-up.test.ts` (LEV-314).
  */
@@ -230,7 +231,7 @@ let daemonInfo: { pid: number; url: string } | null = null;
 
 // ---------------------------------------------------------------------------
 // Live progress logger — this is the heaviest e2e test in the suite (two
-// full dogfood-stack ups = supabase pull + boot * 2). Without progress
+// full dogfood-stack ups = postgres pull + boot * 2). Without progress
 // lines the user stares at silence for minutes wondering whether anything's
 // wrong. Module-scoped so every `it` shares the same t0 — the elapsed
 // numbers tell a continuous story.
@@ -453,7 +454,7 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
       // `<LICH_HOME>/daemon.pid` and `daemon.url`, starts the dashboard
       // server + proxy server + state watcher). The summary line
       // `Dashboard: <url>` confirms the daemon launched.
-      step("lich up A --no-browser (supabase first-pull ~30-90s)");
+      step("lich up A --no-browser (postgres pull + boot ~5-10s)");
       const upA = lichUp(stackA.path);
       if (upA.exitCode !== 0) {
         throw new Error(

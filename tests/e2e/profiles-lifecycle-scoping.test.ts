@@ -7,8 +7,8 @@
  *   `after_up under dev profile runs migrations + seed`
  *      The dogfood-stack's `dev` profile carries:
  *          lifecycle.after_up:
- *            - supabase migration up
- *            - psql "$DATABASE_URL" -f supabase/seed.sql
+ *            - psql "$DATABASE_URL" -f db/migrations/01_init.sql
+ *            - psql "$DATABASE_URL" -f db/seed.sql
  *      `lich up` (default = dev) must execute both hooks. We assert this by
  *      counting rows in `public.things` via psql against the resolved
  *      DATABASE_URL — the migration creates the table, the seed plants 3
@@ -31,7 +31,7 @@
  *     - The inherited `after_up` resolves the seed's `$DATABASE_URL`
  *       against the active profile's env at execution time — which IS
  *       the overridden hostname.
- *     - `psql "$DATABASE_URL" -f seed.sql` therefore fails to connect,
+ *     - `psql "$DATABASE_URL" -f db/seed.sql` therefore fails to connect,
  *       the after_up phase aborts, and `lich up` exits non-zero.
  *   The seed cannot reach a real Postgres unless the active profile's
  *   resolved DATABASE_URL points at one. Demonstrating "the extends
@@ -45,7 +45,7 @@
  *   semantic is already exercised by the unit tests for
  *   `profiles/resolve.ts` (`composes lifecycle.after_up: parent entries
  *   first, then child entries`) and by `commands/up.test.ts`. The
- *   "after_up does NOT run for a profile that excludes supabase"
+ *   "after_up does NOT run for a profile that excludes postgres"
  *   scenario the plan flagged as optional is similarly deferred — the
  *   dogfood-stack has no such profile today.
  *
@@ -55,20 +55,20 @@
  *   migration creates a table, the seed inserts rows, `select count(*)`
  *   reads them back. The `lich exec` proxy routes through the same env
  *   pipeline as the after_up hook, so the test exercises the SAME
- *   DATABASE_URL the hook resolved (worktree-scoped Supabase port).
+ *   DATABASE_URL the hook resolved (worktree-scoped Postgres host port).
  *
  * Why we use `lich exec` to invoke psql (not psql directly from the test):
  *   `lich exec` resolves the stack env_group, which picks up the active
  *   profile's resolved env (Plan 3 Task 6 / LEV-380). Running psql via the
  *   shell directly would require the test to know the worktree's allocated
- *   Supabase port — which is exactly what the exec path computes for us.
+ *   Postgres port — which is exactly what the exec path computes for us.
  *   It also catches a class of bug where `after_up` ran against a DIFFERENT
  *   resolved DATABASE_URL than what subsequent stack consumers see.
  *
- * Prerequisites: docker + supabase CLI v2+ on PATH (the supabase CLI ships
- * psql under its bundled tools, but most dev machines also have a system
- * psql via libpq / homebrew). Without them `lich up` errors loudly; see
- * tests/e2e/README.md and Plan 0's prerequisites.
+ * Prerequisites: docker + a host-installed psql (libpq / homebrew). LEV-463
+ * dropped the supabase CLI requirement; postgres now runs as a plain compose
+ * service. Without them `lich up` errors loudly; see tests/e2e/README.md and
+ * Plan 0's prerequisites.
  *
  * Isolation:
  *   - tmpdir copy of dogfood-stack (never the repo's real one).
@@ -138,7 +138,7 @@ interface Fixture {
 function makeFixture(prefix: string): Fixture {
   // install: true — apps/web's `next dev` and apps/api's `bun run dev` need
   // node_modules in the copy (same pattern as basic-up.test.ts). The
-  // dogfood-stack's `dev` profile starts api + web + supabase + tunnel_demo,
+  // dogfood-stack's `dev` profile starts api + web + postgres + tunnel_demo,
   // so the install is required for `lich up` to succeed at all.
   const stack = copyExampleToTmpdir("dogfood-stack", {
     prefix: `lich-e2e-${prefix}-`,
@@ -216,10 +216,10 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
         process.stderr.write(`  [+${elapsed}s] ${label}\n`);
       };
 
-      step("lich up (runs after_up: supabase migration up + seed)");
+      step("lich up (runs after_up: psql migration + seed)");
       // Mark didUp=true BEFORE invoking up — even a partial up (e.g.
-      // supabase containers started but the after_up hook failed) leaves
-      // docker containers and owned PIDs behind that need `lich nuke` to
+      // postgres container started but the after_up hook failed) leaves
+      // the container and owned PIDs behind that need `lich nuke` to
       // reclaim. If we waited until exit 0 to set this flag, a hook
       // failure would leak resources because teardown's `if (didUp)` gate
       // would be false. nuke is idempotent against partial state.
@@ -227,8 +227,8 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       const upResult = runLich(["up"], {
         cwd: fix.stackPath,
         env: { LICH_HOME: fix.lichHome },
-        // up against the full dogfood stack is heavy: supabase first-pull
-        // alone can be 60-90s, plus migrations + seed. 4 minutes is the
+        // up against the full dogfood stack: postgres pulls fast (~5MB
+        // alpine) plus the migration + seed psql calls. 4 minutes is the
         // conservative ceiling. Matches profiles-named.test.ts.
         timeout: 240_000,
       });
@@ -279,7 +279,7 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
         {
           cwd: fix!.stackPath,
           env: { LICH_HOME: fix!.lichHome },
-          // psql against the local supabase is fast (sub-second once up)
+          // psql against the local postgres is fast (sub-second once up)
           // but a generous 30s ceiling covers cold-cache cases.
           timeout: 30_000,
         },
@@ -294,47 +294,38 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       // to the resolved DATABASE_URL.
       expect(result.exitCode).toBe(0);
 
-      // Why we assert count >= 6 (not == 3) — the load-bearing detail of
-      // this test:
+      // Why we assert count >= 3 — the load-bearing detail of this test:
       //
-      // `supabase/config.toml` has `[db.seed] enabled = true` with
-      // `sql_paths = ['./seed.sql']`. `supabase start` (the supabase owned
-      // service's `cmd`) does a fresh `db reset` on first launch, which
-      // applies migrations AND runs the seed exactly once → 3 rows inserted
-      // by Supabase's own startup path.
+      // Raw postgres (LEV-463 swap; was supabase) has no auto-seed: the
+      // bare `postgres:16-alpine` container starts an empty DB. Schema
+      // and rows ONLY exist if the profile-scoped after_up hooks ran:
+      //   - `psql "$DATABASE_URL" -f db/migrations/01_init.sql` — creates
+      //     `public.things`. If it didn't run, `select count(*) from
+      //     things` errors with "relation does not exist" (exit non-zero)
+      //     and we fail at the previous expect(result.exitCode).toBe(0).
+      //   - `psql "$DATABASE_URL" -f db/seed.sql` — inserts 3 rows. If
+      //     it didn't run, count is 0 and this assertion fires.
       //
-      // The profile-scoped `after_up` hooks then run AFTER the supabase
-      // service is ready:
-      //   - `supabase migration up` — idempotent; no new migrations to
-      //     apply on a fresh start → 0 new rows.
-      //   - `psql "$DATABASE_URL" -f supabase/seed.sql` — re-runs the
-      //     seed against the live DB. The seed inserts 3 more rows
-      //     (the `on conflict do nothing` clause only protects against
-      //     PRIMARY KEY conflicts on `id`, but the inserts don't pin id
-      //     so new rows get fresh auto-incremented ids and ALL three
-      //     succeed) → 3 more rows = 6 total.
-      //
-      // The DISCRIMINATOR between "lich after_up ran" and "only supabase
-      // auto-seed ran" is therefore count >= 6:
+      // The DISCRIMINATOR between "lich after_up ran" and "lich silently
+      // dropped the profile-scoped lifecycle" is therefore count >= 3:
       //   - If lich's after_up was silently skipped (Plan 3 regression
       //     where `up.ts` drops the profile's lifecycle list, the bug
-      //     this test guards against), count would be exactly 3 — only
-      //     supabase's own start-time seed ran.
-      //   - If lich's after_up ran, count is 6 (or higher if `lich up`
-      //     was re-run on a persistent volume, which we don't hit here
-      //     because each tmpdir gets a fresh project_id).
+      //     this test guards against), the migration never ran either —
+      //     the previous psql exit-code check already caught it. If only
+      //     the seed was skipped (unlikely partial regression), count
+      //     would be 0.
+      //   - If lich's after_up ran, count is exactly 3.
       //
-      // We use `>=` rather than `===` to be robust against future supabase
-      // CLI behavior tweaks that might re-seed on subsequent reset/restart
-      // (e.g. if `supabase start` ever does a no-op reset that re-seeds).
-      // Anything below 6 is a real bug worth surfacing.
+      // We use `>=` rather than `===` to be robust against future seed
+      // expansions (adding more rows is still a passing signal — the
+      // regression we care about is the hook NOT running at all).
       const count = parseInt(result.stdout.trim(), 10);
       expect(
         count,
-        `psql returned "${result.stdout.trim()}" — expected an integer ≥ 6 ` +
-          `(3 from supabase-start auto-seed + 3 from after_up's psql -f seed.sql); ` +
-          `count of exactly 3 would mean lich silently dropped the profile-scoped after_up.`,
-      ).toBeGreaterThanOrEqual(6);
+        `psql returned "${result.stdout.trim()}" — expected an integer ≥ 3 ` +
+          `(3 from after_up's psql -f db/seed.sql); count of 0 would mean ` +
+          `lich silently dropped the profile-scoped after_up seed step.`,
+      ).toBeGreaterThanOrEqual(3);
     },
     /* timeout */ 60_000,
   );

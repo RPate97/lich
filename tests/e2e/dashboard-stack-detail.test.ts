@@ -23,11 +23,11 @@
  *        - `status: "up"` (matches the on-disk state.json)
  *        - `active_profile: "dev"` (dogfood-stack's default profile per
  *          lich.yaml:131-133)
- *        - the four expected services (`api`, `supabase`, `tunnel_demo`,
+ *        - the four expected services (`api`, `postgres`, `tunnel_demo`,
  *          `web`) all in the `ready` state — verifying the projection
  *          surfaces per-service detail
- *        - allocated ports per service — every dogfood-stack owned service
- *          gets at least one port (Plan 1 allocator output); the projection
+ *        - allocated ports per service — every dogfood-stack service gets
+ *          at least one port (Plan 1 allocator output); the projection
  *          surfaces them as `ports` (renamed from snapshot's
  *          `allocated_ports`, see `stacks-view.ts`'s `projectService`)
  *        - `primary_url` set (Plan 5 Task 8 routing population — the
@@ -63,9 +63,9 @@
  *     runs (the next test's `lich up` would short-circuit on the
  *     already-running PID).
  *
- * Runtime budget: ~5 minutes (mostly the cold-supabase pull on first
- * run). The actual dashboard fetches are sub-millisecond once the stack
- * is up; the heavy time is the up itself.
+ * Runtime budget: ~5 minutes (LEV-463 swapped supabase for postgres so
+ * cold first-run is ~10s instead of ~90s). The actual dashboard fetches
+ * are sub-millisecond once the stack is up.
  *
  * STATUS (2026-05-24): This test fails until LEV-414 wires the dashboard
  * server into the daemon. The failure mode pre-LEV-414 is `waitForDaemonRunning`
@@ -281,9 +281,9 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       fixture = makeFixture();
       const { stackPath, lichHome } = fixture;
 
-      // Live progress logger — the heavy step is `lich up` (cold supabase
-      // pull) which can be silent for ~30-90s on first run. Surface what
-      // phase the test is in so a hang is obvious.
+      // Live progress logger — `lich up` is the heaviest step but postgres
+      // pulls fast (~5MB alpine image). Surface what phase the test is in
+      // so a hang is obvious.
       const t0 = Date.now();
       const step = (label: string): void => {
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -294,7 +294,7 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       // --no-browser keeps CI/headless hosts from trying to spawn Chrome
       // (the daemon would still open it without the flag — LEV-411). The
       // dashboard server starts regardless.
-      step("lich up --no-browser (cold supabase pull ~30-90s)");
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -365,18 +365,29 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       // verbatim (stacks-view.ts:243-247).
       expect(stack.active_profile).toBe("dev");
 
-      // services: dogfood-stack defines four owned services. All should
-      // be in `ready` after a successful `lich up` (Plan 4's ready_when
+      // services: the dogfood-stack defines four services — three owned
+      // (api, tunnel_demo, web) and one compose (postgres). All should be
+      // in `ready` after a successful `lich up` (Plan 4's ready_when
       // contract). We don't pin the order — the projection doesn't sort
       // within a stack — but the set must match exactly.
       const serviceNames = stack.services.map((s) => s.name).sort();
-      expect(serviceNames).toEqual(["api", "supabase", "tunnel_demo", "web"]);
+      expect(serviceNames).toEqual(["api", "postgres", "tunnel_demo", "web"]);
+
+      // Per-service kind expectations: postgres is a compose service (the
+      // LEV-463 supabase→postgres swap moved it from owned to compose);
+      // the rest are owned host processes.
+      const expectedKinds: Record<string, "owned" | "compose"> = {
+        api: "owned",
+        postgres: "compose",
+        tunnel_demo: "owned",
+        web: "owned",
+      };
 
       for (const svc of stack.services) {
-        // Every dogfood-stack service is `owned` (host process) — none
-        // of them are docker-compose services in the current yaml. The
-        // projection passes the kind through unchanged.
-        expect(svc.kind).toBe("owned");
+        expect(
+          svc.kind,
+          `service ${svc.name} kind mismatch`,
+        ).toBe(expectedKinds[svc.name]);
         // After `status: up`, every service is ready. If a service were
         // still `initializing` or `starting`, the stack-level status
         // would be `starting` or `partial`, not `up`. Catching that here
@@ -461,9 +472,9 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       expect((caught as Error).message).toContain("404");
       step("404 negative case passed");
     },
-    // Per-test override: 5 minutes — same shape as basic-up. The cold
-    // supabase pull on first run is the bottleneck; subsequent runs hit
-    // warm images and complete in under a minute.
+    // Per-test override: 5 minutes — same shape as basic-up. Postgres
+    // pulls fast (~5MB alpine) so even cold first-run is sub-minute, but
+    // the headroom is kept for slow CI boxes.
     300_000,
   );
 });

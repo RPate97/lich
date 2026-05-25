@@ -16,20 +16,21 @@
  *
  *   3. `user group without extends does NOT include stack env`
  *      Run `lich env isolated-tools`. The output must NOT contain
- *      `DATABASE_URL` or `NEXT_PUBLIC_SUPABASE_URL`, even though those are
- *      on the resolved `stack` group — isolated-tools has no `extends`.
+ *      `DATABASE_URL`, even though that's on the resolved `stack` group —
+ *      isolated-tools has no `extends`.
  *
  * Together these pin the env_groups isolation guarantees end-to-end.
  *
  * Why `lich up` before `lich env`?
- *   The dogfood-stack's `stack` env references `${owned.supabase.ports.db}`
- *   etc. — those refs only resolve after the supabase service has been
- *   allocated ports (which happens during `lich up`). For test 2
- *   (`extends: stack`) and test 3 (`without extends`) the stack must be up
- *   so port allocation has written `state.json`. Test 1 (`process_env`
- *   isolation) doesn't strictly need a live stack — `isolated-tools` has no
- *   interpolation refs — but we keep all three tests on the same fixture so
- *   the up/down cost is paid once across the suite.
+ *   The dogfood-stack's `stack` env references
+ *   `${services.postgres.host_port}` etc. — those refs only resolve after
+ *   the postgres service has been allocated a host port (which happens
+ *   during `lich up`). For test 2 (`extends: stack`) and test 3 (`without
+ *   extends`) the stack must be up so port allocation has written
+ *   `state.json`. Test 1 (`process_env` isolation) doesn't strictly need a
+ *   live stack — `isolated-tools` has no interpolation refs — but we keep
+ *   all three tests on the same fixture so the up/down cost is paid once
+ *   across the suite.
  *
  * Isolation:
  *   - tmpdir copy of dogfood-stack (never the repo's real one).
@@ -103,10 +104,10 @@ let fixture: Fixture | null = null;
 // ---------------------------------------------------------------------------
 //
 // Setup and teardown live in `it()` blocks rather than beforeAll/afterAll
-// because Bun's hook timeout default (5s) is too tight for the supabase
-// up/down dance, and Bun doesn't accept a per-hook timeout argument the way
-// vitest does. Putting them in `it()` blocks lets us pass a real timeout
-// per step. Tests run in declaration order, so (setup) → real assertions →
+// because Bun's hook timeout default (5s) is too tight for the up/down
+// dance, and Bun doesn't accept a per-hook timeout argument the way vitest
+// does. Putting them in `it()` blocks lets us pass a real timeout per
+// step. Tests run in declaration order, so (setup) → real assertions →
 // (teardown) is preserved. Same pattern as tests/e2e/logs.test.ts.
 
 describe("env_groups isolation (Plan 2 Task 22)", () => {
@@ -184,7 +185,7 @@ describe("env_groups isolation (Plan 2 Task 22)", () => {
     // the allocated postgres port (digits prove port resolution ran end-to-
     // end, not just literal-pass-through).
     expect(result.stdout).toMatch(
-      /^DATABASE_URL=postgresql:\/\/postgres:postgres@localhost:\d+\/postgres$/m,
+      /^DATABASE_URL=postgresql:\/\/postgres:postgres@localhost:\d+\/dogfood$/m,
     );
     // From the group's own `env:` literal.
     expect(result.stdout).toMatch(/^TEST_MODE=integration$/m);
@@ -203,10 +204,9 @@ describe("env_groups isolation (Plan 2 Task 22)", () => {
       console.error("lich env stderr:", result.stderr);
     }
     expect(result.exitCode).toBe(0);
-    // Neither stack-defined var should appear: isolated-tools has no
+    // The stack-defined var must NOT appear: isolated-tools has no
     // `extends`, so the stack pipeline doesn't run for this group.
     expect(result.stdout).not.toMatch(/^DATABASE_URL=/m);
-    expect(result.stdout).not.toMatch(/^NEXT_PUBLIC_SUPABASE_URL=/m);
     // Sanity: the group's own literal IS present, confirming we got real
     // output (not an empty file that would also pass the negative checks).
     expect(result.stdout).toMatch(/^TOOL_MODE=standalone$/m);

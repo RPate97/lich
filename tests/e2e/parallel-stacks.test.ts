@@ -56,12 +56,11 @@
  * test body throws. The tmpdir copies and the shared LICH_HOME are
  * recursively removed. Leaving leaks here would corrupt subsequent runs.
  *
- * Resource budget: starting two full stacks (Supabase + API + web each)
- * is heavy — we extend each test timeout to 5 minutes. The full file may
- * therefore take ~6-10 minutes when both blocks run end-to-end. Tests run
- * unconditionally; without docker + supabase v2+ on the host, `lich up`
- * fails loudly with the real underlying error (see tests/e2e/README.md
- * and LEV-314).
+ * Resource budget: starting two full stacks (postgres + API + web each)
+ * is much lighter than the previous supabase-based setup (LEV-463 swap),
+ * but the 5-minute per-test timeout stays as headroom for slow CI. Tests
+ * run unconditionally; without docker on the host, `lich up` fails loudly
+ * with the real underlying error (see tests/e2e/README.md and LEV-314).
  */
 
 import {
@@ -310,8 +309,8 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
 
       // Progress logger. Writes to stderr, which bun displays live during
       // the test rather than buffering until the it() resolves. Without
-      // these the test goes silent for minutes (lich up is synchronous +
-      // supabase first-pull is slow) and any failure looks like a hang.
+      // these the test could go silent (lich up is synchronous and even
+      // postgres pull adds a few seconds on cold cache).
       const t0 = Date.now();
       const step = (label: string): void => {
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -319,7 +318,7 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       };
 
       // ---- Bring A up --------------------------------------------------
-      step("lich up A (supabase first-pull ~30-60s)");
+      step("lich up A (postgres pull + boot ~5-10s)");
       const upA = lichUp(a.path);
       if (upA.exitCode !== 0) {
         throw new Error(
@@ -468,22 +467,18 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
 //
 // Topology:
 //   - Worktree A: `lich up dev` — the default profile, all services start
-//     and the dev-profile `after_up` (migrations + seed) succeeds because
-//     `DATABASE_URL` resolves to the local Supabase. End state: status:up,
-//     active_profile:dev.
-//   - Worktree B: `lich up dev:env-override` — extends dev (so the owned
-//     list is identical: supabase, api, web, tunnel_demo) but overrides
-//     `DATABASE_URL` to `postgresql://postgres:test@db.test.example.com:5432/postgres`.
-//     All services still start (port allocator runs, supabase comes up,
-//     api+web come up against the LOCAL Supabase because the override only
-//     affects the lifecycle env). The inherited `after_up` then runs:
-//       1. `supabase migration up` — uses the supabase CLI, NOT
-//          $DATABASE_URL, so this succeeds against the local DB.
-//       2. `psql "$DATABASE_URL" -f supabase/seed.sql` — resolves
-//          $DATABASE_URL against the active profile's env (post-LEV-455
-//          this is properly profile-aware), tries to reach
-//          `db.test.example.com`, gets a "could not translate host name"
-//          error from libpq in ~50ms, exits non-zero.
+//     and the dev-profile `after_up` (psql migrations + seed) succeeds
+//     because `DATABASE_URL` resolves to the local postgres compose
+//     service. End state: status:up, active_profile:dev.
+//   - Worktree B: `lich up dev:env-override` — extends dev (so the
+//     services/owned list is identical: postgres + api + web + tunnel_demo)
+//     but overrides `DATABASE_URL` to
+//     `postgresql://postgres:test@db.test.example.com:5432/dogfood`.
+//     All services still start (port allocator runs, postgres comes up,
+//     api+web come up). The inherited `after_up` then runs the two psql
+//     steps against the OVERRIDDEN URL (post-LEV-455 this is properly
+//     profile-aware), libpq tries to reach `db.test.example.com`, gets a
+//     "could not translate host name" error in ~50ms, exits non-zero.
 //     The after_up phase aborts, `lich up` returns exit 1, the stack is
 //     marked status:failed with active_profile:dev:env-override preserved.
 //     Owned services are NOT torn down automatically on after_up failure
@@ -697,7 +692,7 @@ describe("parallel stacks with profiles (Plan 3 Task 26)", () => {
       const b = profilesStackB!;
 
       // Progress logger — same shape as the sentinel block above. Each
-      // `lich up` here brings up the full dogfood stack (supabase + api +
+      // `lich up` here brings up the full dogfood stack (postgres + api +
       // web + tunnel_demo); the profile only changes WHICH lifecycle
       // hooks resolve to which env (and, for B, whether after_up succeeds).
       const t0 = Date.now();
@@ -708,9 +703,9 @@ describe("parallel stacks with profiles (Plan 3 Task 26)", () => {
 
       // ---- Bring A up under `dev` (default profile) -------------------
       // A is the clean happy-path side — dev's after_up resolves
-      // $DATABASE_URL against the local Supabase port, migrations + seed
-      // succeed, status:up.
-      step("lich up dev for A (supabase first-pull ~30-60s)");
+      // $DATABASE_URL against the local postgres host port, migrations +
+      // seed succeed, status:up.
+      step("lich up dev for A (postgres pull + boot ~5-10s)");
       const upA = lichUpWithProfile(a.path, "dev");
       if (upA.exitCode !== 0) {
         throw new Error(
@@ -727,16 +722,15 @@ describe("parallel stacks with profiles (Plan 3 Task 26)", () => {
       step(`A up under dev (stack_id=${stateA1!.stack_id})`);
 
       // ---- Bring B up under `dev:env-override` ------------------------
-      // The override profile inherits dev's owned list + lifecycle via
-      // `extends: dev`, then overrides $DATABASE_URL to the non-resolving
-      // `db.test.example.com`. All services come up (supabase pulls a
-      // FRESH stack scoped by worktree.id — `SUPABASE_PROJECT_ID:
-      // dogfood-${worktree.id}` — so it doesn't collide with A's docker
-      // containers). Inherited after_up runs and the psql seed step fails
-      // DNS resolution, aborting after_up. Per up.ts:960-973, the stack
-      // is marked status:failed but owned services + compose containers
-      // are NOT torn down (they were ready BEFORE after_up tried to seed).
-      // exitCode is 1.
+      // The override profile inherits dev's services/owned list +
+      // lifecycle via `extends: dev`, then overrides $DATABASE_URL to the
+      // non-resolving `db.test.example.com`. All services come up
+      // (postgres comes up under a per-stack compose project so it
+      // doesn't collide with A's container). Inherited after_up runs
+      // and the psql migration/seed steps fail DNS resolution, aborting
+      // after_up. Per up.ts:960-973, the stack is marked status:failed
+      // but owned services + compose containers are NOT torn down (they
+      // were ready BEFORE after_up tried to seed). exitCode is 1.
       step("lich up dev:env-override for B (after_up will fail; expected)");
       const upB = lichUpWithProfile(b.path, "dev:env-override");
       // We deliberately do NOT throw on non-zero — B's after_up is
@@ -772,8 +766,8 @@ describe("parallel stacks with profiles (Plan 3 Task 26)", () => {
       // profile-aware parallel stacks: even though both stacks bring up
       // the same shape of services under closely related profiles, they
       // live under distinct stack_ids with distinct docker projects
-      // (worktree.id flows into SUPABASE_PROJECT_ID per the dogfood YAML)
-      // and the registry must not have collapsed them.
+      // (lich's compose project name includes the worktree hash) and the
+      // registry must not have collapsed them.
       expect(stateA2!.stack_id).not.toBe(stateB1!.stack_id);
 
       const portsA = collectAllocatedPorts(stateA2!);

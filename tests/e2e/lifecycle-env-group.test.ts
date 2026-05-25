@@ -26,14 +26,15 @@
  *        - `TEST_MODE=integration`              ← layered from the group
  *        - `DATABASE_URL=postgresql://...:N...` ← inherited from `stack`
  *      The second assertion is the load-bearing one: it proves the parent
- *      chain resolved correctly (DATABASE_URL is a `${owned.supabase.ports.db}`
- *      interpolation that ONLY succeeds if the inherited stack env
- *      reached the executor with allocated ports populated).
+ *      chain resolved correctly (DATABASE_URL is a
+ *      `${services.postgres.host_port}` interpolation that ONLY succeeds
+ *      if the inherited stack env reached the executor with allocated
+ *      ports populated).
  *   5. `lich down` + cleanup.
  *
- * Prerequisites: docker + supabase CLI v2+ on PATH. Without them the
- * `lich up` step fails loudly with the real error (see
- * tests/e2e/README.md + LEV-314).
+ * Prerequisites: docker on PATH (LEV-463 dropped the supabase CLI
+ * requirement). Without docker the `lich up` step fails loudly with the
+ * real error (see tests/e2e/README.md + LEV-314).
  *
  * Isolation: tmpdir copy + per-test LICH_HOME mean nothing leaks between
  * runs or into the user's real ~/.lich.
@@ -200,26 +201,26 @@ describe("lifecycle.after_up env_group resolution (LEV-345 sentinel)", () => {
       // (b) Inherited interpolated value from the parent `stack` group.
       //     Load-bearing because:
       //       - DATABASE_URL is a top-level env entry whose value is
-      //         `postgresql://...:${owned.supabase.ports.db}/postgres`.
-      //         Interpolation only resolves if the supabase service's
+      //         `postgresql://...:${services.postgres.host_port}/dogfood`.
+      //         Interpolation only resolves if the postgres service's
       //         ports map is populated — which it only is when the parent
       //         chain reached `resolveStackGroup` with the allocated-ports
       //         context. A bug that resolved the group with an empty
       //         allocated-ports context would still produce a value, but
       //         the interpolation would throw before write.
-      //       - The presence of digits between `:` and `/postgres` proves
+      //       - The presence of digits between `:` and `/dogfood` proves
       //         port allocation flowed through correctly. A literal-string
       //         leak (e.g. the un-interpolated `${...}` token) would fail
       //         the digit-class assertion.
       expect(marker).toMatch(
-        /DATABASE_URL=postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/postgres/,
+        /DATABASE_URL=postgresql:\/\/postgres:postgres@(?:localhost|127\.0\.0\.1):\d+\/dogfood/,
       );
 
       // ---- lich down: in-test teardown ---------------------------------
       // Doing the bulk of teardown here (rather than leaving everything to
       // afterEach) keeps the `afterEach` hook fast — Bun enforces a 5s
       // default timeout on hooks with no per-hook override, and `lich down`
-      // on the dogfood-stack (supabase stop + container teardown) routinely
+      // on the dogfood-stack (postgres stop + container teardown) routinely
       // takes 20-30s. afterEach still issues a second best-effort `lich
       // down` so that a test body throw doesn't leak containers, but that
       // second call is idempotent + fast against an already-stopped stack.

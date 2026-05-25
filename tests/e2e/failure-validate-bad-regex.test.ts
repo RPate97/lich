@@ -35,8 +35,8 @@
  *     swaps `out → err` for the error sink).
  *   - JSON output always goes to STDOUT (regardless of `ok`).
  *
- * Speed: pure config — no `lich up`, no docker, no supabase. Each test
- * should finish well under a second.
+ * Speed: pure config — no `lich up`, no docker. Each test should finish
+ * well under a second.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";

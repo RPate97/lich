@@ -36,17 +36,17 @@
  * Why a minimal lich.yaml (overwriting dogfood's) rather than injecting into
  * the dogfood yaml:
  *
- *   The dogfood `dev` profile starts supabase + api + web + tunnel_demo in
+ *   The dogfood `dev` profile starts postgres + api + web + tunnel_demo in
  *   the same dep level. Per-level `Promise.allSettled` semantics in `up.ts`
  *   wait for every service in the level to settle before failing the step,
  *   so adding an `exiter` service to the dogfood yaml would force the test
- *   to wait for supabase's image pull (90s+ on cold cache) just to reach the
- *   failure assertion. Overwriting with a minimal yaml that declares only
- *   the exiter keeps the failure path under 2s while still exercising the
- *   same code path (ProcessExitWatcher → formatFailure → output.failure →
+ *   to wait for the docker pull just to reach the failure assertion.
+ *   Overwriting with a minimal yaml that declares only the exiter keeps the
+ *   failure path under 2s while still exercising the same code path
+ *   (ProcessExitWatcher → formatFailure → output.failure →
  *   writeStateSnapshot).
  *
- *   The dogfood directory structure (`apps/`, `supabase/`, etc.) ships
+ *   The dogfood directory structure (`apps/`, `db/`, etc.) ships
  *   unchanged — the minimal yaml doesn't reference any of it. `install:
  *   false` skips the (slow) bun install since neither cmd needs node_modules
  *   binaries.
@@ -141,7 +141,7 @@ let fixture: Fixture | null = null;
 
 /**
  * Build a fresh fixture: a tmpdir copy of the dogfood-stack with its
- * `lich.yaml` overwritten by `yaml`. The original `apps/` / `supabase/`
+ * `lich.yaml` overwritten by `yaml`. The original `apps/` / `db/`
  * children are untouched — they're unreferenced by the replacement yaml,
  * just inert siblings.
  *

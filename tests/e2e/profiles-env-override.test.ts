@@ -8,19 +8,19 @@
  *
  *   1. `dev profile uses the top-level DATABASE_URL`
  *      `lich up dev` → the dogfood-stack's top-level
- *      `DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"`
+ *      `DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"`
  *      wins (the `dev` profile does NOT override it). `lich exec sh -c
- *      'echo $DATABASE_URL'` therefore prints `...postgres@localhost:<digits>/postgres`
- *      where `<digits>` is the worktree's allocated supabase port. This
- *      asserts the BASELINE — the profile layer is a strict overlay, not a
- *      blanket replacement; when a key isn't overridden, the top-level
- *      value flows through with its `${...}` references interpolated against
- *      the live allocated-ports map.
+ *      'echo $DATABASE_URL'` therefore prints `...postgres@localhost:<digits>/dogfood`
+ *      where `<digits>` is the worktree's allocated postgres host port.
+ *      This asserts the BASELINE — the profile layer is a strict overlay,
+ *      not a blanket replacement; when a key isn't overridden, the
+ *      top-level value flows through with its `${...}` references
+ *      interpolated against the live allocated-ports map.
  *
  *   2. `dev:env-override profile uses the override DATABASE_URL` — GATED
  *      `lich up dev:env-override` brings up the same services (the profile
  *      `extends: dev` so the owned list is identical) but the profile's
- *      `env.DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/postgres"`
+ *      `env.DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/dogfood"`
  *      overrides the top-level value. The override hostname is intentionally
  *      non-resolving — the dogfood YAML's comment is explicit:
  *      "e2e coverage asserts on the env Lich resolved (via `lich exec`),
@@ -76,12 +76,12 @@
  *   with.
  *
  * Why test 1 still brings up the full stack:
- *   The top-level `DATABASE_URL` references `${owned.supabase.ports.db}`,
- *   which only resolves to a real port after `lich up` has run port
- *   allocation. Without a live snapshot, the resolver would throw
- *   InterpolationError on the unresolved reference. Bringing up the full
- *   stack is the simplest way to populate the snapshot and exercise the
- *   real interpolation path.
+ *   The top-level `DATABASE_URL` references
+ *   `${services.postgres.host_port}`, which only resolves to a real port
+ *   after `lich up` has run port allocation. Without a live snapshot, the
+ *   resolver would throw InterpolationError on the unresolved reference.
+ *   Bringing up the full stack is the simplest way to populate the
+ *   snapshot and exercise the real interpolation path.
  *
  * Isolation:
  *   - The test copies dogfood-stack into a fresh tmpdir.
@@ -220,8 +220,8 @@ describe("profile env override (Plan 3 Task 22)", () => {
   // -----------------------------------------------------------------------
   // Test 1: `lich up dev` — top-level DATABASE_URL flows through (the `dev`
   //         profile does NOT override it). Passes today: top-level env
-  //         resolution interpolates `${owned.supabase.ports.db}` against the
-  //         allocated-ports snapshot and `lich exec` reads back the same
+  //         resolution interpolates `${services.postgres.host_port}` against
+  //         the allocated-ports snapshot and `lich exec` reads back the same
   //         top-level value (no profile threading needed for this case).
   // -----------------------------------------------------------------------
   describe("dev profile (no override): DATABASE_URL = localhost:<allocated-port>", () => {
@@ -235,8 +235,8 @@ describe("profile env override (Plan 3 Task 22)", () => {
         const upResult = runLich(["up", "dev"], {
           cwd: fix.stackPath,
           env: { LICH_HOME: fix.lichHome },
-          // up against the full dogfood stack is heavy: supabase first-pull
-          // alone can be 60-90s. 4 minutes is the conservative ceiling.
+          // up against the full dogfood stack: postgres pulls fast (~5MB
+          // alpine, sub-10s cold) but headroom kept for slow CI boxes.
           timeout: 240_000,
         });
         if (upResult.exitCode !== 0) {
@@ -253,7 +253,7 @@ describe("profile env override (Plan 3 Task 22)", () => {
       /* timeout */ 300_000,
     );
 
-    it("lich exec resolves DATABASE_URL to localhost with the allocated supabase port", () => {
+    it("lich exec resolves DATABASE_URL to localhost with the allocated postgres port", () => {
       const fix2 = fix!;
       // The `--` separator is load-bearing: mri parses the binary's top-level
       // argv and would otherwise treat `-c` as an option of `lich exec`,
@@ -275,11 +275,12 @@ describe("profile env override (Plan 3 Task 22)", () => {
         console.error("lich exec stderr:", result.stderr);
       }
       expect(result.exitCode).toBe(0);
-      // Trailing `<digits>/postgres` proves the `${owned.supabase.ports.db}`
-      // interpolation ran end-to-end — the un-interpolated form would still
-      // carry the literal `${...}` reference and this would fail.
+      // Trailing `<digits>/dogfood` proves the
+      // `${services.postgres.host_port}` interpolation ran end-to-end — the
+      // un-interpolated form would still carry the literal `${...}`
+      // reference and this would fail.
       expect(result.stdout).toMatch(
-        /postgresql:\/\/postgres:postgres@localhost:\d+\/postgres/,
+        /postgresql:\/\/postgres:postgres@localhost:\d+\/dogfood/,
       );
       // Sanity: the override URL must NOT appear under the dev profile.
       // If a wiring bug ever cross-wires the profiles, this catches it.
@@ -305,7 +306,7 @@ describe("profile env override (Plan 3 Task 22)", () => {
   // resolveStackGroup → resolveTopLevelEnv`. LEV-455 did the same for
   // lifecycle env_group resolution. With both fixes landed, `lich exec`
   // against a stack up'd under `dev:env-override` sees the profile's
-  // overridden DATABASE_URL (`postgresql://postgres:test@db.test.example.com:5432/postgres`)
+  // overridden DATABASE_URL (`postgresql://postgres:test@db.test.example.com:5432/dogfood`)
   // rather than the top-level localhost value.
   //
   // The dev:env-override profile intentionally points at a non-resolving
@@ -326,8 +327,8 @@ describe("profile env override (Plan 3 Task 22)", () => {
         const upResult = runLich(["up", "dev:env-override"], {
           cwd: fix.stackPath,
           env: { LICH_HOME: fix.lichHome },
-          // Same heavy-up budget as test 1: supabase first-pull dominates.
-          // api will likely fail ready_when because its DB pointer is
+          // Same heavy-up budget as test 1: postgres pulls fast but api
+          // will likely fail ready_when because its DB pointer is
           // intentionally bogus; we accept any exit (0 or non-zero) and let
           // the assertion in the next it() block check what actually got
           // resolved into the spawned cmd's env. didUp guards the teardown
@@ -370,7 +371,7 @@ describe("profile env override (Plan 3 Task 22)", () => {
       // `dev:env-override.env.DATABASE_URL`. Verbatim — no interpolation
       // happens on this value because the override is a literal string.
       expect(result.stdout).toContain(
-        "postgresql://postgres:test@db.test.example.com:5432/postgres",
+        "postgresql://postgres:test@db.test.example.com:5432/dogfood",
       );
       // Sanity: the dev-profile URL must NOT bleed through. If profile
       // threading regresses, this catches a cross-wire bug where the

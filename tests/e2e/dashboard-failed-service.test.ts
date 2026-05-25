@@ -20,7 +20,7 @@
  *      service variant whose `cmd` exits non-zero before `ready_when` can
  *      ever match. Same overwrite trick `failure-fail-when.test.ts` and
  *      `failure-process-exit.test.ts` use to keep the failure path under
- *      seconds (the real dogfood `dev` profile would force a supabase cold
+ *      seconds (the real dogfood `dev` profile would force a postgres
  *      pull just to reach the failure assertion).
  *
  *   2. Isolated LICH_HOME — the daemon's PID/URL files and the stack's
@@ -91,7 +91,7 @@
  *     clears state.json + tears the daemon down, which is what we need.
  *   - Tmpdir + LICH_HOME removed recursively.
  *
- * Runtime budget: ~30s (no supabase, no compose, no docker). The cmd
+ * Runtime budget: ~30s (no compose, no docker — minimal yaml). The cmd
  * exits in milliseconds; the daemon's cold-spawn is ~500ms; the dashboard
  * fetch is sub-ms. Most of the budget is binary build + safety margin.
  *

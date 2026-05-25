@@ -46,7 +46,7 @@
  * Why both `dev` and `dev:env-override` cover the same services:
  *   Per Plan 3 Task 18's design decision, `dev:env-override` uses
  *   `extends: dev` and overrides ONLY env values. The "test-env without
- *   supabase" use case (a profile that excludes services) is deferred to a
+ *   postgres" use case (a profile that excludes services) is deferred to a
  *   Plan 3.x follow-up that introduces per-profile depends_on overrides.
  *   For Task 20, this is fine — the assertion is on `active_profile`, not on
  *   the service set.
@@ -66,8 +66,9 @@
  *
  * Setup/teardown live inside `it()` blocks (matching env-groups-isolation
  * and logs e2e tests) rather than beforeAll/afterAll so each step gets a
- * generous per-it timeout — the supabase up/down dance takes minutes and
- * the framework's default hook timeout is too tight.
+ * generous per-it timeout — the up/down dance takes time (LEV-463 cut
+ * postgres pull + boot to ~10s, but still well over the framework's
+ * default hook timeout).
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -264,8 +265,8 @@ describe("lich up <profile> activates the named profile (Plan 3 Task 20)", () =>
         const upResult = runLich(["up", "dev"], {
           cwd: fix.stackPath,
           env: { LICH_HOME: fix.lichHome },
-          // up against the full dogfood stack is heavy: supabase first-pull
-          // alone can be 60-90s. 4 minutes is the conservative ceiling.
+          // up against the full dogfood stack: postgres pulls fast (~5MB
+          // alpine, LEV-463 swap) but headroom kept for slow CI boxes.
           timeout: 240_000,
         });
         if (upResult.exitCode !== 0) {

@@ -14,12 +14,13 @@
  * stopped stack is a clean no-op (exit 0, no warnings about "already
  * stopped").
  *
- * Heavy test — supabase startup alone can take 60-90s. Total runtime budget
- * is ~5 minutes (timeout set on the describe block).
+ * Heavy test — LEV-463 swapped supabase for postgres so cold first-run is
+ * ~10s instead of ~90s. Total runtime budget is ~5 minutes (timeout set
+ * on the describe block).
  *
- * Runs unconditionally. Requires docker + supabase CLI v2+ on the host;
- * without them, `lich up` fails loudly with the real underlying error
- * (see tests/e2e/README.md and LEV-314).
+ * Runs unconditionally. Requires docker on the host; without it, `lich up`
+ * fails loudly with the real underlying error (see tests/e2e/README.md
+ * and LEV-314).
  */
 
 import { spawnSync } from "node:child_process";
@@ -346,8 +347,9 @@ describe(
         // "already stopped" or stays silent, both are fine.
         expect(downAgain.stdout).not.toMatch(/warning\(s\) during teardown/i);
       },
-      // 5-minute timeout: supabase cold start + lich up + lich down +
-      // idempotent re-run. The default 120s is too tight.
+      // 5-minute timeout: postgres pull + boot (~10s post-LEV-463) +
+      // lich up + lich down + idempotent re-run. The default 120s is too
+      // tight even with the speed gains.
       300_000,
     );
   },

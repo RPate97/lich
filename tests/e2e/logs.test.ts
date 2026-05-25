@@ -16,10 +16,10 @@
  *   - `lich logs nonexistent`                        → exit 1, message
  *     names the available services.
  *
- * This is a HEAVY test — it spawns docker + supabase + bun dev servers.
- * Runs unconditionally; without docker + supabase v2+ on PATH the (setup)
- * `lich up` fails loudly with the real error (see tests/e2e/README.md
- * and LEV-314).
+ * This is a HEAVY test — it spawns docker + bun dev servers.
+ * Runs unconditionally; without docker on PATH the (setup) `lich up`
+ * fails loudly with the real error (see tests/e2e/README.md and
+ * LEV-314).
  *
  * Isolation:
  *   - Each test copies `examples/dogfood-stack` into a fresh tmpdir.
@@ -58,9 +58,8 @@ let apiPort: number | null = null;
 
 /**
  * Parse `lich urls` plain output into a service → port map. Lines look like
- * `api: http://localhost:9123` (single port) or `supabase.api:
- * http://localhost:9124` (multi-port). We only need the first form to find
- * the API's port; multi-port lines are ignored.
+ * `api: http://localhost:9123`. We only care about single-port owned
+ * services here (api specifically), so dotted multi-port keys are ignored.
  */
 function parseUrls(stdout: string): Record<string, number> {
   const ports: Record<string, number> = {};
@@ -68,9 +67,9 @@ function parseUrls(stdout: string): Record<string, number> {
     const m = line.match(/^(\S+):\s+http:\/\/localhost:(\d+)\s*$/);
     if (!m) continue;
     const [, key, portStr] = m;
-    // Skip dotted multi-port keys (e.g. "supabase.api"); we want the
-    // service's primary http port, which is the un-dotted form for owned
-    // services with `port: { env: PORT }`.
+    // Skip dotted multi-port keys; we want the service's primary http
+    // port, which is the un-dotted form for owned services with
+    // `port: { env: PORT }`.
     if (key.includes(".")) continue;
     ports[key] = Number(portStr);
   }
@@ -195,13 +194,14 @@ describe("lich logs filtering", () => {
       // Each emitted line is `[<service>] <content>`. Every service known to
       // the snapshot should contribute at least one line, except perhaps a
       // service that hasn't logged anything yet (we tolerate that). The
-      // dogfood-stack runs supabase + api + web; api and web both log on
-      // startup, supabase's start log may have flushed to its log too.
+      // dogfood-stack runs postgres + api + web; api and web both log on
+      // startup, postgres's container start log goes through compose too.
       expect(result.stdout).toContain("[api]");
       expect(result.stdout).toContain("[web]");
-      // supabase logs are tooling output; even if the format changes, there
-      // should be SOMETHING. We require ANY one of the multi-line patterns.
-      expect(result.stdout).toMatch(/\[supabase\]/);
+      // postgres logs are container output; even if the format changes,
+      // there should be SOMETHING. We require ANY one of the multi-line
+      // patterns.
+      expect(result.stdout).toMatch(/\[postgres\]/);
     },
   );
 
@@ -220,9 +220,9 @@ describe("lich logs filtering", () => {
       // api's own log lines may include literal `[api]` text in their bodies
       // (the dogfood api logs `[api] listening on ...`); that's fine — what
       // we're checking is that lich didn't ALSO prepend its own prefix, so
-      // no line starts with `[web]` or `[supabase]`.
+      // no line starts with `[web]` or `[postgres]`.
       expect(result.stdout).not.toMatch(/^\[web\] /m);
-      expect(result.stdout).not.toMatch(/^\[supabase\] /m);
+      expect(result.stdout).not.toMatch(/^\[postgres\] /m);
     },
   );
 
@@ -306,18 +306,18 @@ describe("lich logs filtering", () => {
       const combined = result.stdout + result.stderr;
       expect(combined.toLowerCase()).toContain("definitely-not-a-real-service");
       // The error should name at least one real service so the user knows
-      // what they could have typed. The dogfood-stack has api, web, supabase.
-      expect(combined).toMatch(/api|web|supabase/);
+      // what they could have typed. The dogfood-stack has api, web, postgres.
+      expect(combined).toMatch(/api|web|postgres/);
     },
   );
 
   // Teardown lives in a regular `it` rather than `afterAll` because Bun's
   // `afterAll` doesn't accept a per-hook timeout — its built-in 5s default
-  // is too tight for the nuke-against-the-dogfood-stack path (`supabase
-  // stop` shells out to docker, ~10-15s, plus killTree's per-service
-  // SIGTERM-grace-SIGKILL-verify cycles). Tests run in declaration order,
-  // so putting this last gives it the same lifecycle position as afterAll
-  // with a real timeout we can set.
+  // is too tight for the nuke-against-the-dogfood-stack path (postgres
+  // teardown via `docker compose down` is ~1-2s but killTree's per-owned-
+  // service SIGTERM-grace-SIGKILL-verify cycles add up). Tests run in
+  // declaration order, so putting this last gives it the same lifecycle
+  // position as afterAll with a real timeout we can set.
   it(
     "(teardown) nuke + remove tmpdirs",
     async () => {

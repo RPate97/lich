@@ -23,8 +23,8 @@
  *     spawn-the-real-binary tier so the CLI surface (argv parsing, stdout-
  *     vs-stderr routing, exit code) matches what a user would see.
  *
- * Speed: `lich help` is pure config-load (no docker, no supabase, no
- * `lich up`). Each test should finish in under a second.
+ * Speed: `lich help` is pure config-load (no docker, no `lich up`). Each
+ * test should finish in under a second.
  */
 
 import { beforeAll, describe, expect, it, afterAll } from "vitest";

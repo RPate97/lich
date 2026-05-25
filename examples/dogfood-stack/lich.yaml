@@ -14,40 +14,24 @@ runtime:
   # pinning makes friendly URLs deterministic across test environments.
   proxy_port: 3300
 
-owned:
-  supabase:
-    cmd: supabase start
-    cwd: .
-    oneshot: true
-    stop_cmd: supabase stop
-    env:
-      # Per-worktree supabase project_id so parallel lich stacks don't
-      # collide on the same set of docker containers. The supabase CLI
-      # honors this env var at runtime, overriding supabase/config.toml's
-      # project_id. ${worktree.id} is the 12-hex-char stable hash of the
-      # worktree's absolute path.
-      SUPABASE_PROJECT_ID: "dogfood-${worktree.id}"
+services:
+  # Plan 1 compose service. Replaces supabase (~3s startup vs ~35s).
+  # Single port → POSTGRES_HOST_PORT. Healthcheck via pg_isready.
+  #
+  # The image / healthcheck / static environment live in ./compose.yaml;
+  # lich's override generator only emits the per-stack host-port binding
+  # + any env values from this file's `env:` block (DATABASE_URL etc.).
+  postgres:
+    compose_file: compose.yaml
     ports:
-      api: { env: SUPABASE_API_PORT }
-      db: { env: SUPABASE_DB_PORT }
-      db_shadow: { env: SUPABASE_DB_SHADOW_PORT }
-      db_pooler: { env: SUPABASE_DB_POOLER_PORT }
-      studio: { env: SUPABASE_STUDIO_PORT }
-      inbucket: { env: SUPABASE_INBUCKET_PORT }
-      analytics: { env: SUPABASE_ANALYTICS_PORT }
-    ready_when:
-      tcp: "localhost:${owned.supabase.ports.api}"
-      # Plan 4 (LEV-368): supabase start pulls images on first run and brings
-      # up ~10 containers. 90s was tight on cold-cache machines; 120s gives
-      # headroom without masking a real hang (the timeout still fires loudly
-      # if startup actually wedges).
-      timeout: 120s
+      - { container: 5432, env: POSTGRES_HOST_PORT }
 
+owned:
   api:
     cmd: bun run dev
     cwd: apps/api
     port: { env: PORT }
-    depends_on: [supabase]
+    depends_on: [postgres]
     ready_when:
       http_get: /health
       timeout: 30s
@@ -94,17 +78,12 @@ owned:
       log_match: "PANIC|FATAL"
 
 env:
-  # Supabase wiring (used by the API to talk to Supabase)
-  NEXT_PUBLIC_SUPABASE_URL: "http://localhost:${owned.supabase.ports.api}"
-  # Local anon key — Supabase generates a deterministic one per project_id, so
-  # pasting once from Task 9 step 4 is fine for dev.
-  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+  # Postgres connection (for migrate/seed via psql, and for any service that
+  # wants to talk to the database directly).
+  DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
 
   # API wiring (used by the web app to call the API)
   API_URL: "http://localhost:${owned.api.port}"
-
-  # Postgres connection (for migrate/seed via psql)
-  DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
 
 env_groups:
   # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
@@ -140,31 +119,31 @@ lifecycle:
 profiles:
   dev:
     default: true
+    services: [postgres]
     # `tunnel_demo` is included so `lich up` exercises the Plan 4 capture
     # pipeline on every dev run — the captured listen_url flows into
     # TUNNEL_DEMO_URL (see `env` above) before the after_up hooks fire.
-    owned: [supabase, api, web, tunnel_demo]
+    owned: [api, web, tunnel_demo]
     lifecycle:
       after_up:
-        - supabase migration up
-        - psql "$DATABASE_URL" -f supabase/seed.sql
+        - psql "$DATABASE_URL" -f db/migrations/01_init.sql
+        - psql "$DATABASE_URL" -f db/seed.sql
 
   # Plan 3 Task 18 demo: profile-scoped env precedence (LEV-392).
-  # Inherits `dev`'s owned list AND its lifecycle via `extends: dev`, so the
-  # same services start and the same after_up hooks run — only the env values
-  # below override what dev resolved. This exercises the layering rule
+  # Inherits `dev`'s services/owned list AND its lifecycle via `extends: dev`,
+  # so the same services start and the same after_up hooks run — only the env
+  # values below override what dev resolved. This exercises the layering rule
   # (top-level → profile → per-service) without the per-profile depends_on
   # tangle that an exclude-services profile would create against the api's
-  # `depends_on: [supabase]`. The hostnames are intentionally non-resolving;
+  # `depends_on: [postgres]`. The hostname is intentionally non-resolving;
   # e2e coverage asserts on the env Lich resolved (via `lich exec`), not on
-  # actually opening a DB connection. The "test-env without supabase"
+  # actually opening a DB connection. The "test-env without postgres"
   # scenario (excluding services) is deferred to a Plan 3.x follow-up that
   # adds per-profile depends_on overrides.
   dev:env-override:
     extends: dev
     env:
-      DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/postgres"
-      NEXT_PUBLIC_SUPABASE_URL: "https://test.example.com"
+      DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/dogfood"
 
 commands:
   test:e2e:
@@ -176,7 +155,7 @@ commands:
   db:psql:
     cmd: psql "$DATABASE_URL"
     help: |
-      Open a psql shell against the local Supabase Postgres.
+      Open a psql shell against the local Postgres.
 
   tools:env-check:
     cmd: printenv TOOL_MODE TEST_MODE LICH_WORKTREE

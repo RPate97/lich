@@ -70,10 +70,10 @@
  *     reaped so the next test gets a fresh per-LICH_HOME daemon spawn).
  *   - Both tmpdirs recursively removed.
  *
- * Runtime budget: ~5 minutes (mostly the cold-supabase pull on first
- * run). The POST itself is sub-second once `lich down` completes
- * internally — actions.ts wraps the subprocess and captures output, no
- * extra round-trips required.
+ * Runtime budget: ~5 minutes (LEV-463 swapped supabase for postgres so
+ * cold first-run is ~10s instead of ~90s). The POST itself is sub-second
+ * once `lich down` completes internally — actions.ts wraps the subprocess
+ * and captures output, no extra round-trips required.
  *
  * STATUS (2026-05-24): This test fails pending LEV-414, which wires the
  * dashboard server into the daemon's main loop. Until that lands, the
@@ -342,9 +342,9 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
       fixture = makeFixture();
       const { stackPath, lichHome } = fixture;
 
-      // Live progress logger — the heavy step is `lich up` (cold supabase
-      // pull) which can be silent for ~30-90s on first run. Surface what
-      // phase the test is in so a hang is obvious. Matches the pattern from
+      // Live progress logger — `lich up` is the heaviest step but postgres
+      // pulls fast (~5MB alpine image, LEV-463 swap). Surface what phase
+      // the test is in so a hang is obvious. Matches the pattern from
       // basic-up.test.ts, daemon-auto-shutdown.test.ts, and the other
       // dashboard tests.
       const t0 = Date.now();
@@ -357,7 +357,7 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
       // --no-browser keeps CI/headless hosts from trying to spawn Chrome
       // (the daemon would still open it without the flag — LEV-411). The
       // dashboard server starts regardless, which is what we need.
-      step("lich up --no-browser (cold supabase pull ~30-90s)");
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -419,10 +419,10 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
       // ---- POST /api/stacks/:id/stop ------------------------------------
       // The action endpoint shells out to `lich down` in the worktree
       // and returns a structured ActionResult. Generous 3-minute timeout
-      // accommodates supabase teardown (the same budget down.test.ts
-      // uses for `lich down`). The helper throws on non-2xx, so a 404
-      // (stack not found) or 405 (wrong method — e.g. a regression that
-      // routes the stop verb to a GET handler) immediately surfaces here.
+      // accommodates docker teardown (the same budget down.test.ts uses
+      // for `lich down`). The helper throws on non-2xx, so a 404 (stack
+      // not found) or 405 (wrong method — e.g. a regression that routes
+      // the stop verb to a GET handler) immediately surfaces here.
       step(`POSTing /api/stacks/${stackId}/stop`);
       const result = await fetchDashboardJson<ActionResult>(
         lichHome,
@@ -496,9 +496,9 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
     },
     // Per-test override: 5 minutes — same shape as basic-up,
     // dashboard-stack-detail, and the other dogfood-stack-based tests.
-    // The cold supabase pull on first run is the bottleneck; subsequent
-    // runs hit warm images and complete in under a minute. The action
-    // POST itself is fast once the up completes.
+    // Postgres pulls fast (~5MB alpine, LEV-463 swap) so even cold first-
+    // run is sub-minute, but the headroom is kept for slow CI boxes. The
+    // action POST itself is fast once the up completes.
     300_000,
   );
 });

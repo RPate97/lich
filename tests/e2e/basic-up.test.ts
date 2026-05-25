@@ -15,18 +15,18 @@
  *      anyway — see prerequisites note below.
  *
  *   2. `lich up brings the stack up + lich down cleans it up`
- *      Runs unconditionally. Requires docker + supabase CLI v2+ on the
- *      host (see tests/e2e/README.md). On a host missing those, the test
- *      fails loudly with the actual docker / supabase error — that's
- *      desired, lich's whole purpose is orchestrating docker (LEV-314).
+ *      Runs unconditionally. Requires docker on the host (see
+ *      tests/e2e/README.md). On a host missing it, the test fails loudly
+ *      with the actual docker error — that's desired, lich's whole
+ *      purpose is orchestrating docker (LEV-314).
  *        - `lich up` against a tmpdir copy of the dogfood-stack
- *        - poll state.json until status:up (up to ~3 minutes for first
- *          supabase image pull)
- *        - `lich urls` lists web, api, supabase entries
- *        - hit each raw `http://localhost:<port>` URL via fetch:
+ *        - poll state.json until status:up (postgres image is small,
+ *          startup is sub-10s)
+ *        - `lich urls` lists web, api, postgres entries
+ *        - hit each raw `http://127.0.0.1:<port>` URL via fetch:
  *            * api  /health → 200 JSON
  *            * web  /       → 200 HTML
- *            * supabase api / → reachable (Kong gateway)
+ *            * postgres TCP listening
  *        - `lich down` → state.json transitions to status:stopped, the
  *          previously allocated ports stop listening.
  *
@@ -280,9 +280,9 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       // ---- lich up ------------------------------------------------------
       // Run synchronously: `lich up` returns once the stack is fully ready
       // (services are detached — owned services run in their own process
-      // groups, compose runs `-d`). Generous timeout: first run pulls the
-      // supabase images, which can take a couple of minutes on a cold host.
-      step("lich up (supabase first-pull ~30-60s)");
+      // groups, compose runs `-d`). Postgres pulls fast (~5MB alpine image),
+      // so cold first run is still under a minute.
+      step("lich up (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -306,8 +306,10 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       expect(snap.status).toBe("up");
       const serviceNames = snap.services.map((s) => s.name).sort();
       // The dogfood stack defines these services. tunnel_demo was added by
-      // LEV-368 as the Plan 4 capture demo; api/supabase/web are the core.
-      expect(serviceNames).toEqual(["api", "supabase", "tunnel_demo", "web"]);
+      // LEV-368 as the Plan 4 capture demo; api/postgres/web are the core.
+      // postgres is a compose service (replaced supabase per LEV-463);
+      // api/web/tunnel_demo are owned.
+      expect(serviceNames).toEqual(["api", "postgres", "tunnel_demo", "web"]);
 
       // ---- lich urls: expected services present, ports reachable -------
       const urlsResult = runLich(["urls"], {
@@ -318,11 +320,12 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const urls = parseLichUrls(urlsResult.stdout);
       // Every declared service should appear in the urls output.
       expect(Object.keys(urls).sort()).toEqual(
-        expect.arrayContaining(["api", "supabase", "web"]),
+        expect.arrayContaining(["api", "postgres", "web"]),
       );
 
-      // api: single-port → "default"; verify /health responds.
-      const apiUrl = urls.api?.default;
+      // api: single-port → flat string url (post-LEV-419 + LEV-463
+      // parseLichUrls flat-shape); verify /health responds.
+      const apiUrl = urls.api;
       expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
       // Express api: responds immediately after spawn. 10s is huge headroom.
       step(`probing api /health (${apiUrl})`);
@@ -330,8 +333,8 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const health = await fetch(`${apiUrl}/health`).then((r) => r.json());
       expect(health).toMatchObject({ status: "ok" });
 
-      // web: single-port → "default"; verify root returns 200 HTML.
-      const webUrl = urls.web?.default;
+      // web: single-port → flat string url; verify root returns 200 HTML.
+      const webUrl = urls.web;
       expect(webUrl, `expected web url in: ${urlsResult.stdout}`).toBeTruthy();
       // Next.js dev cold compile on first request usually ~3-8s.
       step(`probing web / (${webUrl})`);
@@ -345,18 +348,17 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       // from Next, not from some other process that grabbed the port.
       expect(webBody.toLowerCase()).toMatch(/<!doctype html|_next|next/);
 
-      // supabase: multi-port; the `api` entry is Kong, which proxies the
-      // public API surface and answers on /. We just verify TCP listening
-      // — Kong returns 404 on / without a Host header, so an HTTP-200 probe
-      // is the wrong shape here.
-      const supabaseApiUrl = urls.supabase?.api;
+      // postgres: single-port compose service. We just verify TCP listening
+      // — raw postgres doesn't speak HTTP, so an HTTP probe is the wrong
+      // shape here.
+      const postgresUrl = urls.postgres;
       expect(
-        supabaseApiUrl,
-        `expected supabase.api url in: ${urlsResult.stdout}`,
+        postgresUrl,
+        `expected postgres url in: ${urlsResult.stdout}`,
       ).toBeTruthy();
-      const supabasePort = portFromUrl(supabaseApiUrl!);
-      expect(supabasePort).toBeGreaterThan(0);
-      expect(await tcpListening(supabasePort)).toBe(true);
+      const postgresPort = portFromUrl(postgresUrl!);
+      expect(postgresPort).toBeGreaterThan(0);
+      expect(await tcpListening(postgresPort)).toBe(true);
 
       // Capture the allocated ports so the post-down check can verify they
       // stopped listening.
@@ -424,8 +426,8 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const { stackPath, lichHome } = fixture;
 
       // Live progress logger — same pattern as the raw-URL test above; this
-      // one is also slow (full dogfood-stack boot + supabase pull on cold
-      // caches) and silence for minutes is no help when something hangs.
+      // one also boots the full dogfood-stack, but with postgres replacing
+      // supabase the cold path is sub-minute.
       const t0 = Date.now();
       const step = (label: string): void => {
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -433,7 +435,7 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       };
 
       // ---- lich up --no-browser ----------------------------------------
-      step("lich up --no-browser (supabase first-pull ~30-90s)");
+      step("lich up --no-browser (postgres pull + boot ~5-10s)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
@@ -441,7 +443,7 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       });
       if (upResult.exitCode !== 0) {
         // Surface stdout+stderr so a failed up gives a real diagnostic
-        // (docker not running, supabase CLI missing, etc.) rather than a
+        // (docker not running, image pull failure, etc.) rather than a
         // mystery "timeout waiting for daemon" downstream.
         // eslint-disable-next-line no-console
         console.error("lich up stdout:", upResult.stdout);
@@ -487,7 +489,9 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       });
       expect(urlsResult.exitCode).toBe(0);
       const rawUrls = parseLichUrls(urlsResult.stdout);
-      const rawWebUrl = rawUrls.web?.default;
+      // Post-LEV-419 + LEV-463 parseLichUrls flat-shape: single-port owned
+      // services land under the bare service key, not `.default`.
+      const rawWebUrl = rawUrls.web;
       expect(
         rawWebUrl,
         `expected raw web url in: ${urlsResult.stdout}`,
@@ -597,11 +601,11 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       // ---- lich down (in-body cleanup) ---------------------------------
       // Tear down inside the test body rather than leaving the heavy
       // teardown to `afterEach`. Vitest caps the hookTimeout at 60s
-      // (vitest.config.ts), but a full supabase teardown can easily take
-      // 30-60s on its own — leaving zero margin for the surrounding
-      // `lich down` orchestration to finish. Calling it here keeps the
-      // afterEach fallback fast (it sees status:stopped already and
-      // no-ops) and avoids the "afterEach hook timed out" failure mode.
+      // (vitest.config.ts); postgres teardown is fast (~1s) but the
+      // owned-service stop sequence still runs through SIGTERM → grace →
+      // SIGKILL per service. Calling it here keeps the afterEach fallback
+      // fast (it sees status:stopped already and no-ops) and avoids the
+      // "afterEach hook timed out" failure mode.
       step("lich down (in-body teardown)");
       const downResult = runLich(["down"], {
         cwd: stackPath,
@@ -617,8 +621,9 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       expect(downResult.exitCode).toBe(0);
       step("lich down exit 0");
     },
-    // Per-test timeout: same 5-minute budget as the raw-URL sibling above
-    // (supabase pull + boot + teardown dominates).
+    // Per-test timeout: 5-minute budget mirrors the raw-URL sibling above.
+    // With postgres replacing supabase the cold path is sub-minute, but the
+    // larger budget covers slow CI boxes and warm-image edge cases.
     300_000,
   );
 });
