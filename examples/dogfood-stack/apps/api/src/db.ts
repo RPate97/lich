@@ -1,15 +1,19 @@
-// LEV-463: was @supabase/supabase-js → now raw postgres via Bun.sql.
-// DATABASE_URL is interpolated by lich from `${services.postgres.host_port}`
-// (see ../../lich.yaml env block). The query in src/index.ts uses tagged
-// templates for parameter binding; this file just exports the client.
+// Postgres client for the dogfood-stack API. Tolerates the dev:fast
+// profile, which intentionally doesn't run postgres (DATABASE_URL is
+// empty). Routes that need the DB MUST guard with `dbAvailable()` and
+// 503 if false — see ./index.ts for the pattern.
+//
+// Background: pre-LEV-463 this file used @supabase/supabase-js with a
+// hardcoded localhost fallback. LEV-463 migrated to Bun.sql with a
+// throw-on-missing. The solid+fast e2e plan softens that throw to a
+// `null` so the API can serve /health (and any non-DB routes) under
+// dev:fast.
 import { SQL } from "bun";
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  // Surface immediately rather than waiting for the first query to fail —
-  // the connection-string-missing case has a clearer error here than a
-  // generic "ECONNREFUSED localhost:5432" later.
-  throw new Error("[api] DATABASE_URL is not set; cannot connect to postgres");
-}
+const url = process.env.DATABASE_URL ?? "";
 
-export const sql = new SQL(url);
+export const sql = url.length > 0 ? new SQL(url) : null;
+
+export function dbAvailable(): boolean {
+  return sql !== null;
+}
