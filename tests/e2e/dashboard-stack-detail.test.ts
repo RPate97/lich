@@ -98,6 +98,9 @@ import { runLich } from "./helpers/lich.js";
 import { waitForStackStatus } from "./helpers/state.js";
 import { waitForDaemonRunning } from "./helpers/daemon.js";
 import { fetchDashboardJson } from "./helpers/dashboard-fetch.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Wire-format types — mirror `packages/lich/src/daemon/dashboard/stacks-view.ts`'s
@@ -294,11 +297,14 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       // --no-browser keeps CI/headless hosts from trying to spawn Chrome
       // (the daemon would still open it without the flag — LEV-411). The
       // dashboard server starts regardless.
-      step("lich up --no-browser (postgres pull + boot ~5-10s)");
+      //
+      // Default profile is dev:fast (no compose, no postgres) — just api +
+      // web on the host. Typically ~2-3s.
+      step("lich up --no-browser (dev:fast — api + web on host)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 240_000,
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // Surface the failure cause immediately so a regression is one
@@ -318,6 +324,21 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
         timeoutMs: 10_000,
       });
       expect(snap.status).toBe("up");
+
+      // dev:fast profile sentinel: api /health should report db: stub.
+      // Probe via `lich urls --raw` (localhost URLs) to dodge the
+      // friendly-URL routing race under dev:fast's fast startup.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
+      step("api /health reports db: stub");
 
       // ---- wait for daemon ----------------------------------------------
       // After `lich up` exits successfully, the daemon should already be
@@ -359,27 +380,26 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       // differs we've got a stale cache or a bad mapping.
       expect(stack.status).toBe("up");
 
-      // active_profile: dogfood-stack defines `dev` as the default
-      // profile (lich.yaml:131-133, "default: true"). Plan 3 Task 14+
-      // writes it into the snapshot; the projection forwards it
-      // verbatim (stacks-view.ts:243-247).
-      expect(stack.active_profile).toBe("dev");
+      // active_profile: post-2026-05-25 the default flipped from `dev` to
+      // `dev:fast` (no compose, no postgres) — see lich.yaml's `default:
+      // true` annotation. Plan 3 Task 14+ writes the active profile into
+      // the snapshot; the projection forwards it verbatim
+      // (stacks-view.ts:243-247).
+      expect(stack.active_profile).toBe("dev:fast");
 
-      // services: the dogfood-stack defines four services — three owned
-      // (api, tunnel_demo, web) and one compose (postgres). All should be
-      // in `ready` after a successful `lich up` (Plan 4's ready_when
+      // services: dev:fast defines two owned services (api + web). The
+      // full dev profile additionally has postgres (compose) + tunnel_demo
+      // (owned) — exercised by the compose-pool tests. All should be in
+      // `ready` after a successful `lich up` (Plan 4's ready_when
       // contract). We don't pin the order — the projection doesn't sort
       // within a stack — but the set must match exactly.
       const serviceNames = stack.services.map((s) => s.name).sort();
-      expect(serviceNames).toEqual(["api", "postgres", "tunnel_demo", "web"]);
+      expect(serviceNames).toEqual(["api", "web"]);
 
-      // Per-service kind expectations: postgres is a compose service (the
-      // LEV-463 supabase→postgres swap moved it from owned to compose);
-      // the rest are owned host processes.
+      // Per-service kind expectations: both api + web are owned host
+      // processes under dev:fast.
       const expectedKinds: Record<string, "owned" | "compose"> = {
         api: "owned",
-        postgres: "compose",
-        tunnel_demo: "owned",
         web: "owned",
       };
 
@@ -472,9 +492,9 @@ describe("dashboard /api/stacks/:id against dogfood-stack", () => {
       expect((caught as Error).message).toContain("404");
       step("404 negative case passed");
     },
-    // Per-test override: 5 minutes — same shape as basic-up. Postgres
-    // pulls fast (~5MB alpine) so even cold first-run is sub-minute, but
-    // the headroom is kept for slow CI boxes.
-    300_000,
+    // Per-test override: 60s. dev:fast brings the stack up in ~3s; the
+    // rest is daemon spawn + dashboard fetch (sub-second each). 60s
+    // leaves huge headroom for slow CI.
+    60_000,
   );
 });
