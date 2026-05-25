@@ -162,11 +162,15 @@ function makeFixture(): Fixture {
  * every recorded stack, clears state.
  */
 function teardownFixture(fix: Fixture): void {
+  // LEV-465: timeout tightened from 120s → 20s. `lich nuke --yes`
+  // completes sub-200ms even with a live daemon (SIGTERM → 5s grace →
+  // SIGKILL escalation). Vitest's hookTimeout caps at 60s anyway; the
+  // old 120s value only ever masked a real hang as the wrong error.
   try {
     runLich(["nuke", "--yes"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 120_000,
+      timeout: 20_000,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

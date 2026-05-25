@@ -170,10 +170,13 @@ afterEach(() => {
   // don't want a flaky nuke to mask the real test failure.
   if (lichHome !== null && tmpPath !== null) {
     try {
+      // LEV-465: timeout tightened from 60s → 20s. afterEach is a fast
+      // cleanup path; `lich nuke --yes` completes sub-200ms even when
+      // killing a live daemon. 20s headroom surfaces real hangs loudly.
       runLich(["nuke", "--yes"], {
         cwd: tmpPath,
         env: { LICH_HOME: lichHome },
-        timeout: 60_000,
+        timeout: 20_000,
       });
     } catch {
       /* best-effort */

@@ -150,10 +150,14 @@ function makeFixture(prefix: string, install: boolean): Fixture {
 function teardownFixture(fix: Fixture, didUp: boolean): void {
   if (didUp) {
     try {
+      // LEV-465: timeout tightened from 120s → 20s. afterEach is a fast
+      // cleanup path; vitest's hookTimeout caps at 60s anyway, so the
+      // old value could never actually fire — it just masked teardown
+      // hangs as the wrong error.
       runLich(["down"], {
         cwd: fix.stackPath,
         env: { LICH_HOME: fix.lichHome },
-        timeout: 120_000,
+        timeout: 20_000,
       });
     } catch (err) {
       // eslint-disable-next-line no-console

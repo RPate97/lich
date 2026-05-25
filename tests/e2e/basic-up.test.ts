@@ -141,11 +141,18 @@ function makeFixture(): Fixture {
 function teardownFixture(fix: Fixture): void {
   // Best-effort lich down — if the up test failed before lich up succeeded,
   // there may be no stack to bring down, and that's fine.
+  //
+  // LEV-465: timeout tightened from 120s → 20s. afterEach is a fast cleanup
+  // path; vitest's hookTimeout caps total hook runtime at 60s anyway, so
+  // the previous 120s value could never actually fire — it just masked
+  // teardown hangs as "afterEach timed out" instead of a specific stuck
+  // step. 20s is generous enough for a healthy `lich down` (sub-second
+  // typically) yet tight enough to surface real teardown bugs loudly.
   try {
     runLich(["down"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 120_000,
+      timeout: 20_000,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -158,11 +165,16 @@ function teardownFixture(fix: Fixture): void {
   // 404/connection-refused failures in test N+1. The auto-shutdown loop
   // takes ~30s — long enough to corrupt the next test. Matches the
   // pattern in tests/e2e/dashboard-stack-detail.test.ts's teardown.
+  //
+  // LEV-465: timeout tightened from 60s → 20s. `lich nuke --yes` was
+  // diagnosed at sub-200ms even when killing a live daemon (SIGTERM →
+  // 5s grace → SIGKILL), so 20s is huge headroom while still failing
+  // loudly on a real shutdown hang.
   try {
     runLich(["nuke", "--yes"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 60_000,
+      timeout: 20_000,
     });
   } catch {
     /* best-effort */

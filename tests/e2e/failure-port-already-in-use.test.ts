@@ -185,11 +185,15 @@ afterEach(async () => {
   // Best-effort lich down. The allocator-pre-check path means no services
   // were spawned, but `lich down` is idempotent and the safety net catches
   // any future scenario where the failure mode shifts to a later phase.
+  //
+  // LEV-465: timeout tightened from 60s → 20s. afterEach is fast-cleanup
+  // territory; vitest's hookTimeout caps at 60s anyway, so the old value
+  // could never fire — it just masked teardown hangs as the wrong error.
   try {
     runLich(["down"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 60_000,
+      timeout: 20_000,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

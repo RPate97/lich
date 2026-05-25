@@ -163,10 +163,15 @@ function teardownFixture(fix: Fixture, didUp: boolean): void {
       // Best-effort nuke; ignore exit code. We're tearing down only the
       // resources THIS test created by scoping LICH_HOME — never another
       // stack the user is running by hand.
+      //
+      // LEV-465: timeout tightened from 120s → 20s. afterEach is a fast
+      // cleanup path; vitest's hookTimeout caps at 60s anyway, and
+      // `lich nuke --yes` completes sub-200ms even when killing a
+      // live daemon (SIGTERM → 5s grace → SIGKILL).
       spawnSync(LICH_BINARY, ["nuke", "--yes"], {
         cwd: fix.stackPath,
         env: { ...process.env, LICH_HOME: fix.lichHome },
-        timeout: 120_000,
+        timeout: 20_000,
         encoding: "utf8",
       });
     } catch (err) {

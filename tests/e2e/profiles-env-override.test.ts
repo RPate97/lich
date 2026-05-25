@@ -183,11 +183,14 @@ function makeFixture(prefix: string): Fixture {
  */
 function teardownFixture(fix: Fixture, didUp: boolean): void {
   if (didUp) {
+    // LEV-465: timeout tightened from 120s → 20s. afterEach is a fast
+    // cleanup path; vitest's hookTimeout caps at 60s anyway. `lich
+    // nuke --yes` completes sub-200ms even when killing a live daemon.
     try {
       runLich(["nuke", "--yes"], {
         cwd: fix.stackPath,
         env: { LICH_HOME: fix.lichHome },
-        timeout: 120_000,
+        timeout: 20_000,
       });
     } catch (err) {
       // eslint-disable-next-line no-console

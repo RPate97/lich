@@ -162,11 +162,16 @@ function makeFixture(): Fixture {
  * a separate try/catch so one failure doesn't block the others.
  */
 function teardownFixture(fix: Fixture): void {
+  // LEV-465: timeouts tightened from 120s/60s → 20s. afterEach is a
+  // fast cleanup path; vitest's hookTimeout caps at 60s. `lich nuke
+  // --yes` was diagnosed at sub-200ms even when killing a live daemon
+  // (SIGTERM → 5s grace → SIGKILL). 20s leaves real headroom while
+  // failing loudly on a true teardown hang.
   try {
     runLich(["down"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 120_000,
+      timeout: 20_000,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -181,7 +186,7 @@ function teardownFixture(fix: Fixture): void {
     runLich(["nuke", "--yes"], {
       cwd: fix.stackPath,
       env: { LICH_HOME: fix.lichHome },
-      timeout: 60_000,
+      timeout: 20_000,
     });
   } catch {
     /* best-effort */
