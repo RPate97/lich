@@ -12,5 +12,5 @@
 // we didn't anticipate — document why in AUDIT.md.
 
 export const COMPOSE_REQUIRED: readonly string[] = [
-  // Filled in during per-test migration tasks (Phase B).
+  "env-dotenv.test.ts",
 ] as const;
