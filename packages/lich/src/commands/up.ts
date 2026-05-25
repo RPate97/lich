@@ -56,6 +56,7 @@ import {
 import {
   readSnapshot,
   writeSnapshot,
+  type RoutingEntry,
   type ServiceSnapshot,
   type ServiceState,
   type StackSnapshot,
@@ -284,6 +285,20 @@ interface UpState {
    * resolution, LICH_PROFILE injection).
    */
   activeProfile?: string;
+  /**
+   * Plan 5 Task 8 (LEV-410): friendly-URL routing entries for this stack.
+   * Computed from per-service `allocated_ports` once the stack is ready,
+   * then persisted on the final `writeStateSnapshot` so the Plan-5 daemon's
+   * reverse proxy can read them via the shared filesystem watcher.
+   *
+   * Stays `undefined` until the orchestrator calls `buildRoutingEntries`
+   * (right before marking the stack `up`). Intermediate snapshot writes
+   * (per-level boundaries, failed/cancelled paths) intentionally omit the
+   * field — only fully-ready stacks declare routes. `lich down` (Task 10)
+   * sets it back to `[]` to evict routes from the proxy without dropping
+   * the snapshot's other metadata.
+   */
+  routing?: RoutingEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -976,6 +991,13 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
 
     // ---- Step 12 + 13: mark stack up + summary ----------------------------
     state.status = "up";
+    // Plan 5 Task 8 (LEV-410): populate the friendly-URL routing entries
+    // BEFORE the final snapshot write so the Plan-5 daemon's reverse proxy
+    // (which discovers routes via a filesystem watcher on `state.json`)
+    // picks them up the moment the stack flips to `up`. Computed from the
+    // already-populated per-service `allocated_ports` — see
+    // `buildRoutingEntries` for the hostname convention.
+    state.routing = buildRoutingEntries(state);
     await writeStateSnapshot(state);
 
     // LEV-301: emit a structured success summary — services with their
@@ -2484,6 +2506,106 @@ function buildSuccessSummary(input: BuildSummaryInput): SummaryBlock {
 // State persistence
 // ---------------------------------------------------------------------------
 
+/**
+ * Plan 5 Task 8 (LEV-410): the minimum slice of `UpState` `buildRoutingEntries`
+ * reads. Exported as a separate type so the unit test can build synthetic
+ * inputs without constructing a full `UpState` (which carries LogTails,
+ * ProcessExitWatchers, owned handles, etc. — all unrelated to routing).
+ *
+ * Structurally compatible with `UpState`, so the orchestrator passes `state`
+ * directly. The helper only needs the worktree's human-readable name + the
+ * per-service snapshot map; everything else (handles, captures, tails,
+ * profile) is orthogonal.
+ */
+export interface RoutingInput {
+  /** Worktree identity — only `name` is read (used as the `<worktree>` slot
+   *  in friendly hostnames). */
+  worktree: { name: string };
+  /** Per-service snapshot map. Iteration order is the snapshot's insertion
+   *  order, which (for `UpState`) mirrors the yaml's declared order. */
+  services: Map<string, ServiceSnapshot>;
+}
+
+/**
+ * Plan 5 Task 8 (LEV-410): compute the friendly-URL routing entries for a
+ * fully-ready stack. The Plan-5 daemon's reverse proxy reads these from
+ * `state.json` via a filesystem watcher and joins every stack's entries into
+ * one routing table keyed by `Host` header.
+ *
+ * Hostname convention (per spec section 6 + Plan-5 design doc):
+ *
+ *   single-port owned: `<service>.<worktree>`
+ *     (e.g. `api.feature-x`, addressable as
+ *     `http://api.feature-x.lich.localhost:3300/`)
+ *
+ *   multi-port owned:  `<service>-<portkey>.<worktree>`
+ *     (e.g. `supabase-api.feature-x` + `supabase-db.feature-x`. We use `-`
+ *     rather than `.` between service and portkey because `*.lich.localhost`
+ *     binds only one level of subdomain — `supabase.api.feature-x.lich.
+ *     localhost` would not resolve.)
+ *
+ *   compose: same shape as owned — single allocated port → `<service>.<wt>`;
+ *     multi-port → `<service>-<portkey>.<wt>`. The proxy doesn't care about
+ *     the underlying runtime; it just looks up by hostname.
+ *
+ * The `<worktree>` part is the worktree's human-readable name (already
+ * sanitized to `[a-z0-9-]+` by `worktree/detect.ts`'s `sanitizeName`), NOT
+ * the stack id (which carries an 8-char hash suffix). DNS-friendliness is
+ * the constraint; the stack id is for filesystem disambiguation, not URLs.
+ *
+ * Services with no allocated ports (oneshots, owned services that don't
+ * declare a `port:` block, compose services that don't bind any) produce
+ * zero entries — there's nothing for the proxy to route TO. The result is
+ * deterministic in input order: services iterate in the snapshot's order
+ * (which mirrors the yaml's declared order, since `UpState.services` is a
+ * Map and Maps preserve insertion order), and multi-port entries iterate in
+ * the snapshot's `allocated_ports` key order.
+ *
+ * Pure function so the unit test can pin behavior with synthetic snapshots
+ * — no env, no I/O, no orchestrator plumbing.
+ */
+export function buildRoutingEntries(state: RoutingInput): RoutingEntry[] {
+  const worktreeName = state.worktree.name;
+  const entries: RoutingEntry[] = [];
+
+  for (const svc of state.services.values()) {
+    const ports = svc.allocated_ports;
+    if (!ports || Object.keys(ports).length === 0) continue;
+
+    const portKeys = Object.keys(ports);
+    // Single-port shape: the snapshot stores a one-entry map. For owned
+    // services that came from `port: { env: NAME }`, that single entry is
+    // keyed `default` (per the convention in `state/snapshot.ts`'s
+    // `rebuildAllocatedPorts` doc). For compose services that declared a
+    // single port, the key is whatever logical name the user picked. In
+    // both cases the friendly hostname is `<service>.<worktree>` — the
+    // portkey is irrelevant to the URL because there's only one.
+    if (portKeys.length === 1) {
+      const port = ports[portKeys[0]];
+      entries.push({
+        hostname: `${svc.name}.${worktreeName}`,
+        upstream_url: `http://127.0.0.1:${port}`,
+        service: svc.name,
+      });
+      continue;
+    }
+
+    // Multi-port shape: emit one entry per logical port, using the portkey
+    // as the disambiguator in the hostname. This is how dogfood-style
+    // supabase becomes `supabase-api.<wt>` + `supabase-db.<wt>` + etc.
+    for (const portKey of portKeys) {
+      const port = ports[portKey];
+      entries.push({
+        hostname: `${svc.name}-${portKey}.${worktreeName}`,
+        upstream_url: `http://127.0.0.1:${port}`,
+        service: svc.name,
+      });
+    }
+  }
+
+  return entries;
+}
+
 async function writeStateSnapshot(state: UpState): Promise<void> {
   const snapshot: StackSnapshot = {
     stack_id: state.worktree.stack_id,
@@ -2506,6 +2628,20 @@ async function writeStateSnapshot(state: UpState): Promise<void> {
   // states apart (per Plan 3 Task 8 / LEV-382, the field is optional).
   if (state.activeProfile !== undefined) {
     snapshot.active_profile = state.activeProfile;
+  }
+  // Plan 5 Task 8 (LEV-410): persist the routing entries when the orchestrator
+  // has populated them (right before marking the stack `up`). The field is
+  // optional — intermediate snapshot writes during startup, plus the
+  // failure/cancellation paths, intentionally leave `state.routing` undefined
+  // so the snapshot omits the key entirely. Empty array vs undefined IS
+  // semantically distinct (see `RoutingEntry` JSDoc on `StackSnapshot`):
+  //   - undefined: this snapshot doesn't declare routes (mid-startup, failed,
+  //     pre-Plan-5).
+  //   - []: this stack actively has zero routes (e.g. `lich down` clears
+  //     them — Task 10).
+  // We preserve that distinction by only writing the field when it's set.
+  if (state.routing !== undefined) {
+    snapshot.routing = state.routing;
   }
   await writeSnapshot(snapshot);
   // Touch the stack dir to ensure it exists (writeSnapshot does this too,
