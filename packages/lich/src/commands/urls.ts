@@ -37,12 +37,14 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { detectWorktree } from "../worktree/detect.js";
-import {
-  readSnapshot,
-  type RoutingEntry,
-  type ServiceSnapshot,
-} from "../state/snapshot.js";
+import { readSnapshot } from "../state/snapshot.js";
 import { parseConfig } from "../config/parse.js";
+import {
+  DEFAULT_PROXY_PORT,
+  buildFriendlyUrls,
+  buildRawUrls,
+  formatUrlLine,
+} from "../urls/format.js";
 
 export interface RunUrlsInput {
   /** Defaults to `process.cwd()`. */
@@ -63,16 +65,6 @@ export interface RunUrlsInput {
 export interface RunUrlsResult {
   exitCode: number;
 }
-
-/**
- * Default proxy port for friendly URLs. The lich daemon binds 3300 by
- * default (see `daemon/daemon.ts`). When the user's `lich.yaml` declares
- * `runtime.proxy_port`, that value wins; otherwise we fall back to this
- * constant. Task 30 may centralize this in a shared config helper — for
- * now the constant is fine, and the only readers are this command and
- * the daemon itself.
- */
-const DEFAULT_PROXY_PORT = 3300;
 
 /**
  * Print URL lines for the current worktree's stack. Default emits
@@ -108,18 +100,13 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
 
   // ---- --raw: emit direct upstream URLs (Plan 1 behavior) ----------------
   if (raw) {
-    const lines: string[] = [];
-    for (const svc of snapshot.services) {
-      appendRawServiceLines(svc, lines);
-    }
-
-    if (lines.length === 0) {
+    const rawUrls = buildRawUrls(snapshot.services);
+    if (rawUrls.length === 0) {
       out.write("(no ports allocated)\n");
       return { exitCode: 0 };
     }
-
-    for (const line of lines) {
-      out.write(line + "\n");
+    for (const url of rawUrls) {
+      out.write(formatUrlLine(url, "raw") + "\n");
     }
     return { exitCode: 0 };
   }
@@ -128,8 +115,7 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
   // The snapshot's `routing` field is populated by `lich up` once a stack
   // is ready (Plan 5 Task 8). Each entry carries the friendly hostname
   // (e.g. `api.feature-x` or `supabase-api.feature-x`) and the upstream
-  // URL the proxy forwards to. We don't use the upstream URL here — we
-  // just need the hostname + service to format the user-facing string.
+  // URL the proxy forwards to.
   const routing = snapshot.routing;
   if (!routing || routing.length === 0) {
     // No routing entries can happen in two ways:
@@ -151,9 +137,10 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
   // be robust — the user's workflow shouldn't break when state still
   // exists but the config is in flux.
   const proxyPort = await resolveProxyPort(worktreePath);
+  const friendlyUrls = buildFriendlyUrls(routing, proxyPort);
 
-  for (const entry of routing) {
-    out.write(formatFriendlyLine(entry, proxyPort) + "\n");
+  for (const url of friendlyUrls) {
+    out.write(formatUrlLine(url, "friendly") + "\n");
   }
   return { exitCode: 0 };
 }
@@ -181,83 +168,3 @@ async function resolveProxyPort(worktreePath: string): Promise<number> {
   }
 }
 
-/**
- * Format one friendly URL line for a routing entry.
- *
- * The display logic peels the per-port key (if any) back out of the
- * hostname so single-port services print without the redundant key.
- * Hostname conventions (set by `up.ts#buildRoutingEntries`):
- *   - Single port: `<service>.<worktree>` → `<service>: http://...`
- *   - Multi-port:  `<service>-<key>.<worktree>` → `<service> (<key>): http://...`
- *
- * Detection: if the hostname starts with `<service>-`, everything between
- * that and the first `.` is the port key. If it starts with `<service>.`
- * (no dash), it's single-port. We avoid splitting on `.` because the
- * worktree name itself is `[a-z0-9-]+` and may contain dashes — splitting
- * on dashes would over-eagerly chop the worktree name.
- *
- * Defensive fallback: if neither prefix matches (shouldn't happen for any
- * entry we wrote, but possible if a future writer reshapes the hostname),
- * print the raw hostname without trying to derive a key. Better to show
- * something than to throw.
- */
-function formatFriendlyLine(entry: RoutingEntry, proxyPort: number): string {
-  const url = `http://${entry.hostname}.lich.localhost:${proxyPort}/`;
-  const dashPrefix = `${entry.service}-`;
-  const dotPrefix = `${entry.service}.`;
-
-  if (entry.hostname.startsWith(dashPrefix)) {
-    // Multi-port: extract the key between the dash and the first dot.
-    const afterPrefix = entry.hostname.slice(dashPrefix.length);
-    const dotIdx = afterPrefix.indexOf(".");
-    const key = dotIdx === -1 ? afterPrefix : afterPrefix.slice(0, dotIdx);
-    return `${entry.service} (${key}): ${url}`;
-  }
-  if (entry.hostname.startsWith(dotPrefix)) {
-    return `${entry.service}: ${url}`;
-  }
-  // Unexpected hostname shape — surface the entry as-is rather than
-  // misattributing a key. Worst case the user sees a hostname they
-  // recognize and the URL still works.
-  return `${entry.service}: ${url}`;
-}
-
-/**
- * Append raw (`--raw` mode) URL lines for a single service. A service may
- * declare zero, one, or many logical ports; we print one line per
- * allocated entry.
- *
- * - 1 logical port: `<service>: http://127.0.0.1:<port>`
- * - N logical ports: `<service>.<key>: http://127.0.0.1:<port>` per entry
- *
- * The single-vs-multi distinction is based purely on the number of entries
- * in `allocated_ports`, NOT on the original config shape (`port:` vs
- * `ports:`). A multi-port service that happens to have only one allocated
- * port still prints in single-port form — the raw output is purely about
- * what's reachable on localhost.
- *
- * 127.0.0.1 rather than `localhost` to dodge Docker IPv6 hijack on macOS
- * (see commit 1c19912 / LEV-407). Friendly URLs use `.lich.localhost`
- * which Bun resolves correctly; raw URLs need the explicit IPv4 to be
- * useful for scripts that fetch them.
- */
-function appendRawServiceLines(svc: ServiceSnapshot, lines: string[]): void {
-  const allocated = svc.allocated_ports;
-  if (!allocated) return;
-
-  const entries = Object.entries(allocated);
-  if (entries.length === 0) return;
-
-  if (entries.length === 1) {
-    const port = entries[0][1];
-    lines.push(`${svc.name}: http://127.0.0.1:${port}`);
-    return;
-  }
-
-  // Multi-port: one line per logical port, in declaration order of the
-  // allocated_ports object (JSON object key order is insertion order, which
-  // matches how the runner wrote it — typically the config's ports map).
-  for (const [key, port] of entries) {
-    lines.push(`${svc.name}.${key}: http://127.0.0.1:${port}`);
-  }
-}

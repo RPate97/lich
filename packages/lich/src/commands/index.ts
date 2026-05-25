@@ -111,11 +111,18 @@ const upHandler: CommandHandler = async (ctx) => {
   // still printed regardless — `--no-browser` only suppresses the
   // open-in-browser side effect.
   const noBrowser = ctx.argv.browser === false;
+  // LEV-481: `--raw` opts the success summary's `urls:` block out of
+  // friendly proxied URLs and into direct `http://127.0.0.1:<port>`
+  // URLs — same escape hatch shape as `lich urls --raw`. The `raw`
+  // boolean is declared in `bin/lich.ts` so mri doesn't swallow a
+  // trailing positional as the flag's value.
+  const raw = ctx.argv.raw === true;
   const result = await runUp({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
     profile,
     noBrowser,
+    raw,
   });
   return { ok: result.exitCode === 0, message: "" };
 };

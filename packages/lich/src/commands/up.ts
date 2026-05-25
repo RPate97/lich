@@ -125,6 +125,14 @@ import type {
   OwnedService,
   PortDescriptor,
 } from "../config/types.js";
+// LEV-481: shared URL formatters for the success summary. Keeps the
+// summary's `urls:` block in lockstep with what `lich urls` prints so
+// users see the same strings from both commands.
+import {
+  DEFAULT_PROXY_PORT,
+  buildFriendlyUrls,
+  buildRawUrls,
+} from "../urls/format.js";
 import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -162,6 +170,19 @@ export interface RunUpInput {
    * (CI, scripted runs) where the browser-open isn't wanted at all.
    */
   noBrowser?: boolean;
+  /**
+   * When true, the success summary's `urls:` block emits direct upstream
+   * URLs (`http://localhost:<port>`) instead of the default friendly
+   * proxied URLs (`http://<service>.<worktree>.lich.localhost:<proxy>/`).
+   * Mirrors `lich urls --raw`. Defaults to `false` (friendly URLs).
+   *
+   * The flag does NOT affect what gets recorded in `state.json`'s routing
+   * entries — those are always the canonical friendly hostname → upstream
+   * mapping. `--raw` is purely a presentation choice for the summary so
+   * users who can't use `*.lich.localhost` (corporate DNS shadowing,
+   * non-HTTP debug tooling) still get a copy-pasteable URL out of `lich up`.
+   */
+  raw?: boolean;
 }
 
 export interface RunUpResult {
@@ -1065,15 +1086,24 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // ---- Plan 5 Task 9 END ------------------------------------------------
 
     // LEV-301: emit a structured success summary — services with their
-    // allocated ports, reachable URLs (raw `http://localhost:<port>`),
-    // and "what now?" hints. Pretty renders this as a tidy table; json
-    // surfaces the same data as an extended summary event.
+    // allocated ports, reachable URLs (friendly proxied URLs by default;
+    // raw `http://127.0.0.1:<port>` under `--raw`), and "what now?"
+    // hints. Pretty renders this as a tidy table; json surfaces the
+    // same data as an extended summary event.
+    //
+    // LEV-481: the URL block defaults to friendly URLs matching `lich
+    // urls`. Both surfaces share the formatters in `urls/format.ts`, so
+    // a routing entry produces identical strings here and there.
+    const summaryProxyPort = configuredProxyPort ?? DEFAULT_PROXY_PORT;
     output.summary(
       buildSuccessSummary({
         stackId: worktree.stack_id,
         worktreeName: worktree.name,
         services: [...state.services.values()],
         elapsedMs: Date.now() - runStartedAtMs,
+        routing: state.routing,
+        proxyPort: summaryProxyPort,
+        raw: input.raw === true,
       }),
     );
     await output.close();
@@ -2499,11 +2529,37 @@ function resolveOwnedCwd(def: OwnedService, projectRoot: string): string {
 // Success summary builder (LEV-301)
 // ---------------------------------------------------------------------------
 
-interface BuildSummaryInput {
+/**
+ * Public for unit testing (LEV-481): the success-summary URL block has
+ * meaningful default-vs-`--raw` behavior + routing-vs-no-routing branches
+ * worth pinning. Exporting the shape lets tests construct synthetic input
+ * without dragging the whole orchestrator through `runUp`.
+ */
+export interface BuildSummaryInput {
   stackId: string;
   worktreeName: string;
   services: ServiceSnapshot[];
   elapsedMs: number;
+  /**
+   * Friendly-URL routing entries computed by `buildRoutingEntries` once
+   * the stack is ready. Consumed by the default (non-`--raw`) URL block
+   * so the summary's printed URLs match what `lich urls` shows. Empty /
+   * undefined falls back to the raw URL list — the user always sees some
+   * URLs when at least one service has an allocated port.
+   */
+  routing?: readonly RoutingEntry[];
+  /**
+   * Resolved proxy port for friendly URL formatting. `runtime.proxy_port`
+   * from the yaml, or the default (3300) when unset. Only consulted when
+   * `routing` is non-empty AND `raw` is false.
+   */
+  proxyPort: number;
+  /**
+   * When true, the summary's URL block emits direct upstream URLs
+   * (`http://127.0.0.1:<port>`) instead of friendly proxied URLs. Wired
+   * to `RunUpInput.raw` (the `--raw` flag on `lich up`).
+   */
+  raw: boolean;
 }
 
 /**
@@ -2515,13 +2571,19 @@ interface BuildSummaryInput {
  *
  *   - title with stack id + total wall-clock elapsed
  *   - per-service final state + allocated ports
- *   - per-service raw URLs (when we can infer one — services with a
- *     `default` owned port or a single compose port get a
- *     `http://localhost:<port>` line). Plan 5 will add friendly URLs
- *     alongside; for now the raw URL is what users actually paste.
+ *   - per-service URLs — friendly proxied URLs by default
+ *     (`http://<service>.<worktree>.lich.localhost:<proxy>/`), matching
+ *     what `lich urls` prints. `--raw` falls back to direct upstream
+ *     URLs (`http://127.0.0.1:<port>`) for the same scripts/tools that
+ *     already consume `lich urls --raw`.
  *   - "what now?" hints: the two most useful next commands.
+ *
+ * Friendly URLs read from `input.routing` (populated by `buildRoutingEntries`
+ * before the summary fires); raw URLs read from per-service
+ * `allocated_ports`. We DRY both helpers via `urls/format.ts` so this
+ * surface and `lich urls` produce identical strings for the same inputs.
  */
-function buildSuccessSummary(input: BuildSummaryInput): SummaryBlock {
+export function buildSuccessSummary(input: BuildSummaryInput): SummaryBlock {
   const services: SummaryService[] = input.services.map((s) => {
     const out: SummaryService = {
       name: s.name,
@@ -2533,20 +2595,19 @@ function buildSuccessSummary(input: BuildSummaryInput): SummaryBlock {
     return out;
   });
 
-  // Infer a single user-facing URL per service:
-  //   - owned single-port (`default` key) → `http://localhost:<port>`
-  //   - any service with exactly one allocated port → that port
-  //   - services with multiple ports (e.g. supabase with 6 ports) get
-  //     omitted because there's no "the" port — the user already sees
-  //     the port map in the services table.
-  const urls: SummaryUrl[] = [];
-  for (const s of input.services) {
-    const ports = s.allocated_ports;
-    if (!ports) continue;
-    const entries = Object.entries(ports);
-    if (entries.length !== 1) continue;
-    const [, port] = entries[0];
-    urls.push({ service: s.name, url: `http://localhost:${port}` });
+  // Build the URL list. Default to friendly URLs when routing is
+  // available; fall through to raw URLs (Plan-1 behavior) when the user
+  // passed `--raw` OR when routing is somehow empty (defensive — the
+  // orchestrator computes routing before this runs, but a stack with
+  // zero portful services has an empty routing array, in which case raw
+  // is the only thing we can show).
+  let urls: SummaryUrl[] = [];
+  if (!input.raw && input.routing && input.routing.length > 0) {
+    const friendlyUrls = buildFriendlyUrls(input.routing, input.proxyPort);
+    urls = friendlyUrls.map((u) => ({ service: u.service, url: u.url }));
+  } else {
+    const rawUrls = buildRawUrls(input.services);
+    urls = rawUrls.map((u) => ({ service: u.service, url: u.url }));
   }
 
   const next: SummaryHint[] = [
