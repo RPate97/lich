@@ -126,10 +126,11 @@ Under dev:fast's ~3s startup, the daemon's routing watcher hasn't always registe
 | Daemon shutdown clean | **Met** — verified during agent B's smoke check |
 | Postgres tmpfs ephemeral | **Met** — `select count(*) from things` returns 3 (the seed) on every fresh `lich up dev` |
 
-## Recommended follow-ups (out of scope for this plan)
+## Recommended follow-ups (out of scope for this plan — all filed)
 
-1. **Filed already:** LEV-477 — lich compose override drops non-port/env fields. Fixing this unblocks inlining `services.postgres` back into lich.yaml.
-2. **NEW (recommend filing):** lich port allocator should probe Docker's port table (`docker ps --format "{{.Ports}}"`) so the compose-pool serial race goes away.
-3. **NEW (recommend filing):** lich daemon should pick a free proxy port when the pinned one is in use, OR each test should override `runtime.proxy_port` via env. Unblocks fast-pool parallel forks.
-4. **NEW (recommend filing):** Plan 5 routing watcher debounce — investigate why web's routing entry sometimes lands 15+s after api's under dev:fast. Either tighten the watcher or expose a `lich routing wait` helper.
-5. Re-enable basic-up.test.ts's `it.skip`'d friendly URL test once #3 + #4 land.
+1. **[LEV-477](https://linear.app/levelzero/issue/LEV-477)** — Lich compose override drops non-port/env fields. Fixing this unblocks inlining `services.postgres` back into lich.yaml.
+2. **[LEV-478](https://linear.app/levelzero/issue/LEV-478)** — Lich port allocator should probe Docker's port table (`docker ps --format "{{.Ports}}"`). Unblocks the compose-pool serial race (Known Limitations §1).
+3. **[LEV-479](https://linear.app/levelzero/issue/LEV-479)** — Daemon should pick a free proxy port when the pinned one is in use, OR auto-derive from worktree id. Unblocks fast-pool parallel forks (Known Limitations §2).
+4. **[LEV-480](https://linear.app/levelzero/issue/LEV-480)** — Plan 5 routing watcher debounce investigation. Unblocks basic-up.test.ts's `it.skip`'d friendly URL test (Known Limitations §3).
+
+Re-enable basic-up.test.ts's `it.skip`'d friendly URL test once LEV-479 + LEV-480 land.
