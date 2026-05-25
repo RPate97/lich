@@ -293,20 +293,6 @@ interface UpState {
    */
   stageRefs: Map<string, LifecycleStage>;
   /**
-   * Plan 3: name of the profile this `lich up` is running under, or undefined
-   * when no profile was active (yaml has no `profiles` section). Propagated
-   * into every `writeStateSnapshot` call so `state.json` carries
-   * `active_profile`, which `lich stacks`, `lich down`, and the eventual
-   * dashboard re-read to know which profile is live. Set once at state
-   * construction (right after profile resolution) and never mutated;
-   * flipping mid-run would lie about what's actually running. Threaded
-   * through here per Task 15's wiring sketch — Task 19 (LEV-393) lands this
-   * minimum plumbing so the active_profile flows snapshot → stacks --json;
-   * Task 15 (LEV-389) layers on the rest (lifecycle composition, env
-   * resolution, LICH_PROFILE injection).
-   */
-  activeProfile?: string;
-  /**
    * Plan 5 Task 8 (LEV-410): friendly-URL routing entries for this stack.
    * Computed from per-service `allocated_ports` once the stack is ready,
    * then persisted on the final `writeStateSnapshot` so the Plan-5 daemon's
@@ -2201,13 +2187,14 @@ function filterConfigToProfile(
   // so error messages and topo-sort tie-breaking remain deterministic and
   // user-facing-stable across reruns. The set membership check is O(1); the
   // overall filter is O(N) in the number of declared services + owned.
-  const services: Record<string, (typeof config.services)[string]> = {};
+  const services: Record<string, NonNullable<typeof config.services>[string]> =
+    {};
   for (const [name, def] of Object.entries(config.services ?? {})) {
     if (includedServices.has(name) && def !== undefined) {
       services[name] = def;
     }
   }
-  const owned: Record<string, (typeof config.owned)[string]> = {};
+  const owned: Record<string, NonNullable<typeof config.owned>[string]> = {};
   for (const [name, def] of Object.entries(config.owned ?? {})) {
     if (includedOwned.has(name) && def !== undefined) {
       owned[name] = def;

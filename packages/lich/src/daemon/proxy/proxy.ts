@@ -172,11 +172,11 @@ function buildUpstreamRequest(req: Request, upstreamBase: string): Request {
     headers,
     body: hasBody ? req.body : undefined,
     // Streaming uploads require this; Bun honors it.
-    // @ts-expect-error — `duplex` is part of the Fetch standard but
-    // not yet in lib.dom.d.ts. Bun supports it; Node 20+ supports it.
+    // (Used to need a `@ts-expect-error` here when bun-types didn't
+    // declare `duplex` on RequestInit; current bun-types include it.)
     duplex: hasBody ? "half" : undefined,
     redirect: "manual",
-  });
+  } as RequestInit & { duplex: "half" | undefined });
 }
 
 /**
@@ -331,7 +331,10 @@ export async function startProxy(opts: ProxyOpts): Promise<{
     hostname: "127.0.0.1",
     fetch: handler,
   });
-  actualPort = serverV4.port;
+  // `Bun.serve`'s `.port` is typed `number | undefined` (it's undefined
+  // for unix-socket servers), but we always pass a numeric port, so it's
+  // always a number here. Assert to satisfy the typechecker.
+  actualPort = serverV4.port as number;
 
   let serverV6: ReturnType<typeof Bun.serve> | null = null;
   try {

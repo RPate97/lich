@@ -475,8 +475,10 @@ describe("runDaemon — real dashboard + proxy startup", () => {
       await new Promise<void>((r) => setTimeout(r, 20));
     }
 
-    // URL must be present and shaped like `http://localhost:<port>`.
-    expect(url).toMatch(/^http:\/\/localhost:\d+$/);
+    // URL must be present and shaped like `http://127.0.0.1:<port>`.
+    // (LEV-459: the daemon now reports IPv4 explicitly to dodge the
+    // `localhost` IPv6-resolution-order bug on macOS.)
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
     controller.abort();
     const result = await daemonPromise;
@@ -637,7 +639,7 @@ describe("runDaemon — real dashboard + proxy startup", () => {
       // Pull the proxy port out of the log line. The log line is
       // emitted by `runDaemon` right after `startProxy` resolves.
       const proxyMatch = output().match(
-        /proxy listening on http:\/\/localhost:(\d+)/,
+        /proxy listening on http:\/\/127\.0\.0\.1:(\d+)/,
       );
       expect(proxyMatch).not.toBeNull();
       const proxyPort = Number(proxyMatch?.[1]);
@@ -697,7 +699,7 @@ describe("runDaemon — real dashboard + proxy startup", () => {
         try {
           const headers = new Headers();
           headers.set("Host", "api.added.lich.localhost");
-          const r = await fetch(`http://localhost:${proxyPort}/`, {
+          const r = await fetch(`http://127.0.0.1:${proxyPort}/`, {
             headers,
           });
           if (r.status === 200) {
@@ -743,9 +745,9 @@ describe("runDaemon — real dashboard + proxy startup", () => {
     expect(result.exitCode).toBe(0);
     // The log line names the actual bound port; we can't predict it
     // but we can assert the shape.
-    expect(output()).toMatch(/proxy listening on http:\/\/localhost:\d+/);
+    expect(output()).toMatch(/proxy listening on http:\/\/127\.0\.0\.1:\d+/);
     // And the dashboard also bound.
-    expect(output()).toMatch(/dashboard listening on http:\/\/localhost:\d+/);
+    expect(output()).toMatch(/dashboard listening on http:\/\/127\.0\.0\.1:\d+/);
   });
 });
 

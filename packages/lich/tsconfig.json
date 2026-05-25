@@ -12,5 +12,15 @@
     "types": ["bun-types"],
     "lib": ["ESNext"]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    // The dashboard UI (React + browser DOM) has its own tsconfig that
+    // enables JSX + DOM libs. Don't double-typecheck it here under the
+    // bun/server tsconfig — that would produce hundreds of spurious
+    // "Cannot use JSX" / "Cannot find name 'document'" errors. The UI's
+    // own `npm run build` runs its tsconfig via vite during `build:ui`.
+    "src/daemon/dashboard/ui"
+  ]
 }

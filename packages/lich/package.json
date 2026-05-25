@@ -13,7 +13,8 @@
     "build:ui": "cd src/daemon/dashboard/ui && ([ -d node_modules ] || npm install --prefer-offline) && npm run build",
     "dev": "bun run src/bin/lich.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "^1.1.0",
