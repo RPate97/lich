@@ -20,11 +20,19 @@ describe("copyExampleToTmpdir", () => {
     expect(existsSync(path)).toBe(true);
     expect(existsSync(join(path, "lich.yaml"))).toBe(true);
     expect(existsSync(join(path, "apps/api/src/index.ts"))).toBe(true);
-    expect(existsSync(join(path, "supabase/config.toml"))).toBe(true);
+    // db/ directory replaced supabase/ in LEV-463 when raw postgres
+    // (compose.yaml) took over from the supabase CLI.
+    expect(existsSync(join(path, "db/migrations/01_init.sql"))).toBe(true);
+    expect(existsSync(join(path, "compose.yaml"))).toBe(true);
 
     const yaml = readFileSync(join(path, "lich.yaml"), "utf8");
     expect(yaml).toContain("owned:");
-    expect(yaml).toContain("supabase:");
+    // Post-dev:fast-default flip: lich.yaml declares dev:fast (default),
+    // dev (postgres-backed), and dev:env-override. Asserting on "dev:fast:"
+    // is the most diagnostic — if the default profile ever regresses
+    // back to dev, this fails loudly.
+    expect(yaml).toContain("dev:fast:");
+    expect(yaml).toContain("postgres:");
   });
 
   it("cleanup removes the tmpdir", () => {
