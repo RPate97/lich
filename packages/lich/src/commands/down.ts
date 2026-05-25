@@ -412,6 +412,22 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
 
   // ---- Step 9: status:stopped persisted ---------------------------------
   snap.status = "stopped";
+  // Plan 5 Task 10 (LEV-412): clear the stack's routing entries on teardown
+  // so the daemon's reverse proxy stops serving stale upstream URLs within
+  // one watcher tick (~100ms). We set `routing: []` rather than `undefined`:
+  // the two are semantically distinct (see `RoutingEntry` JSDoc on
+  // `StackSnapshot`):
+  //   - `undefined`: this snapshot never declared routes (pre-Plan-5, or
+  //     mid-startup before `up` populated them).
+  //   - `[]`: routing was actively cleared — "this stack has zero routes
+  //     right now," which is precisely what `down` is signaling.
+  // The proxy in Plan 5 Task 12 filters routing for stacks whose status is
+  // stopped/failed/stopping, so even without the explicit clear the routes
+  // would no longer be served — but writing `[]` here is the unambiguous
+  // signal and keeps the snapshot honest. Always-clear (vs. only-when-
+  // present) is intentional: idempotent and removes any chance of a stale
+  // routing block lingering on disk.
+  snap.routing = [];
   await writeSnapshot(snap).catch((err) => {
     warnings.push({
       phase: "persist_state",
