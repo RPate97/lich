@@ -330,16 +330,10 @@ async function fetchViaProxy(
 ): Promise<Response> {
   const headers = new Headers();
   headers.set("Host", hostHeader);
-  // Force identity encoding: Bun's `fetch` auto-decompresses gzip on the
-  // proxy's upstream call, but the proxy forwards `content-encoding: gzip`
-  // back unchanged (proxy.ts strips only hop-by-hop headers; gzip's
-  // content-encoding isn't hop-by-hop). The client then tries to
-  // decompress an already-decompressed body and chokes with
-  // `Decompression error: ZlibError`. Setting `Accept-Encoding: identity`
-  // on the client request makes Next.js / Express skip compression
-  // entirely, sidestepping the issue. This is a known proxy bug worth
-  // flagging — see the spawn_task at the end of this test.
-  headers.set("Accept-Encoding", "identity");
+  // LEV-458 fixed the proxy's content-encoding double-decompress bug
+  // (`buildClientResponse` now strips `content-encoding`/`content-length`
+  // since Bun's `fetch` already decompressed upstream gzip). This used to
+  // force `Accept-Encoding: identity` to dodge that bug; no longer needed.
   return fetch(`http://localhost:${proxyPort}${path}`, { headers });
 }
 

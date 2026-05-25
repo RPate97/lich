@@ -328,6 +328,68 @@ describe("startProxy — upstream response handling", () => {
     const res = await fetchVia(proxy.url, "api.feature-x.lich.localhost:3300");
     expect(res.status).toBe(502);
   });
+
+  // LEV-458: Bun's `fetch()` auto-decompresses gzip/deflate/brotli upstream
+  // bodies but leaves the `content-encoding` header set. If the proxy forwards
+  // both the (already-decompressed) body AND the `content-encoding: gzip`
+  // header, clients try to decompress a second time and throw a `ZlibError`.
+  //
+  // The fix in `buildClientResponse` strips `content-encoding` (so the client
+  // doesn't double-decompress) AND `content-length` (the original byte length
+  // doesn't match the decompressed body — clients accept chunked over a lying
+  // content-length). This test pins both behaviors.
+  it("strips content-encoding + content-length so clients don't double-decompress gzip", async () => {
+    const plain = "hello from gzipped upstream — proxied transparently";
+    // Bun's gzip helper produces a real gzip stream; this is what Next.js's
+    // dev server or any compression middleware would emit.
+    const gzipped = Bun.gzipSync(new TextEncoder().encode(plain));
+
+    const upstream = makeUpstream(
+      () =>
+        new Response(gzipped, {
+          headers: {
+            "content-encoding": "gzip",
+            // The original (compressed) byte length, which is shorter than
+            // the decompressed body's length. Forwarding this verbatim would
+            // truncate readers that honor content-length.
+            "content-length": String(gzipped.byteLength),
+            "content-type": "text/plain; charset=utf-8",
+          },
+        }),
+    );
+    upstreams.push(upstream);
+
+    seedRouting({ "api.feature-x": upstream.url });
+    proxy = await startProxy({ port: 0, routingTable: table });
+
+    const res = await fetchVia(proxy.url, "api.feature-x.lich.localhost:3300");
+
+    // The proxied response must NOT advertise gzip — Bun already decompressed.
+    // This is the load-bearing assertion: before the fix, forwarding the
+    // upstream's `content-encoding: gzip` made clients double-decompress.
+    expect(res.headers.get("content-encoding")).toBeNull();
+    // Unrelated headers should still flow through.
+    expect(res.headers.get("content-type")).toContain("text/plain");
+
+    // The body should read as the original plaintext, no ZlibError. Before
+    // the fix this line would throw `Decompression error: ZlibError`.
+    const body = await res.text();
+    expect(body).toBe(plain);
+
+    // Content-length sanity: the proxy strips the upstream's claim (it was
+    // the compressed byte length, smaller than the decompressed body). Bun's
+    // serve layer then auto-computes a fresh, accurate content-length from
+    // the body we hand it. If the proxy ever started forwarding the
+    // upstream's stale value, this would mismatch and clients would truncate.
+    const cl = res.headers.get("content-length");
+    if (cl !== null) {
+      // content-length is byte length, not JS string char length — the
+      // em-dash in `plain` is 3 bytes UTF-8 / 1 JS char, so compare against
+      // the UTF-8 byte count.
+      const plainBytes = new TextEncoder().encode(plain).length;
+      expect(Number(cl)).toBe(plainBytes);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

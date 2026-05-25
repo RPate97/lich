@@ -528,11 +528,9 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
             const res = await fetch(probeUrl, {
               headers: {
                 Host: `${friendlyHost}:${proxyPort}`,
-                // Skip gzip — Bun's fetch occasionally trips a ZlibError
-                // when the proxy passes a chunked gzip stream through.
-                // Identity encoding is simpler to compare against the raw
-                // body anyway (raw probe doesn't request gzip either).
-                "Accept-Encoding": "identity",
+                // LEV-458 fixed the proxy's content-encoding double-
+                // decompress bug; the `Accept-Encoding: identity`
+                // workaround that used to live here is no longer needed.
               },
             });
             if (res.status === 200) {

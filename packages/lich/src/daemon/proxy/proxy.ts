@@ -183,11 +183,31 @@ function buildUpstreamRequest(req: Request, upstreamBase: string): Request {
  * Build the Response we send back to the client given the upstream's
  * Response. Strips hop-by-hop headers from the upstream response and
  * preserves status, body, and the remaining headers.
+ *
+ * ## Content-Encoding handling (LEV-458)
+ *
+ * Bun's `fetch()` (which the proxy uses to call the upstream) auto-
+ * decompresses gzip/deflate/brotli bodies but **keeps** the original
+ * `content-encoding` header on the Response. If we forward both the
+ * (already-decompressed) body AND the `content-encoding: gzip` header,
+ * the client tries to decompress the body a second time and explodes
+ * with `Decompression error: ZlibError`. Bun-to-Bun proxying via
+ * Next.js dev hit this constantly.
+ *
+ * We also strip `content-length` for the same reason: the decompressed
+ * body has a different byte length than the header claims, and a
+ * mismatch is worse than its absence (clients accept chunked encoding
+ * when content-length is omitted).
  */
 function buildClientResponse(upstreamRes: Response): Response {
   const headers = new Headers();
   for (const [name, value] of upstreamRes.headers.entries()) {
-    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    const lower = name.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lower)) continue;
+    // See doc comment above — Bun's fetch decompressed the body but kept
+    // the encoding header; both content-encoding and content-length must
+    // be dropped to avoid client-side double-decompression / length lies.
+    if (lower === "content-encoding" || lower === "content-length") continue;
     headers.set(name, value);
   }
 
