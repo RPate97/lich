@@ -7,6 +7,7 @@
  * serialize through the lock so concurrent allocations don't collide.
  */
 
+import { spawnSync } from "node:child_process";
 import {
   mkdir,
   readFile,
@@ -38,18 +39,30 @@ interface Registry {
 }
 
 /**
- * Probe to confirm a candidate port is actually bindable on the host.
- * The registry tells us what other lich stacks reserved; this catches
- * collisions with non-lich processes (the user's other dev tools).
+ * Probe a single address family. Used by `nodeBindProbe`.
+ */
+function probeOn(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen({ port, host, exclusive: true });
+  });
+}
+
+/**
+ * Node-level bind probe. Probes BOTH IPv4 (`0.0.0.0`) AND IPv6 (`::`)
+ * and requires both binds to succeed.
  *
  * ## Dual-stack probe (LEV-457)
  *
- * We probe BOTH IPv4 (`0.0.0.0`) AND IPv6 (`::`) and require both binds
- * to succeed. Why: Docker's port forwards bind dual-stack (both families).
- * If we probed only IPv4 (the original implementation), we'd miss a
- * port that Docker had bound on IPv6 from another stack's containers —
- * `isPortFree` would falsely return true, the allocator would hand it
- * out, then supabase's own dual-stack bind would fail with EADDRINUSE.
+ * Docker's port forwards bind dual-stack (both families). If we probed
+ * only IPv4 (the original implementation), we'd miss a port that Docker
+ * had bound on IPv6 from another stack's containers — `isPortFree`
+ * would falsely return true, the allocator would hand it out, then
+ * supabase's own dual-stack bind would fail with EADDRINUSE.
  *
  * The two probes run sequentially. If IPv4 fails, we short-circuit. If
  * IPv4 succeeds but IPv6 fails (host has IPv6 disabled or a v4-only
@@ -62,21 +75,74 @@ interface Registry {
  * `IPV6_V6ONLY` it depends on `/proc/sys/net/ipv6/bindv6only`. Probing
  * each family separately is the only portable approach.
  */
-async function isPortFree(port: number): Promise<boolean> {
-  const probeOn = (host: string): Promise<boolean> =>
-    new Promise((resolve) => {
-      const server = createServer();
-      server.once("error", () => resolve(false));
-      server.once("listening", () => {
-        server.close(() => resolve(true));
-      });
-      server.listen({ port, host, exclusive: true });
-    });
-
-  const ipv4Free = await probeOn("0.0.0.0");
+async function nodeBindProbe(port: number): Promise<boolean> {
+  const ipv4Free = await probeOn("0.0.0.0", port);
   if (!ipv4Free) return false;
-  const ipv6Free = await probeOn("::");
+  const ipv6Free = await probeOn("::", port);
   return ipv6Free;
+}
+
+/**
+ * Check whether any Docker container is publishing the given port (LEV-478).
+ *
+ * `docker ps -a --format "{{.Ports}}"` emits one line per container with
+ * its published port mappings, e.g.:
+ *
+ *   0.0.0.0:9005->5432/tcp, [::]:9005->5432/tcp
+ *
+ * We just need to see if `:<port>->` appears in any line. This catches
+ * stopped containers too (the `-a` flag), because docker holds the host
+ * port mapping until the container is `docker rm`'d, not just stopped.
+ *
+ * Why this matters: Docker container port mappings are managed by
+ * `docker-proxy` (Linux) or inside the Docker VM (macOS). Those
+ * mappings aren't visible to Node's `net.bind()` probe — so without
+ * this extra check, the allocator can pick a "free" port that Docker
+ * then refuses to publish with "port is already allocated".
+ *
+ * If docker isn't available (binary missing, daemon unreachable),
+ * return false — we trust the Node bind probe and don't pretend the
+ * port is taken when we can't actually tell. Same behavior as before
+ * this check existed.
+ */
+function dockerHoldsPort(port: number): boolean {
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync("docker", ["ps", "-a", "--format", "{{.Ports}}"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } catch {
+    // spawnSync itself can throw if the binary isn't on PATH on some
+    // platforms; treat the same as docker being unreachable.
+    return false;
+  }
+  if (result.status !== 0) return false;
+  // With `encoding: "utf8"` the stdout is a string, but the @types/node
+  // overload union still includes Buffer. Coerce defensively.
+  const stdout =
+    typeof result.stdout === "string"
+      ? result.stdout
+      : result.stdout != null
+        ? result.stdout.toString("utf8")
+        : "";
+  return new RegExp(`:${port}->`).test(stdout);
+}
+
+/**
+ * Probe to confirm a candidate port is actually bindable on the host.
+ * The registry tells us what other lich stacks reserved; this catches
+ * collisions with non-lich processes (the user's other dev tools) AND
+ * stale Docker container port mappings (LEV-478).
+ *
+ * Order: Node bind probe first (fast, no subprocess), Docker check
+ * second (only run if Node thinks the port is free — keeps the cost
+ * down on hot paths).
+ */
+async function isPortFree(port: number): Promise<boolean> {
+  if (!(await nodeBindProbe(port))) return false;
+  if (dockerHoldsPort(port)) return false;
+  return true;
 }
 
 function lichHome(): string {
