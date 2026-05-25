@@ -14,4 +14,5 @@
 export const COMPOSE_REQUIRED: readonly string[] = [
   "env-dotenv.test.ts",
   "env-groups-isolation.test.ts",
+  "lifecycle-env-group.test.ts",
 ] as const;

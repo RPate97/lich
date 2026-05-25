@@ -49,6 +49,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Mirror basic-up.test.ts's pattern so this test
@@ -162,9 +165,14 @@ describe("lifecycle.after_up env_group resolution (LEV-345 sentinel)", () => {
         process.stderr.write(`  [+${elapsed}s] ${label}\n`);
       };
 
-      // ---- lich up -----------------------------------------------------
-      step("lich up (runs after_up hook under stack-plus-test group)");
-      const upResult = runLich(["up"], {
+      // ---- lich up dev -------------------------------------------------
+      // Explicit "dev" profile arg: the e2e suite's default flipped to
+      // dev:fast (no postgres, no after_up). This test exercises the
+      // after_up hook that reads DATABASE_URL via the stack-plus-test
+      // env_group — only present under the dev profile. Lives in the
+      // compose pool — see tests/e2e/_pool-manifest.ts.
+      step("lich up dev (runs after_up hook under stack-plus-test group)");
+      const upResult = runLich(["up", "dev"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
         timeout: 240_000,
@@ -177,6 +185,26 @@ describe("lifecycle.after_up env_group resolution (LEV-345 sentinel)", () => {
       }
       expect(upResult.exitCode).toBe(0);
       step("lich up exit 0 — after_up hook completed");
+
+      // Probe /health and verify db: "live" — catches accidental profile
+      // drift loudly. If the dispatcher ever lost the "dev" arg above
+      // (default flip, env leak), this fails with a clear message instead
+      // of silently passing with stub data (no after_up, no marker file).
+      //
+      // `urls --raw` returns the localhost upstream (http://127.0.0.1:<port>)
+      // rather than the friendly URL via the daemon proxy. The friendly URL
+      // routing can race the proxy's bind / route-table refresh after up;
+      // raw probes the api server directly and avoids that race.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 30_000 });
+      await expectDbMode(apiUrl!, "live");
 
       // ---- assert marker file ------------------------------------------
       const markerPath = join(lichHome, "marker.txt");
