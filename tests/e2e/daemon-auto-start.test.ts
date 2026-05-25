@@ -66,6 +66,9 @@ import {
   waitForDaemonRunning,
   waitForDaemonStopped,
 } from "./helpers/daemon.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Mirrors basic-up.test.ts / restart-basic.test.ts
@@ -163,7 +166,7 @@ function step(label: string): void {
 describe("daemon auto-start on first `lich up`", () => {
   it(
     "(setup) brings the dogfood-stack up under a per-suite LICH_HOME with --no-browser",
-    () => {
+    async () => {
       // install: true — apps/web runs `next dev`, which needs `next` in
       // node_modules/.bin. Without it the web owned service exits 127
       // immediately and the up never reaches the daemon-trigger step
@@ -182,11 +185,14 @@ describe("daemon auto-start on first `lich up`", () => {
       // The daemon itself MUST still start — `--no-browser` only
       // suppresses the auto-open, not the spawn. See `commands/up.ts`
       // Plan 5 Task 9 block: `ensureDaemonRunning({ openBrowser: !noBrowser })`.
-      step("lich up --no-browser (postgres pull + boot ~5-10s)");
+      //
+      // Default profile is dev:fast (no compose, no postgres) — just api +
+      // web on the host. Typically ~2-3s.
+      step("lich up --no-browser (dev:fast — api + web on host)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 300_000,
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // Surface stdout+stderr so a failed up gives a real diagnostic;
@@ -200,8 +206,26 @@ describe("daemon auto-start on first `lich up`", () => {
         );
       }
       step("lich up exit 0");
+
+      // dev:fast profile sentinel: api /health should report db: stub.
+      // Catches silent drift if the default profile ever flips back to dev.
+      // We probe via `lich urls --raw` (localhost URLs, no friendly-URL
+      // routing involved) — friendly URLs would race against the daemon's
+      // routing watcher under dev:fast's sub-3s startup.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      step(`probing api /health (${apiUrl})`);
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
+      step("api /health reports db: stub");
     },
-    /* timeout */ 300_000,
+    /* timeout */ 60_000,
   );
 
   it(
