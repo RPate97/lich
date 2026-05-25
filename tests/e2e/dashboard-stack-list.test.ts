@@ -13,8 +13,8 @@
  *      with:
  *        - the right `worktree_name` (slugged from the tmpdir basename)
  *        - `status: "up"` (matches the on-disk state.json)
- *        - the four expected services (`api`, `supabase`, `tunnel_demo`,
- *          `web`) all in the `ready` state
+ *        - the six expected services (`api`, `mailhog`, `redis`,
+ *          `supabase`, `tunnel_demo`, `web`) all in the `ready` state
  *        - `active_profile: "dev"` (the dogfood-stack's default profile,
  *          per Plan 3 Task 18)
  *        - a `primary_url` (derived from the snapshot's `routing` block,
@@ -332,18 +332,37 @@ describe("dashboard /api/stacks against dogfood-stack", () => {
       // verbatim (stacks-view.ts:243-247).
       expect(stack.active_profile).toBe("dev");
 
-      // services: the dogfood-stack defines four owned services. All
-      // should be in `ready` after a successful `lich up` (Plan 4's
-      // ready_when contract). We don't pin the order — the projection
-      // doesn't sort within a stack — but the set must match exactly.
+      // services: the dogfood-stack defines four owned services + two
+      // compose services (mailhog/redis were added by Task-2 of the
+      // dogfood-stack expansion). All should be in `ready` after a
+      // successful `lich up` (Plan 4's ready_when contract for owned;
+      // docker healthcheck for compose). We don't pin the order — the
+      // projection doesn't sort within a stack — but the set must match
+      // exactly.
       const serviceNames = stack.services.map((s) => s.name).sort();
-      expect(serviceNames).toEqual(["api", "supabase", "tunnel_demo", "web"]);
+      expect(serviceNames).toEqual([
+        "api",
+        "mailhog",
+        "redis",
+        "supabase",
+        "tunnel_demo",
+        "web",
+      ]);
 
+      // Per-service kind tag. The dogfood-stack mixes owned + compose:
+      // mailhog/redis are the only compose entries (declared under the
+      // top-level `services:` block); everything else is owned. The
+      // projection passes the kind through unchanged.
+      const expectedKinds: Record<string, "owned" | "compose"> = {
+        api: "owned",
+        mailhog: "compose",
+        redis: "compose",
+        supabase: "owned",
+        tunnel_demo: "owned",
+        web: "owned",
+      };
       for (const svc of stack.services) {
-        // Every dogfood-stack service is `owned` (host process) — none
-        // of them are docker-compose services in the current yaml. The
-        // projection passes the kind through unchanged.
-        expect(svc.kind).toBe("owned");
+        expect(svc.kind).toBe(expectedKinds[svc.name]);
         // After `status: up`, every service is ready. If a service were
         // still `initializing` or `starting`, the stack-level status
         // would be `starting` or `partial`, not `up`. Catching that

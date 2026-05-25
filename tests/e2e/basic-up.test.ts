@@ -293,8 +293,17 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       expect(snap.status).toBe("up");
       const serviceNames = snap.services.map((s) => s.name).sort();
       // The dogfood stack defines these services. tunnel_demo was added by
-      // LEV-368 as the Plan 4 capture demo; api/supabase/web are the core.
-      expect(serviceNames).toEqual(["api", "supabase", "tunnel_demo", "web"]);
+      // LEV-368 as the Plan 4 capture demo; api/supabase/web are the core
+      // owned services; mailhog/redis are the Plan 1 compose services
+      // added by the Task-2 dogfood-stack expansion.
+      expect(serviceNames).toEqual([
+        "api",
+        "mailhog",
+        "redis",
+        "supabase",
+        "tunnel_demo",
+        "web",
+      ]);
 
       // ---- lich urls: expected services present, ports reachable -------
       const urlsResult = runLich(["urls"], {
