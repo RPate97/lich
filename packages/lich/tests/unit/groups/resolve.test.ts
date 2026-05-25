@@ -46,6 +46,9 @@ function baseInput(
     allocatedPorts: overrides.allocatedPorts ?? noPorts,
     projectRoot: overrides.projectRoot ?? tmp,
     processEnv: overrides.processEnv ?? {},
+    // LEV-395 (Plan 3 Task 21): pass through optional profile when caller
+    // supplies one. Default behavior (no profile) is preserved when omitted.
+    profile: overrides.profile,
   };
 }
 
@@ -359,5 +362,142 @@ describe("resolveEnvGroup (errors)", () => {
     await expect(
       resolveEnvGroup(baseInput({ name: "clean", config })),
     ).rejects.toThrow(GroupCycleError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Profile threading (Plan 3 Task 21 / LEV-395)
+// ---------------------------------------------------------------------------
+//
+// `resolveEnvGroup` learned an optional `profile` field so callers (`lich
+// exec`, `lich env`) can thread the active profile through to the built-in
+// `stack` terminator. The terminator forwards it to `resolveTopLevelEnv`,
+// which applies the profile env layer AND auto-injects `LICH_PROFILE`. The
+// tests below pin the chain at the group-resolver boundary (the
+// `resolveTopLevelEnv` half is exhaustively covered by
+// `tests/unit/env/resolve.test.ts`).
+
+describe("resolveEnvGroup (profile threading — Plan 3 Task 21)", () => {
+  it("forwards profile to the built-in stack group: LICH_PROFILE is auto-injected", async () => {
+    // Minimal profile shape — only `name` matters for the auto-inject path;
+    // the env layer is empty so we isolate the LICH_PROFILE wiring from any
+    // env-layering confounders.
+    const env = await resolveEnvGroup(
+      baseInput({
+        name: "stack",
+        config: { version: "1" },
+        profile: {
+          name: "dev:env-override",
+          services: [],
+          owned: [],
+          env: {},
+          env_files: [],
+          env_from: [],
+          lifecycle: { before_up: [], after_up: [], before_down: [] },
+        },
+      }),
+    );
+    expect(env.LICH_PROFILE).toBe("dev:env-override");
+    // Sanity: the other auto-injects still land (so we'd catch a wiring
+    // regression that accidentally suppressed them).
+    expect(env.LICH_WORKTREE).toBe("feature-x");
+    expect(env.LICH_STACK_ID).toBe("feature-x-abc123de");
+  });
+
+  it("omits LICH_PROFILE when profile is undefined (Plan-1 behavior preserved)", async () => {
+    const env = await resolveEnvGroup(
+      baseInput({
+        name: "stack",
+        config: { version: "1" },
+        // profile intentionally omitted
+      }),
+    );
+    expect(Object.prototype.hasOwnProperty.call(env, "LICH_PROFILE")).toBe(
+      false,
+    );
+  });
+
+  it("applies profile env layer to the stack group: profile env overrides top-level", async () => {
+    const env = await resolveEnvGroup(
+      baseInput({
+        name: "stack",
+        config: { version: "1", env: { DB: "top-level" } },
+        profile: {
+          name: "dev:env-override",
+          services: [],
+          owned: [],
+          env: { DB: "from-profile" },
+          env_files: [],
+          env_from: [],
+          lifecycle: { before_up: [], after_up: [], before_down: [] },
+        },
+      }),
+    );
+    // Profile layer wins per the precedence rules (env/resolve.ts steps 6-8
+    // override step 5).
+    expect(env.DB).toBe("from-profile");
+  });
+
+  it("forwards profile through extends: stack so derived groups see LICH_PROFILE", async () => {
+    // A user-defined group that `extends: stack` should inherit the
+    // profile-aware stack env (including LICH_PROFILE). This proves the
+    // recursive walker carries `profile` down to the terminator, not just
+    // the direct-stack call.
+    const env = await resolveEnvGroup(
+      baseInput({
+        name: "stack-plus",
+        config: {
+          version: "1",
+          env_groups: {
+            "stack-plus": {
+              extends: "stack",
+              env: { EXTRA: "yes" },
+            },
+          },
+        },
+        profile: {
+          name: "dev",
+          services: [],
+          owned: [],
+          env: {},
+          env_files: [],
+          env_from: [],
+          lifecycle: { before_up: [], after_up: [], before_down: [] },
+        },
+      }),
+    );
+    expect(env.EXTRA).toBe("yes");
+    expect(env.LICH_PROFILE).toBe("dev");
+  });
+
+  it("does NOT auto-inject LICH_PROFILE into a group that does NOT extend stack", async () => {
+    // A standalone group (no `extends`) should never see LICH_PROFILE even
+    // when one is passed — the auto-inject only fires through the stack
+    // terminator. This proves the wiring respects group isolation per spec
+    // section 4 (only stack participates in the profile precedence layering).
+    const env = await resolveEnvGroup(
+      baseInput({
+        name: "isolated",
+        config: {
+          version: "1",
+          env_groups: {
+            isolated: { env: { ONLY: "this" } },
+          },
+        },
+        profile: {
+          name: "dev",
+          services: [],
+          owned: [],
+          env: {},
+          env_files: [],
+          env_from: [],
+          lifecycle: { before_up: [], after_up: [], before_down: [] },
+        },
+      }),
+    );
+    expect(env.ONLY).toBe("this");
+    expect(Object.prototype.hasOwnProperty.call(env, "LICH_PROFILE")).toBe(
+      false,
+    );
   });
 });
