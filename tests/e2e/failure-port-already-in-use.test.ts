@@ -274,7 +274,11 @@ describe("lich up — port already in use on a pinned owned port", () => {
       // 30s budget per the acceptance criteria; in practice the allocator
       // probe fires in milliseconds — the budget is for cold binary load
       // + filesystem setup on the slowest CI machine.
-      const result = runLich(["up"], {
+      //
+      // `--no-browser` is defensive: `up` fails at the allocator pre-check
+      // before any service starts, so the daemon never spawns either way.
+      // Matches the fast-pool convention.
+      const result = runLich(["up", "--no-browser"], {
         cwd: stack.path,
         env: { LICH_HOME: lichHome },
         timeout: 30_000,
