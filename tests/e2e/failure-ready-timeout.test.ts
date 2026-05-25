@@ -315,8 +315,12 @@ describe("lich up — ready_when.timeout fires and surfaces", () => {
       // doesn't false-fail, while still being well under the 120s default
       // vitest timeout. The acceptance criteria's "~10s" is the target on
       // a warm host; 30s is the slack ceiling.
+      //
+      // `--no-browser` is defensive: `up` exits non-zero before any
+      // service reaches ready, so the daemon never spawns either way.
+      // Matches the fast-pool convention.
       const t0 = Date.now();
-      const upResult = runLich(["up"], {
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
         timeout: 30_000,
