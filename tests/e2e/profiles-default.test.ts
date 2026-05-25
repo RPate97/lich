@@ -149,8 +149,11 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
       const upResult = runLich(["up", "--no-browser"], {
         cwd: fixture.stackPath,
         env: { LICH_HOME: fixture.lichHome },
-        // dev:fast comes up in ~2-3s; 60s is generous headroom for slow CI.
-        timeout: 60_000,
+        // dev:fast comes up in ~3-5s warm; cold first run + Next dev's
+        // initial compile under fork-pool contention (maxForks: 4 — see
+        // vitest.config.ts) can stretch to ~30s. 120s is generous headroom
+        // for CI boxes and parallel-fork CPU competition.
+        timeout: 120_000,
       });
       if (upResult.exitCode !== 0) {
         // eslint-disable-next-line no-console
@@ -179,7 +182,7 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
       await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
       await expectDbMode(apiUrl!, "stub");
     },
-    /* timeout */ 90_000,
+    /* timeout */ 180_000,
   );
 
   it("lich stacks --json reports active_profile === 'dev:fast'", () => {

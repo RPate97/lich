@@ -573,15 +573,14 @@ describe("friendly URL reverse proxy against dogfood-stack", () => {
       // flag only affects the auto-open side effect.
       //
       // Default profile is now `dev:fast` (LEV-470) — just api + web on
-      // the host, no postgres. Boot is ~2-3s. The friendly URL routing
-      // table is populated from the same `up.ts` block regardless of
-      // profile, so the assertions below don't care about which services
-      // are up — they iterate over `snap.services`.
-      step("lich up --no-browser (dev:fast — api + web boot ~2-3s)");
+      // the host, no postgres. Boot is ~3-5s warm. Under fork-pool
+      // contention (maxForks: 4) Next's cold compile can stretch to
+      // ~30s; 120s timeout absorbs that.
+      step("lich up --no-browser (dev:fast — api + web boot ~3-5s warm)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 60_000,
+        timeout: 120_000,
       });
       if (upResult.exitCode !== 0) {
         // Surface the failure cause immediately so a regression is one
@@ -795,11 +794,11 @@ describe("friendly URL reverse proxy against dogfood-stack", () => {
 
       step("all friendly-URL assertions passed");
     },
-    // Per-test override: 90s. dev:fast (LEV-470) brings up in ~2-3s; the
-    // dominant cost is Next dev cold-compile (~3-8s on first request) and
-    // the two proxy probes. The 90s budget is headroom for slow CI boxes
-    // — well below the 30s default the fast pool would otherwise impose,
-    // but well above the realistic ~15s warm runtime.
-    90_000,
+    // Per-test override: 180s. dev:fast (LEV-470) brings up in ~3-5s
+    // warm; the dominant cost is Next dev cold-compile (~3-30s on first
+    // request under fork-pool contention) and the routing-table settle
+    // (~20-30s from `lich up` returning to the first friendly URL
+    // 200). Generous headroom for parallel-fork CPU competition.
+    180_000,
   );
 });
