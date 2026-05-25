@@ -1065,18 +1065,16 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       if (typeof configuredProxyPort === "number") {
         ensureOpts.proxyPort = configuredProxyPort;
       }
-      const { url: _rawDashboardUrl, alreadyRunning } =
+      const { url: rawDashboardUrl, alreadyRunning } =
         await ensureDaemonRunning(ensureOpts);
       // LEV-481: prefer the friendly apex URL (`http://lich.localhost:<proxy>/`)
       // for the user-facing dashboard line. The daemon registers a static
       // route for `lich.localhost` → its ephemeral dashboard URL, so users
       // see a stable, memorable URL instead of an ephemeral
       // `http://127.0.0.1:<random>` that changes every daemon restart.
-      // `_rawDashboardUrl` is intentionally unused here — we still call
-      // `ensureDaemonRunning` for its side effects (spawning the daemon,
-      // confirming it's ready, optional browser open) and for the
-      // `alreadyRunning` signal that drives the suffix; we just don't
-      // display the raw URL anymore.
+      // `rawDashboardUrl` is still used internally for the LEV-480
+      // routing-wait API call (the /api/routing endpoints aren't proxied
+      // — they're served directly by the dashboard server).
       //
       // Surface the URL on a single info line so the user sees where to
       // point their browser even if the auto-open was suppressed (or
@@ -1113,8 +1111,8 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       //
       // The routing API is on the daemon's RAW URL (not the friendly
       // one) since the proxy itself doesn't proxy `/api/routing` — the
-      // dashboard server hosts it directly. `url` here is the raw
-      // daemon URL from ensureDaemonRunning.
+      // dashboard server hosts it directly. `rawDashboardUrl` from
+      // ensureDaemonRunning above is exactly that URL.
       const expectedHostnames = (state.routing ?? []).map((r) =>
         r.hostname.toLowerCase(),
       );
@@ -1128,7 +1126,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           ? Number(overrideTimeout)
           : NaN;
         await waitForRoutingReady({
-          dashboardUrl: url,
+          dashboardUrl: rawDashboardUrl,
           expectedHostnames,
           warn: (msg) => output.info(`[lich] warning: ${msg}`),
           ...(Number.isFinite(overrideTimeoutNum)
