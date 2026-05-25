@@ -188,13 +188,26 @@ export interface ComposeService {
   depends_on?: string[];
 
   // Compose-spec passthroughs — accepted opaquely, compose will validate
-  // them when we shell out.
+  // them when we shell out. The override generator emits each of these
+  // verbatim into the per-stack `compose.override.yaml` when declared,
+  // so users can keep their entire service definition inline in
+  // `lich.yaml` (single source of truth) without needing a sibling
+  // compose file to carry image/healthcheck/etc.
   image?: string;
   environment?: unknown;
   healthcheck?: Record<string, unknown>;
   volumes?: unknown[];
   networks?: unknown;
   profiles?: unknown[];
+  /**
+   * Compose `tmpfs:` passthrough — list of in-container paths to mount
+   * as tmpfs (RAM-backed, ephemeral). Compose accepts either a string
+   * or a list of strings; we accept both shapes opaquely. The dogfood
+   * stack uses this for an ephemeral Postgres data dir so tests get a
+   * clean DB on every `lich down → lich up` cycle without manual
+   * volume management.
+   */
+  tmpfs?: string[] | string;
 }
 
 // ---------------------------------------------------------------------------

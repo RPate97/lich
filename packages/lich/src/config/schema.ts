@@ -326,6 +326,12 @@ const composeServiceSchema = {
     volumes: { type: "array" },
     networks: {},
     profiles: { type: "array" },
+    // `tmpfs` accepts either a single path or a list of paths per the
+    // compose spec. We pass it through opaquely (the override generator
+    // emits it verbatim and compose itself validates the contents).
+    tmpfs: {
+      oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+    },
   },
   additionalProperties: false,
 } as const;

@@ -93,7 +93,11 @@ describe("generateComposeOverride", () => {
     const parsed = yamlParse(out);
 
     expect(parsed.services).toBeDefined();
+    // Per LEV-477, the user-declared `image: "node:20"` on the fixture
+    // is now also emitted (compose-spec passthrough). The env + ports
+    // are unchanged from the pre-LEV-477 shape.
     expect(parsed.services.api).toEqual({
+      image: "node:20",
       environment: {
         DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
         LICH_STACK_ID: "dogfood-stack-a1b2c3d4",
@@ -123,11 +127,17 @@ describe("generateComposeOverride", () => {
     expect(parsed.services.web.ports).toEqual(["5001:3001"]);
   });
 
-  it("omits a service that has neither ports nor env", () => {
+  it("omits a service that has no fields at all to emit", () => {
+    // Per LEV-477, the inclusion check is widened from "ports OR env" to
+    // "any field at all" — so a service that declares only opaque fields
+    // outside the override scope (here: `compose_file` and `depends_on`,
+    // which lich reads itself rather than passing to compose) gets
+    // dropped. The fixture's `worker` declares only `compose_file:`,
+    // which the override generator never emits.
     const input: OverrideInput = {
       config: makeConfig({
         api: { ports: { http: { container: 3000, env: "PORT" } } },
-        worker: { image: "node:20" },
+        worker: { compose_file: "extra.yaml" },
       }),
       allocatedPorts: { compose: { api: { http: 5000 } } },
       resolvedEnv: { api: { NODE_ENV: "dev" } },
@@ -136,6 +146,24 @@ describe("generateComposeOverride", () => {
     const parsed = yamlParse(generateComposeOverride(input));
     expect(parsed.services.api).toBeDefined();
     expect(parsed.services.worker).toBeUndefined();
+  });
+
+  it("emits a service that declares ONLY `image:` (LEV-477)", () => {
+    // Pre-LEV-477 the inclusion check was "ports OR env"; a service
+    // that declared only `image:` (no ports, no env to inject) was
+    // silently dropped, and compose then rejected it with "neither an
+    // image nor a build context specified". Post-fix the service is
+    // emitted with `image:` only.
+    const input: OverrideInput = {
+      config: makeConfig({
+        worker: { image: "redis:7-alpine" },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { worker: {} },
+      stackId: "stack-image-only",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.worker).toEqual({ image: "redis:7-alpine" });
   });
 
   it("emits only `ports:` when a service has ports but no env", () => {
@@ -152,7 +180,10 @@ describe("generateComposeOverride", () => {
     expect(parsed.services.api.environment).toBeUndefined();
   });
 
-  it("emits only `environment:` when a service has env but no ports", () => {
+  it("emits `image:` + `environment:` when a service has env but no ports", () => {
+    // Per LEV-477, the user-declared `image:` is now part of the
+    // emitted block alongside the resolved env. Pre-LEV-477 the image
+    // was silently dropped — this regression-pins the fix.
     const input: OverrideInput = {
       config: makeConfig({
         api: { image: "node:20" },
@@ -162,7 +193,10 @@ describe("generateComposeOverride", () => {
       stackId: "stack-env-only",
     };
     const parsed = yamlParse(generateComposeOverride(input));
-    expect(parsed.services.api).toEqual({ environment: { FOO: "bar" } });
+    expect(parsed.services.api).toEqual({
+      image: "node:20",
+      environment: { FOO: "bar" },
+    });
     expect(parsed.services.api.ports).toBeUndefined();
   });
 
@@ -291,8 +325,13 @@ describe("generateComposeOverride", () => {
   });
 
   it("when no services need overriding, still emits a valid (empty) document", () => {
+    // A service whose declaration carries nothing the override generator
+    // emits (here: only `compose_file:`, which lich reads itself and
+    // passes to compose via `-f`) collapses to a no-op block — and a
+    // config full of such services produces an empty `services: {}`.
+    // The header is still present so the file is valid YAML.
     const input: OverrideInput = {
-      config: makeConfig({ api: { image: "node:20" } }),
+      config: makeConfig({ api: { compose_file: "extra.yaml" } }),
       allocatedPorts: { compose: {} },
       resolvedEnv: {},
       stackId: "stack-empty",
@@ -323,6 +362,250 @@ describe("generateComposeOverride", () => {
     };
     const parsed = yamlParse(generateComposeOverride(input));
     expect(Object.keys(parsed.services)).toEqual(["api"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // LEV-477: compose-spec passthrough fields
+  //
+  // Before LEV-477, the override generator emitted only `environment:` (from
+  // the env pipeline) and `ports:` (from the allocator). Any other field the
+  // user declared inline on a compose service — `image`, `healthcheck`,
+  // `volumes`, `networks`, `profiles`, `tmpfs`, user-declared `environment` —
+  // was silently dropped. Result: declaring a fully-inline compose service in
+  // `lich.yaml` was impossible; users had to extract the passthroughs into a
+  // sibling compose.yaml and reference it via `compose_file:` (the LEV-463
+  // workaround), defeating the single-source-of-truth ergonomics.
+  //
+  // These tests pin that each documented passthrough field is now emitted
+  // verbatim, that user-declared `environment:` merges with the resolved env
+  // (resolved wins on conflict), and that the emit order is stable.
+  // -------------------------------------------------------------------------
+
+  it("LEV-477: emits user-declared `healthcheck:` verbatim", () => {
+    const healthcheck = {
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"],
+      interval: "1s",
+      timeout: "1s",
+      retries: 30,
+    };
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: { image: "postgres:16-alpine", healthcheck },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-healthcheck",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.healthcheck).toEqual(healthcheck);
+  });
+
+  it("LEV-477: emits user-declared `volumes:` verbatim", () => {
+    const volumes = ["./data:/var/lib/postgresql/data", "shared-vol:/shared"];
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: { image: "postgres:16-alpine", volumes },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-volumes",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.volumes).toEqual(volumes);
+  });
+
+  it("LEV-477: emits user-declared `networks:` verbatim", () => {
+    const networks = ["app-net", "db-net"];
+    const input: OverrideInput = {
+      config: makeConfig({
+        api: { image: "node:20", networks },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { api: {} },
+      stackId: "stack-networks",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.api.networks).toEqual(networks);
+  });
+
+  it("LEV-477: emits user-declared `profiles:` verbatim", () => {
+    const profiles = ["debug", "tools"];
+    const input: OverrideInput = {
+      config: makeConfig({
+        debugger: { image: "alpine", profiles },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { debugger: {} },
+      stackId: "stack-profiles",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.debugger.profiles).toEqual(profiles);
+  });
+
+  it("LEV-477: emits user-declared `tmpfs:` (list form) verbatim", () => {
+    const tmpfs = ["/var/lib/postgresql/data"];
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: { image: "postgres:16-alpine", tmpfs },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-tmpfs-list",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.tmpfs).toEqual(tmpfs);
+  });
+
+  it("LEV-477: emits user-declared `tmpfs:` (string form) verbatim", () => {
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: {
+          image: "postgres:16-alpine",
+          tmpfs: "/var/lib/postgresql/data",
+        },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-tmpfs-string",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.tmpfs).toBe("/var/lib/postgresql/data");
+  });
+
+  it("LEV-477: merges user-declared `environment:` with resolved env (resolved wins)", () => {
+    // User declares `POSTGRES_USER` + `POSTGRES_DB` inline (compose
+    // semantics). The env pipeline also produced `POSTGRES_USER` (with
+    // a different value) + `DATABASE_URL` (resolved-only). After merge:
+    //   - keys only in user-declared (POSTGRES_DB) remain.
+    //   - keys only in resolved (DATABASE_URL) remain.
+    //   - keys in both (POSTGRES_USER) take the resolved value, since
+    //     resolved is the output of the full env pipeline.
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: {
+          image: "postgres:16-alpine",
+          environment: {
+            POSTGRES_USER: "wrong",
+            POSTGRES_DB: "dogfood",
+          },
+        },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: {
+        postgres: {
+          POSTGRES_USER: "postgres",
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/dogfood",
+        },
+      },
+      stackId: "stack-env-merge",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.environment).toEqual({
+      POSTGRES_USER: "postgres",
+      POSTGRES_DB: "dogfood",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/dogfood",
+    });
+  });
+
+  it("LEV-477: emits user-declared `environment:` alone when no resolved env", () => {
+    // When the env pipeline produced nothing, the user-declared
+    // environment passes through unchanged.
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: {
+          image: "postgres:16-alpine",
+          environment: {
+            POSTGRES_USER: "postgres",
+            POSTGRES_PASSWORD: "postgres",
+            POSTGRES_DB: "dogfood",
+          },
+        },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-env-user-only",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.postgres.environment).toEqual({
+      POSTGRES_USER: "postgres",
+      POSTGRES_PASSWORD: "postgres",
+      POSTGRES_DB: "dogfood",
+    });
+  });
+
+  it("LEV-477: emits all passthroughs together in the stable field order", () => {
+    // Pins the chosen emit order so the on-disk file is stable across
+    // changes (and so the test catches accidental reordering that would
+    // churn the user-visible file even when content is unchanged):
+    //   image, environment, ports, healthcheck, volumes, networks,
+    //   profiles, tmpfs.
+    const input: OverrideInput = {
+      config: makeConfig({
+        postgres: {
+          image: "postgres:16-alpine",
+          ports: { db: { container: 5432, env: "POSTGRES_HOST_PORT" } },
+          environment: { POSTGRES_DB: "dogfood" },
+          healthcheck: { test: ["CMD-SHELL", "pg_isready"] },
+          volumes: ["shared:/shared"],
+          networks: ["db-net"],
+          profiles: ["db"],
+          tmpfs: ["/var/lib/postgresql/data"],
+        },
+      }),
+      allocatedPorts: { compose: { postgres: { db: 9001 } } },
+      resolvedEnv: { postgres: {} },
+      stackId: "stack-order",
+    };
+    const out = generateComposeOverride(input);
+    // Strip the header comment for stable indexing, then check that
+    // each field appears in the expected order in the emitted body.
+    const body = out
+      .split("\n")
+      .filter((l) => !l.startsWith("#"))
+      .join("\n");
+    const expectedOrder = [
+      "image:",
+      "environment:",
+      "ports:",
+      "healthcheck:",
+      "volumes:",
+      "networks:",
+      "profiles:",
+      "tmpfs:",
+    ];
+    const positions = expectedOrder.map((needle) => body.indexOf(needle));
+    // All fields should be present.
+    for (let i = 0; i < positions.length; i++) {
+      expect(positions[i], `${expectedOrder[i]} should be present`).toBeGreaterThan(-1);
+    }
+    // …and strictly ascending (stable emit order).
+    for (let i = 1; i < positions.length; i++) {
+      expect(
+        positions[i],
+        `${expectedOrder[i]} should come after ${expectedOrder[i - 1]}`,
+      ).toBeGreaterThan(positions[i - 1]);
+    }
+  });
+
+  it("LEV-477: ignores non-object `environment:` shape and falls back to resolved env", () => {
+    // Compose accepts list-form (`environment: ["KEY=value"]`) too.
+    // Lich's override emits the map form, so to avoid mixing shapes we
+    // only merge the map form. List-form user env is left alone (the
+    // resolved env alone is emitted); this is documented in
+    // `buildOverrideDocument`.
+    const input: OverrideInput = {
+      config: makeConfig({
+        api: {
+          image: "node:20",
+          environment: ["LEGACY_KEY=value"],
+        },
+      }),
+      allocatedPorts: { compose: {} },
+      resolvedEnv: { api: { FROM_PIPELINE: "ok" } },
+      stackId: "stack-env-list-form",
+    };
+    const parsed = yamlParse(generateComposeOverride(input));
+    expect(parsed.services.api.environment).toEqual({ FROM_PIPELINE: "ok" });
   });
 });
 

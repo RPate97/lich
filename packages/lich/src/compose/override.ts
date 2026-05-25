@@ -78,10 +78,31 @@ export interface OverrideInput {
   stackId: string;
 }
 
-/** Internal shape of a single service entry in the generated override. */
+/**
+ * Internal shape of a single service entry in the generated override.
+ *
+ * Holds both the lich-owned fields (`environment` populated from the env
+ * pipeline, `ports` populated from the allocator) and the compose-spec
+ * passthroughs the user declares inline in `lich.yaml`
+ * (`image`/`healthcheck`/`volumes`/`networks`/`profiles`/`tmpfs`). Per
+ * LEV-477 the passthroughs are emitted verbatim so users can keep the
+ * full service definition in `lich.yaml` rather than splitting it
+ * across a sibling compose file.
+ *
+ * Field insertion order in `buildOverrideDocument` determines emit
+ * order in the YAML output (the `yaml` package preserves insertion
+ * order in default `stringify`). The chosen order is:
+ *   `image, environment, ports, healthcheck, volumes, networks, profiles, tmpfs`.
+ */
 interface OverrideServiceBlock {
+  image?: string;
   environment?: Record<string, string>;
   ports?: string[];
+  healthcheck?: Record<string, unknown>;
+  volumes?: unknown[];
+  networks?: unknown;
+  profiles?: unknown[];
+  tmpfs?: string[] | string;
 }
 
 /**
@@ -182,12 +203,32 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * Build the override document object (not yet serialized).
  *
  * Walks every compose service declared in the user's lich.yaml and
- * decides whether it deserves an override block. A service makes it
- * in if either:
- *   - it has at least one port binding to add, OR
- *   - it has at least one env var to inject.
- * Otherwise it's omitted entirely — no point shipping empty entries
- * to compose.
+ * builds an override block from:
+ *   - lich-owned fields (`environment` from the env pipeline, `ports`
+ *     from the allocator), AND
+ *   - compose-spec passthroughs declared inline in lich.yaml (`image`,
+ *     `healthcheck`, `volumes`, `networks`, `profiles`, `tmpfs`,
+ *     user-declared `environment`).
+ *
+ * A service makes it into the output as long as the block has any
+ * field at all. A service that declares nothing relevant (no ports,
+ * no env, no passthroughs) is omitted entirely — no point shipping
+ * empty entries to compose.
+ *
+ * Field insertion order is fixed (`image, environment, ports,
+ * healthcheck, volumes, networks, profiles, tmpfs`) so the emitted
+ * YAML is deterministic regardless of object-key insertion order in
+ * the input.
+ *
+ * Environment merge rule (LEV-477): if the user declared `environment:`
+ * inline AND the env pipeline also produced values, both are merged
+ * and the pipeline's values win on key conflict. Rationale: the
+ * pipeline output is the result of the full env resolution chain
+ * (top-level env, profile env, env_groups, etc.) and the user's
+ * inline `environment:` on a compose service is the equivalent of
+ * raw compose syntax that pre-dates lich. Where they overlap, the
+ * lich pipeline is the more recently computed and more authoritative
+ * source.
  */
 function buildOverrideDocument(input: OverrideInput): {
   services: Record<string, OverrideServiceBlock>;
@@ -201,16 +242,80 @@ function buildOverrideDocument(input: OverrideInput): {
     if (!serviceDef) continue;
 
     const portMap = input.allocatedPorts.compose[serviceName] ?? {};
-    const envMap = normalizeEnv(input.resolvedEnv[serviceName] ?? {});
+    const resolvedEnvMap = normalizeEnv(input.resolvedEnv[serviceName] ?? {});
     const portBindings = buildPortBindings(serviceDef, portMap);
 
-    const hasPorts = portBindings.length > 0;
-    const hasEnv = Object.keys(envMap).length > 0;
-    if (!hasPorts && !hasEnv) continue;
+    // Merge user-declared `environment:` (if any) with the resolved env
+    // from the pipeline. Resolved wins on conflict.
+    //
+    // The user-declared form is typed `unknown` in `ComposeService`
+    // because compose accepts both map form (`{ KEY: value }`) and list
+    // form (`["KEY=value"]`). We only normalize the map form here — the
+    // list form is rare in lich.yaml (where the map form composes cleanly
+    // with lich's own env machinery) and the override emits a map; mixing
+    // a user-supplied list with lich's map would produce inconsistent
+    // shapes inside the override. If a user supplies the list form it
+    // passes through unchanged in the absence of resolved env, otherwise
+    // resolved env wins and the list is dropped — surface a stricter rule
+    // here only if we get a real report.
+    let envMap: Record<string, string> = resolvedEnvMap;
+    if (
+      serviceDef.environment !== undefined &&
+      serviceDef.environment !== null &&
+      typeof serviceDef.environment === "object" &&
+      !Array.isArray(serviceDef.environment)
+    ) {
+      const userEnv = normalizeEnv(
+        serviceDef.environment as NodeJS.ProcessEnv,
+      );
+      envMap = { ...userEnv, ...resolvedEnvMap };
+    }
 
+    const hasImage = typeof serviceDef.image === "string";
+    const hasEnv = Object.keys(envMap).length > 0;
+    const hasPorts = portBindings.length > 0;
+    const hasHealthcheck = serviceDef.healthcheck !== undefined;
+    const hasVolumes =
+      Array.isArray(serviceDef.volumes) && serviceDef.volumes.length > 0;
+    const hasNetworks = serviceDef.networks !== undefined;
+    const hasProfiles =
+      Array.isArray(serviceDef.profiles) && serviceDef.profiles.length > 0;
+    const hasTmpfs =
+      typeof serviceDef.tmpfs === "string" ||
+      (Array.isArray(serviceDef.tmpfs) && serviceDef.tmpfs.length > 0);
+
+    // Widened inclusion check (LEV-477): emit a block if ANY field has
+    // content. Pre-LEV-477 we only checked ports + env, which silently
+    // dropped services that declared (e.g.) only `image:` — the
+    // resulting override missed the inline declaration and compose then
+    // rejected the service with "neither an image nor a build context
+    // specified".
+    if (
+      !hasImage &&
+      !hasEnv &&
+      !hasPorts &&
+      !hasHealthcheck &&
+      !hasVolumes &&
+      !hasNetworks &&
+      !hasProfiles &&
+      !hasTmpfs
+    ) {
+      continue;
+    }
+
+    // Build the block by inserting fields in the fixed emit order. The
+    // `yaml` package preserves insertion order in `stringify`, so this
+    // is also the order the user sees in the on-disk override file.
     const block: OverrideServiceBlock = {};
+    if (hasImage) block.image = serviceDef.image;
     if (hasEnv) block.environment = envMap;
     if (hasPorts) block.ports = portBindings;
+    if (hasHealthcheck) block.healthcheck = serviceDef.healthcheck;
+    if (hasVolumes) block.volumes = serviceDef.volumes;
+    if (hasNetworks) block.networks = serviceDef.networks;
+    if (hasProfiles) block.profiles = serviceDef.profiles;
+    if (hasTmpfs) block.tmpfs = serviceDef.tmpfs;
+
     services[serviceName] = block;
   }
 
