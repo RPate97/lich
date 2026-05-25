@@ -16,6 +16,7 @@ import {
   formatPortRange,
   serviceColor,
   stateBucket,
+  summarizeHealth,
 } from '../lib/format';
 import { Logs } from './Logs';
 import { restartStack, stopStack } from '../api';
@@ -105,7 +106,19 @@ function MainHeader({ stack }: { stack: StackView }) {
         <div className="subtitle">
           <MetaItem label="status" value={stack.status} />
           <span className="sep" />
-          <MetaItem label="health" value={formatHealthCount(stack)} />
+          {/* When any service has failed, color the health pill red so the
+              "N/M services failed" delta is unmissable at a glance. The
+              MetaItem still renders the same text — only the .failed class
+              changes the color, keeping the failure flag a pure CSS tweak. */}
+          <span
+            className={
+              summarizeHealth(stack.services).failed > 0
+                ? 'meta-health failed'
+                : 'meta-health'
+            }
+          >
+            <MetaItem label="health" value={formatHealthCount(stack)} />
+          </span>
           {stack.active_profile && (
             <>
               <span className="sep" />
@@ -186,74 +199,153 @@ function MainHeader({ stack }: { stack: StackView }) {
 // ---------------------------------------------------------------------------
 // ServiceList — per-service rows with state, kind, ports.
 //
-// Render-only here; LEV-417 (Plan 5 Task 15) extends this to highlight failed
-// services with their `failure_reason` + `failure_log_tail`. We pre-include
-// the data-state attribute on the row so that task's CSS hook is already in
-// place once it lands.
+// LEV-417 (Plan 5 Task 15) extends this to highlight failed services with
+// their `failure_reason` + `failure_log_tail`. Failed rows get a red left
+// border (via the `.service-row[data-state="failed"]` CSS hook) and an
+// expandable detail block below the row.
 // ---------------------------------------------------------------------------
 
 function ServiceRow({ service }: { service: ServiceView }) {
   const bucket = stateBucket(service.state);
   const color = serviceColor(service.name);
   const portEntries = service.ports ? Object.entries(service.ports) : [];
+  const isFailed = service.state === 'failed';
+  // Collapse the log tail by default so a single failed service doesn't
+  // dominate the layout. Operators triaging click to reveal the lines that
+  // preceded the failure.
+  const [logsOpen, setLogsOpen] = useState(false);
   return (
-    <div
-      className="service-row"
-      data-state={service.state}
-      data-bucket={bucket}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(140px, 1fr) 90px 90px 1fr',
-        gap: 12,
-        alignItems: 'baseline',
-        padding: '8px 24px',
-        borderBottom: '1px solid var(--border)',
-        fontSize: 13,
-      }}
-    >
-      <span
+    <div className="service-row-wrap" data-state={service.state}>
+      <div
+        className="service-row"
+        data-state={service.state}
+        data-bucket={bucket}
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          fontFamily: 'var(--font-mono)',
-          color,
-          fontWeight: 500,
+          display: 'grid',
+          gridTemplateColumns: 'minmax(140px, 1fr) 90px 90px 1fr',
+          gap: 12,
+          alignItems: 'baseline',
+          padding: '8px 24px',
+          borderBottom: isFailed ? 'none' : '1px solid var(--border)',
+          fontSize: 13,
         }}
       >
         <span
           style={{
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            background: 'currentColor',
-            display: 'inline-block',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontFamily: 'var(--font-mono)',
+            color,
+            fontWeight: 500,
           }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: 'currentColor',
+              display: 'inline-block',
+            }}
+          />
+          {service.name}
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11.5,
+            color: 'var(--subtle-foreground)',
+          }}
+        >
+          {service.kind}
+        </span>
+        <StateBadge state={service.state} />
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11.5,
+            color: 'var(--muted-foreground)',
+            wordBreak: 'break-all',
+          }}
+        >
+          {portEntries.length === 0
+            ? '—'
+            : portEntries.map(([k, v]) => `${k}:${v}`).join('  ')}
+        </span>
+      </div>
+      {isFailed && (
+        <FailureDetail
+          service={service}
+          open={logsOpen}
+          onToggle={() => setLogsOpen((v) => !v)}
         />
-        {service.name}
-      </span>
-      <span
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11.5,
-          color: 'var(--subtle-foreground)',
-        }}
-      >
-        {service.kind}
-      </span>
-      <StateBadge state={service.state} />
-      <span
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11.5,
-          color: 'var(--muted-foreground)',
-          wordBreak: 'break-all',
-        }}
-      >
-        {portEntries.length === 0
-          ? '—'
-          : portEntries.map(([k, v]) => `${k}:${v}`).join('  ')}
-      </span>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FailureDetail — inline triage panel rendered below a failed service row.
+//
+// Surfaces:
+//   - `failure_reason` (single line; the orchestrator already truncates the
+//     underlying message to a sane length in Plan 4's failure formatter)
+//   - `failure_log_tail` — collapsed by default; click to expand. Most stacks
+//     run clean, so the default-collapsed posture keeps the layout calm. When
+//     expanded, the tail renders as a `<pre>` so log whitespace + ANSI-stripped
+//     output retain their shape.
+//
+// Empty `failure_log_tail` arrays (failure detected before any output landed)
+// render as "(no log output captured)" rather than disappearing — the caller
+// still wants to know "yes, we tried to capture but there was nothing".
+// ---------------------------------------------------------------------------
+
+function FailureDetail({
+  service,
+  open,
+  onToggle,
+}: {
+  service: ServiceView;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const reason = service.failure_reason ?? 'failed (no reason recorded)';
+  const tail = service.failure_log_tail;
+  const hasTail = tail !== undefined;
+  const tailLineCount = tail?.length ?? 0;
+  return (
+    <div className="failure-detail" role="alert">
+      <div className="failure-reason" title={reason}>
+        <span className="failure-label">reason</span>
+        <span className="failure-reason-text">{reason}</span>
+      </div>
+      {hasTail && (
+        <div className="failure-tail">
+          <button
+            className="failure-tail-toggle"
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+          >
+            <span className="failure-tail-caret" data-open={open ? '1' : '0'}>
+              ▸
+            </span>
+            {open ? 'hide log tail' : 'show log tail'}
+            <span className="failure-tail-count">
+              ({tailLineCount}
+              {tailLineCount === 1 ? ' line' : ' lines'})
+            </span>
+          </button>
+          {open && (
+            <pre className="failure-tail-body">
+              {tailLineCount === 0
+                ? '(no log output captured)'
+                : tail!.join('\n')}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }

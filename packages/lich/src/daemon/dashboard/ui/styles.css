@@ -485,6 +485,123 @@ button {
 .metric.unhealthy .value { color: var(--status-unhealthy); }
 .metric.unhealthy.zero .value { color: var(--muted-foreground); }
 
+/* ---------- Service rows ---------- */
+/*
+ * The service-row layout itself lives in inline styles in Main.tsx (grid
+ * template + paddings stay there because they get tweaked alongside the
+ * column layout). This section handles the failed-state treatment:
+ *
+ *   - A subtle red left-border on the row wrapper signals failure at a
+ *     glance without overpowering the rest of the table.
+ *   - The "reason" line below the row carries the failure_reason text
+ *     pulled off the snapshot. Dim by default, full color on failure.
+ *   - The "show log tail" toggle reveals a <pre> block holding the last
+ *     N lines captured before exit. Monospace, slightly dimmer than the
+ *     main foreground so it reads as supporting context.
+ */
+
+.service-row-wrap[data-state="failed"] {
+  border-left: 3px solid rgba(248, 113, 113, 0.7);
+  background: rgba(248, 113, 113, 0.025);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Dim foreground tone for the failed service name. Falls back to the
+   service's hue color (set inline) for everything else. */
+.service-row[data-state="failed"] {
+  background: rgba(248, 113, 113, 0.04);
+}
+
+.failure-detail {
+  padding: 6px 24px 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.failure-reason {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  /* Long reasons truncate at the row width; the full text is in the
+     title attr so hover reveals it. ~80 chars fits comfortably on a
+     1024px-wide dashboard pane. */
+  overflow: hidden;
+}
+.failure-reason .failure-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtle-foreground);
+  flex-shrink: 0;
+}
+.failure-reason .failure-reason-text {
+  color: #fca5a5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.failure-tail-toggle {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.failure-tail-toggle:hover { color: var(--foreground); }
+.failure-tail-caret {
+  display: inline-block;
+  transition: transform .12s ease;
+  font-size: 10px;
+}
+.failure-tail-caret[data-open="1"] { transform: rotate(90deg); }
+.failure-tail-count {
+  color: var(--subtle-foreground);
+  font-size: 10.5px;
+}
+
+.failure-tail-body {
+  /* The captured tail is plain text with whatever whitespace the service
+     emitted. <pre> preserves that shape; the slightly dimmer foreground +
+     subdued background keeps it as supporting context rather than the
+     focal point. */
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(248, 113, 113, 0.05);
+  border: 1px solid rgba(248, 113, 113, 0.15);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* Header health meta turns red when any service failed. The MetaItem
+   inside keeps its label dim; only the value text picks up the warning
+   hue. */
+.subtitle .meta-health.failed .meta-label { color: var(--subtle-foreground); }
+.subtitle .meta-health.failed > .meta > span:last-child {
+  color: #fca5a5;
+}
+
 /* ---------- Logs ---------- */
 
 .logs {
