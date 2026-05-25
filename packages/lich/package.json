@@ -9,6 +9,7 @@
   "scripts": {
     "build": "bun build --compile --target=bun --outfile=dist/lich src/bin/lich.ts",
     "build:daemon": "bun build --compile --target=bun --outfile=dist/lich-daemon src/bin/lich-daemon.ts",
+    "build:ui": "cd src/daemon/dashboard/ui && npm install && npm run build",
     "dev": "bun run src/bin/lich.ts",
     "test": "vitest run",
     "test:watch": "vitest"
