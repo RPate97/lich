@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer, type Server } from "node:net";
 import {
   allocate,
   release,
@@ -201,5 +202,85 @@ describe("allocate", () => {
         range: tinyRange,
       }),
     ).rejects.toThrow(/no free ports/);
+  });
+});
+
+// LEV-457: the allocator's `isPortFree` probe used to bind IPv4 only
+// (`host: "0.0.0.0"`), so a port bound on IPv6 alone (Docker dual-stack
+// forwards via the IPv6 half) would be falsely reported free. The fix
+// probes both stacks. These tests pin both directions.
+describe("isPortFree (LEV-457): dual-stack awareness", () => {
+  // Small private range to keep test setup deterministic.
+  const RANGE_DS: [number, number] = [54300, 54309];
+
+  /**
+   * Bind a port on a single address family. Returns a `close` helper
+   * the test must call in cleanup. We use the OS-assigned `address()`
+   * to verify the bind actually happened on the family we asked for.
+   */
+  function bindOnly(host: "0.0.0.0" | "::", port: number): Promise<Server> {
+    return new Promise((resolve, reject) => {
+      const server = createServer();
+      server.once("error", reject);
+      server.once("listening", () => resolve(server));
+      server.listen({ port, host, exclusive: true });
+    });
+  }
+
+  async function closeServer(server: Server): Promise<void> {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+
+  it("skips a port that's bound only on IPv6 (::), not IPv4", async () => {
+    // Bind the first port of the range on IPv6 only. Before LEV-457 the
+    // allocator would happily hand this port out because the IPv4 probe
+    // succeeded — then a real consumer's dual-stack bind would EADDRINUSE.
+    const blockedPort = RANGE_DS[0];
+    let server: Server;
+    try {
+      server = await bindOnly("::", blockedPort);
+    } catch {
+      // Some CI/dev environments have IPv6 disabled. Skip the test in
+      // that case — the IPv4-only path below covers the other half.
+      // eslint-disable-next-line no-console
+      console.warn("IPv6 bind unavailable; skipping IPv6-blocked test");
+      return;
+    }
+
+    try {
+      const result = await allocate({
+        stackId: "ds-test-v6",
+        logicalPorts: { svc: null },
+        range: RANGE_DS,
+      });
+      // Allocated port must NOT be the IPv6-blocked one.
+      expect(result.svc).not.toBe(blockedPort);
+      // And must be in the range.
+      expect(result.svc).toBeGreaterThanOrEqual(RANGE_DS[0]);
+      expect(result.svc).toBeLessThanOrEqual(RANGE_DS[1]);
+    } finally {
+      await closeServer(server);
+      await release("ds-test-v6");
+    }
+  });
+
+  it("skips a port that's bound only on IPv4 (0.0.0.0), not IPv6", async () => {
+    // Symmetric companion: bind the first port on IPv4 only.
+    const blockedPort = RANGE_DS[0];
+    const server = await bindOnly("0.0.0.0", blockedPort);
+
+    try {
+      const result = await allocate({
+        stackId: "ds-test-v4",
+        logicalPorts: { svc: null },
+        range: RANGE_DS,
+      });
+      expect(result.svc).not.toBe(blockedPort);
+      expect(result.svc).toBeGreaterThanOrEqual(RANGE_DS[0]);
+      expect(result.svc).toBeLessThanOrEqual(RANGE_DS[1]);
+    } finally {
+      await closeServer(server);
+      await release("ds-test-v4");
+    }
   });
 });

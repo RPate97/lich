@@ -41,16 +41,42 @@ interface Registry {
  * Probe to confirm a candidate port is actually bindable on the host.
  * The registry tells us what other lich stacks reserved; this catches
  * collisions with non-lich processes (the user's other dev tools).
+ *
+ * ## Dual-stack probe (LEV-457)
+ *
+ * We probe BOTH IPv4 (`0.0.0.0`) AND IPv6 (`::`) and require both binds
+ * to succeed. Why: Docker's port forwards bind dual-stack (both families).
+ * If we probed only IPv4 (the original implementation), we'd miss a
+ * port that Docker had bound on IPv6 from another stack's containers —
+ * `isPortFree` would falsely return true, the allocator would hand it
+ * out, then supabase's own dual-stack bind would fail with EADDRINUSE.
+ *
+ * The two probes run sequentially. If IPv4 fails, we short-circuit. If
+ * IPv4 succeeds but IPv6 fails (host has IPv6 disabled or a v4-only
+ * conflict exists), we return false too — better to skip the port than
+ * to hand out a half-bindable one.
+ *
+ * Note: we can't use a single `::` socket with `ipv6Only: false` (the
+ * "true dual-stack" bind) because OS defaults differ — on macOS that
+ * socket also blocks IPv4 binds on the same port, but on Linux without
+ * `IPV6_V6ONLY` it depends on `/proc/sys/net/ipv6/bindv6only`. Probing
+ * each family separately is the only portable approach.
  */
 async function isPortFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createServer();
-    server.once("error", () => resolve(false));
-    server.once("listening", () => {
-      server.close(() => resolve(true));
+  const probeOn = (host: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      const server = createServer();
+      server.once("error", () => resolve(false));
+      server.once("listening", () => {
+        server.close(() => resolve(true));
+      });
+      server.listen({ port, host, exclusive: true });
     });
-    server.listen({ port, host: "0.0.0.0", exclusive: true });
-  });
+
+  const ipv4Free = await probeOn("0.0.0.0");
+  if (!ipv4Free) return false;
+  const ipv6Free = await probeOn("::");
+  return ipv6Free;
 }
 
 function lichHome(): string {
