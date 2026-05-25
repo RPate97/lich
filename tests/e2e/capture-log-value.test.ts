@@ -156,7 +156,12 @@ describe("ready_when.capture threads a log value into a downstream service (Plan
         // No docker, no compile step, no network — the entire pipeline
         // should resolve within a few seconds. 60s is generous headroom for
         // a cold-cache binary spawn on a busy machine.
-        const upResult = runLich(["up"], {
+        //
+        // `--no-browser` suppresses the daemon's auto-open side effect.
+        // The daemon still spawns (it must, for the proxy to bind) but no
+        // Chrome tab pops up — matches the fast-pool convention applied
+        // across the migrated suite.
+        const upResult = runLich(["up", "--no-browser"], {
           cwd: dir,
           env: { LICH_HOME: home },
           timeout: 60_000,
