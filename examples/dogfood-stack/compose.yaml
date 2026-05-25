@@ -16,6 +16,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: dogfood
+    tmpfs:
+      # Ephemeral data directory — postgres state lives in RAM and goes
+      # away when the container is removed. Tests get a clean DB per
+      # `lich down → lich up` cycle without manual volume management.
+      # See docs/superpowers/specs/2026-05-25-e2e-suite-solid-and-fast-design.md
+      # Section 8 for rationale.
+      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"]
       interval: 1s
