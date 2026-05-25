@@ -346,7 +346,11 @@ describe("lich up — process exits during startup (Plan 4 Task 22)", () => {
       // budget covers binary cold-start + yaml parse + supervisor spawn +
       // shutdown. The acceptance criteria says "~5s"; we double it as
       // headroom for cold CI.
-      const upResult = runLich(["up"], {
+      //
+      // `--no-browser` is defensive: this test's `up` exits non-zero before
+      // any service reaches ready, so the daemon never spawns and no
+      // browser is opened either way. Matches the fast-pool convention.
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
         timeout: 10_000,
@@ -453,7 +457,11 @@ describe("lich up — process exits during startup (Plan 4 Task 22)", () => {
       // ---- lich up ------------------------------------------------------
       // 10s budget: the cmd sleeps 0.5s then exits, so total wall-clock is
       // ~1s plus orchestrator overhead. 10s is comfortable headroom.
-      const upResult = runLich(["up"], {
+      //
+      // `--no-browser` is defensive: `up` exits non-zero before any
+      // service reaches ready, so the daemon never spawns either way.
+      // Matches the fast-pool convention.
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
         timeout: 10_000,
