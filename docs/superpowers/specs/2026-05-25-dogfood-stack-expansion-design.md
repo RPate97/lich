@@ -1,7 +1,16 @@
 # Dogfood-Stack Expansion — Design
 
-> **Status:** Approved 2026-05-25. Implementation plan to follow in a
-> separate plan file under `docs/superpowers/plans/`.
+> **Status:** REVISED 2026-05-25 (post-execution). The original
+> spec called for keeping supabase + adding redis + mailhog as compose
+> services. After Task 2 of the first plan landed, a full e2e run
+> surfaced that supabase was the dominant ~35s latency (compared to ~5s
+> for the rest of startup). The revision drops supabase from the
+> dogfood-stack entirely in favor of raw `postgres:16-alpine`, drops
+> redis + mailhog (no longer needed for the compose-services coverage —
+> postgres is the one compose service), and reorders execution to fix
+> some bugs surfaced by the full run before continuing with feature
+> coverage. **See §13 for the addendum describing all deltas.**
+> Implementation plan: `docs/superpowers/plans/2026-05-25-dogfood-stack-redesign-and-expansion.md`.
 
 > **Spec source:** Feature inventory pulled from
 > `docs/superpowers/specs/2026-05-23-lich-v1-design.md`.
@@ -389,3 +398,36 @@ updates to affected existing tests).
 - WebSocket proxy support — orthogonal to fixture coverage.
 - The instrumentation skill (`lich:instrument`) — descoped from Plan 6
   per the user; out of scope here too.
+
+## 13. Addendum (2026-05-25, post-execution revision)
+
+After Task 2 of the first plan landed (redis + mailhog compose services + e2e), a full e2e run took ~28 minutes and produced 10 failures. Three root-cause buckets:
+
+- **Bucket A — Real test rot:** `parseLichUrls` (in `tests/e2e/helpers/urls.ts`) was written for the pre-LEV-419 `lich urls` output format. After Plan 5 shipped friendly URLs by default, the helper started parsing keys like `"supabase (api)"` instead of `"api"`, breaking 4 tests (basic-up, restart-basic, logs, parallel-stacks). No one updated it when LEV-419 landed.
+- **Bucket B — afterEach hook timeout cascade:** 6 tests passed their bodies but their afterEach hooks timed out trying to nuke. "killed 1 dangling process" suggests the daemon hangs during shutdown. The single-fork vitest config meant these timeouts stacked end-to-end, doubling the suite runtime.
+- **Bucket C — Real race:** `dashboard-parallel-stacks.test.ts` fetched `/api/stacks` before stackB's snapshot transitioned `starting→up`. Needed a `waitForStackStatus` before the assertion.
+
+Additionally, supabase's ~35s startup dominated test latency on every dogfood-stack test (most tests do a `lich up`). The user decided supabase was over-tested for the value it added — coverage of the supabase-specific `oneshot + stop_cmd` pattern is already pinned by unit tests; the integration tests don't need supabase specifically, they need a long-running service with ports.
+
+### Redesign
+
+| Original | Revised |
+|---|---|
+| Keep supabase as the owned-oneshot service; add redis + mailhog as compose services | Drop supabase entirely; replace with raw `postgres:16-alpine` as the sole compose service; drop redis + mailhog (no longer needed for compose coverage) |
+| api `depends_on: [supabase]`; DATABASE_URL from `${owned.supabase.ports.db}` | api `depends_on: [postgres]`; DATABASE_URL from `${services.postgres.host_port}` |
+| `lifecycle.after_up` runs `supabase migration up` + `psql -f supabase/seed.sql` | `lifecycle.after_up` runs `psql -f db/migrations/01_init.sql` + `psql -f db/seed.sql` |
+| `examples/dogfood-stack/supabase/` directory (config.toml + migrations + seed) | `examples/dogfood-stack/db/` directory (migrations + seed; supabase/ deleted) |
+| `dev:lite` excludes `[redis, mailhog, tunnel_demo, health_probe]` + opt-in REDIS_URL in api | `dev:lite` excludes `[tunnel_demo, health_probe]` — just trims optional owned services; no api code change needed |
+| New `cache:flush` command consuming `${services.redis.host_port}` | DELETED — `db:psql` already exercises `${services.postgres.host_port}` |
+
+### Execution order (revised)
+
+The original plan was a linear feature-addition sequence. The revised plan front-loads three categories of work:
+
+1. **Speed + fixes** (Phase 1, Tasks 0-4): revert redis+mailhog; postgres pivot; fix parseLichUrls (with regression unit test); tighten afterEach timeouts + investigate daemon hang; fix dashboard-parallel-stacks race.
+2. **Verify** (Phase 2, Task 5): full e2e checkpoint must be green before continuing.
+3. **Expansion** (Phase 3, Tasks 6-14): the remaining original feature-coverage work, minus the redis-specific items.
+
+### Why the revision belongs in the original spec
+
+The original spec's core thesis — "the dogfood-stack is a test fixture and should cover every Lich v1 feature" — is unchanged. What changed is the realization that supabase was over-served by the test stack's structure. Updating the spec inline (vs writing a v2) keeps the design history readable: anyone landing on this spec sees both the original framing and the lessons learned during execution.

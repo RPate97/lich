@@ -1,6 +1,10 @@
 # Dogfood-Stack Expansion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Superseded by:** `docs/superpowers/plans/2026-05-25-dogfood-stack-redesign-and-expansion.md` (2026-05-25). The supabase-based approach was replaced with raw `postgres:16-alpine` after a full e2e run surfaced (a) test rot in `parseLichUrls`, (b) afterEach hook timeouts cascading into 28-min suite runs, (c) a race in `dashboard-parallel-stacks`, and the realization that supabase's ~35s startup was the dominant test latency. The replacement plan reorders work as: speed/fixes first, then verification, then the original expansion items minus the now-unneeded redis/mailhog/cache:flush tasks.
+
+> **For agentic workers:** This file is HISTORICAL. Do not execute. Use the superseding plan instead.
+
+> **For agentic workers (historical original):** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expand `examples/dogfood-stack/` to exercise every Lich v1 feature that currently has zero e2e coverage (compose services, env_files, env_from, runtime block, lifecycle.before_down, per-service after_ready, ready_when.cmd, exclude-services profile pattern, commands consuming compose-port interpolations + env_from output).
 
