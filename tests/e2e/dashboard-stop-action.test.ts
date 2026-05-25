@@ -110,6 +110,9 @@ import { runLich } from "./helpers/lich.js";
 import { readStateJson, waitForStackStatus } from "./helpers/state.js";
 import { waitForDaemonRunning } from "./helpers/daemon.js";
 import { fetchDashboardJson } from "./helpers/dashboard-fetch.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Wire-format type for the action response. Mirrors
@@ -357,11 +360,14 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
       // --no-browser keeps CI/headless hosts from trying to spawn Chrome
       // (the daemon would still open it without the flag — LEV-411). The
       // dashboard server starts regardless, which is what we need.
-      step("lich up --no-browser (postgres pull + boot ~5-10s)");
+      //
+      // Default profile is dev:fast (no compose, no postgres) — just api +
+      // web on the host. Typically ~2-3s.
+      step("lich up --no-browser (dev:fast — api + web on host)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 240_000,
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // Surface the failure cause immediately so a regression is one
@@ -383,11 +389,26 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
       expect(snap.status).toBe("up");
       step(`stack ${stackId} up`);
 
+      // dev:fast profile sentinel: api /health should report db: stub.
+      // Probe via `lich urls --raw` (localhost URLs) to dodge the
+      // friendly-URL routing race under dev:fast's fast startup.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
+      step("api /health reports db: stub");
+
       // ---- capture allocated ports BEFORE the stop ----------------------
       // We need concrete port numbers to probe with `isPortRefused` post-
       // stop. After the stack stops, state.json may zero out / omit ports,
-      // so we read them while the stack is still up. The dogfood-stack
-      // declares four owned services and every one is expected to have
+      // so we read them while the stack is still up. dev:fast declares
+      // two owned services (api + web) and every one is expected to have
       // at least one allocated port (dashboard-stack-detail.test.ts
       // already asserts this; we rely on it here).
       const portsBefore: number[] = [];
@@ -418,16 +439,15 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
 
       // ---- POST /api/stacks/:id/stop ------------------------------------
       // The action endpoint shells out to `lich down` in the worktree
-      // and returns a structured ActionResult. Generous 3-minute timeout
-      // accommodates docker teardown (the same budget down.test.ts uses
-      // for `lich down`). The helper throws on non-2xx, so a 404 (stack
-      // not found) or 405 (wrong method — e.g. a regression that routes
-      // the stop verb to a GET handler) immediately surfaces here.
+      // and returns a structured ActionResult. Under dev:fast there's no
+      // compose to tear down, so the inner `lich down` finishes in ~1s.
+      // 60s timeout is generous; the helper throws on non-2xx, so a 404
+      // (stack not found) or 405 (wrong method) immediately surfaces.
       step(`POSTing /api/stacks/${stackId}/stop`);
       const result = await fetchDashboardJson<ActionResult>(
         lichHome,
         `/api/stacks/${stackId}/stop`,
-        { method: "POST", timeoutMs: 180_000 },
+        { method: "POST", timeoutMs: 60_000 },
       );
 
       // ok: true AND exitCode: 0. Both: a regression where the projection
@@ -494,11 +514,11 @@ describe("dashboard POST /api/stacks/:id/stop tears down the stack", () => {
 
       step("all stop-action assertions passed");
     },
-    // Per-test override: 5 minutes — same shape as basic-up,
-    // dashboard-stack-detail, and the other dogfood-stack-based tests.
-    // Postgres pulls fast (~5MB alpine, LEV-463 swap) so even cold first-
-    // run is sub-minute, but the headroom is kept for slow CI boxes. The
-    // action POST itself is fast once the up completes.
-    300_000,
+    // Per-test override: 120s. dev:fast brings the stack up in ~3s; the
+    // POST + lich down sequence is ~1-2s; ports-refused probes are
+    // sub-ms each. 120s leaves headroom for slow CI; the per-port
+    // 2s timeout is the inner deadline that catches real refused-port
+    // hangs.
+    120_000,
   );
 });
