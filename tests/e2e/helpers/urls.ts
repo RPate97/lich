@@ -1,53 +1,44 @@
+export interface UrlMap {
+  [key: string]: string;
+}
+
 /**
- * Parse the output of `lich urls` into a structured map.
+ * Parse `lich urls` output into a key → URL map.
  *
- * Plan 1 `lich urls` prints one line per allocated host port:
- *   - single-port service:   `<service>: http://localhost:<port>`
- *   - multi-port service:    `<service>.<port-key>: http://localhost:<port>`
+ * Handles both the default friendly-URL output (post-LEV-419, e.g.
+ * `api: http://api.<wt>.lich.localhost:3300/`) and the `--raw` flag output
+ * (e.g. `api: http://127.0.0.1:9014/`).
  *
- * The parsed shape:
- *   {
- *     api: { default: "http://localhost:4123" },
- *     supabase: {
- *       api: "http://localhost:54321",
- *       db: "http://localhost:54322",
- *       ...
- *     }
- *   }
- *
- * For single-port services we use the key `"default"`; for multi-port
- * services the parsed key matches the `<port-key>` in the line.
+ * Multi-port owned services emit one line per port with a parenthesized
+ * port key: `supabase (api): http://supabase-api.<wt>.lich.localhost:3300/`.
+ * These are surfaced under the key `<service>.<portkey>` so callers can
+ * address individual ports without parsing the parenthesized form
+ * themselves.
  */
-export interface ParsedUrls {
-  [service: string]: Record<string, string>;
-}
+export function parseLichUrls(stdout: string): UrlMap {
+  const result: UrlMap = {};
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
-const LINE_RE = /^([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?:\s+(\S+)$/;
-
-export function parseLichUrls(stdout: string): ParsedUrls {
-  const out: ParsedUrls = {};
-  for (const rawLine of stdout.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const m = LINE_RE.exec(line);
+    // Match "key: url" where key may be "service" or "service (portkey)".
+    const m = trimmed.match(
+      /^([a-z0-9_-]+)(?:\s+\(([a-z0-9_-]+)\))?\s*:\s*(https?:\/\/\S+)$/,
+    );
     if (!m) continue;
-    const [, service, key, url] = m;
-    if (!out[service]) out[service] = {};
-    out[service][key ?? "default"] = url;
+
+    const [, service, portKey, url] = m;
+    const key = portKey ? `${service}.${portKey}` : service;
+    result[key] = url;
   }
-  return out;
+  return result;
 }
 
 /**
- * Pull the host port off a `http://host:port[/path]` URL. Returns -1 if the
- * URL doesn't have an explicit port.
+ * Pull the host port off a `http://host:port[/path]` URL.
  */
 export function portFromUrl(url: string): number {
-  try {
-    const u = new URL(url);
-    if (!u.port) return -1;
-    return Number(u.port);
-  } catch {
-    return -1;
-  }
+  const m = url.match(/:(\d+)/);
+  if (!m) throw new Error(`no port in URL: ${url}`);
+  return parseInt(m[1], 10);
 }
