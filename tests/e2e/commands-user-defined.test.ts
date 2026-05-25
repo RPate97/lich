@@ -102,6 +102,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. We fail loudly (don't skip) — the binary is OUR
@@ -160,10 +163,19 @@ describe("user-defined command invocation (Plan 2 Task 19)", () => {
         lichHome: home,
       };
 
-      const upResult = runLich(["up"], {
+      // Default profile is dev:fast (api + web on host, no postgres). The
+      // user-command dispatcher resolves the `stack` env_group, which under
+      // dev:fast only exposes API_URL — DATABASE_URL is profile-scoped to
+      // `dev` and therefore absent here. `test:e2e` (cmd: `echo ...`) and
+      // `tools:env-check` (cmd: `printenv` under `isolated-tools`) neither
+      // need DATABASE_URL, so the dispatcher's env resolution succeeds.
+      //
+      // `--no-browser` is the fast-pool convention (avoids the daemon's
+      // browser-open side effect; the daemon itself still spawns).
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: fixture.stackPath,
         env: { LICH_HOME: fixture.lichHome },
-        timeout: 240_000,
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // eslint-disable-next-line no-console
@@ -175,8 +187,26 @@ describe("user-defined command invocation (Plan 2 Task 19)", () => {
             `user-command dispatch tests`,
         );
       }
+
+      // Probe /health and verify dev:fast's `db: "stub"` contract. Catches
+      // silent profile drift — if the default ever flipped back to `dev`,
+      // commands that resolve the `stack` env_group would behave
+      // differently (DATABASE_URL becomes defined) and this assertion
+      // would fail loudly before the dispatch tests below run. Uses
+      // --raw because friendly URLs race under dev:fast's fast startup;
+      // raw localhost URLs are stable.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: fixture.stackPath,
+        env: { LICH_HOME: fixture.lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
     },
-    /* timeout */ 300_000,
+    /* timeout */ 120_000,
   );
 
   it("lich <user-command> runs the cmd with resolved env", () => {
