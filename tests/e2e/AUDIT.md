@@ -80,20 +80,15 @@ and `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md`.
 
 ## Known limitations
 
-### 1. Cross-test docker port-allocator gap (compose pool)
+### 1. ~~Cross-test docker port-allocator gap (compose pool)~~ — RESOLVED (commit `57e8147`)
 
-Each compose-pool test does `lich up dev → assertions → lich down`. `lich down` invokes `docker compose down` but the lich port allocator probes Node-level `isPortFree(127.0.0.1, port)`. Docker container port mappings (managed by `docker-proxy`) aren't visible to Node's `net.createServer().listen()` probe — the bind succeeds, then docker fails when actually trying to publish the port:
+**Was:** compose-pool tests leaked containers/networks across runs; the lich port allocator couldn't see Docker's port table, so test N+1 would EADDRINUSE on test N's leftover postgres.
 
-```
-Bind for 0.0.0.0:9005 failed: port is already allocated
-```
+**Root cause (now fixed):** `lich nuke`/`lich down`'s `tearDownCompose` was passing `-f <override.yaml>` to `docker compose down`. The override file declares only ports + env (no `image`/`build`) because the LEV-477 workaround pattern puts those in a sibling `compose.yaml`. compose validated the assembled project before tearing it down, the override-only project failed validation, and the teardown silently no-op'd. Containers + networks accumulated until Docker exhausted its address pool.
 
-This surfaces when running multiple compose tests serially: test N+1's allocator picks a port that test N's leftover postgres container is still mapping. Each compose test passes in isolation after a clean docker state.
+**Fix:** drop `-f` entirely from `compose down` calls. compose finds containers via `-p <project>` label regardless of which files are passed. Verified: full e2e suite (39/39 files, 139 tests + 1 skipped) runs end-to-end in 4m54s with zero leaked containers afterward.
 
-**Workarounds:**
-- Run `docker ps -aq --filter "label=com.docker.compose.project" | xargs -r docker rm -f && docker volume prune -f` before any compose-pool run
-- Or run each compose test in its own invocation
-- Or fix lich's allocator to probe `docker ps --format` for in-use ports (product change)
+LEV-478 (recommended docker-port-table probe) is now an optional defense-in-depth rather than a required fix.
 
 ### 2. Fast pool not actually parallel
 
