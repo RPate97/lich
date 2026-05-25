@@ -8,11 +8,10 @@
 
 It's a single binary that wraps `docker compose` + host process supervision + an HTTP dashboard. It is NOT a framework, NOT a runtime, NOT a plugin ecosystem.
 
-## Current state (2026-05-23)
+## Current state (2026-05-25)
 
-- **v0 (`levelzero`)** was a multi-package plugin-based implementation. **It is fully archived** in `docs/archive-v0/`, `docs/superpowers/specs/archive-v0/`, and `docs/superpowers/plans/archive-v0/`. Do not follow its guidance.
-- **v1 (`lich`)** is the current direction. Design is complete. Implementation is structured as 7 plans (Plan 0 fully detailed with bite-sized tasks; Plans 1-6 written as high-level shells with task structure captured — refine each shell to bite-sized when ready to execute).
-- **Plan 0 (Foundation)** sets up the new `packages/lich/` skeleton, the `examples/dogfood-stack/` failing test case, and the `tests/e2e/` infrastructure. After Plan 0 runs, every e2e test fails (lich is a stub). Each subsequent plan turns tests green tier by tier.
+- **v0 (`levelzero`)** was a multi-package plugin-based implementation. It's **deleted** from `packages/` (post-LEV-445/446 cleanup). Only `docs/archive-v0/`, `docs/superpowers/specs/archive-v0/`, and `docs/superpowers/plans/archive-v0/` remain as historical record. Do not follow their guidance.
+- **v1 (`lich`)** is the single live codebase at `packages/lich/`. Plans 0-5 have shipped. Plan 6 remaining work is the README rewrite + the `lich:instrument` agent skill (the v0 deletion half of Plan 6 is done).
 
 ## REQUIRED READING — read these files in order before starting any task
 
@@ -20,10 +19,10 @@ It's a single binary that wraps `docker compose` + host process supervision + an
 2. **`docs/superpowers/specs/2026-05-23-lich-v1-design.md`** — the product spec. Source of truth for what lich does. Read the sections relevant to your task; skim the rest.
 3. **The plan that owns your task.** Find it yourself — do not assume. Process:
    - Look at `ls docs/superpowers/plans/*.md` to see every active plan (ignore `archive-v0/`).
-   - Each plan filename is `YYYY-MM-DD-lich-v1-plan-<N>-<name>.md`. The roadmap section in this file (below) and in any plan's header lists what each plan covers — match your task to one of those scopes.
+   - Each plan filename is `YYYY-MM-DD-<topic>.md`. Match your task to one of the plans by scope.
    - When uncertain (multiple plans seem to overlap, or your task isn't clearly named anywhere), STOP and ask. Do not guess; doing the wrong plan's work is worse than waiting for clarification.
    - Once identified, read that plan **fully** — not just the task you've been given. Plans contain shared context (architecture, file structure, conventions) that earlier sections establish for later tasks. Tasks read out of context produce out-of-context code.
-4. **`examples/dogfood-stack/lich.yaml`** (once it exists, after Plan 0 Task 11) — the failing test case target. This is the config lich must handle by end of v1.
+4. **`examples/dogfood-stack/lich.yaml`** — the canonical example config. Postgres compose service + api/web/tunnel_demo owned services + profile coverage (dev:fast is the default; dev opt-in for DB; dev:env-override for env precedence demos).
 
 If you find yourself wanting to read anything under any `archive-v0/` directory, stop. Those describe a different system. They will mislead you.
 
@@ -32,25 +31,27 @@ If you find yourself wanting to read anything under any `archive-v0/` directory,
 ```
 packages/lich/                # the v1 codebase (single TS package, compiled to single binary)
   src/                        # engine + CLI source
+  src/daemon/dashboard/ui/    # the dashboard React SPA (separate vite build)
   tests/unit/                 # fast unit tests
   dist/lich                   # compiled binary (after `bun run build`)
+  dist/lich-daemon            # daemon companion binary
 
-examples/dogfood-stack/       # the failing test case — Next + Express + Supabase + migrations + seed
+examples/dogfood-stack/       # the canonical example — Next + Express + Postgres
   apps/web/                   # Next.js frontend
-  apps/api/                   # Express API
-  supabase/                   # Supabase config + migrations
-  lich.yaml                   # target config (what lich must handle)
+  apps/api/                   # Express API (Bun.sql against postgres)
+  db/                         # migrations + seed
+  compose.yaml                # postgres compose passthrough (image/healthcheck/tmpfs)
+  lich.yaml                   # the stack config
 
 tests/e2e/                    # end-to-end tests; spawn real binary, run against dogfood-stack
-  helpers/                    # shared helpers (tmpdir, lich spawn, wait conditions)
+  helpers/                    # shared helpers (tmpdir, lich spawn, wait, dbmode, urls)
+  vitest.workspace.ts         # dual-pool config (fast = dev:fast, compose = dev)
+  _pool-manifest.ts           # which tests need the compose pool
+  AUDIT.md                    # per-test pool assignment + hardening notes
 
 docs/superpowers/
   specs/                      # v1 design + testing standards (v0 in archive-v0/)
   plans/                      # implementation plans (v0 in archive-v0/)
-
-packages/core, packages/dashboard, packages/plugin-*, packages/template-v0-stack,
-packages/create-stack-v0      # ← all v0 code. Read-only reference until Plan 6
-                                cleanup. Don't modify; don't import from new code.
 ```
 
 ## Rules for v1 work
@@ -59,21 +60,20 @@ packages/create-stack-v0      # ← all v0 code. Read-only reference until Plan 
 2. **The real binary in e2e tests.** No mocking the CLI. Spawn `packages/lich/dist/lich` (built first) and assert observable behavior.
 3. **Bite-sized commits.** Each task in the plan is a coherent unit of work that gets its own commit. Don't accumulate work across tasks; commit at the end of each one.
 4. **Stay scoped to the current task.** Don't reach forward into future tasks or future plans. If you spot a real issue that's out of scope, note it for later rather than fixing it now.
-5. **Don't touch v0 code.** Everything in `packages/core/`, `packages/dashboard/`, `packages/plugin-*`, `packages/template-v0-stack/`, `packages/create-stack-v0/` is v0. Read it for reference if porting specific subsystems calls for it; otherwise leave it alone. Cleanup happens in Plan 6.
-6. **Don't read v0 docs.** Anything under any `archive-v0/` directory is stale guidance.
-7. **Follow the plan's testing/commit/verification structure exactly.** It exists to keep the feedback loop tight.
+5. **Don't read v0 docs.** Anything under any `archive-v0/` directory is stale guidance.
+6. **Follow the plan's testing/commit/verification structure exactly.** It exists to keep the feedback loop tight.
 
-## Roadmap (all plans now exist as shells under `docs/superpowers/plans/`)
+## Roadmap
 
-- **Plan 0: Foundation** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md` (fully detailed)
-- **Plan 1: Core engine** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-1-core-engine.md` (shell). Config + validate, worktree detection, port allocator, compose runner, owned-service runner, env basics, basic ready_when, basic CLI surface.
-- **Plan 2: Extension surfaces** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-2-extension-surfaces.md` (shell). env_groups, user-defined commands, lich help/exec/env.
-- **Plan 3: Profiles** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-3-profiles.md` (shell). Profile resolution, profile-scoped env, profile-scoped lifecycle.
-- **Plan 4: Failure surfacing** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-4-failure-surfacing.md` (shell). fail_when, ready timeout, capture, exit detection, failure UX.
-- **Plan 5: Daemon + dashboard** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-5-daemon-dashboard.md` (shell). Daemon process, dashboard backend + UI port, reverse proxy, friendly URLs.
-- **Plan 6: Onramp + cleanup** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-6-onramp-cleanup.md` (shell). lich:instrument skill, rewrite root README, delete all v0 packages.
+- **Plan 0: Foundation** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-0-foundation.md` — SHIPPED
+- **Plan 1: Core engine** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-1-core-engine.md` — SHIPPED
+- **Plan 2: Extension surfaces** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-2-extension-surfaces.md` — SHIPPED
+- **Plan 3: Profiles** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-3-profiles.md` — SHIPPED
+- **Plan 4: Failure surfacing** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-4-failure-surfacing.md` — SHIPPED
+- **Plan 5: Daemon + dashboard** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-5-daemon-dashboard.md` — SHIPPED
+- **Plan 6: Onramp + cleanup** — `docs/superpowers/plans/2026-05-23-lich-v1-plan-6-onramp-cleanup.md` — v0 cleanup DONE; README rewrite + `lich:instrument` skill remaining
 
-Shell plans capture intent, task structure, dependencies, and acceptance criteria — but tasks are NOT yet broken into bite-sized step-by-step form. The shell exists so the full project is documented and Linear can hold the cross-plan dependency tree. When a shell plan is up next for execution, refine it to bite-sized form (Plan 0 is the model) before dispatching.
+Subsequent design + plan docs (under `docs/superpowers/specs/` and `docs/superpowers/plans/`, dated 2026-05-25 onwards) cover the e2e suite redesign (solid + fast) and the dogfood-stack expansion. Read those if your task touches the suite shape or the dogfood-stack itself.
 
 ## Quick-start commands
 
@@ -84,8 +84,11 @@ cd packages/lich && bun run build
 # Run unit tests
 cd packages/lich && bun test
 
-# Run e2e tests
-cd tests/e2e && bun test
+# Run e2e tests (both pools, ~5 min wall clock)
+cd tests/e2e && bun run test
+
+# Run just the fast pool (no docker, ~3 min)
+cd tests/e2e && bunx vitest run --project fast
 
 # Run the lich binary directly
 ./packages/lich/dist/lich --help
@@ -95,13 +98,10 @@ cd tests/e2e && bun test
 
 Requires:
 
-- Docker Desktop (or compatible) running
-- supabase CLI v2.101+ on PATH (`brew install supabase/tap/supabase`)
+- Docker Desktop (or OrbStack) running, for the `compose` pool
+- The `fast` pool needs no docker; it runs `dev:fast` (api + web on the host)
 
-If you don't have these, the e2e tests will fail with a docker connectivity
-error. That's correct — lich is a docker-compose orchestrator, so a no-docker
-environment isn't a valid place to verify it. Run `cd packages/lich && bun test`
-for unit tests if you just want a quick check.
+If docker isn't running, the `compose` pool tests will fail with a docker connectivity error — that's correct, the compose pool exists to verify docker-orchestrated behavior. The `fast` pool runs independently and is the right preflight check during local iteration.
 
 ## Conventions
 
