@@ -579,6 +579,42 @@ describe("dashboard + friendly URLs with two parallel stacks (Plan 5 Task 28)", 
         timeoutMs: 10_000,
       });
 
+      // Wait for the dashboard's view of BOTH stacks to catch up to
+      // status:up before asserting. `lich up` returns once state.json is
+      // written; the dashboard's in-memory cache (see
+      // packages/lich/src/daemon/dashboard/server.ts's `reload`) refreshes
+      // on the watcher's debounce (~100ms), so there's a small window where
+      // the disk says "up" but `/api/stacks` still shows "starting" for
+      // the most-recently-started stack (typically B). The disk wait above
+      // doesn't cover this — the dashboard cache is a separate piece of
+      // state that has to catch up independently. Poll the API endpoint
+      // itself until both stacks show up. (LEV-430 race fix, LEV-466.)
+      step("waiting for dashboard cache to reflect both stacks up");
+      const dashboardReadyDeadline = Date.now() + 10_000;
+      let dashboardReadyLast: StackView[] = [];
+      while (Date.now() < dashboardReadyDeadline) {
+        try {
+          dashboardReadyLast = await fetchDashboardJson<StackView[]>(
+            lichHome!,
+            "/api/stacks",
+          );
+          const a = dashboardReadyLast.find((s) => s.id === stateA!.stack_id);
+          const b = dashboardReadyLast.find((s) => s.id === stateB!.stack_id);
+          if (a?.status === "up" && b?.status === "up") break;
+        } catch {
+          // transient fetch error → retry until the outer deadline
+        }
+        await new Promise<void>((r) => setTimeout(r, 100));
+      }
+      if (Date.now() >= dashboardReadyDeadline) {
+        throw new Error(
+          `timeout waiting for /api/stacks to show both stacks up; ` +
+            `last response: ${JSON.stringify(
+              dashboardReadyLast.map((s) => ({ id: s.id, status: s.status })),
+            )}`,
+        );
+      }
+
       // ---- Sentinel #1: BOTH stacks appear in /api/stacks --------------
       // The dashboard list projection iterates every per-stack
       // state.json under `<LICH_HOME>/stacks/`. A regression where it
