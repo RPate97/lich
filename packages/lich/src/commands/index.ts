@@ -11,6 +11,7 @@ import { runRestart } from "./restart.js";
 import { runHelp } from "./help.js";
 import { runEnvCmd } from "./env.js";
 import { runExec } from "./exec.js";
+import { runRouting } from "./routing.js";
 
 /**
  * The shape every command returns to the router.
@@ -209,6 +210,13 @@ const envHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
+const routingHandler: CommandHandler = async (ctx) => {
+  // LEV-480: `lich routing` prints the daemon's current in-memory
+  // routing table. `--json` switches to JSON output for scripting.
+  const result = await runRouting({ json: Boolean(ctx.argv.json) });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
 const execHandler: CommandHandler = async (ctx) => {
   // The router strips the command name (`exec`) and leaves everything else
   // in `ctx.argv._`. mri also parses `--env-group=<X>` into the camelCased
@@ -243,6 +251,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   help: helpHandler,
   exec: execHandler,
   env: envHandler,
+  routing: routingHandler,
 };
 
 export type CommandName = keyof typeof COMMANDS;

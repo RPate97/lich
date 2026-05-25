@@ -27,6 +27,10 @@ export const BUILTIN_COMMAND_NAMES = [
   "help",
   "exec",
   "env",
+  // LEV-480: `lich routing` prints the daemon's in-memory routing table.
+  // Diagnostic command for the friendly-URL reverse proxy — when a
+  // friendly URL 404s, this is the first thing to run.
+  "routing",
 ] as const;
 
 export type BuiltinCommandName = (typeof BUILTIN_COMMAND_NAMES)[number];

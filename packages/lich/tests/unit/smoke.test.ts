@@ -19,6 +19,8 @@ describe("smoke", () => {
         "logs",
         "nuke",
         "restart",
+        // LEV-480: `lich routing` debug command.
+        "routing",
         "stacks",
         "up",
         "urls",
