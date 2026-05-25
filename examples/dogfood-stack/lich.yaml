@@ -14,35 +14,6 @@ runtime:
   # pinning makes friendly URLs deterministic across test environments.
   proxy_port: 3300
 
-services:
-  # Plan 1 compose services. Demonstrates the unowned (docker-compose-
-  # managed) side of the stack. Both services are simple, fast to pull,
-  # and have well-known healthchecks — chosen to keep e2e setup time low.
-  redis:
-    image: redis:7-alpine
-    ports:
-      - { container: 6379, env: REDIS_HOST_PORT }
-    environment: {}
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
-      timeout: 1s
-      retries: 30
-
-  mailhog:
-    # Multi-port compose service: 1025 SMTP + 8025 HTTP UI. Exercises
-    # the per-port `env:` mapping pattern, distinct from the single-port
-    # shape redis uses above.
-    image: mailhog/mailhog:latest
-    ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8025/api/v1/messages || exit 1"]
-      interval: 3s
-      timeout: 2s
-      retries: 20
-
 owned:
   supabase:
     cmd: supabase start
@@ -135,21 +106,6 @@ env:
   # Postgres connection (for migrate/seed via psql)
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
 
-  # Plan 1 compose-port interpolations. The api uses REDIS_URL opt-in
-  # (no hard depends_on) so dev:lite can exclude redis cleanly.
-  #
-  # `${services.<name>.host_port}` resolves to the FIRST declared port for
-  # that compose service (per `interpolation.ts` SUPPORTED_SHAPES). For
-  # mailhog that's port 1025 (SMTP), declared before 8025 (UI). The
-  # multi-port shape `${services.<name>.ports.<key>}` is documented in
-  # the spec for compose services but the interpolation engine only
-  # ships the `host_port` (primary) form — so `SMTP_URL` uses
-  # `services.mailhog.host_port` and the UI URL is intentionally omitted
-  # here (deferred until the engine adds multi-port resolution for
-  # compose services).
-  REDIS_URL: "redis://localhost:${services.redis.host_port}"
-  SMTP_URL: "smtp://localhost:${services.mailhog.host_port}"
-
 env_groups:
   # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
   # (top-level env + ports + interpolated values) and layers an extra literal
@@ -188,11 +144,6 @@ profiles:
     # pipeline on every dev run — the captured listen_url flows into
     # TUNNEL_DEMO_URL (see `env` above) before the after_up hooks fire.
     owned: [supabase, api, web, tunnel_demo]
-    # Plan 1 compose services — both included here so the dev profile
-    # exercises the full compose pipeline (override file, port bindings,
-    # healthcheck waits) in every `lich up`. `dev:lite` (added later in
-    # the expansion plan) trims these out for the fast-iteration path.
-    services: [redis, mailhog]
     lifecycle:
       after_up:
         - supabase migration up
