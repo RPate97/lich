@@ -69,6 +69,9 @@ import {
   waitForDaemonRunning,
   waitForDaemonStopped,
 } from "./helpers/daemon.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binaries up front. Same pattern as basic-up.test.ts: fail loudly
@@ -222,13 +225,13 @@ describe("lich daemon auto-shutdown", () => {
 
       // ---- ACT 1: lich up --no-browser -------------------------------------
       // `--no-browser` is critical so CI doesn't try to spawn Chrome. The
-      // up timeout is generous; postgres pulls fast post-LEV-463 but the
-      // headroom covers slow CI boxes.
-      step("lich up --no-browser (postgres pull + boot ~5-10s)");
+      // default profile is dev:fast (no compose, no postgres) — startup
+      // typically ~2-3s. 60s timeout leaves huge headroom for slow CI.
+      step("lich up --no-browser (dev:fast — api + web on host)");
       const upResult = runLich(["up", "--no-browser"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 240_000,
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // eslint-disable-next-line no-console
@@ -238,6 +241,22 @@ describe("lich daemon auto-shutdown", () => {
       }
       expect(upResult.exitCode).toBe(0);
       step("lich up exit 0");
+
+      // dev:fast profile sentinel: api /health should report db: stub.
+      // Catches silent drift if the default profile ever flips back to dev.
+      // Probe via `lich urls --raw` (localhost URLs) to dodge the friendly-
+      // URL routing race under dev:fast's sub-3s startup.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
+      step("api /health reports db: stub");
 
       // ---- ASSERT: daemon advertises itself -------------------------------
       // The `--no-browser` flag does NOT suppress the daemon — only the
@@ -262,11 +281,12 @@ describe("lich daemon auto-shutdown", () => {
       // After down returns, the stack's state.json transitions to
       // `status: stopped`. The daemon's auto-shutdown loop, polling every
       // 10s with K=3 consecutive empty ticks, will fire ~30s later.
-      step("lich down (stack teardown, ~15-30s)");
+      // dev:fast: no compose tear-down, so this completes in <2s.
+      step("lich down (dev:fast — sub-second)");
       const downResult = runLich(["down"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
-        timeout: 120_000,
+        timeout: 30_000,
       });
       if (downResult.exitCode !== 0) {
         // eslint-disable-next-line no-console
@@ -346,15 +366,13 @@ describe("lich daemon auto-shutdown", () => {
 
       step("auto-shutdown verified end-to-end");
     },
-    // 10-minute per-test budget. Breakdown:
-    //   - lich up (postgres pull + boot, LEV-463): ~10-30s typical, up
-    //     to 4 min on slow CI
-    //   - daemon-running assertion: <30s
-    //   - lich down: ~30s
-    //   - daemon auto-shutdown wait: up to 60s
+    // Per-test budget: 150s. Breakdown:
+    //   - lich up (dev:fast, no compose): ~3-5s
+    //   - daemon-running assertion: <5s
+    //   - lich down: ~1-2s
+    //   - daemon auto-shutdown wait: up to 60s (3 × 10s ticks + buffer)
     //   - file/PID assertions: <1s
     //   - headroom for slow CI
-    // The default 120s is far too tight; 10 min covers the worst case.
-    600_000,
+    150_000,
   );
 });
