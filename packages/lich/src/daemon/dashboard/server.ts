@@ -62,7 +62,9 @@
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { LogTail } from "../../logs/tail.js";
+import { runLichAction, type ActionResult } from "./actions.js";
 import { loadStacksView, type StackView } from "./stacks-view.js";
+import type { StackSnapshot } from "../../state/snapshot.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -124,6 +126,22 @@ export interface DashboardServerOpts {
    * at real files.
    */
   tailFactory?: TailFactory;
+  /**
+   * Injection hook for the action runner (LEV-418 / Plan 5 Task 16).
+   * Defaults to the real {@link runLichAction} which spawns the `lich`
+   * binary in the stack's worktree. Tests pass a fake to assert spawn
+   * shape without needing a compiled binary on disk.
+   *
+   * The handler awaits this for both `/stop` and `/restart`; the only
+   * difference between the two POST routes is the `action` argument
+   * passed in. Keeping the dependency injected at the server-construction
+   * boundary (rather than per-request) avoids per-call overhead and lets
+   * the test harness control the runner's lifecycle if needed.
+   */
+  runAction?: (
+    worktreePath: string,
+    action: "down" | "restart",
+  ) => Promise<ActionResult>;
 }
 
 /**
@@ -212,6 +230,11 @@ export async function startDashboardServer(
   const tailFactory: TailFactory =
     opts.tailFactory ?? ((o) => new LogTail({ logPath: o.logPath }));
 
+  // ----- 2a. Resolve the action runner (LEV-418) -------------------------
+  // Default to the real CLI-shellout runner. Tests inject a fake so they
+  // can assert spawn args without needing a compiled binary on disk.
+  const runAction = opts.runAction ?? runLichAction;
+
   // ----- 3. Build the request handler ------------------------------------
   const handler = async (req: Request): Promise<Response> => {
     const u = new URL(req.url);
@@ -227,14 +250,38 @@ export async function startDashboardServer(
       return jsonResponse(cache);
     }
 
-    // /api/stacks/:id and /api/stacks/:id/services/:service. We avoid a
-    // full router library — three routes, straightforward string match.
+    // /api/stacks/:id, /api/stacks/:id/services/:service,
+    // POST /api/stacks/:id/stop, POST /api/stacks/:id/restart.
+    // We avoid a full router library — straightforward string match.
     if (path.startsWith("/api/stacks/")) {
       const rest = path.slice("/api/stacks/".length);
-      // Split into at most 3 segments: [id, "services", serviceName] or
-      // [id, "logs"]. Trailing empty segment from a trailing slash is
-      // filtered out.
+      // Split into segments: [id], [id, "services", serviceName],
+      // [id, "logs"], [id, "stop"], or [id, "restart"]. Trailing empty
+      // segment from a trailing slash is filtered out.
       const segments = rest.split("/").filter((s) => s.length > 0);
+
+      // -- Action endpoints (POST /api/stacks/:id/{stop,restart}) --
+      // Handled before the GET-by-id case so a request like
+      // `POST /api/stacks/<id>/stop` doesn't accidentally fall through
+      // to the "unknown API path" branch.
+      if (
+        segments.length === 2 &&
+        (segments[1] === "stop" || segments[1] === "restart")
+      ) {
+        if (req.method !== "POST") {
+          // Wrong-method on an action endpoint is a 405. Some
+          // clients (curl with no -X) default to GET and would get
+          // a confusing "stack not found" if we returned 404 here.
+          return methodNotAllowed("POST");
+        }
+        const action = segments[1] === "stop" ? "down" : "restart";
+        return handleActionRequest(
+          opts.stateRoot,
+          segments[0],
+          action,
+          runAction,
+        );
+      }
 
       if (segments.length === 1) {
         // /api/stacks/:id
@@ -654,6 +701,118 @@ function buildMergedStream(
       closeAll(null);
     },
   });
+}
+
+/**
+ * Build a 405 Method Not Allowed with the standard `Allow` header. Used
+ * by the action endpoints to reject GET/etc. on POST-only routes.
+ */
+function methodNotAllowed(allowed: string): Response {
+  return new Response(
+    JSON.stringify({ error: "method_not_allowed", allowed }),
+    {
+      status: 405,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        allow: allowed,
+      },
+    },
+  );
+}
+
+/**
+ * Build a 500 with a JSON body. Reserved for "the server couldn't even
+ * try to run the action" — e.g. the lich binary is missing. The action's
+ * own subprocess failures get returned as 200 with `ok: false` so the
+ * dashboard renders them as a result-panel error rather than a generic
+ * HTTP error page.
+ */
+function internalServerError(message: string): Response {
+  return jsonResponse({ error: "internal_server_error", message }, 500);
+}
+
+/**
+ * Look up a stack's `worktree_path` by reading its on-disk snapshot.
+ *
+ * Returns the path on success, or `null` when the stack id is unknown
+ * (state.json missing) or the snapshot is malformed.
+ *
+ * Reads from `stateRoot/<id>/state.json` directly — we deliberately do
+ * NOT route through the in-memory `cache`, which is the projection layer
+ * (`StackView`) that omits `worktree_path` as an implementation detail.
+ * The action endpoint needs the raw worktree path to spawn the CLI in
+ * the right cwd; that's the source of truth on disk.
+ */
+async function readWorktreePath(
+  stateRoot: string,
+  stackId: string,
+): Promise<string | null> {
+  const file = join(stateRoot, stackId, "state.json");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    // Other read errors (EACCES, EIO): treat as unknown — the dashboard
+    // shouldn't differentiate. The error gets surfaced by the parent's
+    // 404 message which is sufficient for an operator debugging.
+    return null;
+  }
+  let snap: StackSnapshot;
+  try {
+    snap = JSON.parse(raw) as StackSnapshot;
+  } catch {
+    return null;
+  }
+  if (typeof snap.worktree_path !== "string" || snap.worktree_path.length === 0) {
+    return null;
+  }
+  return snap.worktree_path;
+}
+
+/**
+ * Shared handler for POST /api/stacks/:id/{stop,restart}.
+ *
+ * Sequence:
+ *   1. Look up the stack's `worktree_path` from its on-disk snapshot.
+ *      → 404 when the stack is unknown.
+ *   2. Run the action via the injected `runAction` (default: spawn the
+ *      `lich` binary in that worktree).
+ *      → 500 when the action throws (e.g. lich binary missing — a hard
+ *        configuration error).
+ *      → 200 with the {@link ActionResult} JSON in all other cases,
+ *        INCLUDING `ok: false`. The dashboard wants to render the
+ *        outcome regardless of whether the CLI succeeded; an HTTP error
+ *        would hide useful detail.
+ *
+ * The shape mirrors v0's `packages/dashboard/src/server/actions.ts`
+ * handler — same field names, same status-code semantics.
+ */
+async function handleActionRequest(
+  stateRoot: string,
+  stackId: string,
+  action: "down" | "restart",
+  runAction: (
+    worktreePath: string,
+    action: "down" | "restart",
+  ) => Promise<ActionResult>,
+): Promise<Response> {
+  const worktreePath = await readWorktreePath(stateRoot, stackId);
+  if (worktreePath === null) {
+    return notFound(`stack not found: ${stackId}`);
+  }
+  try {
+    const result = await runAction(worktreePath, action);
+    return jsonResponse(result);
+  } catch (err) {
+    // Hard configuration error — e.g. lich binary missing. The action
+    // didn't even start. 500 because the dashboard's request can't be
+    // fulfilled at all (vs the action ran-and-failed case, which is a
+    // 200 with ok: false).
+    return internalServerError(
+      `failed to run lich action: ${(err as Error).message}`,
+    );
+  }
 }
 
 /**
