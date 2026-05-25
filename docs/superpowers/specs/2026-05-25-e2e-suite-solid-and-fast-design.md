@@ -262,33 +262,43 @@ Per-test, one commit each:
 | Test file | Pool | Primary assertion | Race risks | Hardening applied |
 |---|---|---|---|---|
 | `basic-up.test.ts` | fast | api+web come up; urls list; /health 200 | next dev cold start sometimes >5s | `waitForHttp200` timeout raised; comment cites |
-| `profiles-lifecycle-scoping.test.ts` | compose | psql `count(*) >= 3` from things | postgres anonymous volume persists across runs (LEV-463 finding) | uses `>=` not `==`; comment cites volume gotcha |
+| `profiles-lifecycle-scoping.test.ts` | compose | psql `count(*) == 3` from things | none (tmpfs ensures fresh DB per up/down) | assertion tightened from `>= 3` to `== 3`; comment cites tmpfs |
 | ... | ... | ... | ... | ... |
 
 In-place audit — each test migrated AND hardened in the same commit. No separate audit-then-harden pass.
 
-### 8. README for the postgres volume gotcha
+### 8. Postgres on tmpfs (ephemeral per up/down cycle)
 
-New file `examples/dogfood-stack/db/README.md`:
+`examples/dogfood-stack/compose.yaml`'s `postgres` service mounts a `tmpfs` for the data directory:
 
-```markdown
-# Dogfood stack: postgres data persistence
-
-The `services.postgres` compose service uses an anonymous volume for
-`/var/lib/postgresql/data`. The volume persists across `lich down`
-intentionally (see `packages/lich/src/compose/runner.ts`).
-
-Consequences for tests:
-- `after_up` runs psql migrations + seed on every `lich up`. The seed
-  uses `ON CONFLICT DO NOTHING` so re-seeding is idempotent for the
-  default `things` table.
-- Any test that asserts on row counts MUST use `>=` not `==`, or
-  truncate the table at setup. Multiple `lich up` invocations against
-  the same worktree will see the same data.
-- To start with a fresh DB, `docker volume rm` the postgres volume
-  before `lich up`, or use a different worktree (each worktree
-  resolves to a different compose project name).
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dogfood
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
 ```
+
+Two wins:
+
+- **Ephemeral data per `lich down → lich up` cycle.** The default anonymous-volume behavior persists data across `lich down`, which forced tests to use `>=` instead of `==` for row-count assertions (LEV-463 finding). With `tmpfs`, every fresh container starts empty; the `after_up` migration + seed produces the canonical 3 rows; tests can assert `== 3` again.
+- **Faster I/O.** Data lives in RAM rather than on a copy-on-write disk volume. `pg_isready` healthcheck should land sub-second. Negligible per test, meaningful across the suite.
+
+Caveats:
+
+- Data still persists within a single `lich up` session (the container is alive the whole time). Only down → up cycles get a clean slate. This is the correct semantic for tests.
+- macOS users (Docker Desktop / OrbStack): both run a Linux VM where `tmpfs` works. No platform-specific workaround needed.
+- A user playing with the dogfood-stack as a personal DB would lose data on every `lich down`. Acceptable for an example/demo app; if anyone wants persistent dev data they can run their own postgres or remove the tmpfs mount.
+- The tmpfs lives in `compose.yaml` (not inline in `lich.yaml`) because of LEV-477 — lich's compose override generator currently drops non-port/env passthrough fields. Once LEV-477 ships, the whole `services.postgres` block can move back inline.
 
 ## Acceptance criteria
 
@@ -305,7 +315,7 @@ All of these must hold on a fresh checkout for the plan to be considered done:
 | No silent test skips | vitest output shows N run / N pass, no skipped |
 | API contract honored | `curl /health` returns `{db: "live"}` on dev, `{db: "stub"}` on dev:fast; `curl /api/things` returns 503 on dev:fast, 200+rows on dev |
 | Daemon shutdown still clean | `lich up dev:fast && lich nuke --yes` leaves no orphan processes |
-| Postgres volume gotcha documented | `examples/dogfood-stack/db/README.md` exists with the persistence-rule explanation |
+| Postgres data is ephemeral per up/down cycle | `compose.yaml` declares `tmpfs: [/var/lib/postgresql/data]`; first query after fresh `lich up dev` sees only the 3 seeded rows (not stale data from a prior run) |
 
 Numeric targets (wall-clock, COMPOSE_REQUIRED size) are stretch goals. If we miss, document why in AUDIT.md but don't block on them.
 
@@ -325,7 +335,7 @@ Numeric targets (wall-clock, COMPOSE_REQUIRED size) are stretch goals. If we mis
 
 ## Notes & gotchas
 
-- **Postgres anonymous volume persists** across `lich down`. Tests that assert on row counts use `>=`. See `examples/dogfood-stack/db/README.md`.
+- **Postgres uses tmpfs** for `/var/lib/postgresql/data` (see Section 8). Data is ephemeral across `lich down → lich up` cycles, so tests can assert exact row counts (`== 3`) rather than `>=`. Within a single up session, data persists normally.
 - **`expectDbMode` failure messages** name the likely cause ("did this test forget to pass `dev`?") so future readers diagnose quickly.
 - **Parallel pool size (`maxForks: 4`)** is a starting point. If audit reveals a port-allocation race or daemon contention under parallel load, drop to 2 or stay single-fork for affected tests.
 - **Audit doc commits incrementally.** Don't wait for a complete audit before migrating — fill in each row as the corresponding test gets migrated/hardened.
