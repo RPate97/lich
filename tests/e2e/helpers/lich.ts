@@ -20,13 +20,28 @@ export interface RunLichOptions {
 }
 
 /**
+ * Default env for every `runLich`/`spawnLich` invocation. Tests can
+ * override any of these by passing the same keys in `opts.env`.
+ *
+ * - `LICH_NO_BROWSER: "1"` — disables the `lich up` browser-auto-open
+ *   side effect (LEV-411). Test runs don't want Chrome popping up
+ *   between tests; this is equivalent to passing `--no-browser` on
+ *   every `lich up` invocation but happens uniformly without per-test
+ *   plumbing. Caller can override (`opts.env.LICH_NO_BROWSER = "0"`)
+ *   to opt back in for a specific test.
+ */
+const DEFAULT_TEST_ENV = {
+  LICH_NO_BROWSER: "1",
+};
+
+/**
  * Run the lich binary synchronously and capture output.
  * Used for short-lived commands like --version, validate, init.
  */
 export function runLich(args: string[], opts: RunLichOptions): RunLichResult {
   const result = spawnSync(LICH_BINARY, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: { ...process.env, ...DEFAULT_TEST_ENV, ...opts.env },
     timeout: opts.timeout ?? 30_000,
     encoding: "utf8",
   });
@@ -49,7 +64,7 @@ export function spawnLich(
 ): ChildProcess {
   return spawn(LICH_BINARY, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: { ...process.env, ...DEFAULT_TEST_ENV, ...opts.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }

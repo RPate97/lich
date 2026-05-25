@@ -1026,7 +1026,14 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     // who pin it in yaml get the same port the daemon will bind. When
     // unset, `ensureDaemonRunning` and the daemon itself both default to
     // 3300 — we just don't forward an undefined value.
-    const noBrowser = input.noBrowser ?? false;
+    // `--no-browser` flag is the explicit per-invocation opt-out (LEV-411).
+    // `LICH_NO_BROWSER=1` env is the global opt-out for environments where
+    // browser-open is never wanted (test runners, CI, headless dev boxes).
+    // Either signal disables the auto-open.
+    const envNoBrowser =
+      process.env.LICH_NO_BROWSER === "1" ||
+      process.env.LICH_NO_BROWSER === "true";
+    const noBrowser = (input.noBrowser ?? false) || envNoBrowser;
     const configuredProxyPort = config.runtime?.proxy_port;
     try {
       const lichHomeEnv = process.env.LICH_HOME;
