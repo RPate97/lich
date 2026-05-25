@@ -1,5 +1,5 @@
 /**
- * Dashboard HTTP server (LEV-408, Plan 5 Task 6).
+ * Dashboard HTTP server (LEV-408 + LEV-409, Plan 5 Tasks 6 + 7).
  *
  * The lich daemon hosts this `Bun.serve` HTTP server on an ephemeral
  * port (production: `port: 0` so the OS picks; tests: same). The bound
@@ -11,12 +11,20 @@
  *
  *   1. REST endpoints (`/healthz`, `/api/stacks`, `/api/stacks/:id`,
  *      `/api/stacks/:id/services/:service`) consumed by the SPA.
- *   2. Static file serving from an optional `uiDir` with SPA fallback
+ *   2. Server-Sent Events log-tail endpoints (LEV-409):
+ *      - `GET /api/stacks/:id/logs?service=<name>` — single-service stream
+ *      - `GET /api/stacks/:id/logs` — merged stream across all services
+ *      Each frame is `data: {"service":<name>,"line":<line>}\n\n`.
+ *      Backed by the `LogTail` primitive (`logs/tail.ts`); one tail per
+ *      service per open connection. Disconnects (ReadableStream cancel
+ *      or req.signal abort) stop every tail attached to the stream so
+ *      we don't leak poll loops on closed browser tabs.
+ *   3. Static file serving from an optional `uiDir` with SPA fallback
  *      to `index.html` for any non-API path. When no `uiDir` is
  *      configured (Plan 5 Task 13 hasn't landed yet), the root path
  *      returns a placeholder HTML so an unbuilt deployment doesn't
  *      look broken.
- *   3. An in-memory cache of the {@link StackView} list, refreshed
+ *   4. An in-memory cache of the {@link StackView} list, refreshed
  *      explicitly by the daemon's watcher via `refresh()`. The cache
  *      keeps response latency under a millisecond regardless of how
  *      many stacks the machine is running.
@@ -53,11 +61,36 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
+import { LogTail } from "../../logs/tail.js";
 import { loadStacksView, type StackView } from "./stacks-view.js";
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Minimal contract a {@link DashboardServerOpts.tailFactory} must
+ * satisfy. The real {@link LogTail} from `logs/tail.ts` implements this
+ * structurally; the seam exists so unit tests can swap in a fake that
+ * emits lines on demand AND lets the test observe `.stop()` to verify
+ * the SSE handler's cleanup path on client disconnect.
+ *
+ * We deliberately type only the methods the SSE handler calls — start,
+ * onLine, stop — rather than re-exporting LogTail's full surface. A
+ * tighter interface means a test fake can be a few lines of code.
+ */
+export interface LogTailLike {
+  start(): Promise<void>;
+  onLine(cb: (line: string) => void): () => void;
+  stop(): Promise<void>;
+}
+
+/**
+ * Constructor signature for tail instances. The default factory
+ * instantiates the real {@link LogTail} from `logs/tail.ts`; tests pass
+ * a custom factory that returns a fake observable.
+ */
+export type TailFactory = (opts: { logPath: string }) => LogTailLike;
 
 export interface DashboardServerOpts {
   /**
@@ -84,6 +117,13 @@ export interface DashboardServerOpts {
    * connections. Mirrors `startProxy`'s pattern in `daemon/proxy/proxy.ts`.
    */
   signal?: AbortSignal;
+  /**
+   * Optional factory for constructing log tails. Defaults to instantiating
+   * the real {@link LogTail} from `logs/tail.ts`. Tests inject a fake so
+   * they can observe stop() calls and emit lines on demand without poking
+   * at real files.
+   */
+  tailFactory?: TailFactory;
 }
 
 /**
@@ -166,6 +206,12 @@ export async function startDashboardServer(
   // pins the boundary to whatever existed at start time.
   const resolvedUiDir = opts.uiDir ? resolve(opts.uiDir) : null;
 
+  // Default tail factory: real `LogTail` from `logs/tail.ts`. Tests
+  // override via `opts.tailFactory` to inject a fake that records stop()
+  // calls and emits lines on demand. See LogTailLike for the contract.
+  const tailFactory: TailFactory =
+    opts.tailFactory ?? ((o) => new LogTail({ logPath: o.logPath }));
+
   // ----- 3. Build the request handler ------------------------------------
   const handler = async (req: Request): Promise<Response> => {
     const u = new URL(req.url);
@@ -185,8 +231,9 @@ export async function startDashboardServer(
     // full router library — three routes, straightforward string match.
     if (path.startsWith("/api/stacks/")) {
       const rest = path.slice("/api/stacks/".length);
-      // Split into at most 3 segments: [id, "services", serviceName].
-      // Trailing empty segment from a trailing slash is filtered out.
+      // Split into at most 3 segments: [id, "services", serviceName] or
+      // [id, "logs"]. Trailing empty segment from a trailing slash is
+      // filtered out.
       const segments = rest.split("/").filter((s) => s.length > 0);
 
       if (segments.length === 1) {
@@ -196,6 +243,45 @@ export async function startDashboardServer(
           return notFound(`stack not found: ${segments[0]}`);
         }
         return jsonResponse(stack);
+      }
+
+      if (segments.length === 2 && segments[1] === "logs") {
+        // /api/stacks/:id/logs[?service=<name>]
+        const stackId = segments[0];
+        const stack = cache.find((s) => s.id === stackId);
+        if (!stack) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        const serviceName = u.searchParams.get("service");
+        if (serviceName !== null) {
+          // Single-service stream. 404 if the named service isn't in
+          // the stack so the client gets immediate feedback rather
+          // than an empty event stream.
+          const service = stack.services.find((sv) => sv.name === serviceName);
+          if (!service) {
+            return notFound(`service not found: ${serviceName}`);
+          }
+          return sseResponse(
+            buildSingleServiceStream({
+              stateRoot: opts.stateRoot,
+              stackId,
+              service: serviceName,
+              tailFactory,
+              clientSignal: req.signal,
+            }),
+          );
+        }
+        // Merged stream — one LogTail per service in the stack, each
+        // event labeled with the source service.
+        return sseResponse(
+          buildMergedStream({
+            stateRoot: opts.stateRoot,
+            stackId,
+            services: stack.services.map((s) => s.name),
+            tailFactory,
+            clientSignal: req.signal,
+          }),
+        );
       }
 
       if (segments.length === 3 && segments[1] === "services") {
@@ -320,6 +406,254 @@ function jsonResponse(body: unknown, status = 200): Response {
  */
 function notFound(message: string): Response {
   return jsonResponse({ error: "not_found", message }, 404);
+}
+
+/**
+ * Wrap a {@link ReadableStream} in an SSE-shaped {@link Response} with
+ * the headers EventSource clients expect. Centralized so every SSE
+ * endpoint pins the same content-type, cache-control, and connection
+ * directives. Without `Cache-Control: no-cache` an aggressive proxy
+ * might buffer the entire stream; without `Connection: keep-alive`
+ * an HTTP/1.1 client might close after a single chunk.
+ *
+ * status defaults to 200 — SSE never uses other codes once the stream
+ * is opened (errors are surfaced inside event payloads, not via HTTP).
+ */
+function sseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    },
+  });
+}
+
+/**
+ * Encode one SSE frame from a JSON-serializable payload. The shape is
+ * verbatim what an EventSource client receives in its `onmessage`
+ * handler's `event.data`. We keep encoding centralized so every event
+ * frame uses the same `data:` prefix and `\n\n` terminator — getting
+ * either wrong silently breaks the client without any obvious error.
+ */
+function encodeSseFrame(payload: unknown): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+/**
+ * SSE comment frame enqueued at stream start so the HTTP runtime flushes
+ * the response headers immediately. Without an initial byte, Bun (and
+ * other servers) delay sending the headers until the first body chunk —
+ * which means a client that does `await fetch(url)` against an idle log
+ * stream hangs until the first log line lands. The leading `:` makes
+ * this a comment per the SSE spec (HTML5 § "Server-sent events"); both
+ * EventSource and our test frame parser ignore it.
+ *
+ * Pre-encoded as a module-level constant because every SSE response
+ * sends exactly this byte sequence as its first chunk.
+ */
+const SSE_HEARTBEAT = new TextEncoder().encode(": ok\n\n");
+
+/**
+ * Per-service log file path. Mirrors `state/directory.ts`'s
+ * `serviceLogPath` but works against an explicit `stateRoot` (the
+ * `directory.ts` helper reads `LICH_HOME` globally; the dashboard
+ * server takes its root as an option for test isolation).
+ */
+function logPathFor(
+  stateRoot: string,
+  stackId: string,
+  serviceName: string,
+): string {
+  return join(stateRoot, stackId, "logs", `${serviceName}.log`);
+}
+
+/**
+ * Build a single-service SSE stream. Spins up one {@link LogTail},
+ * subscribes to its `onLine` callback, enqueues an SSE frame for each
+ * complete line, and tears the tail down when the client disconnects
+ * (the ReadableStream's `cancel` fires, OR the request's AbortSignal
+ * fires — both wire to the same cleanup path).
+ *
+ * The frame payload shape is `{ service, line }` (no timestamp — the
+ * underlying LogTail only emits text lines, and we don't want to
+ * fabricate timestamps that don't appear in the source). Future tasks
+ * can extend the shape; the SPA's EventSource handler is forward-
+ * compatible because it just consumes the JSON.
+ */
+interface BuildStreamOpts {
+  stateRoot: string;
+  stackId: string;
+  tailFactory: TailFactory;
+  /**
+   * The fetch request's AbortSignal. Bun fires this when the client
+   * disconnects. We mirror it into the stream's cancel handler so a
+   * disconnect triggers tail teardown even if the request is aborted
+   * without going through the ReadableStream cancel path (defensive —
+   * different runtimes can route disconnects differently).
+   */
+  clientSignal?: AbortSignal;
+}
+
+function buildSingleServiceStream(
+  opts: BuildStreamOpts & { service: string },
+): ReadableStream<Uint8Array> {
+  // Tail and close-state live at function scope so both `start` and
+  // `cancel` can reach them. Without this, `cancel` (which fires on
+  // client disconnect) has no way to reach the tail it needs to stop.
+  let tail: LogTailLike | null = null;
+  let closed = false;
+
+  const closeOnce = (controller: ReadableStreamDefaultController<Uint8Array> | null): void => {
+    if (closed) return;
+    closed = true;
+    if (tail) {
+      // Fire-and-forget; stop() is async and idempotent.
+      void tail.stop();
+    }
+    if (controller) {
+      try {
+        controller.close();
+      } catch {
+        // controller may already be closed (cancel path) — harmless.
+      }
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Push an initial SSE comment frame so the server flushes HTTP
+      // headers immediately. Without this, Bun (and most HTTP runtimes)
+      // wait for the first body byte before sending headers — which
+      // means a client `await fetch()` hangs until the first log line
+      // arrives. The `:` prefix makes this a comment per the SSE spec,
+      // so EventSource and our test parser both ignore it.
+      controller.enqueue(SSE_HEARTBEAT);
+
+      tail = opts.tailFactory({
+        logPath: logPathFor(opts.stateRoot, opts.stackId, opts.service),
+      });
+
+      // Wire line callback BEFORE start() so we don't miss a line the
+      // poll loop might emit synchronously on its first tick.
+      tail.onLine((line) => {
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encodeSseFrame({ service: opts.service, line }),
+          );
+        } catch {
+          // Controller closed mid-callback — stop the tail and bail.
+          closeOnce(controller);
+        }
+      });
+
+      // Kick the poll loop. We don't await — start() resolves once the
+      // interval is scheduled; lines arrive on subsequent ticks.
+      void tail.start();
+
+      // Honor the request's AbortSignal. Bun's `req.signal` fires when
+      // the client drops the connection; we want to release the tail
+      // immediately rather than waiting for the next poll's stop-check.
+      if (opts.clientSignal) {
+        if (opts.clientSignal.aborted) {
+          closeOnce(controller);
+        } else {
+          opts.clientSignal.addEventListener(
+            "abort",
+            () => closeOnce(controller),
+            { once: true },
+          );
+        }
+      }
+    },
+    cancel() {
+      // ReadableStream.cancel runs when the consumer abandons the
+      // stream (typically: the browser tab closed or the fetch
+      // response was discarded). Stop the tail to release the poll
+      // loop's setInterval — otherwise we leak a file watcher per
+      // closed dashboard tab. Pass null for the controller because
+      // we're being notified the stream is already torn down on the
+      // consumer side; just release upstream resources.
+      closeOnce(null);
+    },
+  });
+}
+
+/**
+ * Build a merged SSE stream — one {@link LogTail} per service, each
+ * event labeled with the source service name so the client can
+ * distinguish lines from different services. Cleanup stops every
+ * tail on client disconnect.
+ *
+ * If the stack has no services, the stream stays open but never
+ * emits — same shape as a no-traffic single-service stream. The
+ * client closing the connection is still cleaned up properly.
+ */
+function buildMergedStream(
+  opts: BuildStreamOpts & { services: string[] },
+): ReadableStream<Uint8Array> {
+  // Tails and close-state at function scope so `cancel` can reach the
+  // tails to stop them — see buildSingleServiceStream for the same
+  // pattern + rationale.
+  const tails: LogTailLike[] = [];
+  let closed = false;
+
+  const closeAll = (controller: ReadableStreamDefaultController<Uint8Array> | null): void => {
+    if (closed) return;
+    closed = true;
+    for (const tail of tails) {
+      void tail.stop();
+    }
+    if (controller) {
+      try {
+        controller.close();
+      } catch {
+        // already closed
+      }
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Heartbeat to flush HTTP headers immediately — see
+      // buildSingleServiceStream for the rationale.
+      controller.enqueue(SSE_HEARTBEAT);
+
+      for (const service of opts.services) {
+        const tail = opts.tailFactory({
+          logPath: logPathFor(opts.stateRoot, opts.stackId, service),
+        });
+        tails.push(tail);
+
+        tail.onLine((line) => {
+          if (closed) return;
+          try {
+            controller.enqueue(encodeSseFrame({ service, line }));
+          } catch {
+            closeAll(controller);
+          }
+        });
+        void tail.start();
+      }
+
+      if (opts.clientSignal) {
+        if (opts.clientSignal.aborted) {
+          closeAll(controller);
+        } else {
+          opts.clientSignal.addEventListener(
+            "abort",
+            () => closeAll(controller),
+            { once: true },
+          );
+        }
+      }
+    },
+    cancel() {
+      closeAll(null);
+    },
+  });
 }
 
 /**
