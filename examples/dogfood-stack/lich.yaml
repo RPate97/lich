@@ -18,13 +18,32 @@ services:
   # Plan 1 compose service. Replaces supabase (~3s startup vs ~35s).
   # Single port → POSTGRES_HOST_PORT. Healthcheck via pg_isready.
   #
-  # The image / healthcheck / static environment live in ./compose.yaml;
-  # lich's override generator only emits the per-stack host-port binding
-  # + any env values from this file's `env:` block (DATABASE_URL etc.).
+  # Fully inline (LEV-477): image / environment / healthcheck / tmpfs all
+  # live here in lich.yaml. Lich's compose override generator emits the
+  # entire service block (including the compose-spec passthroughs) into
+  # the per-stack `compose.override.yaml`, so no sibling compose file is
+  # needed. Pre-LEV-477 these had to live in a separate compose.yaml
+  # because the override generator silently dropped non-port/env fields.
   postgres:
-    compose_file: compose.yaml
+    image: postgres:16-alpine
     ports:
       - { container: 5432, env: POSTGRES_HOST_PORT }
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dogfood
+    tmpfs:
+      # Ephemeral data directory — postgres state lives in RAM and goes
+      # away when the container is removed. Tests get a clean DB per
+      # `lich down → lich up` cycle without manual volume management.
+      # See docs/superpowers/specs/2026-05-25-e2e-suite-solid-and-fast-design.md
+      # Section 8 for rationale.
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
 
 owned:
   api:
