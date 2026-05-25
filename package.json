@@ -5,24 +5,16 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/lich", "tests/e2e"],
   "devDependencies": {
-    "@changesets/cli": "2.31.0",
     "bun-types": "^1.2.0",
-    "tsup": "8.5.1",
-    "turbo": "^2.0.0",
     "typescript": "^5.4.0"
   },
   "scripts": {
-    "build": "turbo run build",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "test:e2e": "bun run --cwd packages/core test:e2e",
-    "changeset": "changeset",
-    "version-packages": "changeset version && bun install --lockfile-only",
-    "release": "bun run build && changeset publish",
-    "sync-workspace-symlinks": "bash scripts/sync-workspace-symlinks.sh",
-    "check-workspace-symlinks": "bash scripts/sync-workspace-symlinks.sh --check",
+    "build": "bun run --cwd packages/lich build",
+    "typecheck": "bun run --cwd packages/lich typecheck",
+    "test": "bun run --cwd packages/lich test",
+    "test:e2e": "bun run --cwd tests/e2e test",
     "install-git-hooks": "bash scripts/install-git-hooks.sh"
   }
 }
