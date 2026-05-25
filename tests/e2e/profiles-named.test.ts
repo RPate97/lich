@@ -313,16 +313,31 @@ describe("lich up <profile> activates the named profile (Plan 3 Task 20)", () =>
           env: { LICH_HOME: fix.lichHome },
           timeout: 240_000,
         });
+        // dev:env-override intentionally overrides DATABASE_URL to a
+        // non-resolving hostname (db.test.example.com). The dogfood yaml
+        // documents this: "e2e coverage asserts on the env Lich resolved,
+        // not on actually opening a DB connection." Consequence: the api
+        // service returns 500 for any route that touches the DB, the web
+        // service's `/` page renders that 500, web's `ready_when.http_get`
+        // never sees a 200, and `lich up` exits non-zero.
+        //
+        // That's fine for this test — the assertion in the next it() block
+        // is about the snapshot's `active_profile`, which gets written at
+        // the start of `runUp` (Step 6) BEFORE service ready_when waits.
+        // So even a partial-up writes the field we're checking.
+        //
+        // Mirror the LEV-396 follow-up's pattern (profiles-env-override.test.ts):
+        // mark didUp regardless so teardown runs, log a warning on non-zero
+        // exit so a real regression (e.g. up dies before snapshot is
+        // written) is visible in test output, and let the snapshot
+        // assertion do the actual gating.
+        didUp = true;
         if (upResult.exitCode !== 0) {
           // eslint-disable-next-line no-console
-          console.error("lich up dev:env-override stdout:", upResult.stdout);
-          // eslint-disable-next-line no-console
-          console.error("lich up dev:env-override stderr:", upResult.stderr);
-          throw new Error(
-            `lich up dev:env-override exited ${upResult.exitCode}; cannot proceed with active_profile assertion`,
+          console.warn(
+            `lich up dev:env-override exited ${upResult.exitCode} (expected; api can't reach bogus DB). Continuing to active_profile assertion.`,
           );
         }
-        didUp = true;
       },
       /* timeout */ 300_000,
     );
