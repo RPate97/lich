@@ -46,6 +46,11 @@ import {
 import { resolveComposeCli } from "../compose/detect.js";
 import { parseConfig } from "../config/parse.js";
 import type { LichConfig } from "../config/types.js";
+import {
+  clearDaemonPid,
+  isDaemonAlive,
+  readDaemonPid,
+} from "../daemon/pid-file.js";
 import { resolveEnvForService } from "../env/resolve.js";
 import { release } from "../ports/allocator.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
@@ -139,7 +144,15 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
   // Rescue mode skips the "no stacks to nuke" early return — the whole
   // point of rescue is that state.json may be gone but external
   // resources may still be leaking. We still need to scan the log.
+  // Even on the empty-stacks early-return path we make a best-effort
+  // pass at killing the daemon (LEV-420) — `lich nuke` is the escape
+  // hatch, and a stray daemon process is exactly the kind of cruft the
+  // user is invoking nuke to clear.
   if (ids.length === 0 && !input.rescue) {
+    const daemonWarning = await killDaemon();
+    if (daemonWarning !== null) {
+      writeLine(out, `warning: ${daemonWarning}`);
+    }
     writeLine(out, "no stacks to nuke");
     return { exitCode: 0, outcomes: [] };
   }
@@ -175,6 +188,16 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
         detail: errorMessage(err),
       });
     }
+  }
+
+  // After all per-stack teardown lands, signal the daemon to exit so the
+  // dashboard + proxy stop immediately rather than waiting ~30s for the
+  // daemon's own auto-shutdown to notice no stacks remain. Best-effort:
+  // failures here surface as a warning line but never flip exit code
+  // (LEV-420, Plan 5 Task 18).
+  const daemonWarning = await killDaemon();
+  if (daemonWarning !== null) {
+    writeLine(out, `warning: ${daemonWarning}`);
   }
 
   // Final summary line. Always one line, machine-readable enough to
@@ -593,6 +616,137 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon teardown (LEV-420, Plan 5 Task 18)
+//
+// The lich daemon (a per-machine process hosting the dashboard, reverse
+// proxy, and state watcher) auto-shuts down when no stacks remain — but
+// that takes ~30s by design. `lich nuke` is the user's "stop everything
+// NOW" escape hatch, so we don't wait: SIGTERM the daemon, give it 5s
+// to exit cleanly, escalate to SIGKILL if it hasn't, then clear the
+// PID file so the next `lich up` starts from a clean slate.
+//
+// Best-effort throughout. Daemon-kill failures surface as a warning in
+// the nuke summary but never flip `runNuke`'s exit code — the escape-
+// hatch contract is "you're free to `lich up` again," and a misbehaving
+// daemon shouldn't block that.
+// ---------------------------------------------------------------------------
+
+/** Time to wait for the daemon to exit after SIGTERM before SIGKILL. */
+const DAEMON_SIGTERM_GRACE_MS = 5_000;
+
+/**
+ * SIGTERM the lich daemon (if running), wait up to 5s for clean exit,
+ * SIGKILL if still alive. Always clears the PID file at the end so a
+ * stale-file scenario can't leak into the next `lich up`.
+ *
+ * Returns `null` on a clean outcome (no daemon, daemon stopped cleanly,
+ * or SIGKILL reaped it) or a human-readable warning string when something
+ * went wrong (PID file read failed, signal failed for a reason other than
+ * ESRCH, etc.). Callers attach the warning to the nuke summary as a
+ * non-fatal note.
+ *
+ * The PID-file clear is unconditional: even if SIGTERM/SIGKILL fail, we
+ * remove the file so the next `lich up` doesn't see a stale PID and
+ * incorrectly assume a daemon is alive. If the underlying process really
+ * IS still running, the next `lich up` will detect that via the daemon's
+ * own "refuse to start when alive PID exists" guard (Task 4) — but with
+ * an empty PID file slot the user gets the cleaner "no daemon" path
+ * instead of confused stale-file behavior.
+ */
+async function killDaemon(): Promise<string | null> {
+  // Read the recorded PID first. If no file (the common case on a fresh
+  // machine that never started a daemon), there's nothing to do.
+  let pid: number | null;
+  try {
+    pid = await readDaemonPid();
+  } catch (err) {
+    // Defensive: readDaemonPid swallows ENOENT and returns null already;
+    // any throw is unexpected (filesystem permissions, IO error). Surface
+    // as a warning and bail without touching the file — best-effort.
+    return `read daemon.pid: ${errorMessage(err)}`;
+  }
+
+  if (pid === null) {
+    // No PID file, no daemon — silent no-op. Nothing to clear either
+    // (clearDaemonPid is idempotent but calling it would be wasted work).
+    return null;
+  }
+
+  // The PID file exists but the daemon may have crashed without clearing
+  // it. Check liveness; on stale-file we just sweep the file silently.
+  const alive = await isDaemonAlive();
+  if (!alive) {
+    await clearDaemonPid().catch(() => {
+      // Failing to clear a stale file is annoying but not actionable —
+      // the next `lich up` will re-check liveness and treat it as stale
+      // anyway. Don't surface as a warning; the user's view of "nuke
+      // cleaned up the daemon" is honest.
+    });
+    return null;
+  }
+
+  // Daemon is alive. SIGTERM the process so its own SIGTERM handler can
+  // tear down dashboard + proxy + watcher cleanly. We don't signal the
+  // process group here — the daemon is a single Bun process, not a fan-out
+  // supervisor like an owned service.
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
+      // Race: daemon died between our isDaemonAlive check and the signal.
+      // Treat as success; clear the file and move on.
+      await clearDaemonPid().catch(() => {});
+      return null;
+    }
+    // EPERM (different uid) or unexpected errno — surface and still try
+    // to clear the file so the next `lich up` sees a clean slate.
+    await clearDaemonPid().catch(() => {});
+    return `daemon SIGTERM (pid ${pid}): ${errorMessage(err)}`;
+  }
+
+  // Poll for the daemon to exit. 5s total, 50ms intervals.
+  const startMs = Date.now();
+  while (Date.now() - startMs < DAEMON_SIGTERM_GRACE_MS) {
+    if (!isAlive(pid)) {
+      await clearDaemonPid().catch(() => {});
+      return null;
+    }
+    await sleep(50);
+  }
+
+  // Still alive after the grace window. Escalate to SIGKILL — uncatchable;
+  // the kernel reaps shortly after.
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
+      // Exited right at the grace boundary.
+      await clearDaemonPid().catch(() => {});
+      return null;
+    }
+    await clearDaemonPid().catch(() => {});
+    return `daemon SIGKILL (pid ${pid}): ${errorMessage(err)}`;
+  }
+
+  // Brief verify so we don't lie about success.
+  for (let i = 0; i < 20; i++) {
+    if (!isAlive(pid)) {
+      await clearDaemonPid().catch(() => {});
+      return null;
+    }
+    await sleep(50);
+  }
+
+  // Pathological: SIGKILL didn't reap. Pid is in D-state or container/pid
+  // mismatch territory. Clear the file (so the next `lich up` doesn't
+  // think a daemon owns this LICH_HOME) but surface a loud warning.
+  await clearDaemonPid().catch(() => {});
+  return `daemon pid ${pid} still alive after SIGKILL + 1s grace; manual cleanup may be needed`;
 }
 
 /**
