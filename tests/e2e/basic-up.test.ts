@@ -30,11 +30,16 @@
  *        - `lich down` → state.json transitions to status:stopped, the
  *          previously allocated ports stop listening.
  *
- *   3. `serves the web app over its friendly URL` — TODO (Plan 5)
- *      Gated with `it.todo(...)`. The friendly URL
- *      `http://web.<worktree>.lich.localhost:3300/` requires the daemon +
- *      reverse proxy from Plan 5. Until then, Plan 1's raw URLs (test 2)
- *      are the lich-up acceptance bar.
+ *   3. `serves the web app over its friendly URL` — Plan 5 (LEV-431)
+ *      Brings the stack up with `--no-browser`, waits for the daemon's
+ *      pid + url files, then hits `http://web.<worktree>.lich.localhost:
+ *      3300/` via the proxy (using a loopback + Host-header probe to
+ *      sidestep flaky `*.localhost` DNS on some hosts). Probes both
+ *      127.0.0.1 AND [::1] because `Bun.serve` with `hostname: "localhost"`
+ *      binds whichever family the OS resolver returns first — a browser
+ *      would let the OS choose, so the test does the same. Asserts the
+ *      proxy is transparent — same status, same body markers, similar
+ *      size — as the raw URL.
  *
  * Isolation:
  *   - tmpdir copy of dogfood-stack (never the repo's real one).
@@ -43,7 +48,9 @@
  *   - lich binary built in `beforeAll` from packages/lich/.
  *
  * Cleanup contract (testing-standards §"Resource cleanup contract"):
- *   - `lich down` runs in `afterEach` even when the test body throws.
+ *   - `lich down` then `lich nuke --yes` runs in `afterEach` even when the
+ *     test body throws. The nuke step kills the Plan-5 daemon (which would
+ *     otherwise hold the proxy port and break the next test).
  *   - tmpdir + LICH_HOME removed in `afterEach`.
  *   - Leaving leaks is a test bug; we'd rather see noisy cleanup logs than
  *     mysterious failures on the next run.
@@ -73,6 +80,7 @@ import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
 import { parseLichUrls, portFromUrl } from "./helpers/urls.js";
 import { readStateJson, waitForStackStatus } from "./helpers/state.js";
+import { waitForDaemonRunning } from "./helpers/daemon.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. We fail loudly here (don't skip) — the binary
@@ -142,6 +150,22 @@ function teardownFixture(fix: Fixture): void {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(`afterEach lich down failed for ${fix.stackPath}:`, err);
+  }
+  // Plan 5 (LEV-431) — nuke --yes follows the down so the daemon process
+  // dies too. The Plan-5 daemon binds the proxy port (default 3300); if
+  // we left it alive between tests, the next `lich up` would refuse to
+  // bind a new proxy on the same port, leading to mysterious
+  // 404/connection-refused failures in test N+1. The auto-shutdown loop
+  // takes ~30s — long enough to corrupt the next test. Matches the
+  // pattern in tests/e2e/dashboard-stack-detail.test.ts's teardown.
+  try {
+    runLich(["nuke", "--yes"], {
+      cwd: fix.stackPath,
+      env: { LICH_HOME: fix.lichHome },
+      timeout: 60_000,
+    });
+  } catch {
+    /* best-effort */
   }
   try {
     fix.stackCleanup();
@@ -360,12 +384,230 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
     300_000,
   );
 
-  // Friendly URL — gated on Plan 5 (daemon + reverse proxy).
-  // The pattern `http://<service>.<worktree>.lich.localhost:3300/` lives in
-  // the spec under section 5; until the proxy is up, there's nothing to
-  // resolve that hostname or terminate that port.
-  // TODO(Plan 5): unskip and assert HTTP 200 + same HTML body as raw URL.
-  it.todo(
-    "serves the web app over http://web.<worktree>.lich.localhost:3300/ (pending Plan 5 daemon + proxy)",
+  // Friendly URL — Plan 5 (LEV-431). The pattern `http://<service>.<worktree>
+  // .lich.localhost:<proxy_port>/` lives in the spec under section 5. Plan 5
+  // wires up the daemon's reverse proxy on `runtime.proxy_port` (default
+  // 3300) and the routing entries `lich up` writes into state.json; this
+  // test verifies the whole pipeline end-to-end against the dogfood-stack.
+  //
+  // Why hit 127.0.0.1 with a `Host` header instead of the friendly URL
+  // directly? `*.lich.localhost` IS a special-use TLD that modern browsers
+  // and OSes auto-resolve to loopback (RFC 6761 + 8375). But not every Mac
+  // / CI runner has `mDNSResponder` configured to return `127.0.0.1` for
+  // arbitrary `*.localhost` names — some return ENOTFOUND. The proxy itself
+  // routes purely on the `Host` header, so we use `127.0.0.1:<proxy_port>`
+  // + an explicit `Host` to exercise the same code path without depending
+  // on the host's DNS behavior. The plan's Task 23 implementation notes
+  // call this out explicitly as the recommended fallback for `*.localhost`
+  // resolution.
+  //
+  // `--no-browser` mirrors daemon-auto-start.test.ts — we want the daemon
+  // to spawn (it must, for the proxy to bind) but we don't want a Chrome
+  // tab popping up during a test run.
+  it(
+    "serves the web app over http://web.<worktree>.lich.localhost:3300/ (Plan 5 friendly URL)",
+    async () => {
+      fixture = makeFixture();
+      const { stackPath, lichHome } = fixture;
+
+      // Live progress logger — same pattern as the raw-URL test above; this
+      // one is also slow (full dogfood-stack boot + supabase pull on cold
+      // caches) and silence for minutes is no help when something hangs.
+      const t0 = Date.now();
+      const step = (label: string): void => {
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        process.stderr.write(`  [+${elapsed}s] ${label}\n`);
+      };
+
+      // ---- lich up --no-browser ----------------------------------------
+      step("lich up --no-browser (supabase first-pull ~30-90s)");
+      const upResult = runLich(["up", "--no-browser"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+        timeout: 300_000,
+      });
+      if (upResult.exitCode !== 0) {
+        // Surface stdout+stderr so a failed up gives a real diagnostic
+        // (docker not running, supabase CLI missing, etc.) rather than a
+        // mystery "timeout waiting for daemon" downstream.
+        // eslint-disable-next-line no-console
+        console.error("lich up stdout:", upResult.stdout);
+        // eslint-disable-next-line no-console
+        console.error("lich up stderr:", upResult.stderr);
+      }
+      expect(upResult.exitCode).toBe(0);
+      step("lich up exit 0");
+
+      // ---- state.json: stack reached `up` ------------------------------
+      const stackId = findStackId(lichHome);
+      expect(stackId).not.toBeNull();
+      const snap = await waitForStackStatus(lichHome, stackId!, "up", {
+        timeoutMs: 10_000,
+      });
+      expect(snap.status).toBe("up");
+      const worktreeName = snap.worktree_name;
+      expect(
+        worktreeName,
+        "snapshot must record worktree_name for friendly-URL hostnames",
+      ).toBeTruthy();
+
+      // ---- daemon: pid + url files present, dashboard up ---------------
+      // The daemon-auto-start path in `lich up` is best-effort (failures
+      // don't fail the up — see commands/up.ts Plan 5 Task 9 block), so we
+      // assert it explicitly here. Without the daemon, the proxy isn't
+      // bound and the friendly URL has nothing to hit.
+      step("waiting for daemon pid + url files");
+      const daemon = await waitForDaemonRunning(lichHome, {
+        timeoutMs: 30_000,
+      });
+      step(`daemon alive: pid=${daemon.pid} url=${daemon.url}`);
+
+      // ---- raw URL: capture the expected body --------------------------
+      // We need the raw URL's response body so the friendly URL assertion
+      // can prove the proxy is transparent (same body, same content), not
+      // just "returns 200." The raw URL probe also doubles as a sanity
+      // check that the web service itself is up — if THIS fails, the
+      // friendly URL test fails for the wrong reason.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const rawUrls = parseLichUrls(urlsResult.stdout);
+      const rawWebUrl = rawUrls.web?.default;
+      expect(
+        rawWebUrl,
+        `expected raw web url in: ${urlsResult.stdout}`,
+      ).toBeTruthy();
+
+      // Next.js dev cold-compile on first request usually ~3-8s; 20s
+      // headroom mirrors the raw-URL test's budget.
+      step(`probing raw web / (${rawWebUrl})`);
+      await waitForHttp200(rawWebUrl!, { timeoutMs: 20_000 });
+      const rawBody = await fetch(rawWebUrl!).then((r) => r.text());
+      expect(rawBody.toLowerCase()).toMatch(/<!doctype html|_next|next/);
+
+      // ---- friendly URL: same body via proxy ---------------------------
+      // The proxy port comes from `config.runtime.proxy_port` with a 3300
+      // default. The dogfood-stack's lich.yaml doesn't set it, so 3300 is
+      // what the daemon bound. If a future variant overrides it, this
+      // assertion would need to read the config — but that's
+      // out-of-scope for the LEV-431 gate (which is specifically about
+      // proving the 3300 default path works end-to-end).
+      const proxyPort = 3300;
+      const friendlyHost = `web.${worktreeName}.lich.localhost`;
+      const friendlyUrl = `http://${friendlyHost}:${proxyPort}/`;
+
+      // Hit the proxy via loopback with an explicit Host header — see the
+      // doc comment above this `it` block for the DNS rationale. We probe
+      // both IPv4 (127.0.0.1) AND IPv6 (::1) because `Bun.serve` with
+      // `hostname: "localhost"` binds only one family per process, and
+      // which family wins depends on macOS's resolver order at the moment
+      // the proxy started. A browser hitting `web.<wt>.lich.localhost`
+      // would let the OS pick whichever family resolves, so the test
+      // tracks that behavior: try both loopback addresses, accept the
+      // first one that the proxy actually answers on.
+      step(`probing friendly URL: ${friendlyUrl}`);
+      const probeUrls = [
+        `http://127.0.0.1:${proxyPort}/`,
+        `http://[::1]:${proxyPort}/`,
+      ];
+
+      // Wait for the proxy to be up + the routing table to have picked up
+      // the dogfood-stack's `web` entry. The routing watcher is debounced
+      // ~100ms, so the table should be live within a few seconds of
+      // state.json reaching status:up — but cold-start of the daemon and
+      // of the routing watcher's initial fs scan can need a beat longer.
+      const deadline = Date.now() + 15_000;
+      let lastErr: unknown = null;
+      let friendlyRes: Response | null = null;
+      let chosenProbe: string | null = null;
+      outer: while (Date.now() < deadline) {
+        for (const probeUrl of probeUrls) {
+          try {
+            const res = await fetch(probeUrl, {
+              headers: {
+                Host: `${friendlyHost}:${proxyPort}`,
+                // Skip gzip — Bun's fetch occasionally trips a ZlibError
+                // when the proxy passes a chunked gzip stream through.
+                // Identity encoding is simpler to compare against the raw
+                // body anyway (raw probe doesn't request gzip either).
+                "Accept-Encoding": "identity",
+              },
+            });
+            if (res.status === 200) {
+              friendlyRes = res;
+              chosenProbe = probeUrl;
+              break outer;
+            }
+            lastErr = new Error(
+              `${probeUrl} (Host=${friendlyHost}) returned ${res.status} — body: ${(await res.text()).slice(0, 200)}`,
+            );
+          } catch (err) {
+            lastErr = new Error(
+              `${probeUrl} (Host=${friendlyHost}) fetch threw: ${(err as Error).message}`,
+            );
+          }
+        }
+        await new Promise<void>((r) => setTimeout(r, 250));
+      }
+      if (!friendlyRes) {
+        throw new Error(
+          `friendly URL ${friendlyUrl} never returned 200 within 15s. ` +
+            `Tried loopback addresses: ${probeUrls.join(", ")}. ` +
+            `Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+        );
+      }
+      expect(friendlyRes.status).toBe(200);
+      step(`friendly URL 200 OK via ${chosenProbe}`);
+
+      // Body match: the proxy is transparent, so the friendly URL must
+      // serve the same bytes the raw URL serves. Compare bodies after the
+      // status check — this is the "proxy actually proxies" assertion.
+      // Note: Next.js dev sometimes injects per-request nonces in CSP
+      // headers / Refresh-control comments, but the document body itself
+      // should be stable across two back-to-back requests. We assert a
+      // substring match (the `<!doctype` / `_next` markers from the raw
+      // body must appear in the friendly body) rather than full equality
+      // to avoid flaking on transient framework cosmetics.
+      const friendlyBody = await friendlyRes.text();
+      expect(friendlyBody.toLowerCase()).toMatch(/<!doctype html|_next|next/);
+
+      // The proxy IS transparent, so the response sizes should be very
+      // close. We allow generous slack because Next.js may emit different
+      // absolute timestamps / cache-bust query strings between two
+      // requests, but the rough shape must match (within a few KB).
+      const sizeDelta = Math.abs(friendlyBody.length - rawBody.length);
+      expect(
+        sizeDelta,
+        `friendly body (${friendlyBody.length}B) and raw body (${rawBody.length}B) differ by ${sizeDelta}B — proxy may not be transparent`,
+      ).toBeLessThan(2_000);
+
+      // ---- lich down (in-body cleanup) ---------------------------------
+      // Tear down inside the test body rather than leaving the heavy
+      // teardown to `afterEach`. Vitest caps the hookTimeout at 60s
+      // (vitest.config.ts), but a full supabase teardown can easily take
+      // 30-60s on its own — leaving zero margin for the surrounding
+      // `lich down` orchestration to finish. Calling it here keeps the
+      // afterEach fallback fast (it sees status:stopped already and
+      // no-ops) and avoids the "afterEach hook timed out" failure mode.
+      step("lich down (in-body teardown)");
+      const downResult = runLich(["down"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+        timeout: 120_000,
+      });
+      if (downResult.exitCode !== 0) {
+        // eslint-disable-next-line no-console
+        console.error("lich down stdout:", downResult.stdout);
+        // eslint-disable-next-line no-console
+        console.error("lich down stderr:", downResult.stderr);
+      }
+      expect(downResult.exitCode).toBe(0);
+      step("lich down exit 0");
+    },
+    // Per-test timeout: same 5-minute budget as the raw-URL sibling above
+    // (supabase pull + boot + teardown dominates).
+    300_000,
   );
 });
