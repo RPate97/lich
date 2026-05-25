@@ -49,6 +49,7 @@ import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
 import { parseLichUrls } from "./helpers/urls.js";
 import { readStateJson, waitForStackStatus } from "./helpers/state.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Same pattern as basic-up.test.ts — fail loudly
@@ -264,6 +265,9 @@ describe("lich restart against dogfood-stack", () => {
       await waitForHttp200(`http://127.0.0.1:${apiPortBefore}/health`, {
         timeoutMs: 15_000,
       });
+      // dev:fast: api reports db: stub (no DATABASE_URL). Catches silent
+      // profile drift if the default ever flips back to dev.
+      await expectDbMode(`http://127.0.0.1:${apiPortBefore}`, "stub");
 
       // ---- ACT 2: lich restart -----------------------------------------
       // Restart is up+down+up so 5+ min timeout — second up benefits
@@ -362,14 +366,16 @@ describe("lich restart against dogfood-stack", () => {
       //    sanity check on top of the snapshot assertion above). Per the
       //    acceptance criteria: "urls still shows the same stack with new
       //    PIDs".
-      const urlsResult = runLich(["urls"], {
+      const urlsResult = runLich(["urls", "--raw"], {
         cwd: stackPath,
         env: { LICH_HOME: lichHome },
       });
       expect(urlsResult.exitCode).toBe(0);
       const urls = parseLichUrls(urlsResult.stdout);
+      // dev:fast: only api + web. Compose-pool tests assert on postgres
+      // entries in their dev-profile coverage.
       expect(Object.keys(urls).sort()).toEqual(
-        expect.arrayContaining(["api", "postgres", "web"]),
+        expect.arrayContaining(["api", "web"]),
       );
       step("post-restart assertions complete");
 
