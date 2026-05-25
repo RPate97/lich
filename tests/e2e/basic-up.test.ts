@@ -240,6 +240,129 @@ function tcpListening(port: number): Promise<boolean> {
   });
 }
 
+/**
+ * Probe the lich proxy via a raw HTTP/1.1 socket — REQUIRED instead of
+ * `fetch()` because Node's undici fetch SILENTLY STRIPS the `Host`
+ * header (it's on the WHATWG "forbidden headers" list, so the proxy
+ * sees `Host: 127.0.0.1:3300` instead of the friendly URL).
+ *
+ * Returns a `Response`-shaped object whose status reflects the proxy's
+ * reply. We only care about status here; bodies are decoded as
+ * Transfer-Encoding: chunked or content-length-framed depending on the
+ * proxy's response shape. Mirrors the pattern in
+ * tests/e2e/friendly-urls.test.ts.
+ *
+ * @param ip — `127.0.0.1` or `::1`. The proxy binds both loopback
+ *   families explicitly (LEV-459); either should work.
+ * @param port — the proxy port (3300 by default in dogfood-stack).
+ * @param hostHeader — the full `Host: ...` value to send (include the
+ *   port suffix the test cares about, e.g. `web.<wt>.lich.localhost:3300`).
+ * @param path — the URL path to GET. Defaults to `/`.
+ */
+async function fetchViaProxy(
+  ip: string,
+  port: number,
+  hostHeader: string,
+  path: string = "/",
+): Promise<Response> {
+  const { Socket } = await import("node:net");
+  return new Promise<Response>((resolve, reject) => {
+    const socket = new Socket();
+    let buf = Buffer.alloc(0);
+    socket.setTimeout(10_000);
+    socket.on("data", (d) => {
+      buf = Buffer.concat([buf, d]);
+    });
+    socket.on("end", () => {
+      try {
+        resolve(parseHttpResponse(buf));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      if (buf.length > 0) {
+        try {
+          resolve(parseHttpResponse(buf));
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      reject(new Error(`proxy probe timeout: ${hostHeader}${path}`));
+    });
+    socket.on("error", (err) => reject(err));
+    socket.connect(port, ip, () => {
+      // Plain HTTP/1.1 GET request with explicit Host header.
+      // Connection: close keeps the response self-contained — the
+      // server flushes the body then FINs; we resolve on `end`.
+      const req =
+        `GET ${path} HTTP/1.1\r\n` +
+        `Host: ${hostHeader}\r\n` +
+        `Connection: close\r\n` +
+        `\r\n`;
+      socket.write(req);
+    });
+  });
+}
+
+/**
+ * Minimal HTTP/1.1 response parser. Decodes chunked transfer-encoding
+ * so the test's body-match assertion compares decoded payload, not
+ * `<hex>\r\n<bytes>\r\n0\r\n` framing.
+ */
+function parseHttpResponse(raw: Buffer): Response {
+  const sep = raw.indexOf("\r\n\r\n");
+  const headerEnd = sep >= 0 ? sep : raw.length;
+  const headerBlock = raw.subarray(0, headerEnd).toString("utf8");
+  const rawBody = sep >= 0 ? raw.subarray(sep + 4) : Buffer.alloc(0);
+  const [statusLine, ...headerLines] = headerBlock.split("\r\n");
+  const m = statusLine.match(/^HTTP\/\d\.\d\s+(\d{3})/);
+  if (!m) {
+    throw new Error(
+      `unparseable HTTP response line: ${JSON.stringify(statusLine)}`,
+    );
+  }
+  const status = parseInt(m[1], 10);
+  const headers = new Headers();
+  let chunked = false;
+  for (const line of headerLines) {
+    const ci = line.indexOf(":");
+    if (ci > 0) {
+      const name = line.slice(0, ci).trim();
+      const value = line.slice(ci + 1).trim();
+      headers.append(name, value);
+      if (
+        name.toLowerCase() === "transfer-encoding" &&
+        /\bchunked\b/i.test(value)
+      ) {
+        chunked = true;
+      }
+    }
+  }
+  const body = chunked ? decodeChunkedBody(rawBody) : rawBody;
+  return new Response(body, { status, headers });
+}
+
+/** Decode an HTTP/1.1 chunked-transfer-encoding body. */
+function decodeChunkedBody(raw: Buffer): Buffer {
+  const out: Buffer[] = [];
+  let pos = 0;
+  while (pos < raw.length) {
+    const crlf = raw.indexOf("\r\n", pos);
+    if (crlf < 0) break;
+    const sizeHex = raw.subarray(pos, crlf).toString("utf8");
+    const size = parseInt(sizeHex, 16);
+    if (!Number.isFinite(size) || size < 0) break;
+    pos = crlf + 2;
+    if (size === 0) break;
+    out.push(raw.subarray(pos, pos + size));
+    pos += size + 2; // skip chunk + trailing \r\n
+  }
+  return Buffer.concat(out);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -421,15 +544,13 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
   // `--no-browser` mirrors daemon-auto-start.test.ts — we want the daemon
   // to spawn (it must, for the proxy to bind) but we don't want a Chrome
   // tab popping up during a test run.
-  // Skipped under dev:fast — the daemon's routing table sometimes only
-  // registers the api service before the test reaches the friendly-URL
-  // probe; web's entry shows up later. This race didn't surface under
-  // the old supabase stack because supabase's ~30s startup gave the
-  // routing watcher plenty of time to settle. Equivalent friendly-URL
-  // coverage lives in tests/e2e/friendly-urls.test.ts, which has its
-  // own waits tuned for the fast profile. Re-enable here once the
-  // routing registration is debounced reliably under fast stacks.
-  it.skip(
+  // LEV-480: `lich up` now blocks on the daemon's routing table reflecting
+  // this stack's friendly hostnames before returning. The wait is fast
+  // (POST /api/routing/reload + GET /api/routing polls) — under dev:fast
+  // it adds ~50ms to the up. The race that used to skip this test (the
+  // routing watcher's 100ms debounce missing the final state.json write)
+  // is closed, so this test re-enables.
+  it(
     "serves the web app over http://web.<worktree>.lich.localhost:3300/ (Plan 5 friendly URL)",
     async () => {
       fixture = makeFixture();
@@ -543,42 +664,51 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       // tracks that behavior: try both loopback addresses, accept the
       // first one that the proxy actually answers on.
       step(`probing friendly URL: ${friendlyUrl}`);
-      const probeUrls = [
-        `http://127.0.0.1:${proxyPort}/`,
-        `http://[::1]:${proxyPort}/`,
-      ];
 
       // Wait for the proxy to be up + the routing table to have picked up
-      // the dogfood-stack's `web` entry. The routing watcher is debounced
-      // ~100ms, so the table should be live within a few seconds of
-      // state.json reaching status:up — but cold-start of the daemon and
-      // of the routing watcher's initial fs scan can need a beat longer.
+      // the dogfood-stack's `web` entry. LEV-480: `lich up` now blocks on
+      // /api/routing reflecting this stack's hostnames before returning,
+      // so this poll should succeed on the first iteration in the happy
+      // path. The retry loop survives transient connection-refused races
+      // between bind and probe.
+      //
+      // We use a raw HTTP/1.1 socket (not fetch()) because Node's
+      // undici fetch SILENTLY STRIPS the `Host` header when it's overridden
+      // (it's on the WHATWG "forbidden headers" list). vitest runs under
+      // Node, so a fetch-based probe would 404 even when the proxy is
+      // correctly serving the route. Same pattern that
+      // tests/e2e/friendly-urls.test.ts uses for the same reason.
       const deadline = Date.now() + 15_000;
       let lastErr: unknown = null;
       let friendlyRes: Response | null = null;
       let chosenProbe: string | null = null;
+      // Try both IPv4 and IPv6 loopback — `Bun.serve` may bind only one
+      // family depending on macOS resolver order. The proxy now binds
+      // BOTH explicitly (LEV-459), so either should work.
+      const probeHosts: Array<{ ip: string; label: string }> = [
+        { ip: "127.0.0.1", label: "http://127.0.0.1" },
+        { ip: "::1", label: "http://[::1]" },
+      ];
       outer: while (Date.now() < deadline) {
-        for (const probeUrl of probeUrls) {
+        for (const probe of probeHosts) {
           try {
-            const res = await fetch(probeUrl, {
-              headers: {
-                Host: `${friendlyHost}:${proxyPort}`,
-                // LEV-458 fixed the proxy's content-encoding double-
-                // decompress bug; the `Accept-Encoding: identity`
-                // workaround that used to live here is no longer needed.
-              },
-            });
+            const res = await fetchViaProxy(
+              probe.ip,
+              proxyPort,
+              `${friendlyHost}:${proxyPort}`,
+              "/",
+            );
             if (res.status === 200) {
               friendlyRes = res;
-              chosenProbe = probeUrl;
+              chosenProbe = `${probe.label}:${proxyPort}/`;
               break outer;
             }
             lastErr = new Error(
-              `${probeUrl} (Host=${friendlyHost}) returned ${res.status} — body: ${(await res.text()).slice(0, 200)}`,
+              `${probe.label}:${proxyPort}/ (Host=${friendlyHost}) returned ${res.status} — body: ${(await res.text()).slice(0, 1000)}`,
             );
           } catch (err) {
             lastErr = new Error(
-              `${probeUrl} (Host=${friendlyHost}) fetch threw: ${(err as Error).message}`,
+              `${probe.label}:${proxyPort}/ (Host=${friendlyHost}) probe threw: ${(err as Error).message}`,
             );
           }
         }
@@ -587,7 +717,7 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       if (!friendlyRes) {
         throw new Error(
           `friendly URL ${friendlyUrl} never returned 200 within 15s. ` +
-            `Tried loopback addresses: ${probeUrls.join(", ")}. ` +
+            `Tried IPv4 and IPv6 loopback. ` +
             `Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
         );
       }
