@@ -57,6 +57,10 @@ import {
   GroupResolveError,
   GroupCycleError,
 } from "../groups/resolve.js";
+import {
+  resolveProfile,
+  type ResolvedProfile,
+} from "../profiles/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -130,6 +134,22 @@ export async function runEnvCmd(
     ? rebuildAllocatedPorts(snap)
     : { compose: {}, owned: {} };
 
+  // LEV-454: re-resolve the active profile from the on-disk yaml so the env
+  // group sees profile-scoped env_from/env_files/env overrides + injects
+  // LICH_PROFILE. Same drift-tolerant fallback as `commands/exec.ts`: if
+  // the yaml has changed and the recorded profile no longer resolves cleanly,
+  // we silently fall back to top-level-only output rather than failing the
+  // command. `lich env` is a discovery surface, not a diagnostic one; broken
+  // configs flow through `lich validate`.
+  let resolvedProfile: ResolvedProfile | undefined;
+  if (snap?.active_profile && config.profiles?.[snap.active_profile]) {
+    try {
+      resolvedProfile = resolveProfile(snap.active_profile, config);
+    } catch {
+      resolvedProfile = undefined;
+    }
+  }
+
   // ---- Step 4: resolve the group -----------------------------------------
   let env: Record<string, string>;
   try {
@@ -140,6 +160,7 @@ export async function runEnvCmd(
       allocatedPorts,
       projectRoot: worktree.path,
       processEnv: opts.processEnv ?? process.env,
+      profile: resolvedProfile,
     });
   } catch (e) {
     if (e instanceof GroupResolveError || e instanceof GroupCycleError) {

@@ -24,6 +24,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runExec } from "../../../src/commands/exec.js";
+import { writeSnapshot } from "../../../src/state/snapshot.js";
+import { ensureStackDir } from "../../../src/state/directory.js";
+import { detectWorktree } from "../../../src/worktree/detect.js";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation: a fresh tmpdir with a minimal lich.yaml.
@@ -309,5 +312,125 @@ describe("runExec — cwd", () => {
     const res = await execCapture(["pwd"]);
     expect(res.exitCode).toBe(0);
     expect(res.stdout.trim()).toBe(tmp);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LEV-454: active_profile from snapshot is threaded through to env resolver
+// ---------------------------------------------------------------------------
+// `lich up dev:env-override` persists the profile name into state.json. When
+// the user later runs `lich exec --` we must re-resolve that profile from the
+// on-disk yaml so the spawned child sees profile-scoped env overrides — not
+// just top-level values. Pre-LEV-454, exec ignored `snap.active_profile` and
+// the user saw the wrong values. Each test seeds a snapshot, then asserts on
+// what reaches the child's env.
+
+/**
+ * Seed `<LICH_HOME>/stacks/<stack_id>/state.json` for the per-test tmpdir
+ * with the given active_profile (or no profile when undefined). Mirrors
+ * what `lich up` writes after a successful start.
+ */
+async function seedSnapshot(activeProfile?: string): Promise<void> {
+  const wt = detectWorktree(tmp);
+  await ensureStackDir(wt.stack_id);
+  await writeSnapshot({
+    stack_id: wt.stack_id,
+    worktree_name: wt.name,
+    worktree_path: wt.path,
+    status: "up",
+    started_at: new Date().toISOString(),
+    services: [],
+    ...(activeProfile ? { active_profile: activeProfile } : {}),
+  });
+}
+
+describe("runExec — active_profile from snapshot (LEV-454)", () => {
+  it("layers profile env over top-level env when snapshot has active_profile", async () => {
+    // Top-level env declares DATABASE_URL=top; the `dev:env-override` profile
+    // overrides it with DATABASE_URL=from-profile. Without the LEV-454 wiring
+    // the child would see "top"; with it, the child sees "from-profile".
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev:env-override:
+    env:
+      DATABASE_URL: from-profile
+`);
+    await seedSnapshot("dev:env-override");
+
+    const res = await execCapture(["printenv DATABASE_URL"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("from-profile");
+  });
+
+  it("uses only top-level env when snapshot has no active_profile (regression guard)", async () => {
+    // Same yaml, but the seeded snapshot has no active_profile. Confirms the
+    // non-profile path still works — the profile field genuinely is opt-in,
+    // not always-on, so callers without a profile see unchanged behavior.
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev:env-override:
+    env:
+      DATABASE_URL: from-profile
+`);
+    await seedSnapshot(undefined);
+
+    const res = await execCapture(["printenv DATABASE_URL"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("top");
+  });
+
+  it("auto-injects LICH_PROFILE into the spawned cmd's env when a profile is active", async () => {
+    // The spec pins LICH_PROFILE as a child-visible env var when (and only
+    // when) a profile is active. Validates the auto-inject reaches the child
+    // — not just the resolver's internal map.
+    writeYaml(`
+version: "1"
+profiles:
+  dev:env-override: {}
+`);
+    await seedSnapshot("dev:env-override");
+
+    const res = await execCapture(["printenv LICH_PROFILE"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("dev:env-override");
+  });
+
+  it("does NOT auto-inject LICH_PROFILE when no profile is active", async () => {
+    // Symmetric regression guard for the previous test: `LICH_PROFILE` is
+    // absent (not empty-string) when no profile is in play. Use `||` so the
+    // child prints a sentinel we can assert on instead of an empty line.
+    writeYaml(`
+version: "1"
+`);
+    await seedSnapshot(undefined);
+
+    const res = await execCapture(["printenv LICH_PROFILE || echo MISSING"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("MISSING");
+  });
+
+  it("falls back to top-level-only when active_profile in snapshot no longer exists in yaml", async () => {
+    // Drift scenario: user removed `dev:env-override` from yaml after running
+    // `lich up dev:env-override`. exec should silently fall back to top-level
+    // env rather than crashing — exec is a read-what's-running surface, not a
+    // diagnostic one. Mirrors `commands/down.ts`'s best-effort approach.
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev: {}
+`);
+    await seedSnapshot("dev:env-override"); // snapshot points at a profile no longer declared
+
+    const res = await execCapture(["printenv DATABASE_URL"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("top");
   });
 });

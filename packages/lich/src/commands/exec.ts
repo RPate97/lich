@@ -63,6 +63,10 @@ import {
   type AllocatedPorts,
 } from "../state/snapshot.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
+import {
+  resolveProfile,
+  type ResolvedProfile,
+} from "../profiles/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -184,6 +188,26 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
     allocatedPorts = rebuildAllocatedPorts(snap);
   }
 
+  // LEV-454: re-resolve the active profile from the on-disk yaml so the env
+  // group sees profile-scoped env_from/env_files/env overrides. The snapshot
+  // carries only the profile NAME (Plan 3 Task 8); the layered env lives in
+  // the yaml. If the yaml has drifted between up and exec (user removed or
+  // renamed the profile, broke the extends chain, etc.) we silently fall back
+  // to top-level-only env — mirrors `commands/down.ts`'s best-effort approach
+  // for before_down composition. exec is a "read what's running" surface;
+  // surfacing yaml drift as a hard failure would block the user from running
+  // ad-hoc commands while they untangle the config.
+  let resolvedProfile: ResolvedProfile | undefined;
+  if (snap?.active_profile && config.profiles?.[snap.active_profile]) {
+    try {
+      resolvedProfile = resolveProfile(snap.active_profile, config);
+    } catch {
+      // Fall back to undefined → top-level-only env. The user's broken-yaml
+      // diagnosis flows through `lich validate`, not exec.
+      resolvedProfile = undefined;
+    }
+  }
+
   // ---- 4. Resolve the env group -----------------------------------------
   let env: Record<string, string>;
   try {
@@ -193,6 +217,7 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
       worktree,
       allocatedPorts,
       projectRoot: worktree.path,
+      profile: resolvedProfile,
     });
   } catch (e) {
     err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);

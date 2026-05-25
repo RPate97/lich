@@ -50,6 +50,7 @@ import {
 import type { Worktree } from "../worktree/detect.js";
 import type { AllocatedPorts } from "../state/snapshot.js";
 import { loadEnvFromShellOut } from "../env/shell-out.js";
+import type { ResolvedProfile } from "../profiles/resolve.js";
 
 import { resolveStackGroup } from "./built-in-stack.js";
 import { detectExtendsCycle } from "./validate-extends.js";
@@ -70,6 +71,23 @@ export interface ResolveEnvGroupInput {
   projectRoot: string;
   /** Process env (defaults to `process.env` at call time if omitted). */
   processEnv?: NodeJS.ProcessEnv;
+  /**
+   * Plan-3 (LEV-454) active profile to layer into the built-in `stack` chain.
+   * When provided AND the chain bottoms out at `stack`, the profile's
+   * `env_from` / `env_files` / `env` are layered between top-level and
+   * per-service (precedence steps 6-8 in `env/resolve.ts`'s docstring), and
+   * `LICH_PROFILE` is auto-injected. User-defined groups themselves do NOT
+   * consume this — env_groups are top-level by design and untouched by the
+   * profile filter (LEV-388). The field only affects what the `stack`
+   * terminator sees: it's threaded straight into `resolveStackGroup`'s
+   * `profile` parameter when the recursive walker terminates there.
+   *
+   * Callers obtain `ResolvedProfile` from `profiles/resolve.ts`'s
+   * `resolveProfile()`. The active profile is decided by `commands/up.ts`
+   * at startup and persisted to `state.json` as `active_profile`; `lich exec`
+   * and `lich env` re-resolve from the snapshot at command time.
+   */
+  profile?: ResolvedProfile;
 }
 
 /**
@@ -269,6 +287,13 @@ async function resolveInternal(
     projectRoot: string;
     /** Decided once at the outermost call; threaded unchanged downward. */
     processEnvAllowed: boolean;
+    /**
+     * Active profile (LEV-454). Only consumed when the recursive walker
+     * terminates at the built-in `stack` adapter; threaded unchanged for
+     * intermediate user-group hops. User-defined groups don't get a profile
+     * layer of their own — they're top-level by design (LEV-388).
+     */
+    profile?: ResolvedProfile;
   },
 ): Promise<Record<string, string>> {
   // The built-in `stack` group is the universal terminator. It carries
@@ -283,6 +308,10 @@ async function resolveInternal(
       allocatedPorts: ctx.allocatedPorts,
       processEnv: ctx.processEnvAllowed ? ctx.processEnv : {},
       projectRoot: ctx.projectRoot,
+      // LEV-454: thread the active profile into the stack terminator so its
+      // env_from/env_files/env literals layer in, and LICH_PROFILE gets
+      // auto-injected alongside LICH_WORKTREE / LICH_STACK_ID.
+      profile: ctx.profile,
     });
   }
 
@@ -383,6 +412,7 @@ export async function resolveEnvGroup(
     processEnv,
     projectRoot: input.projectRoot,
     processEnvAllowed,
+    profile: input.profile,
   });
 
   // Final pass: interpolate every value once against the runtime context.

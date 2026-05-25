@@ -30,24 +30,42 @@ import {
   formatValue,
 } from "../../../src/commands/env.js";
 import { loadEnvFromShellOut } from "../../../src/env/shell-out.js";
+import { writeSnapshot } from "../../../src/state/snapshot.js";
+import { ensureStackDir } from "../../../src/state/directory.js";
+import { detectWorktree } from "../../../src/worktree/detect.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures + helpers
 // ---------------------------------------------------------------------------
 
 let tmp: string;
+let homeDir: string;
+let prevHome: string | undefined;
 let stdout: string[];
 let stderr: string[];
 
 beforeEach(() => {
   // realpathSync resolves /var → /private/var on macOS so paths compare cleanly.
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "lich-env-cmd-test-")));
+  // Per-test LICH_HOME so the snapshot-seeding tests below don't leak into
+  // the real ~/.lich and don't collide across tests. Pre-LEV-454 these tests
+  // didn't need state.json at all; the snapshot-driven profile tests added
+  // here do — readSnapshot resolves the per-stack path relative to LICH_HOME.
+  homeDir = realpathSync(mkdtempSync(join(tmpdir(), "lich-env-home-")));
+  prevHome = process.env.LICH_HOME;
+  process.env.LICH_HOME = homeDir;
   stdout = [];
   stderr = [];
 });
 
 afterEach(() => {
+  if (prevHome === undefined) {
+    delete process.env.LICH_HOME;
+  } else {
+    process.env.LICH_HOME = prevHome;
+  }
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(homeDir, { recursive: true, force: true });
 });
 
 function writeYaml(body: string): void {
@@ -336,5 +354,127 @@ env_groups:
       WITH_DOLLAR: "$FOO",
       URL: "postgresql://u:p@h:5432/db",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LEV-454: active_profile from snapshot is threaded through to env resolver
+// ---------------------------------------------------------------------------
+// `lich env stack` must surface profile-scoped env overrides when the stack
+// was started under a profile. Pre-LEV-454, `lich env` ignored
+// `snap.active_profile` and printed only top-level values, which broke the
+// e2e tests verifying profile env wiring. Each test seeds a snapshot, runs
+// `lich env stack`, and asserts on the emitted dotenv lines.
+
+/**
+ * Seed `<LICH_HOME>/stacks/<stack_id>/state.json` for the per-test tmpdir
+ * with the given active_profile (or no profile when undefined). Mirrors
+ * what `lich up` writes after a successful start.
+ */
+async function seedSnapshot(activeProfile?: string): Promise<void> {
+  const wt = detectWorktree(tmp);
+  await ensureStackDir(wt.stack_id);
+  await writeSnapshot({
+    stack_id: wt.stack_id,
+    worktree_name: wt.name,
+    worktree_path: wt.path,
+    status: "up",
+    started_at: new Date().toISOString(),
+    services: [],
+    ...(activeProfile ? { active_profile: activeProfile } : {}),
+  });
+}
+
+describe("runEnvCmd — active_profile from snapshot (LEV-454)", () => {
+  it("layers profile env over top-level env for the stack group", async () => {
+    // Top-level DATABASE_URL=top is overridden by `dev:env-override`'s
+    // DATABASE_URL=from-profile. The emitted dotenv line must reflect the
+    // profile value, not the top-level one.
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev:env-override:
+    env:
+      DATABASE_URL: from-profile
+`);
+    await seedSnapshot("dev:env-override");
+
+    const res = await run({ groupName: "stack" });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.join("\n")).toMatch(/^DATABASE_URL=from-profile$/m);
+    expect(stdout.join("\n")).not.toMatch(/^DATABASE_URL=top$/m);
+  });
+
+  it("uses only top-level env when snapshot has no active_profile (regression guard)", async () => {
+    // No profile in the snapshot → no profile layer applied. Confirms the
+    // pre-LEV-454 behavior still works when a stack was started without
+    // a profile.
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev:env-override:
+    env:
+      DATABASE_URL: from-profile
+`);
+    await seedSnapshot(undefined);
+
+    const res = await run({ groupName: "stack" });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.join("\n")).toMatch(/^DATABASE_URL=top$/m);
+    expect(stdout.join("\n")).not.toMatch(/^DATABASE_URL=from-profile$/m);
+  });
+
+  it("emits LICH_PROFILE in the stack output when a profile is active", async () => {
+    // The auto-inject must reach the dotenv output too — not just spawned
+    // children. Mirrors the LICH_WORKTREE / LICH_STACK_ID assertions above.
+    writeYaml(`
+version: "1"
+profiles:
+  dev:env-override: {}
+`);
+    await seedSnapshot("dev:env-override");
+
+    const res = await run({ groupName: "stack" });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.join("\n")).toMatch(/^LICH_PROFILE=dev:env-override$/m);
+  });
+
+  it("does NOT emit LICH_PROFILE in the stack output when no profile is active", async () => {
+    // Symmetric guard: the spec treats LICH_PROFILE as "present iff a profile
+    // is active", not "always present, possibly empty". Without an active
+    // profile the key must be absent from the output entirely.
+    writeYaml(`
+version: "1"
+`);
+    await seedSnapshot(undefined);
+
+    const res = await run({ groupName: "stack" });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.join("\n")).not.toMatch(/^LICH_PROFILE=/m);
+  });
+
+  it("falls back to top-level-only when active_profile in snapshot no longer exists in yaml", async () => {
+    // Drift scenario mirroring the exec.test.ts case: user removed the
+    // profile from yaml after `lich up`. `lich env` should silently fall
+    // back to top-level-only output rather than failing — it's a discovery
+    // surface, not a diagnostic one.
+    writeYaml(`
+version: "1"
+env:
+  DATABASE_URL: top
+profiles:
+  dev: {}
+`);
+    await seedSnapshot("dev:env-override"); // recorded profile no longer declared
+
+    const res = await run({ groupName: "stack" });
+    expect(res.exitCode).toBe(0);
+    expect(stdout.join("\n")).toMatch(/^DATABASE_URL=top$/m);
+    // And LICH_PROFILE is absent — drift means we have no profile to inject.
+    expect(stdout.join("\n")).not.toMatch(/^LICH_PROFILE=/m);
   });
 });
