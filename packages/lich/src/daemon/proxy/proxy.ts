@@ -57,6 +57,7 @@
 import { createHash } from "node:crypto";
 
 import type { RoutingTable } from "./routing.js";
+import { emptyStaticRoutes, type StaticRoutes } from "./static-routes.js";
 
 export interface ProxyOpts {
   /**
@@ -77,6 +78,18 @@ export interface ProxyOpts {
    * on every request.
    */
   routingTable: RoutingTable;
+  /**
+   * LEV-481: daemon-wide static routes consulted BEFORE the per-stack
+   * routing table. The dashboard route (`Host: lich.localhost` →
+   * `http://127.0.0.1:<dashboard-port>`) is registered here so the
+   * apex of the proxy domain reaches the dashboard without needing a
+   * per-stack `state.json` entry.
+   *
+   * Optional. When omitted, the proxy behaves as if it received an
+   * empty static-routes table (no daemon-wide routes; every request
+   * falls through to the per-stack routing table).
+   */
+  staticRoutes?: StaticRoutes;
   /**
    * Optional AbortSignal: when aborted, the server stops accepting
    * new connections. The returned `stop()` method does the same;
@@ -280,8 +293,18 @@ function buildClientResponse(upstreamRes: Response): Response {
  * 404 body for misses. Explains the friendly URL schema so a user who
  * hit the proxy with the wrong hostname (typo, no `lich up` for that
  * worktree, stale browser tab) gets enough context to fix it.
+ *
+ * LEV-481: also lists daemon-wide static hosts (e.g. `lich.localhost`
+ * for the dashboard) so a user who mis-typed the apex sees the correct
+ * URL advertised. Static hosts are full hostnames (no `.lich.localhost`
+ * suffix needed — they ARE the host); per-stack hosts get the suffix
+ * appended for the user-facing URL.
  */
-function notFoundBody(proxyPort: number, knownHosts: string[]): string {
+function notFoundBody(
+  proxyPort: number,
+  knownHosts: string[],
+  staticHosts: string[] = [],
+): string {
   const lines = [
     `No friendly URL matches this Host header.`,
     ``,
@@ -289,12 +312,19 @@ function notFoundBody(proxyPort: number, knownHosts: string[]): string {
     `  http://<service>.<worktree>.lich.localhost:${proxyPort}/`,
     ``,
   ];
+  if (staticHosts.length > 0) {
+    lines.push(`Daemon-wide friendly hosts:`);
+    for (const h of staticHosts.slice().sort()) {
+      lines.push(`  http://${h}:${proxyPort}/`);
+    }
+    lines.push(``);
+  }
   if (knownHosts.length > 0) {
     lines.push(`Known friendly hosts on this machine:`);
     for (const h of knownHosts.sort()) {
       lines.push(`  http://${h}.lich.localhost:${proxyPort}/`);
     }
-  } else {
+  } else if (staticHosts.length === 0) {
     lines.push(`There are no friendly URLs registered right now.`);
     lines.push(`Run \`lich up\` in a worktree to register some.`);
   }
@@ -320,17 +350,57 @@ export async function startProxy(opts: ProxyOpts): Promise<{
   // 404 body should match the bound port (useful when port: 0).
   let actualPort = opts.port;
 
+  // LEV-481: daemon-wide static routes (e.g. the dashboard at the apex
+  // `lich.localhost`). Captured in a closure so the handler can consult
+  // them without re-resolving on every request. Defaults to an empty
+  // table when the caller doesn't supply one — preserves the pre-LEV-481
+  // behavior (every request goes through `parseHostname` → per-stack
+  // routing table).
+  const staticRoutes = opts.staticRoutes ?? emptyStaticRoutes();
+
   const handler = async (req: Request): Promise<Response> => {
     const rawHost = req.headers.get("host");
+
+    // LEV-481: check daemon-wide static routes BEFORE the per-stack
+    // routing table. The apex `lich.localhost` lives here because it
+    // doesn't fit the subdomain grammar `parseHostname` expects — the
+    // helper would return null for the bare apex, so we'd never reach
+    // the routing table anyway. Static routes handle the apex (and any
+    // future daemon-wide hosts) naturally.
+    const staticUpstream = staticRoutes.lookup(rawHost);
+    if (staticUpstream !== undefined) {
+      try {
+        const upstreamReq = buildUpstreamRequest(req, staticUpstream);
+        const upstreamRes = await fetch(upstreamReq);
+        return buildClientResponse(upstreamRes);
+      } catch (err) {
+        // Mirror the per-stack upstream-fetch failure shape so 502s read
+        // the same regardless of which routing tier matched.
+        return new Response(
+          `Upstream fetch failed for ${rawHost ?? "<no host>"} -> ${staticUpstream}\n${(err as Error).message}\n`,
+          {
+            status: 502,
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          },
+        );
+      }
+    }
+
     const key = parseHostname(rawHost);
 
     if (key === null) {
       // Pull every known host so the body is actually useful for
       // debugging. The routing table doesn't expose its keys directly;
       // we don't need that interface beyond this debugging case, so
-      // we just include the request that arrived.
+      // we just include the request that arrived. Static-route hosts
+      // are listed alongside so a misrouted apex request sees
+      // `lich.localhost` advertised.
       return new Response(
-        notFoundBody(actualPort, knownHostsFromRouting(opts.routingTable)),
+        notFoundBody(
+          actualPort,
+          knownHostsFromRouting(opts.routingTable),
+          staticRoutes.hosts(),
+        ),
         {
           status: 404,
           headers: { "content-type": "text/plain; charset=utf-8" },
@@ -341,7 +411,11 @@ export async function startProxy(opts: ProxyOpts): Promise<{
     const upstream = opts.routingTable.get(key);
     if (upstream === undefined) {
       return new Response(
-        notFoundBody(actualPort, knownHostsFromRouting(opts.routingTable)),
+        notFoundBody(
+          actualPort,
+          knownHostsFromRouting(opts.routingTable),
+          staticRoutes.hosts(),
+        ),
         {
           status: 404,
           headers: { "content-type": "text/plain; charset=utf-8" },

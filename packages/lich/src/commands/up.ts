@@ -1065,15 +1065,29 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       if (typeof configuredProxyPort === "number") {
         ensureOpts.proxyPort = configuredProxyPort;
       }
-      const { url, alreadyRunning } = await ensureDaemonRunning(ensureOpts);
-      // Surface the dashboard URL on a single info line so the user sees
-      // where to point their browser even if the auto-open was suppressed
-      // (or failed silently). The "already running" suffix gives a hint
-      // that the daemon is shared with other worktrees — relevant for
-      // parallel-stack workflows where a second `lich up` should NOT be
-      // surprising the user with a fresh dashboard pop-up.
+      const { url: _rawDashboardUrl, alreadyRunning } =
+        await ensureDaemonRunning(ensureOpts);
+      // LEV-481: prefer the friendly apex URL (`http://lich.localhost:<proxy>/`)
+      // for the user-facing dashboard line. The daemon registers a static
+      // route for `lich.localhost` → its ephemeral dashboard URL, so users
+      // see a stable, memorable URL instead of an ephemeral
+      // `http://127.0.0.1:<random>` that changes every daemon restart.
+      // `_rawDashboardUrl` is intentionally unused here — we still call
+      // `ensureDaemonRunning` for its side effects (spawning the daemon,
+      // confirming it's ready, optional browser open) and for the
+      // `alreadyRunning` signal that drives the suffix; we just don't
+      // display the raw URL anymore.
+      //
+      // Surface the URL on a single info line so the user sees where to
+      // point their browser even if the auto-open was suppressed (or
+      // failed silently). The "already running" suffix gives a hint that
+      // the daemon is shared with other worktrees — relevant for
+      // parallel-stack workflows where a second `lich up` should NOT
+      // surprise the user with a fresh dashboard pop-up.
+      const dashboardProxyPort = configuredProxyPort ?? DEFAULT_PROXY_PORT;
+      const friendlyDashboardUrl = `http://lich.localhost:${dashboardProxyPort}/`;
       const suffix = alreadyRunning ? " (daemon was already running)" : "";
-      output.info(`Dashboard: ${url}${suffix}`);
+      output.info(`Dashboard: ${friendlyDashboardUrl}${suffix}`);
     } catch (err) {
       // Daemon spawn failure (binary missing, URL-file timeout, etc.)
       // does NOT propagate. The stack is already `up` — failing the up

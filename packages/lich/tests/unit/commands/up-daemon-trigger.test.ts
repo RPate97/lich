@@ -346,7 +346,15 @@ describe("runUp — daemon trigger failure is non-fatal", () => {
 // ---------------------------------------------------------------------------
 
 describe("runUp — Dashboard URL surfaced in output", () => {
-  it("pretty output contains 'Dashboard: <url>' after a successful up", async () => {
+  // LEV-481: the dashboard line now prints the friendly apex URL
+  // (`http://lich.localhost:<proxy-port>/`) rather than the ephemeral
+  // `http://127.0.0.1:<random>` returned by `ensureDaemonRunning`. The
+  // daemon registers a static proxy route from the apex to its real
+  // dashboard URL, so the user-facing URL is stable across daemon
+  // restarts and matches the rest of the friendly-URL convention.
+  // `ensureDaemonRunningSpy` still returns the raw URL (used for side
+  // effects like browser-open), but the displayed line uses the apex.
+  it("pretty output contains 'Dashboard: http://lich.localhost:<proxy-port>/' after a successful up", async () => {
     ensureDaemonRunningSpy.mockImplementation(async () => ({
       url: "http://127.0.0.1:12345",
       alreadyRunning: false,
@@ -365,9 +373,11 @@ describe("runUp — Dashboard URL surfaced in output", () => {
     expect(result.exitCode).toBe(0);
     const out = text();
     // The URL line is the user-facing handoff to the dashboard, so it
-    // MUST appear verbatim in the pretty output. No formatting magic —
-    // just `Dashboard: <url>`.
-    expect(out).toMatch(/Dashboard: http:\/\/127\.0\.0\.1:12345/);
+    // MUST appear verbatim in the pretty output. No proxy port pinned
+    // in the yaml → default 3300.
+    expect(out).toMatch(/Dashboard: http:\/\/lich\.localhost:3300\//);
+    // The ephemeral 127.0.0.1 URL the daemon binds on is NOT shown.
+    expect(out).not.toMatch(/127\.0\.0\.1:12345/);
     // Fresh-spawn path → no "(daemon was already running)" suffix.
     expect(out).not.toMatch(/daemon was already running/);
   });
@@ -391,11 +401,34 @@ describe("runUp — Dashboard URL surfaced in output", () => {
     expect(result.exitCode).toBe(0);
     const out = text();
     expect(out).toMatch(
-      /Dashboard: http:\/\/127\.0\.0\.1:54321 \(daemon was already running\)/,
+      /Dashboard: http:\/\/lich\.localhost:3300\/ \(daemon was already running\)/,
     );
   });
 
-  it("json output emits an info event carrying the dashboard URL", async () => {
+  it("uses runtime.proxy_port in the friendly dashboard URL when pinned", async () => {
+    // LEV-481: the displayed dashboard URL substitutes the resolved
+    // proxy port. A pinned `runtime.proxy_port` should appear verbatim
+    // so the user can copy/paste the URL straight into a browser tab.
+    ensureDaemonRunningSpy.mockImplementation(async () => ({
+      url: "http://127.0.0.1:12345",
+      alreadyRunning: false,
+    }));
+    writeYamlWithProxyPort(34567);
+    const wt = detectWorktree(projectDir);
+    createdStackIds.push(wt.stack_id);
+
+    const { stream, text } = captureOut();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "pretty",
+      out: stream,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(text()).toMatch(/Dashboard: http:\/\/lich\.localhost:34567\//);
+  });
+
+  it("json output emits an info event carrying the friendly dashboard URL", async () => {
     // The trigger uses `output.info(...)`, which json mode turns into a
     // `{ type: "info", message: ... }` NDJSON line. Asserting the JSON
     // shape pins the wire contract for scripted callers.
@@ -429,7 +462,9 @@ describe("runUp — Dashboard URL surfaced in output", () => {
       typeof e.message === "string" && e.message.startsWith("Dashboard:"),
     );
     expect(dashboardInfo).toBeDefined();
-    expect(dashboardInfo!.message).toBe("Dashboard: http://127.0.0.1:8000");
+    expect(dashboardInfo!.message).toBe(
+      "Dashboard: http://lich.localhost:3300/",
+    );
   });
 });
 

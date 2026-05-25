@@ -25,6 +25,7 @@ import {
   parseHostname,
   startProxy,
 } from "../../../../src/daemon/proxy/proxy.js";
+import { createStaticRoutes } from "../../../../src/daemon/proxy/static-routes.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -484,6 +485,199 @@ describe("startProxy — AbortSignal teardown", () => {
     await expect(proxy.stop()).resolves.toBeUndefined();
     await expect(proxy.stop()).resolves.toBeUndefined();
     proxy = null;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Static routes (LEV-481) — daemon-wide routes consulted BEFORE the
+//    per-stack routing table. Used for the dashboard apex `lich.localhost`.
+// ---------------------------------------------------------------------------
+
+describe("startProxy — static routes (LEV-481)", () => {
+  it("forwards an apex request matching a static route to the static upstream", async () => {
+    // Mirrors the daemon's setup: an upstream (here standing in for the
+    // dashboard) and a static-routes entry mapping `lich.localhost` to it.
+    // The proxy must forward apex hits to the dashboard, bypassing the
+    // per-stack routing table entirely.
+    const dashboard = makeUpstream(() => new Response("dashboard root"));
+    upstreams.push(dashboard);
+
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": dashboard.url,
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(proxy.url, "lich.localhost");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("dashboard root");
+  });
+
+  it("matches static routes even when the Host header includes `:port`", async () => {
+    // Real browsers + curl send `Host: lich.localhost:3300`. The
+    // static-route matcher strips the port before lookup so the
+    // expected friendly URL (`http://lich.localhost:3300/`) works
+    // without the daemon having to special-case it.
+    const dashboard = makeUpstream(() => new Response("dashboard"));
+    upstreams.push(dashboard);
+
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": dashboard.url,
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(proxy.url, "lich.localhost:3300");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("dashboard");
+  });
+
+  it("static routes are consulted BEFORE the per-stack routing table", async () => {
+    // If a static route and a per-stack route had the same key (unusual
+    // — the apex doesn't fit the per-stack grammar — but defensively
+    // pinning the precedence here), the static route should win. We
+    // contrive a same-key collision via the static-route name pattern
+    // and assert the static upstream serves.
+    const dashboardUpstream = makeUpstream(
+      () => new Response("from-static"),
+    );
+    const stackUpstream = makeUpstream(() => new Response("from-stack"));
+    upstreams.push(dashboardUpstream, stackUpstream);
+
+    seedRouting({ "lich.localhost": stackUpstream.url });
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": dashboardUpstream.url,
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(proxy.url, "lich.localhost");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("from-static");
+  });
+
+  it("falls through to per-stack routing for non-static-matching hosts", async () => {
+    // The static-route table is small (one entry, `lich.localhost`).
+    // A per-stack URL hit must NOT be shadowed by the static table —
+    // it should reach the per-stack routing table as before.
+    const dashboard = makeUpstream(() => new Response("dashboard"));
+    const stack = makeUpstream(() => new Response("stack-api"));
+    upstreams.push(dashboard, stack);
+
+    seedRouting({ "api.feature-x": stack.url });
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": dashboard.url,
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(
+      proxy.url,
+      "api.feature-x.lich.localhost:3300",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("stack-api");
+  });
+
+  it("returns 502 when the static upstream is unreachable", async () => {
+    // Mirrors the per-stack 502 path: if the dashboard has crashed, the
+    // proxy returns 502 with the upstream URL embedded for debugging.
+    const staticRoutes = createStaticRoutes({
+      // Port 1 is reserved and (almost certainly) unbound — fetch fails.
+      "lich.localhost": "http://127.0.0.1:1",
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(proxy.url, "lich.localhost");
+    expect(res.status).toBe(502);
+  });
+
+  it("preserves path + query when forwarding to the static upstream", async () => {
+    // The dashboard's SPA routes (`/stacks/<id>` etc.) need the proxy
+    // to preserve path + query end-to-end.
+    let receivedUrl = "";
+    const dashboard = makeUpstream((req) => {
+      const u = new URL(req.url);
+      receivedUrl = u.pathname + u.search;
+      return new Response("ok");
+    });
+    upstreams.push(dashboard);
+
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": dashboard.url,
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    await fetchVia(proxy.url, "lich.localhost", {
+      path: "/stacks/dogfood?refresh=1",
+    });
+    expect(receivedUrl).toBe("/stacks/dogfood?refresh=1");
+  });
+
+  it("404 body lists static hosts alongside per-stack hosts on a miss", async () => {
+    // A user typo (`Host: nope.localhost`) should land in the 404 body
+    // that advertises both per-stack and daemon-wide friendly hosts so
+    // they can self-correct.
+    seedRouting({ "api.feature-x": "http://127.0.0.1:9999" });
+    const staticRoutes = createStaticRoutes({
+      "lich.localhost": "http://127.0.0.1:8000",
+    });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      staticRoutes,
+    });
+
+    const res = await fetchVia(proxy.url, "totally.unrelated:1234");
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    // Per-stack hosts section (existing).
+    expect(body).toContain("api.feature-x");
+    // Daemon-wide static hosts section (new).
+    expect(body).toContain("Daemon-wide friendly hosts");
+    expect(body).toContain("lich.localhost");
+  });
+
+  it("works without a static-routes option (back-compat with pre-LEV-481 callers)", async () => {
+    // Defensive: tests that don't care about static routes should keep
+    // working — the proxy treats `staticRoutes: undefined` as "empty
+    // table", which falls through to per-stack routing.
+    const upstream = makeUpstream(() => new Response("plain"));
+    upstreams.push(upstream);
+
+    seedRouting({ "api.feature-x": upstream.url });
+    proxy = await startProxy({
+      port: 0,
+      routingTable: table,
+      // staticRoutes intentionally omitted.
+    });
+
+    const res = await fetchVia(
+      proxy.url,
+      "api.feature-x.lich.localhost:3300",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("plain");
   });
 });
 

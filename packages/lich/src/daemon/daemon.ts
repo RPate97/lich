@@ -117,6 +117,7 @@ import { StateWatcher } from "./watcher.js";
 import { startDashboardServer, type DashboardServer } from "./dashboard/server.js";
 import { deriveProxyPort, startProxy } from "./proxy/proxy.js";
 import { RoutingTable } from "./proxy/routing.js";
+import { createStaticRoutes } from "./proxy/static-routes.js";
 import { readSnapshot, type StackStatus } from "../state/snapshot.js";
 
 /**
@@ -427,26 +428,7 @@ export async function runDaemon(
     );
   });
 
-  // ---- 5. Start the reverse proxy ------------------------------------
-  // Bind on the configured port (explicit via opts.proxyPort, or
-  // worktree-derived default per LEV-479, or 0 for tests). `startProxy`
-  // itself handles the EADDRINUSE fallback to an OS-assigned port; a
-  // bind failure escaping that fallback is non-fatal here — the
-  // dashboard can still surface stack state and the user can fall back
-  // to `lich urls --raw`. We log a warning and continue without a proxy
-  // handle.
-  let proxy: { url: string; stop(): Promise<void> } | null = null;
-  try {
-    proxy = await startProxy({ port: proxyPort, routingTable });
-    log(out, `proxy listening on ${proxy.url}`);
-  } catch (err) {
-    log(
-      out,
-      `proxy failed to start on port ${proxyPort}: ${(err as Error).message}`,
-    );
-  }
-
-  // ---- 6. Start the watcher pointed at <LICH_HOME>/stacks ------------
+  // ---- 5. Start the watcher pointed at <LICH_HOME>/stacks ------------
   // The watcher's onChange callback fans the signal out to:
   //   - dashboardServer.refresh() — rebuilds the cached StackView list
   //   - routingTable.reload(stateRoot) — rebuilds the hostname → upstream
@@ -482,15 +464,23 @@ export async function runDaemon(
   });
   await watcher.start();
 
-  // ---- 7. Start the dashboard HTTP server ----------------------------
+  // ---- 6. Start the dashboard HTTP server ----------------------------
+  // LEV-481: dashboard now starts BEFORE the proxy so the proxy's
+  // static-routes table can include `lich.localhost` → dashboard URL
+  // from the very first request. The dashboard already used to follow
+  // the proxy in the startup order — flipping them is mechanical
+  // (cleanup ordering inverts to match) and conceptually cleaner: the
+  // proxy's routing surface is fully known at bind time rather than
+  // patched in mid-flight.
+  //
   // Bind on an ephemeral port so we never collide with the user's other
   // services. The returned URL is what we write to daemon.url for the
   // auto-start hook to read and present in `lich up`'s summary.
   //
   // Bind failure IS fatal: without a dashboard URL there's nothing to
   // record in daemon.url and no UI for the user to interact with. We
-  // clean up the proxy + watcher + PID file we've already started, then
-  // return a non-zero exit code so the parent observes the failure.
+  // clean up the watcher + PID file we've already started, then return
+  // a non-zero exit code so the parent observes the failure.
   try {
     dashboardServer = await startDashboardServer({
       port: 0,
@@ -500,7 +490,6 @@ export async function runDaemon(
   } catch (err) {
     log(out, `dashboard failed to start: ${(err as Error).message}`);
     await watcher.stop().catch(() => {});
-    if (proxy) await proxy.stop().catch(() => {});
     await clearDaemonPid(pidOpts).catch(() => {});
     if (opts.lichHome !== undefined) {
       if (prevLichHome === undefined) {
@@ -512,6 +501,36 @@ export async function runDaemon(
     return { exitCode: 1 };
   }
   log(out, `dashboard listening on ${dashboardServer.url}`);
+
+  // ---- 7. Start the reverse proxy ------------------------------------
+  // Bind on the configured port (default 3300, or 0 for tests). A bind
+  // failure here is non-fatal — the dashboard can still surface stack
+  // state and the user can fall back to `lich urls --raw`. We log a
+  // warning and continue without a proxy handle.
+  //
+  // LEV-481: pass a daemon-wide static-routes table containing the
+  // dashboard. `lich.localhost` (the apex of the proxy domain) routes
+  // to the dashboard's ephemeral URL — same UX as the per-stack
+  // friendly URLs but at a fixed, memorable apex. The dashboard URL is
+  // already bound at this point (step 6); the proxy can advertise it
+  // from request one.
+  const staticRoutes = createStaticRoutes({
+    "lich.localhost": dashboardServer.url,
+  });
+  let proxy: { url: string; stop(): Promise<void> } | null = null;
+  try {
+    proxy = await startProxy({
+      port: proxyPort,
+      routingTable,
+      staticRoutes,
+    });
+    log(out, `proxy listening on ${proxy.url}`);
+  } catch (err) {
+    log(
+      out,
+      `proxy failed to start on port ${proxyPort}: ${(err as Error).message}`,
+    );
+  }
 
   // ---- 8. Publish the dashboard URL ----------------------------------
   // Write the URL file AFTER `Bun.serve` has bound — the auto-start
