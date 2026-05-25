@@ -4,13 +4,15 @@
  * Two coverage targets pinned by this suite:
  *
  *   1. `lich up (no arg) activates the default profile`
- *      With the dogfood-stack's `dev` profile carrying `default: true`,
+ *      With the dogfood-stack's `dev:fast` profile carrying `default: true`
+ *      (post LEV-470's flip, see
+ *      docs/superpowers/specs/2026-05-25-e2e-suite-solid-and-fast-design.md),
  *      `lich up` (no positional arg) must bring the stack up under that
  *      profile. We assert this by reading `lich stacks --json` after the
- *      up completes and checking `active_profile === "dev"`. The field
- *      flows: `up.ts` writes it into `state.json`, `stacks.ts` re-reads
- *      the snapshot and surfaces it on the JSON wire. If either link
- *      breaks, the assertion fires — proving the resolver picked the
+ *      up completes and checking `active_profile === "dev:fast"`. The
+ *      field flows: `up.ts` writes it into `state.json`, `stacks.ts`
+ *      re-reads the snapshot and surfaces it on the JSON wire. If either
+ *      link breaks, the assertion fires — proving the resolver picked the
  *      default, the snapshot wrote it, and the read path serialized it.
  *
  *   2. `lich up exits non-zero with a clear error when no default and no
@@ -54,6 +56,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
+import { parseLichUrls } from "./helpers/urls.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. Fail-loud — the binary is OUR code; a broken
@@ -125,7 +130,7 @@ interface StacksJsonEntry {
 describe("lich up activates the default profile (Plan 3 Task 19)", () => {
   it(
     "(setup) brings the dogfood-stack up with no profile arg",
-    () => {
+    async () => {
       // install: true — apps/web runs `next dev`, which needs `next` in
       // node_modules/.bin. Same prerequisite as basic-up.test.ts (LEV-313).
       const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
@@ -137,12 +142,15 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
       };
 
       // `lich up` with NO positional argument — this is what we're testing.
-      // The dogfood-stack's `dev` profile carries `default: true`, so the
-      // resolver should pick it and the stack should come up under "dev".
-      const upResult = runLich(["up"], {
+      // The dogfood-stack's `dev:fast` profile carries `default: true`, so
+      // the resolver should pick it and the stack should come up under
+      // "dev:fast" (just api + web, no postgres). --no-browser keeps the
+      // test runner from racing a Chrome spawn.
+      const upResult = runLich(["up", "--no-browser"], {
         cwd: fixture.stackPath,
         env: { LICH_HOME: fixture.lichHome },
-        timeout: 240_000,
+        // dev:fast comes up in ~2-3s; 60s is generous headroom for slow CI.
+        timeout: 60_000,
       });
       if (upResult.exitCode !== 0) {
         // eslint-disable-next-line no-console
@@ -153,11 +161,28 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
           `lich up failed (exit ${upResult.exitCode}); cannot proceed with default-profile assertion`,
         );
       }
+
+      // Sanity probe + expectDbMode: catches silent profile drift if the
+      // default ever flips back to `dev` (the assertion below on
+      // active_profile would also catch it, but expectDbMode fails earlier
+      // with a clearer message). Use --raw to sidestep the friendly-URL
+      // routing race the fast stack exposes (see basic-up.test.ts header
+      // for context).
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: fixture.stackPath,
+        env: { LICH_HOME: fixture.lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 10_000 });
+      await expectDbMode(apiUrl!, "stub");
     },
-    /* timeout */ 300_000,
+    /* timeout */ 90_000,
   );
 
-  it("lich stacks --json reports active_profile === 'dev'", () => {
+  it("lich stacks --json reports active_profile === 'dev:fast'", () => {
     const fix = fixture!;
 
     const result = runLich(["stacks", "--json"], {
@@ -195,26 +220,40 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
     // failure pointing at the wrong root cause.
     expect(entry.status, `stack status from stacks --json: ${JSON.stringify(entry)}`).toBe("up");
 
-    // The actual contract under test: `default: true` in the dev profile
-    // means `lich up` with no arg picks "dev" → the snapshot records
-    // active_profile = "dev" → `lich stacks --json` surfaces it on the
-    // wire. All three links of the chain are exercised by this single
-    // assertion (writing, reading, serializing).
-    expect(entry.active_profile).toBe("dev");
+    // The actual contract under test: `default: true` in the dev:fast
+    // profile means `lich up` with no arg picks "dev:fast" → the snapshot
+    // records active_profile = "dev:fast" → `lich stacks --json` surfaces
+    // it on the wire. All three links of the chain are exercised by this
+    // single assertion (writing, reading, serializing).
+    //
+    // Pre LEV-470 the default was "dev" (full DB-backed stack); the e2e
+    // suite-solid-and-fast design flipped it to "dev:fast" for speed.
+    // The contract under test is unchanged (the chain still preserves
+    // whichever name `default: true` selects).
+    expect(entry.active_profile).toBe("dev:fast");
+
+    // Service set sanity: dev:fast resolves to just api + web (no
+    // postgres, no tunnel_demo). Belt + braces with the active_profile
+    // assertion — if the resolver picked the right profile name but
+    // somehow brought up the wrong services, this catches it.
+    const serviceNames = (entry.services ?? []).map((s) => s.name).sort();
+    expect(serviceNames).toEqual(["api", "web"]);
   });
 
   it(
     "(teardown) nuke + remove tmpdirs",
     () => {
       if (!fixture) return;
-      // `lich nuke --yes` releases docker resources and owned PIDs in one
-      // shot. We prefer nuke over `lich down` here because the suite owns
-      // the LICH_HOME exclusively — there's no other stack to preserve.
+      // `lich nuke --yes` releases owned PIDs + the daemon in one shot.
+      // We prefer nuke over `lich down` here because the suite owns the
+      // LICH_HOME exclusively — there's no other stack to preserve.
+      // dev:fast has no docker to tear down, so the 20s budget (LEV-465)
+      // is plenty.
       try {
         runLich(["nuke", "--yes"], {
           cwd: fixture.stackPath,
           env: { LICH_HOME: fixture.lichHome },
-          timeout: 120_000,
+          timeout: 20_000,
         });
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -234,7 +273,7 @@ describe("lich up activates the default profile (Plan 3 Task 19)", () => {
       }
       fixture = null;
     },
-    /* timeout */ 180_000,
+    /* timeout */ 60_000,
   );
 });
 
