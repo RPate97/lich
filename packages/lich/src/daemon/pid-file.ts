@@ -1,11 +1,20 @@
 /**
- * Daemon PID file management (LEV-404, Plan 5 Task 2).
+ * Daemon PID file + URL file management (LEV-404, Plan 5 Task 2).
  *
  * The lich daemon — a single per-machine process that hosts the dashboard,
  * the reverse proxy, and the state-directory watcher — records its presence
- * via a PID file at `<LICH_HOME>/daemon.pid` (default `~/.lich/daemon.pid`).
+ * via two files under `<LICH_HOME>`:
  *
- * Subsequent `lich up` invocations check this file to decide whether to
+ *   - `daemon.pid` — the daemon's process id. Written the instant the daemon
+ *     has a PID (i.e. as soon as `runDaemon()` starts) so the next `lich up`
+ *     can short-circuit when a daemon is already alive.
+ *   - `daemon.url` — the dashboard URL (e.g. `http://127.0.0.1:54321`).
+ *     Written AFTER the dashboard's `Bun.serve` has bound a port, which
+ *     happens a moment after the PID file. The auto-start hook (Task 5)
+ *     waits for this file with a short timeout so it can print the URL in
+ *     the `lich up` summary and (optionally) open the browser.
+ *
+ * Subsequent `lich up` invocations check the PID file to decide whether to
  * spawn a fresh daemon or short-circuit because one is already running.
  * Three possible states drive that decision:
  *
@@ -79,14 +88,48 @@ export interface PidFileOpts {
  * the helper keeps the four public functions trivially symmetric.
  */
 function pidFilePath(opts?: PidFileOpts): string {
+  return resolveLichHomeFile(opts, "daemon.pid");
+}
+
+/**
+ * Resolve the absolute path to `daemon.url` for the given options.
+ *
+ * Sister to {@link pidFilePath}. The URL file is written by the daemon
+ * AFTER its dashboard `Bun.serve` has bound a port — so the auto-start
+ * logic in Task 5 polls this file (with a short timeout) once it has
+ * confirmed via the PID file that the daemon process is alive.
+ *
+ * Keeping the two files separate (instead of stuffing pid + url into a
+ * single JSON document) lets the daemon advertise its presence the
+ * instant `process.pid` is known, even while the dashboard is still
+ * starting up. Callers that just need "is a daemon running" check the
+ * PID file; callers that also want the dashboard URL wait for the URL
+ * file to appear (or time out).
+ */
+function urlFilePath(opts?: PidFileOpts): string {
+  return resolveLichHomeFile(opts, "daemon.url");
+}
+
+/**
+ * Shared LICH_HOME resolver used by both `pidFilePath` and `urlFilePath`.
+ *
+ * Resolution order matches `state/directory.ts`'s `stateRoot()`:
+ *   1. Explicit `opts.lichHome` argument (test isolation)
+ *   2. `$LICH_HOME` environment variable (test isolation)
+ *   3. `~/.lich` (default)
+ */
+function resolveLichHomeFile(
+  opts: PidFileOpts | undefined,
+  filename: string,
+): string {
   if (opts?.lichHome && opts.lichHome.length > 0) {
-    return join(opts.lichHome, "daemon.pid");
+    return join(opts.lichHome, filename);
   }
   const override = process.env.LICH_HOME;
   if (override && override.length > 0) {
-    return join(override, "daemon.pid");
+    return join(override, filename);
   }
-  return join(homedir(), ".lich", "daemon.pid");
+  return join(homedir(), ".lich", filename);
 }
 
 /**
@@ -215,5 +258,93 @@ export async function clearDaemonPid(opts?: PidFileOpts): Promise<void> {
   const path = pidFilePath(opts);
   // `rm` with `force: true` is the idempotent flavor — returns
   // undefined on missing file rather than ENOENT.
+  await rm(path, { force: true });
+}
+
+// ---------------------------------------------------------------------------
+// URL file — companion to the PID file
+//
+// The dashboard URL ("http://127.0.0.1:<port>/") is written to
+// `<LICH_HOME>/daemon.url` by the daemon AFTER its `Bun.serve` has bound
+// a port. The auto-start hook (Task 5) waits for this file to appear so
+// it can print the URL in the `lich up` summary and (optionally) open
+// the browser.
+//
+// Atomicity, LICH_HOME resolution, and idempotency rules mirror the PID
+// file family above — see those JSDocs for the rationale.
+// ---------------------------------------------------------------------------
+
+/**
+ * Write the daemon's dashboard URL atomically to `<LICH_HOME>/daemon.url`.
+ *
+ * The serialized form is a single line: `<url>\n`. Callers should pass
+ * the full URL including scheme + port (e.g. `http://127.0.0.1:54321`)
+ * — `readDaemonUrl` returns whatever was written verbatim minus
+ * surrounding whitespace.
+ *
+ * Same atomic-rename pattern as {@link writeDaemonPid}: write to a tmp
+ * sibling, then `rename()` into place. Concurrent readers see either
+ * the previous URL or the new one, never a partial document.
+ */
+export async function writeDaemonUrl(
+  url: string,
+  opts?: PidFileOpts,
+): Promise<void> {
+  const dest = urlFilePath(opts);
+  await mkdir(dirname(dest), { recursive: true });
+
+  const serialized = `${url}\n`;
+  const tmp = `${dest}.${randomBytes(8).toString("hex")}.tmp`;
+
+  try {
+    await writeFile(tmp, serialized, "utf8");
+    await rename(tmp, dest);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Read the daemon's recorded dashboard URL from disk.
+ *
+ * Returns:
+ *   - The trimmed URL string on success.
+ *   - `null` when the file is absent (ENOENT).
+ *   - `null` when the file exists but is empty (or whitespace-only).
+ *
+ * No URL parsing or validation — callers that need to fetch from the URL
+ * are responsible for whatever shape-check they care about. We do strip
+ * surrounding whitespace (trailing newline from the writer plus any
+ * leading/trailing whitespace from a manual edit).
+ */
+export async function readDaemonUrl(
+  opts?: PidFileOpts,
+): Promise<string | null> {
+  const path = urlFilePath(opts);
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Remove the URL file. Idempotent — succeeds silently when the file is
+ * already absent.
+ *
+ * Called by the daemon's SIGTERM cleanup (alongside `clearDaemonPid`)
+ * and by `lich nuke`. The two clears can happen in either order; both
+ * tolerate the other's file being already gone.
+ */
+export async function clearDaemonUrl(opts?: PidFileOpts): Promise<void> {
+  const path = urlFilePath(opts);
   await rm(path, { force: true });
 }

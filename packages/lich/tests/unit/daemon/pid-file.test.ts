@@ -12,9 +12,12 @@ import { join } from "node:path";
 
 import {
   clearDaemonPid,
+  clearDaemonUrl,
   isDaemonAlive,
   readDaemonPid,
+  readDaemonUrl,
   writeDaemonPid,
+  writeDaemonUrl,
 } from "../../../src/daemon/pid-file.js";
 
 // ---------------------------------------------------------------------------
@@ -242,5 +245,141 @@ describe("LICH_HOME resolution", () => {
     const pid = await readDaemonPid();
     expect(pid).toBeNull();
     expect(existsSync(join(home, "daemon.pid"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL file — writeDaemonUrl + readDaemonUrl round-trip
+//
+// The URL file mirrors the PID file's contract (LICH_HOME resolution,
+// atomic writes, idempotent clear). These tests cover the URL-specific
+// shape: any string the caller hands in is what `readDaemonUrl` gives
+// back, modulo surrounding whitespace.
+// ---------------------------------------------------------------------------
+
+describe("writeDaemonUrl + readDaemonUrl", () => {
+  it("round-trips a URL through the file", async () => {
+    await writeDaemonUrl("http://127.0.0.1:54321");
+    expect(await readDaemonUrl()).toBe("http://127.0.0.1:54321");
+  });
+
+  it("overwrites a prior URL on subsequent writes", async () => {
+    await writeDaemonUrl("http://127.0.0.1:1111");
+    await writeDaemonUrl("http://127.0.0.1:2222");
+    expect(await readDaemonUrl()).toBe("http://127.0.0.1:2222");
+  });
+
+  it("creates the LICH_HOME parent directory if it does not yet exist", async () => {
+    // Mirror the PID-file test: a fresh machine lacks `~/.lich`.
+    const fresh = join(home, "fresh-home");
+    await writeDaemonUrl("http://127.0.0.1:9000", { lichHome: fresh });
+    expect(await readDaemonUrl({ lichHome: fresh })).toBe(
+      "http://127.0.0.1:9000",
+    );
+  });
+
+  it("strips trailing whitespace on read (writer convention)", async () => {
+    // writeDaemonUrl intentionally appends a trailing newline; the read
+    // path must strip it.
+    writeFileSync(
+      join(home, "daemon.url"),
+      "  http://127.0.0.1:7777  \n",
+      "utf8",
+    );
+    expect(await readDaemonUrl()).toBe("http://127.0.0.1:7777");
+  });
+
+  it("returns null when the URL file does not exist", async () => {
+    expect(await readDaemonUrl()).toBeNull();
+  });
+
+  it("returns null when the URL file is empty", async () => {
+    writeFileSync(join(home, "daemon.url"), "", "utf8");
+    expect(await readDaemonUrl()).toBeNull();
+  });
+
+  it("returns null when the URL file is whitespace only", async () => {
+    writeFileSync(join(home, "daemon.url"), "  \n\t\n", "utf8");
+    expect(await readDaemonUrl()).toBeNull();
+  });
+
+  it("does not validate URL shape — round-trips arbitrary strings", async () => {
+    // We deliberately don't parse the URL on write/read. A caller that
+    // writes garbage gets garbage back. Documented behavior.
+    await writeDaemonUrl("not-actually-a-url-just-a-string");
+    expect(await readDaemonUrl()).toBe("not-actually-a-url-just-a-string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clearDaemonUrl
+// ---------------------------------------------------------------------------
+
+describe("clearDaemonUrl", () => {
+  it("removes the URL file when present", async () => {
+    await writeDaemonUrl("http://127.0.0.1:1234");
+    expect(existsSync(join(home, "daemon.url"))).toBe(true);
+
+    await clearDaemonUrl();
+    expect(existsSync(join(home, "daemon.url"))).toBe(false);
+  });
+
+  it("is idempotent when the file does not exist", async () => {
+    await expect(clearDaemonUrl()).resolves.toBeUndefined();
+  });
+
+  it("can be called twice in a row without error", async () => {
+    await writeDaemonUrl("http://127.0.0.1:7");
+    await clearDaemonUrl();
+    await expect(clearDaemonUrl()).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL + PID file independence
+//
+// The two files have separate lifecycles — clearing one must NOT clear
+// the other. This matters because the daemon's startup writes the PID
+// file first, then the URL file once `Bun.serve` binds; the auto-start
+// hook polls for the URL file independently of the PID file.
+// ---------------------------------------------------------------------------
+
+describe("URL + PID file independence", () => {
+  it("clearing the PID file leaves the URL file untouched", async () => {
+    await writeDaemonPid(1234);
+    await writeDaemonUrl("http://127.0.0.1:5678");
+
+    await clearDaemonPid();
+
+    expect(await readDaemonPid()).toBeNull();
+    expect(await readDaemonUrl()).toBe("http://127.0.0.1:5678");
+  });
+
+  it("clearing the URL file leaves the PID file untouched", async () => {
+    await writeDaemonPid(1234);
+    await writeDaemonUrl("http://127.0.0.1:5678");
+
+    await clearDaemonUrl();
+
+    expect(await readDaemonUrl()).toBeNull();
+    expect(await readDaemonPid()).toBe(1234);
+  });
+
+  it("URL file honors opts.lichHome over env (mirrors PID)", async () => {
+    const alt = mkdtempSync(join(tmpdir(), "lich-daemon-url-alt-"));
+    try {
+      await writeDaemonUrl("http://127.0.0.1:9999", { lichHome: alt });
+
+      expect(await readDaemonUrl({ lichHome: alt })).toBe(
+        "http://127.0.0.1:9999",
+      );
+      // env-var path (no opts) has no file.
+      expect(await readDaemonUrl()).toBeNull();
+
+      const altContents = readFileSync(join(alt, "daemon.url"), "utf8");
+      expect(altContents.trim()).toBe("http://127.0.0.1:9999");
+    } finally {
+      rmSync(alt, { recursive: true, force: true });
+    }
   });
 });
