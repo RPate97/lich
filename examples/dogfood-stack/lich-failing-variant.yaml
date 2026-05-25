@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://lich.dev/schema/v1.json
+# Deliberately-failing variant of the dogfood-stack's lich.yaml.
+#
+# Used by `tests/e2e/dashboard-failed-service.test.ts` (LEV-428, Plan 5 Task 26)
+# to drive the dashboard's "render a failed service" path end-to-end. The test
+# copies the dogfood-stack to a tmpdir, overwrites `lich.yaml` with THIS file,
+# runs `lich up --no-browser` (expects non-zero exit), spawns the daemon
+# manually, then fetches `/api/stacks/<id>` and asserts the broken service
+# appears with `state: "failed"`, a populated `failure_reason`, and a
+# `failure_log_tail` array.
+#
+# Why a minimal yaml rather than overwriting one of dogfood's existing
+# services:
+#   - The real dogfood-stack's `dev` profile starts supabase + api + web +
+#     tunnel_demo in interleaved levels. Per-level `Promise.allSettled`
+#     semantics in `up.ts` wait for every service in a level to settle before
+#     failing the step, so injecting a broken service would force the test to
+#     wait for supabase's image pull (90s+ cold) just to reach the failure
+#     assertion. A minimal yaml with one failing service keeps the failure
+#     path under 5s while still exercising the same code path
+#     (ProcessExitWatcher → formatFailure → markStackFailed → state.json
+#     `status: failed` with per-service `failure_reason` + `failure_log_tail`).
+#   - The test specifically validates the dashboard's projection of the failed
+#     snapshot, NOT the dogfood-stack itself. Using the full dogfood yaml
+#     would test a lot of unrelated code paths and confuse a regression
+#     bisect later.
+#
+# Why we ship this as a fixture under examples/dogfood-stack/ rather than
+# inline in the test file:
+#   - Discoverability: a future reader scanning examples/ for "what does a
+#     failing lich.yaml look like?" finds this directly.
+#   - Symmetry with `lich.yaml`: lives in the same directory as its
+#     happy-path sibling so the diff is obvious.
+#
+# The broken service's contract:
+#   - `cmd: echo failing; exit 1` — emits one line then exits non-zero. The
+#     ProcessExitWatcher in `up.ts` observes the exit, classifies it via
+#     `formatProcessExitFailure` (failure/formatter.ts), and persists
+#     `failure_reason: "exited with code 1 during startup"` plus the
+#     captured `failing` line in `failure_log_tail`.
+#   - `ready_when.log_match: NEVER_MATCHES` — forces `waitReady` (up.ts) into
+#     its full race assembly (ready evaluator vs ProcessExitWatcher vs
+#     timeout). Without a `ready_when` block, services with no readiness
+#     contract resolve immediately via the synthetic-ready short-circuit;
+#     since the cmd exits within ~10ms of spawn the exit watcher still wins,
+#     but the never-matching pattern keeps the code path uniform with how
+#     real services (e.g. dogfood's api/web) are wired.
+#   - 5s timeout: a safety net so a hypothetical regression that drops the
+#     exit watcher would fail the up within 5s rather than hanging on the
+#     never-matching ready loop.
+#
+# `profiles.dev.default: true` makes `lich up` pick up `broken` without
+# needing a positional profile arg.
+
+version: "1"
+
+owned:
+  broken:
+    cmd: 'echo "failing"; exit 1'
+    ready_when:
+      # Pattern chosen to NEVER match the cmd's output. Forces waitReady into
+      # the full race assembly so the ProcessExitWatcher gets wired in; see
+      # the doc comment at the top of this file for the full rationale.
+      log_match: "NEVER_MATCHES"
+      timeout: "5s"
+
+profiles:
+  dev:
+    default: true
+    owned: [broken]
