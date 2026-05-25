@@ -363,13 +363,18 @@ Tests unaffected (no change needed):
 
 **Created:**
 
-- `examples/dogfood-stack/.env`
-- `examples/dogfood-stack/.env.local` (gitignored example committed once
-  so the writer-of-this-spec can reproduce; actual `.env.local` is
-  gitignored thereafter — TBD during implementation)
+- `examples/dogfood-stack/.env` (committed; baseline fixture)
 - `examples/dogfood-stack/scripts/fake-secrets.sh`
 - `examples/dogfood-stack/scripts/teardown-marker.sh`
 - 9 new e2e test files listed in §10
+
+**NOT created (deliberately):**
+
+- `examples/dogfood-stack/.env.local` — gitignored by intent. The
+  env-files-precedence e2e test (`dogfood-env-files.test.ts`) creates
+  its own `.env.local` in its tmpdir during setup so the assertion has
+  predictable content. Checking in an example `.env.local` would teach
+  users the wrong pattern (the file is meant for local-only overrides).
 
 **Total scope:** roughly 12-15 bite-sized implementation tasks once the
 writing-plans skill breaks this down. Each task owns one feature gap
