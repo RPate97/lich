@@ -31,7 +31,11 @@ owned:
     cmd: bun run dev
     cwd: apps/api
     port: { env: PORT }
-    depends_on: [postgres]
+    # No depends_on: [postgres] — the api gracefully tolerates missing
+    # DATABASE_URL (see apps/api/src/db.ts) so it can run under dev:fast
+    # without postgres. Under the `dev` profile, lich waits for postgres
+    # healthcheck before running after_up migrations, so the implicit
+    # ordering still holds for the only DB-touching operation.
     ready_when:
       http_get: /health
       timeout: 30s
@@ -78,12 +82,16 @@ owned:
       log_match: "PANIC|FATAL"
 
 env:
-  # Postgres connection (for migrate/seed via psql, and for any service that
-  # wants to talk to the database directly).
-  DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
-
-  # API wiring (used by the web app to call the API)
+  # API wiring (used by the web app to call the API). Works under both
+  # dev and dev:fast since owned.api is in both profiles.
   API_URL: "http://localhost:${owned.api.port}"
+
+  # DATABASE_URL is intentionally NOT at the top level — it interpolates
+  # ${services.postgres.host_port}, which doesn't resolve under dev:fast
+  # (no postgres). It lives in the `dev` profile's env (below) so that
+  # only profiles which run postgres see it. dev:env-override inherits
+  # via `extends: dev` and overrides the value with an intentionally
+  # non-resolving host for the profile-env-precedence demo.
 
 env_groups:
   # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
@@ -117,13 +125,30 @@ lifecycle:
       env_group: stack-plus-test
 
 profiles:
-  dev:
+  # Default profile — no compose service, no DB. Most e2e tests use this
+  # for the speed (api + web come up in ~2-3s instead of ~5-8s with
+  # postgres). Routes that need DB (api's /api/things) return 503 here
+  # — the api code guards on DATABASE_URL presence (see apps/api/src/db.ts).
+  dev:fast:
     default: true
+    services: []
+    owned: [api, web]
+    # No after_up — there's no DB to migrate.
+
+  # Full DB-backed stack. Tests that exercise postgres or
+  # lifecycle.after_up migrations opt in via `lich up dev`. The api's
+  # /health reports db: "live" under this profile (vs "stub" under dev:fast).
+  dev:
     services: [postgres]
-    # `tunnel_demo` is included so `lich up` exercises the Plan 4 capture
+    # `tunnel_demo` is included so `lich up dev` exercises the Plan 4 capture
     # pipeline on every dev run — the captured listen_url flows into
     # TUNNEL_DEMO_URL (see `env` above) before the after_up hooks fire.
     owned: [api, web, tunnel_demo]
+    env:
+      # Postgres connection (for migrate/seed via psql, and for any service
+      # that wants to talk to the database directly). Only defined under
+      # profiles that actually run postgres.
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
     lifecycle:
       after_up:
         - psql "$DATABASE_URL" -f db/migrations/01_init.sql
