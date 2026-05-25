@@ -7,6 +7,7 @@ import { runUrls } from "./urls.js";
 import { runStacks } from "./stacks.js";
 import { runNuke } from "./nuke.js";
 import { runDown } from "./down.js";
+import { runRestart } from "./restart.js";
 import { runHelp } from "./help.js";
 import { runEnvCmd } from "./env.js";
 import { runExec } from "./exec.js";
@@ -115,6 +116,23 @@ const downHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
+const restartHandler: CommandHandler = async (ctx) => {
+  // Whole-stack restart: down + up. Forwards the same output-mode flags
+  // (--json / --quiet) as `up` so a scripted caller running
+  // `lich restart --json` gets the same structured stream over the up
+  // portion.
+  const mode = ctx.argv.json
+    ? "json"
+    : ctx.argv.quiet
+      ? "quiet"
+      : "pretty";
+  const result = await runRestart({
+    outputMode: mode as "pretty" | "json" | "quiet",
+    signal: ctx.signal,
+  });
+  return { ok: result.exitCode === 0, message: "" };
+};
+
 const logsHandler: CommandHandler = async (ctx) => {
   const [service] = ctx.argv._;
   // mri parses `--no-follow` into `{ follow: false }`, NOT
@@ -198,7 +216,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   logs: logsHandler,
   urls: urlsHandler,
   stacks: stacksHandler,
-  restart: stub("restart"),
+  restart: restartHandler,
   nuke: nukeHandler,
   init: initHandler,
   validate: validateHandler,

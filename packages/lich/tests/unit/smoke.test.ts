@@ -35,9 +35,11 @@ describe("smoke", () => {
   it("every unimplemented command stub returns not-yet-implemented", async () => {
     // Commands implemented in Plan 1 are excluded from the stub sweep;
     // their own tests cover behavior. Plan 2 promotes `help` (LEV-329),
-    // `exec` (LEV-330), and `env` (LEV-331) to real handlers. `restart`
-    // lands in a later plan.
-    const STUB_COMMANDS = new Set<string>(["restart"]);
+    // `exec` (LEV-330), and `env` (LEV-331) to real handlers. Plan 5
+    // Task 19 (LEV-421) promotes `restart`. With all commands now wired
+    // to real handlers, the stub set is empty — this assertion stays so
+    // any future stub re-introduction is caught.
+    const STUB_COMMANDS = new Set<string>([]);
     for (const [name, fn] of Object.entries(COMMANDS)) {
       if (!STUB_COMMANDS.has(name)) continue;
       const result = await fn({ argv: { _: [] } });
