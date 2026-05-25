@@ -57,6 +57,9 @@ import { fileURLToPath } from "node:url";
 
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
+import { parseLichUrls } from "./helpers/urls.js";
+import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 // ---------------------------------------------------------------------------
 // Build the binary up front. We fail loudly (don't skip) — the binary is OUR
@@ -124,7 +127,11 @@ describe("env_groups isolation (Plan 2 Task 22)", () => {
         lichHome: home,
       };
 
-      const upResult = runLich(["up"], {
+      // Explicit "dev" profile arg: the e2e suite's default flipped to
+      // dev:fast (no postgres). Test 2 asserts on DATABASE_URL with the
+      // allocated postgres host port — only present under the dev profile.
+      // Lives in the compose pool — see tests/e2e/_pool-manifest.ts.
+      const upResult = runLich(["up", "dev"], {
         cwd: fixture.stackPath,
         env: { LICH_HOME: fixture.lichHome },
         timeout: 240_000,
@@ -138,6 +145,26 @@ describe("env_groups isolation (Plan 2 Task 22)", () => {
           `lich up failed (exit ${upResult.exitCode}); cannot proceed with env_group tests`,
         );
       }
+
+      // Probe /health and verify db: "live" — catches accidental profile
+      // drift loudly at setup time. If the dispatcher ever lost the "dev"
+      // arg above (default flip, env leak), this fails with a clear
+      // message instead of silently passing with stub data.
+      //
+      // `urls --raw` returns the localhost upstream (http://127.0.0.1:<port>)
+      // rather than the friendly URL via the daemon proxy. The friendly URL
+      // routing can race the proxy's bind / route-table refresh after up;
+      // raw probes the api server directly and avoids that race.
+      const urlsResult = runLich(["urls", "--raw"], {
+        cwd: fixture.stackPath,
+        env: { LICH_HOME: fixture.lichHome },
+      });
+      expect(urlsResult.exitCode).toBe(0);
+      const urls = parseLichUrls(urlsResult.stdout);
+      const apiUrl = urls.api;
+      expect(apiUrl, `expected api url in: ${urlsResult.stdout}`).toBeTruthy();
+      await waitForHttp200(`${apiUrl}/health`, { timeoutMs: 30_000 });
+      await expectDbMode(apiUrl!, "live");
     },
     /* timeout */ 300_000,
   );
