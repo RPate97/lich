@@ -775,14 +775,23 @@ async function tearDownCompose(
   worktree: Worktree,
 ): Promise<ComposeTeardownResult> {
   const cli = await resolveComposeCli(undefined);
-  const overridePath = join(stackDir(worktree.stack_id), "compose.override.yaml");
-  const files = existsSync(overridePath) ? [overridePath] : [];
   const project = `lich-${worktree.stack_id}`;
 
+  // For `compose down` we deliberately pass NO `-f` files. compose finds
+  // containers via the project label (`-p <project>`) regardless of which
+  // files are passed. Passing the per-stack override file here used to
+  // cause "service has neither an image nor a build context" failures
+  // for stacks that use the LEV-477 workaround pattern (base compose.yaml
+  // declares image/healthcheck; override.yaml only has ports + env) —
+  // compose validates the assembled project before tearing it down, and
+  // an override-only project is invalid. Project-label-only avoids the
+  // validation path entirely. Verified: `docker compose -p <project> down
+  // -v --remove-orphans` works for any project compose currently knows
+  // about, irrespective of which compose files were originally used.
   const ctx: RunnerCtx = {
     cli,
     project,
-    files,
+    files: [],
     cwd: worktree.path,
   };
 

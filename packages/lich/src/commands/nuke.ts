@@ -772,7 +772,6 @@ async function tearDownCompose(
   worktreeName: string,
 ): Promise<string[]> {
   const cli = await resolveComposeCli(undefined);
-  const overridePath = join(stackDir(stackId), "compose.override.yaml");
 
   // Project name follows the convention documented on `RunnerCtx.project`:
   // `lich-<worktree.name>-<stack_id_short>`. The stack_id format is
@@ -782,16 +781,27 @@ async function tearDownCompose(
     : stackId;
   const project = `lich-${worktreeName}-${shortId}`;
 
+  // For `compose down` we deliberately pass NO `-f` files. compose finds
+  // containers via the project label (`-p <project>`) regardless of which
+  // files are passed. Passing the per-stack override file here used to
+  // cause "service has neither an image nor a build context" failures
+  // for stacks that use the LEV-477 workaround pattern (base compose.yaml
+  // declares image/healthcheck; override.yaml only has ports + env) —
+  // compose validates the assembled project before tearing it down, and
+  // an override-only project is invalid. Project-label-only avoids the
+  // validation path entirely. Verified: `docker compose -p <project> down
+  // -v --remove-orphans` works for any project compose currently knows
+  // about, irrespective of which compose files were originally used.
   const ctx: RunnerCtx = {
     cli,
     project,
-    files: [overridePath],
+    files: [],
     cwd: worktreePath,
   };
 
-  // Best-effort: a non-zero exit (compose project doesn't exist, override
-  // file missing, etc.) doesn't throw — we just move on. The state dir
-  // removal that follows is what definitively "ends" the stack.
+  // Best-effort: a non-zero exit (compose project doesn't exist, etc.)
+  // doesn't throw — we just move on. The state dir removal that follows
+  // is what definitively "ends" the stack.
   await composeDown(ctx, { volumes: true, remove_orphans: true });
 
   // LEV-312: post-down verification. See commands/down.ts for the
