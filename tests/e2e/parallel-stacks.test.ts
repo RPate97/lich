@@ -216,7 +216,14 @@ function collectAllocatedPorts(snap: {
 function parseUrls(stdout: string): Record<string, number> {
   const out: Record<string, number> = {};
   for (const line of stdout.split("\n")) {
-    const m = line.match(/^(\S+):\s+http:\/\/localhost:(\d+)\s*$/);
+    // Accept both `localhost` (older `lich up` summary form) and
+    // `127.0.0.1` (current `lich urls --raw` form). The test calls
+    // `lich urls --raw` to ensure ports are per-stack-unique (proxy
+    // friendly URLs would all share port 3300, defeating the
+    // no-overlap sentinel).
+    const m = line.match(
+      /^(\S+):\s+http:\/\/(?:localhost|127\.0\.0\.1):(\d+)\s*\/?\s*$/,
+    );
     if (!m) continue;
     out[m[1]] = parseInt(m[2], 10);
   }
@@ -362,12 +369,15 @@ describe("parallel stacks (REQUIRED sentinel)", () => {
       expect(stateA2!.stack_id).not.toBe(stateB1!.stack_id);
 
       // ---- Sentinel #2: lich urls works for both, web is reachable ----
-      const urlsA = runLich(["urls"], {
+      // --raw because the sentinel needs per-stack-unique ports to prove
+      // the stacks don't collide; friendly URLs all share the proxy port
+      // (3300) which would mask collisions.
+      const urlsA = runLich(["urls", "--raw"], {
         cwd: a.path,
         env: { LICH_HOME: lichHome! },
       });
       expect(urlsA.exitCode).toBe(0);
-      const urlsB = runLich(["urls"], {
+      const urlsB = runLich(["urls", "--raw"], {
         cwd: b.path,
         env: { LICH_HOME: lichHome! },
       });
