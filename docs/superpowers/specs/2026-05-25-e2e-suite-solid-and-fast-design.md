@@ -1,6 +1,6 @@
 # E2E Suite: Solid + Fast — Design
 
-> **Status:** Approved. Implementation plan to follow via `writing-plans`.
+> **Status:** Implemented (with caveats). See `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md` and `tests/e2e/AUDIT.md` for verification results + known limitations. Three follow-up Linear issues recommended in AUDIT.md (allocator/docker visibility, proxy port pick, routing watcher debounce) — not blocking but unblock further parallel-pool speedups.
 >
 > **Related:** Pauses Phase 3 of `2026-05-25-dogfood-stack-redesign-and-expansion.md` (coverage expansion). Phase 3 resumes once this design ships.
 >
