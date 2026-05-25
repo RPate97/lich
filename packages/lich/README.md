@@ -17,13 +17,28 @@ bun install
 # Run the CLI from source
 bun run dev --version
 
-# Build the binary
+# Build everything (UI + CLI + daemon)
 bun run build
 ./dist/lich --version
+
+# Or build a single piece during inner-loop work
+bun run build:ui      # vite-builds the dashboard SPA
+bun run build:cli     # compiles the `lich` CLI binary
+bun run build:daemon  # compiles the `lich-daemon` binary
 
 # Run unit tests
 bun test
 ```
+
+`bun run build` produces two binaries:
+
+- `dist/lich` — the user-facing CLI (`lich up`, `lich down`, etc.)
+- `dist/lich-daemon` — the background daemon that hosts the dashboard
+  HTTP server + reverse proxy. The CLI auto-starts this on the first
+  `lich up` of a session; the user never invokes it directly.
+
+The dashboard SPA is built first because the daemon binary references the
+SPA's `dist/` directory at runtime to serve static assets.
 
 ## End-to-end tests
 
