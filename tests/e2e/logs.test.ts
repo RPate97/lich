@@ -39,6 +39,7 @@ import { fileURLToPath } from "node:url";
 import { copyExampleToTmpdir } from "./helpers/tmpdir.js";
 import { runLich } from "./helpers/lich.js";
 import { waitForHttp200 } from "./helpers/wait.js";
+import { expectDbMode } from "./helpers/dbmode.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LICH_BINARY = resolve(repoRoot, "packages/lich/dist/lich");
@@ -64,7 +65,12 @@ let apiPort: number | null = null;
 function parseUrls(stdout: string): Record<string, number> {
   const ports: Record<string, number> = {};
   for (const line of stdout.split("\n")) {
-    const m = line.match(/^(\S+):\s+http:\/\/localhost:(\d+)\s*$/);
+    // Accept either localhost or 127.0.0.1 hosts (lich urls --raw emits
+    // 127.0.0.1; the bare summary lich up prints uses localhost). Both
+    // resolve to loopback; we just want the port.
+    const m = line.match(
+      /^(\S+):\s+http:\/\/(?:localhost|127\.0\.0\.1):(\d+)\s*\/?\s*$/,
+    );
     if (!m) continue;
     const [, key, portStr] = m;
     // Skip dotted multi-port keys; we want the service's primary http
@@ -135,10 +141,12 @@ describe("lich logs filtering", () => {
         );
       }
 
-      // Find the api's host port from `lich urls`. We can't rely on the env
-      // var name (`PORT`) because the allocator picks an arbitrary free
-      // port per worktree — that's the whole point of port allocation.
-      const urlsResult = runLich(["urls"], {
+      // Find the api's host port from `lich urls --raw` (localhost URLs).
+      // We can't rely on the env var name (`PORT`) because the allocator
+      // picks an arbitrary free port per worktree. --raw avoids the
+      // friendly-URL routing race that surfaces under dev:fast's fast
+      // startup (the routing watcher hasn't settled when we query).
+      const urlsResult = runLich(["urls", "--raw"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
       });
@@ -158,6 +166,9 @@ describe("lich logs filtering", () => {
       await waitForHttp200(`http://localhost:${apiPort}/health`, {
         timeoutMs: 30_000,
       });
+      // dev:fast profile: api should report db: stub. Catches silent
+      // profile drift if the default ever flips back to dev.
+      await expectDbMode(`http://localhost:${apiPort}`, "stub");
 
       // Hit the api a few times to generate something concrete in the api's
       // log file beyond the startup banner. The dogfood api doesn't log
@@ -193,15 +204,11 @@ describe("lich logs filtering", () => {
 
       // Each emitted line is `[<service>] <content>`. Every service known to
       // the snapshot should contribute at least one line, except perhaps a
-      // service that hasn't logged anything yet (we tolerate that). The
-      // dogfood-stack runs postgres + api + web; api and web both log on
-      // startup, postgres's container start log goes through compose too.
+      // service that hasn't logged anything yet (we tolerate that). dev:fast
+      // runs just api + web — both log on startup. Compose-pool log tests
+      // for [postgres] are covered separately under the dev profile.
       expect(result.stdout).toContain("[api]");
       expect(result.stdout).toContain("[web]");
-      // postgres logs are container output; even if the format changes,
-      // there should be SOMETHING. We require ANY one of the multi-line
-      // patterns.
-      expect(result.stdout).toMatch(/\[postgres\]/);
     },
   );
 
@@ -220,9 +227,8 @@ describe("lich logs filtering", () => {
       // api's own log lines may include literal `[api]` text in their bodies
       // (the dogfood api logs `[api] listening on ...`); that's fine — what
       // we're checking is that lich didn't ALSO prepend its own prefix, so
-      // no line starts with `[web]` or `[postgres]`.
+      // no line starts with `[web]`.
       expect(result.stdout).not.toMatch(/^\[web\] /m);
-      expect(result.stdout).not.toMatch(/^\[postgres\] /m);
     },
   );
 
@@ -306,8 +312,8 @@ describe("lich logs filtering", () => {
       const combined = result.stdout + result.stderr;
       expect(combined.toLowerCase()).toContain("definitely-not-a-real-service");
       // The error should name at least one real service so the user knows
-      // what they could have typed. The dogfood-stack has api, web, postgres.
-      expect(combined).toMatch(/api|web|postgres/);
+      // what they could have typed. dev:fast has api + web.
+      expect(combined).toMatch(/api|web/);
     },
   );
 
