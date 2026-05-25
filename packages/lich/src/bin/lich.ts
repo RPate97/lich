@@ -17,8 +17,10 @@ const argv = mri(process.argv.slice(2), {
   // Explicitly declare every boolean flag here so mri never tries to
   // consume the following positional as the flag's value. `yes`/`rescue`
   // are nuke flags (LEV-311 for rescue); `json` is shared across
-  // commands that support structured output.
-  boolean: ["version", "help", "json", "yes", "rescue"],
+  // commands that support structured output. `raw` is the `lich urls`
+  // escape hatch (LEV-419) that switches output back to direct upstream
+  // URLs from the Plan-5 friendly-URL default.
+  boolean: ["version", "help", "json", "yes", "rescue", "raw"],
   // Declare `env-group` as a string option so mri parses `--env-group=foo`
   // (and the space-separated `--env-group foo`) into `{ "env-group": "foo" }`
   // without trying to swallow it as a boolean. Used by `lich exec` (LEV-330)

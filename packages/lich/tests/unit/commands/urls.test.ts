@@ -75,10 +75,14 @@ async function writeSnap(
 }
 
 async function run(): Promise<{ exitCode: number; out: string; err: string }> {
+  // Use --raw mode for these tests: they predate Plan 5's friendly URL
+  // default and pin the raw-upstream-URL behavior. Friendly URL coverage
+  // lives in `urls-friendly.test.ts`.
   const result = await runUrls({
     cwd: workdir,
     out: stdout as unknown as NodeJS.WritableStream,
     err: stderr as unknown as NodeJS.WritableStream,
+    raw: true,
   });
   return { exitCode: result.exitCode, out: stdout.text(), err: stderr.text() };
 }
@@ -130,7 +134,7 @@ describe("runUrls — owned services", () => {
     const { exitCode, out, err } = await run();
     expect(exitCode).toBe(0);
     expect(err).toBe("");
-    expect(out).toBe("api: http://localhost:4001\n");
+    expect(out).toBe("api: http://127.0.0.1:4001\n");
   });
 
   it("prints one URL line per logical port for a multi-port owned service", async () => {
@@ -162,9 +166,9 @@ describe("runUrls — owned services", () => {
     // insertion order, which is what the runner is responsible for setting.
     const lines = out.trimEnd().split("\n");
     expect(lines).toEqual([
-      "supabase.api: http://localhost:54321",
-      "supabase.studio: http://localhost:54323",
-      "supabase.db: http://localhost:54322",
+      "supabase.api: http://127.0.0.1:54321",
+      "supabase.studio: http://127.0.0.1:54323",
+      "supabase.db: http://127.0.0.1:54322",
     ]);
   });
 });
@@ -190,7 +194,7 @@ describe("runUrls — compose services", () => {
 
     const { exitCode, out } = await run();
     expect(exitCode).toBe(0);
-    expect(out).toBe("postgres: http://localhost:54100\n");
+    expect(out).toBe("postgres: http://127.0.0.1:54100\n");
   });
 });
 
@@ -230,9 +234,9 @@ describe("runUrls — mixed compose + owned", () => {
     const { exitCode, out } = await run();
     expect(exitCode).toBe(0);
     expect(out).toBe(
-      "postgres: http://localhost:54100\n" +
-        "api: http://localhost:4001\n" +
-        "web: http://localhost:3001\n",
+      "postgres: http://127.0.0.1:54100\n" +
+        "api: http://127.0.0.1:4001\n" +
+        "web: http://127.0.0.1:3001\n",
     );
   });
 });
@@ -309,6 +313,6 @@ describe("runUrls — no ports", () => {
 
     const { exitCode, out } = await run();
     expect(exitCode).toBe(0);
-    expect(out).toBe("api: http://localhost:4002\n");
+    expect(out).toBe("api: http://127.0.0.1:4002\n");
   });
 });

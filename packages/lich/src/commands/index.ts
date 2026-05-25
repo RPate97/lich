@@ -152,8 +152,12 @@ const logsHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
-const urlsHandler: CommandHandler = async () => {
-  const result = await runUrls({});
+const urlsHandler: CommandHandler = async (ctx) => {
+  // LEV-419 (Plan 5 Task 17): default is friendly URLs from the snapshot's
+  // routing table; `--raw` falls back to direct upstream URLs (Plan 1
+  // behavior). The bin layer registers `raw` as a boolean flag so mri
+  // doesn't swallow a trailing positional.
+  const result = await runUrls({ raw: Boolean(ctx.argv.raw) });
   return { ok: result.exitCode === 0, message: "" };
 };
 
