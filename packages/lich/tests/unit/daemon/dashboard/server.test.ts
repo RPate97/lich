@@ -395,6 +395,135 @@ describe("dashboard server — root (with uiDir)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 8b. GET / (with embeddedUi) -> serves from in-memory manifest
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: build a synthetic EmbeddedAssetSource from a plain object.
+ * The production source is `embedded-ui.generated.ts`'s
+ * `{ get: getEmbeddedAsset }`; tests don't need the real generated
+ * module — just the same shape.
+ */
+function makeEmbeddedSource(
+  files: Record<string, { body: string | Uint8Array; contentType: string }>,
+) {
+  return {
+    get(path: string) {
+      const hit = files[path];
+      if (!hit) return undefined;
+      const bytes =
+        typeof hit.body === "string"
+          ? new TextEncoder().encode(hit.body)
+          : hit.body;
+      return { bytes, contentType: hit.contentType };
+    },
+  };
+}
+
+describe("dashboard server — root (with embeddedUi)", () => {
+  it("serves embedded index.html on / when no uiDir is configured", async () => {
+    const embeddedUi = makeEmbeddedSource({
+      "index.html": {
+        body: "<html><body>embedded shell</body></html>",
+        contentType: "text/html; charset=utf-8",
+      },
+    });
+    server = await startDashboardServer({ port: 0, stateRoot, embeddedUi });
+
+    const res = await fetch(url("/"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toBe("<html><body>embedded shell</body></html>");
+  });
+
+  it("serves arbitrary embedded assets by path", async () => {
+    const embeddedUi = makeEmbeddedSource({
+      "index.html": {
+        body: "<html>shell</html>",
+        contentType: "text/html; charset=utf-8",
+      },
+      "assets/index-abc.js": {
+        body: "console.log('embedded');",
+        contentType: "text/javascript; charset=utf-8",
+      },
+    });
+    server = await startDashboardServer({ port: 0, stateRoot, embeddedUi });
+
+    const res = await fetch(url("/assets/index-abc.js"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/javascript");
+    expect(await res.text()).toBe("console.log('embedded');");
+  });
+
+  it("falls back to embedded index.html for SPA routes", async () => {
+    const embeddedUi = makeEmbeddedSource({
+      "index.html": {
+        body: "<html>spa-shell</html>",
+        contentType: "text/html; charset=utf-8",
+      },
+    });
+    server = await startDashboardServer({ port: 0, stateRoot, embeddedUi });
+
+    const res = await fetch(url("/stacks/some-id"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<html>spa-shell</html>");
+  });
+
+  it("does NOT fall back for /api/* paths even with embeddedUi set", async () => {
+    const embeddedUi = makeEmbeddedSource({
+      "index.html": {
+        body: "<html>shell</html>",
+        contentType: "text/html; charset=utf-8",
+      },
+    });
+    server = await startDashboardServer({ port: 0, stateRoot, embeddedUi });
+
+    const res = await fetch(url("/api/unknown"));
+    expect(res.status).toBe(404);
+  });
+
+  it("falls through to placeholder when embeddedUi has no index.html", async () => {
+    // An empty (or stub) manifest should let the placeholder do its job
+    // — that's the "you didn't build the UI" signal.
+    const embeddedUi = makeEmbeddedSource({});
+    server = await startDashboardServer({ port: 0, stateRoot, embeddedUi });
+
+    const res = await fetch(url("/"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("dashboard UI not built");
+  });
+
+  it("uiDir wins over embeddedUi when both are set (LICH_UI_DIR override path)", async () => {
+    const uiDir = mkdtempSync(join(tmpdir(), "lich-dashboard-override-"));
+    try {
+      writeFileSync(
+        join(uiDir, "index.html"),
+        "<html>from disk</html>",
+        "utf8",
+      );
+      const embeddedUi = makeEmbeddedSource({
+        "index.html": {
+          body: "<html>from embed</html>",
+          contentType: "text/html; charset=utf-8",
+        },
+      });
+      server = await startDashboardServer({
+        port: 0,
+        stateRoot,
+        uiDir,
+        embeddedUi,
+      });
+
+      const res = await fetch(url("/"));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("<html>from disk</html>");
+    } finally {
+      rmSync(uiDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 9. refresh() updates the cached view
 // ---------------------------------------------------------------------------
 
