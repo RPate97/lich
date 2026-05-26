@@ -54,6 +54,7 @@ export const BUILTIN_SUMMARIES: Record<string, string> = {
   help: "Show this help, or detailed help for a single command.",
   exec: "Run an ad-hoc command with the stack's resolved env loaded.",
   env: "Print a named env_group as dotenv-format on stdout.",
+  routing: "Print the daemon's in-memory routing table (friendly-URL debug).",
 };
 
 /**
@@ -167,6 +168,15 @@ export const BUILTIN_LONG_HELP: Record<string, string> = {
     "Exit codes: 0 on success; 1 when the group is unknown; 2 on",
     "usage error (no group name given).",
   ].join("\n"),
+  routing: [
+    "Usage: lich routing",
+    "",
+    "Print the daemon's in-memory routing table as JSON. Useful when",
+    "a friendly URL (host:port from `lich urls`) 404s — compare what",
+    "the daemon has loaded against the routing entries in state.json.",
+    "",
+    "Exit codes: 0 on success; non-zero if the daemon is unreachable.",
+  ].join("\n"),
 };
 
 /**
@@ -191,6 +201,7 @@ const BUILTIN_DISPLAY_ORDER: readonly string[] = [
   "help",
   "exec",
   "env",
+  "routing",
 ];
 
 // ---------------------------------------------------------------------------
