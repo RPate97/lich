@@ -111,12 +111,6 @@ function MainHeader({ stack }: { stack: StackView }) {
           </h1>
         </div>
         <div className="subtitle">
-          {stack.worktree_path && (
-            <>
-              <MetaItem label="worktree" value={stack.worktree_path} />
-              <span className="sep" />
-            </>
-          )}
           <span
             className={
               summarizeHealth(stack.services).failed > 0
