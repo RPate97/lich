@@ -5,21 +5,15 @@ node_modules/
 *.tmp
 packages/*/node_modules
 packages/*/dist
-# Dashboard UI (Plan 5 Task 13 / LEV-415) lives nested under packages/lich.
-# Its vite + react deps are installed via npm and stay out of the main lich
-# binary's bun deps; Task 30 (LEV-432) composes the built dist into the binary.
 packages/lich/src/daemon/dashboard/ui/node_modules
 packages/lich/src/daemon/dashboard/ui/dist
-# turbo's local task cache — created once the tsup `build` task runs (LEV-214).
 .turbo/
 packages/*/.turbo/
-# Plan 14 / LEV-166 smoke test scaffolds projects under packages/ so bun's
-# resolver can reach the workspace symlinks. The afterAll hook cleans up,
-# but if the run is interrupted (Ctrl-C, OOM kill, etc.) a stray directory
-# can be left behind — ignore it so it never gets committed by accident.
 packages/.lz-plan14-smoke-*
 packages/.lz-plan14-home-*
 node_modules
 .claude/
 .vite/
 demo/
+docs/superpowers
+sample-dashboard
