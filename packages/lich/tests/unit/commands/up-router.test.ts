@@ -21,7 +21,19 @@
  * command-level tests it relates to.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mock } from "bun:test";
+
+// Capture the REAL `runUp` before we install the mock. Bun's `mock.module`
+// (which `vi.mock` desugars to under `bun test`) is GLOBAL — once installed,
+// subsequent test files in the same `bun test` invocation see the mocked
+// module too. We need to (a) hold a stable reference to the real export
+// here, (b) install the test mock, (c) restore the real module in
+// `afterAll` so later test files that import `runUp` for real (e.g.
+// up-routing.test.ts, up-failure-wiring.test.ts) get the actual function
+// back instead of an unconfigured spy returning `undefined`.
+const realUpModule = await import("../../../src/commands/up.js");
+const realRunUp = realUpModule.runUp;
 
 // vi.mock MUST be hoisted ABOVE the import of the module under test so vitest
 // substitutes the fake before `commands/index.js` evaluates `import { runUp }
@@ -44,6 +56,17 @@ afterEach(() => {
   // here too so a custom mockImplementation in one test doesn't leak into a
   // later mockClear-only setup elsewhere in the file.
   runUpSpy.mockReset();
+});
+
+afterAll(() => {
+  // Restore the REAL `runUp` for any test file that runs after this one in
+  // the same `bun test` invocation. Without this, the global mock would
+  // leak and subsequent files would see `runUpSpy` (post-reset, returning
+  // `undefined`) instead of the real implementation.
+  mock.module("../../../src/commands/up.js", () => ({
+    ...realUpModule,
+    runUp: realRunUp,
+  }));
 });
 
 describe("upHandler — LEV-391: positional profile forwarding", () => {

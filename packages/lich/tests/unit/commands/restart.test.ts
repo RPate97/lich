@@ -21,7 +21,18 @@
  *      restart result.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mock } from "bun:test";
+
+// Capture the REAL `runDown` and `runUp` BEFORE installing the mocks.
+// Bun's `mock.module` (which `vi.mock` desugars to under `bun test`) is
+// GLOBAL — once installed, subsequent test files in the same `bun test`
+// invocation see the mocked module too. We restore the real modules in
+// `afterAll` so later test files that import these symbols for real
+// (e.g. up-routing.test.ts → indirectly imports runUp) get the actual
+// function back instead of an unconfigured spy returning `undefined`.
+const realDownModule = await import("../../../src/commands/down.js");
+const realUpModule = await import("../../../src/commands/up.js");
 
 // vi.mock MUST be hoisted above the module imports so vitest substitutes
 // the fakes before `restart.ts` evaluates its `import` statements. Vitest
@@ -58,6 +69,20 @@ afterEach(() => {
   // next test's mockClear-only setup.
   runDownSpy.mockReset();
   runUpSpy.mockReset();
+});
+
+afterAll(() => {
+  // Restore the REAL modules for any test file that runs after this one
+  // in the same `bun test` invocation. Without this, the global mock
+  // would leak (see top-of-file comment).
+  mock.module("../../../src/commands/down.js", () => ({
+    ...realDownModule,
+    runDown: realDownModule.runDown,
+  }));
+  mock.module("../../../src/commands/up.js", () => ({
+    ...realUpModule,
+    runUp: realUpModule.runUp,
+  }));
 });
 
 describe("runRestart — happy path: down + up", () => {

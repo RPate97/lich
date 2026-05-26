@@ -16,26 +16,29 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Hoisted mock. Vitest lifts `vi.mock` above the imports below so the
-// allocator module sees our fake when it evaluates `import { spawnSync }
-// from "node:child_process"`. We re-export the real module's other
-// members because allocator only uses `spawnSync`, but other consumers
-// inside the test (none today) shouldn't see a half-mocked module.
+// We mock `node:child_process` so the allocator's docker port probe sees
+// a fake `spawnSync` and we can drive the three branches deterministically.
+// We re-export the real module's other members because allocator only uses
+// `spawnSync`, but other consumers inside the test (none today) shouldn't
+// see a half-mocked module.
+//
+// Bun's test runner doesn't ship `vi.importActual` (vitest-only), so we
+// capture the real module via top-level await BEFORE the mock is installed
+// and re-export its members alongside the spawnSync spy. We also use Bun's
+// native `mock.module(...)` which is what `vi.mock` desugars to under
+// `bun test`; calling it directly avoids the missing-`importActual` path.
 const spawnSyncSpy = vi.fn();
-vi.mock("node:child_process", async () => {
-  const actual =
-    await vi.importActual<typeof import("node:child_process")>(
-      "node:child_process",
-    );
-  return {
-    ...actual,
-    spawnSync: (...args: unknown[]) => spawnSyncSpy(...args),
-  };
-});
+const realChildProcess =
+  await import("node:child_process");
+mock.module("node:child_process", () => ({
+  ...realChildProcess,
+  spawnSync: (...args: unknown[]) => spawnSyncSpy(...args),
+}));
 
 import { allocate, release } from "../../../src/ports/allocator.js";
 
