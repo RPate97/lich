@@ -10,7 +10,7 @@ It's a single binary that wraps `docker compose` + host process supervision + an
 
 ## Current state (2026-05-25)
 
-- **v0 (`levelzero`)** was a multi-package plugin-based implementation. It's **deleted** from `packages/` (post-LEV-445/446 cleanup). Only `docs/archive-v0/`, `docs/superpowers/specs/archive-v0/`, and `docs/superpowers/plans/archive-v0/` remain as historical record. Do not follow their guidance.
+- **v0 (`levelzero`)** was a multi-package plugin-based implementation. It's **deleted** from `packages/` (post-LEV-445/446 cleanup). Only `docs/superpowers/specs/archive-v0/` and `docs/superpowers/plans/archive-v0/` remain as historical record. Do not follow their guidance.
 - **v1 (`lich`)** is the single live codebase at `packages/lich/`. Plans 0-5 have shipped. Plan 6 remaining work is the README rewrite + the `lich:instrument` agent skill (the v0 deletion half of Plan 6 is done).
 
 ## REQUIRED READING — read these files in order before starting any task
