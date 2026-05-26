@@ -77,14 +77,6 @@ Two service types: `services` for anything `docker compose` runs, `owned` for pr
 
 > lich.yaml is a powerful configuration interface with many advanced features including lifecycle hooks, profiles, environment variable loading, and arbitrary command extension. [Read the full documentation]().
 
-## Quickstart
-
-### TODO - lich instrument skill
-
-### TODO - real example app
-
-### TODO - Run two stacks in parallel
-
 ## License
 
 MIT
