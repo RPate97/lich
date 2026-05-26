@@ -52,24 +52,27 @@ describe("parseConfig", () => {
     // added in Plan 4 (LEV-368) as a synthetic fixture that exercises
     // ready_when.capture and fail_when end-to-end; if it disappears from
     // the yaml the capture e2e tests in Plan 4 lose their target.
+    //
+    // LEV-463: supabase (owned) was replaced by postgres (compose service)
+    // for faster startup (~3s vs ~35s). owned count is now 3 (was 4).
     expect(result.config.owned).toBeDefined();
     expect(Object.keys(result.config.owned!).sort()).toEqual([
       "api",
-      "supabase",
       "tunnel_demo",
       "web",
     ]);
 
-    // services block is absent in the dogfood yaml (all owned), so should be
-    // undefined — confirm that's parsed correctly rather than e.g. coerced
-    // to {}.
-    expect(result.config.services).toBeUndefined();
+    // services block now declares postgres (LEV-463 + LEV-477 inlined the
+    // compose service definition into lich.yaml). Confirm parse handles
+    // the inline-compose shape correctly.
+    expect(result.config.services).toBeDefined();
+    expect(Object.keys(result.config.services!).sort()).toEqual(["postgres"]);
 
     // Type-check: LichConfig actually narrows things. If types compile
     // we get to assign here without `any`.
-    const supabase: OwnedService = result.config.owned!.supabase;
-    expect(supabase.cmd).toBe("supabase start");
-    expect(supabase.oneshot).toBe(true);
+    const api: OwnedService = result.config.owned!.api;
+    expect(api.cmd).toBe("bun run dev");
+    expect(api.cwd).toBe("apps/api");
   });
 
   it("returns an io error when the file does not exist", async () => {
@@ -183,7 +186,9 @@ describe("parseConfig", () => {
     const services: LichConfig["services"] = config.services;
     const owned: LichConfig["owned"] = config.owned;
 
-    expect(services).toBeUndefined();
+    // Post-LEV-463/LEV-477: dogfood yaml declares an inline `postgres`
+    // compose service. Both blocks should be defined.
+    expect(services).toBeDefined();
     expect(owned).toBeDefined();
     // The assignment-itself is the type check; runtime assertions just keep
     // vitest from skipping the test as empty.

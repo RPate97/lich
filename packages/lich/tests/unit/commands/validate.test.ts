@@ -61,10 +61,13 @@ describe("runValidate", () => {
     expect(res.report.ok).toBe(true);
     expect(res.report.path).toBe(DOGFOOD_YAML);
     expect(res.report.summary).toBeDefined();
-    // 4 owned services: supabase, api, web, tunnel_demo. tunnel_demo was
-    // added in Plan 4 (LEV-368) to exercise ready_when.capture + fail_when.
-    expect(res.report.summary?.owned).toBe(4);
-    expect(res.report.summary?.compose).toBe(0);
+    // 3 owned services: api, web, tunnel_demo. tunnel_demo was added in
+    // Plan 4 (LEV-368) to exercise ready_when.capture + fail_when.
+    // LEV-463 replaced supabase (owned) with postgres (compose), and
+    // LEV-477 re-inlined postgres into lich.yaml so it counts as 1
+    // compose service.
+    expect(res.report.summary?.owned).toBe(3);
+    expect(res.report.summary?.compose).toBe(1);
   });
 
   it("dogfood-stack validates cleanly via --json with the documented shape", async () => {
@@ -1709,14 +1712,15 @@ describe("runValidate", () => {
   // -------------------------------------------------------------------------
 
   it("summary includes profile count for the dogfood yaml (after Task 18)", async () => {
-    // The dogfood-stack lich.yaml declares two profiles: `dev` (default)
-    // and `dev:env-override` (extends dev). The summary's `profiles` field
-    // must surface that count so downstream consumers (dashboard, CI) can
-    // tell at a glance how many slices the stack defines.
+    // The dogfood-stack lich.yaml declares three profiles: `dev:fast`
+    // (default), `dev`, and `dev:env-override` (extends dev). The summary's
+    // `profiles` field must surface that count so downstream consumers
+    // (dashboard, CI) can tell at a glance how many slices the stack
+    // defines. `dev:fast` was added later as the no-DB fast-path profile.
     const res = await run({ path: DOGFOOD_YAML });
     expect(res.exitCode).toBe(0);
     expect(res.report.summary).toBeDefined();
-    expect(res.report.summary?.profiles).toBe(2);
+    expect(res.report.summary?.profiles).toBe(3);
   });
 
   it("summary.profiles is 0 when no profiles section is defined", async () => {
