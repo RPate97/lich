@@ -44,7 +44,7 @@ jobs:
             runner: macos-14
           - name: darwin-x64
             bun_target: bun-darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
           - name: linux-arm64
             bun_target: bun-linux-arm64
             runner: ubuntu-24.04-arm
