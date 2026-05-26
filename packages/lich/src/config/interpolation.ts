@@ -23,10 +23,32 @@
  *   ${worktree.name}                    -> ctx.worktree.name
  *   ${worktree.id}                      -> ctx.worktree.id
  *   ${worktree.path}                    -> ctx.worktree.path
- *   ${services.<name>.host_port}        -> ctx.services[name].host_port
+ *   ${services.<name>.host_port}        -> ctx.services[name].host_port (primary)
+ *   ${services.<name>.host_port_<idx>}  -> ctx.services[name].ports[<idx>]
+ *   ${services.<name>.ports.<key>}      -> ctx.services[name].ports[key]
  *   ${owned.<name>.port}                -> ctx.owned[name].port
  *   ${owned.<name>.ports.<key>}         -> ctx.owned[name].ports[key]
  *   ${owned.<name>.captured.<key>}      -> ctx.owned[name].captured[key]
+ *
+ * Multi-port compose-service syntax (LEV-461):
+ *
+ *   When a compose service declares more than one port, `host_port`
+ *   (suffix-less) resolves to the primary port — the first declared port
+ *   (insertion order of the `ports:` block per the design spec). The new
+ *   shapes pick a specific port:
+ *
+ *   - `host_port_<idx>` indexes into the array-form `ports:` block by
+ *     positional index (`host_port_0`, `host_port_1`, ...). The index is
+ *     the same key the allocator uses for array-form ports (numeric strings).
+ *   - `ports.<key>` looks up by logical name for the Record-form `ports:`
+ *     block (`ports.api`, `ports.db`, ...). The key is the logical name
+ *     declared in the `ports:` map.
+ *
+ *   Both shapes resolve through the same `ctx.services[name].ports` map.
+ *   For array-form services, keys are numeric strings; for Record-form
+ *   services, keys are the declared logical names. Validation (in
+ *   `commands/validate.ts`) checks the shape against the declared form,
+ *   so a Record-form service can't use `host_port_<idx>` and vice versa.
  *
  * Escape sequence:
  *   $$ -> literal $
@@ -47,7 +69,25 @@
 
 export interface InterpolationContext {
   worktree: { name: string; id: string; path: string };
-  services: Record<string, { host_port?: number }>;
+  services: Record<
+    string,
+    {
+      /**
+       * Primary host port — the first declared port (insertion order of
+       * the service's `ports:` block). Backward-compat target for
+       * `${services.<name>.host_port}` (the suffix-less shape).
+       */
+      host_port?: number;
+      /**
+       * Full per-service host-port map keyed by the allocator's port key.
+       * For array-form `ports:` declarations, keys are numeric strings
+       * (`"0"`, `"1"`, ...). For Record-form declarations, keys are the
+       * declared logical names (`"api"`, `"db"`, ...). Used to resolve
+       * the multi-port shapes added in LEV-461.
+       */
+      ports?: Record<string, number>;
+    }
+  >;
   owned: Record<
     string,
     {
@@ -101,6 +141,8 @@ const SUPPORTED_SHAPES = [
   "worktree.id",
   "worktree.path",
   "services.<name>.host_port",
+  "services.<name>.host_port_<idx>",
+  "services.<name>.ports.<key>",
   "owned.<name>.port",
   "owned.<name>.ports.<key>",
   "owned.<name>.captured.<key>",
@@ -158,28 +200,120 @@ function resolveReference(
   }
 
   if (root === "services") {
-    // services.<name>.host_port
-    if (rest.length !== 2 || rest[1] !== "host_port") {
+    // Supported shapes:
+    //   services.<name>.host_port               -> primary port
+    //   services.<name>.host_port_<idx>         -> indexed (array form)
+    //   services.<name>.ports.<key>             -> keyed   (Record form)
+    if (rest.length === 2 && rest[1].startsWith("host_port")) {
+      const name = rest[0];
+      const svc = ctx.services[name];
+      if (!svc) {
+        unresolved(
+          fullRef,
+          `no compose service named "${name}" in runtime context`,
+          source,
+        );
+      }
+
+      // Backward-compat: suffix-less `host_port` returns the primary port.
+      if (rest[1] === "host_port") {
+        const port = svc.host_port;
+        if (port === undefined || port === null) {
+          unresolved(
+            fullRef,
+            `host_port for service "${name}" is not allocated yet`,
+            source,
+          );
+        }
+        return String(port);
+      }
+
+      // host_port_<idx> — array-form indexed lookup. The suffix is the
+      // positional index into the `ports:` array (`host_port_0`,
+      // `host_port_1`, ...). The allocator stores these under numeric-
+      // string keys (`"0"`, `"1"`) so we look up directly by the suffix.
+      if (rest[1].startsWith("host_port_")) {
+        const suffix = rest[1].slice("host_port_".length);
+        // Reject non-numeric suffixes early — they're a typo (e.g.
+        // `host_port_admin`) that should route to `ports.<key>` instead.
+        if (suffix.length === 0 || !/^\d+$/.test(suffix)) {
+          unknownShape(fullRef, source);
+        }
+        const ports = svc.ports;
+        if (!ports) {
+          unresolved(
+            fullRef,
+            `compose service "${name}" has no allocated ports map ` +
+              `(allocation may not have run yet)`,
+            source,
+          );
+        }
+        const port = ports[suffix];
+        if (port === undefined || port === null) {
+          // Determine whether this looks like an out-of-range error for
+          // an array-form service, or just an unknown numeric key. We
+          // can tell by inspecting whether the existing keys are all
+          // numeric (array form) — if so, count them and report range.
+          const declaredKeys = Object.keys(ports);
+          const allNumeric =
+            declaredKeys.length > 0 &&
+            declaredKeys.every((k) => /^\d+$/.test(k));
+          if (allNumeric) {
+            unresolved(
+              fullRef,
+              `service "${name}" has only ${declaredKeys.length} port(s) ` +
+                `declared; ${fullRef} is out of range (valid indices: ` +
+                `0..${declaredKeys.length - 1})`,
+              source,
+            );
+          }
+          unresolved(
+            fullRef,
+            `compose service "${name}" has no port at index "${suffix}" ` +
+              `(use \${services.${name}.ports.<key>} for Record-form ports)`,
+            source,
+          );
+        }
+        return String(port);
+      }
+
       unknownShape(fullRef, source);
     }
-    const name = rest[0];
-    const svc = ctx.services[name];
-    if (!svc) {
-      unresolved(
-        fullRef,
-        `no compose service named "${name}" in runtime context`,
-        source,
-      );
+
+    // services.<name>.ports.<key>
+    if (rest.length === 3 && rest[1] === "ports") {
+      const name = rest[0];
+      const key = rest[2];
+      const svc = ctx.services[name];
+      if (!svc) {
+        unresolved(
+          fullRef,
+          `no compose service named "${name}" in runtime context`,
+          source,
+        );
+      }
+      const ports = svc.ports;
+      if (!ports) {
+        unresolved(
+          fullRef,
+          `compose service "${name}" has no allocated ports map ` +
+            `(allocation may not have run yet)`,
+          source,
+        );
+      }
+      const port = ports[key];
+      if (port === undefined || port === null) {
+        unresolved(
+          fullRef,
+          `port "${key}" is not declared on compose service "${name}" ` +
+            `(declared keys: ${Object.keys(ports).join(", ") || "<none>"})`,
+          source,
+        );
+      }
+      return String(port);
     }
-    const port = svc.host_port;
-    if (port === undefined || port === null) {
-      unresolved(
-        fullRef,
-        `host_port for service "${name}" is not allocated yet`,
-        source,
-      );
-    }
-    return String(port);
+
+    unknownShape(fullRef, source);
   }
 
   if (root === "owned") {

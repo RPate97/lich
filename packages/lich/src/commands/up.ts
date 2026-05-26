@@ -1824,7 +1824,14 @@ async function waitReady(
     services: Object.fromEntries(
       Object.entries(input.allocatedPorts.compose).map(([svc, ports]) => [
         svc,
-        { host_port: Object.values(ports)[0] },
+        {
+          // Primary port (first allocated, by allocator/declaration order)
+          // for the suffix-less `${services.X.host_port}` shape.
+          host_port: Object.values(ports)[0],
+          // Full port map for the multi-port shapes
+          // (`host_port_<idx>` / `ports.<key>`, LEV-461).
+          ports: { ...ports },
+        },
       ]),
     ),
     owned: Object.fromEntries(

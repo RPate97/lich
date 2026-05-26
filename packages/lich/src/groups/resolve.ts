@@ -186,6 +186,7 @@ function buildInterpolationContext(
     const keys = Object.keys(ports);
     services[name] = {
       host_port: keys.length > 0 ? ports[keys[0]] : undefined,
+      ports: { ...ports },
     };
   }
 

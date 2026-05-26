@@ -198,11 +198,17 @@ function autoInjects(
  * Build the InterpolationContext shape expected by interpolation.ts from
  * the worktree + allocated-ports inputs.
  *
- * Compose services in `services.*` interpolation only currently expose
- * `host_port` (the primary port). The allocator's per-compose-service map
- * is `logicalName -> hostPort`; we expose the first entry as `host_port`
- * here, since the design spec defines `${services.<name>.host_port}` as
- * "the primary port" (the first logical port declared for that service).
+ * Compose services in `services.*` interpolation expose two facets:
+ *   - `host_port`: the primary port — the first logical port in declared
+ *     order. The design spec defines `${services.<name>.host_port}` as
+ *     "the primary port" (insertion order of the service's `ports:`
+ *     block); Object.keys preserves insertion order for string keys so
+ *     this matches the order the allocator filled them in.
+ *   - `ports`: the full per-service host-port map, keyed by the
+ *     allocator's port key (numeric strings for array-form `ports:`,
+ *     declared logical names for Record-form). Used by the multi-port
+ *     interpolation shapes added in LEV-461 (`host_port_<idx>` and
+ *     `ports.<key>`).
  */
 function buildInterpolationContext(
   worktree: Worktree,
@@ -213,12 +219,10 @@ function buildInterpolationContext(
 ): InterpolationContext {
   const services: InterpolationContext["services"] = {};
   for (const [name, ports] of Object.entries(allocatedPorts.compose)) {
-    // Pick a stable "primary" port: the first logical port in declared
-    // order. Object.keys preserves insertion order for string keys, so
-    // this matches the order the allocator filled them in.
     const keys = Object.keys(ports);
     services[name] = {
       host_port: keys.length > 0 ? ports[keys[0]] : undefined,
+      ports: { ...ports },
     };
   }
 

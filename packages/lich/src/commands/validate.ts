@@ -34,7 +34,12 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parseConfig, type ParseError } from "../config/parse.js";
 import { buildGraph, type NodeDecl } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
-import type { EnvMap, LichConfig, ProfileDef } from "../config/types.js";
+import type {
+  ComposeService,
+  EnvMap,
+  LichConfig,
+  ProfileDef,
+} from "../config/types.js";
 import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 import { detectExtendsCycle } from "../groups/validate-extends.js";
 // LEV-384 (Plan 3 Task 10): cycle detection for `profiles.<name>.extends`.
@@ -543,25 +548,137 @@ function validateRefBody(
   }
 
   if (root === "services") {
-    // services.<name>.host_port
-    if (rest.length !== 2 || rest[1] !== "host_port") {
+    // Supported shapes (LEV-461 extends host_port_<idx> + ports.<key>):
+    //   services.<name>.host_port               -> primary port
+    //   services.<name>.host_port_<idx>         -> indexed (array form)
+    //   services.<name>.ports.<key>             -> keyed   (Record form)
+    if (rest.length === 2 && rest[1].startsWith("host_port")) {
+      const name = rest[0];
+      if (!composeNames.has(name)) {
+        const suggestion = suggest(name, [...composeNames]);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references unknown compose service "${name}"${hint}`,
+        });
+        return;
+      }
+
+      // Suffix-less host_port: always valid as long as the service is declared.
+      if (rest[1] === "host_port") return;
+
+      // host_port_<idx> — array-form positional. Suffix must be all-digit.
+      if (rest[1].startsWith("host_port_")) {
+        const suffix = rest[1].slice("host_port_".length);
+        if (suffix.length === 0 || !/^\d+$/.test(suffix)) {
+          errors.push({
+            kind: "interp",
+            location,
+            message:
+              `unknown reference ${fullRef} ` +
+              `(expected \${services.${name}.host_port_<idx>} with a numeric index, ` +
+              `or \${services.${name}.ports.<key>} for Record-form ports)`,
+          });
+          return;
+        }
+        const svc = config.services?.[name];
+        const portsDecl = svc?.ports;
+        if (!portsDecl) {
+          errors.push({
+            kind: "interp",
+            location,
+            message: `${fullRef} indexes into ports but compose service "${name}" declares no \`ports:\` block`,
+          });
+          return;
+        }
+        const idx = Number(suffix);
+        if (Array.isArray(portsDecl)) {
+          if (idx >= portsDecl.length) {
+            errors.push({
+              kind: "interp",
+              location,
+              message:
+                `${fullRef} is out of range: compose service "${name}" has only ` +
+                `${portsDecl.length} port(s) declared (valid indices: 0..${portsDecl.length - 1})`,
+            });
+          }
+          return;
+        }
+        // Record form using array-style indexing — wrong shape.
+        errors.push({
+          kind: "interp",
+          location,
+          message:
+            `${fullRef} uses array-form indexing but compose service "${name}" ` +
+            `declares \`ports:\` as a Record — use \${services.${name}.ports.<key>} with one of: ` +
+            `${Object.keys(portsDecl).join(", ") || "<none>"}`,
+        });
+        return;
+      }
+
       errors.push({
         kind: "interp",
         location,
-        message: `unknown reference ${fullRef} (expected \${services.<name>.host_port})`,
+        message: `unknown reference ${fullRef} (expected \${services.<name>.host_port} or \${services.<name>.host_port_<idx>})`,
       });
       return;
     }
-    const name = rest[0];
-    if (!composeNames.has(name)) {
-      const suggestion = suggest(name, [...composeNames]);
-      const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
-      errors.push({
-        kind: "interp",
-        location,
-        message: `${fullRef} references unknown compose service "${name}"${hint}`,
-      });
+
+    // services.<name>.ports.<key>
+    if (rest.length === 3 && rest[1] === "ports") {
+      const name = rest[0];
+      const key = rest[2];
+      if (!composeNames.has(name)) {
+        const suggestion = suggest(name, [...composeNames]);
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references unknown compose service "${name}"${hint}`,
+        });
+        return;
+      }
+      const svc = config.services?.[name];
+      const portsDecl = svc?.ports;
+      if (!portsDecl) {
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} uses keyed lookup but compose service "${name}" declares no \`ports:\` block`,
+        });
+        return;
+      }
+      if (Array.isArray(portsDecl)) {
+        errors.push({
+          kind: "interp",
+          location,
+          message:
+            `${fullRef} uses keyed lookup but compose service "${name}" declares ` +
+            `\`ports:\` as an array — use \${services.${name}.host_port_<idx>} with a numeric index`,
+        });
+        return;
+      }
+      if (!(key in portsDecl)) {
+        const suggestion = suggest(key, Object.keys(portsDecl));
+        const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+        errors.push({
+          kind: "interp",
+          location,
+          message: `${fullRef} references unknown port "${key}" on compose service "${name}"${hint}`,
+        });
+      }
+      return;
     }
+
+    errors.push({
+      kind: "interp",
+      location,
+      message:
+        `unknown reference ${fullRef} ` +
+        `(expected \${services.<name>.host_port}, \${services.<name>.host_port_<idx>}, ` +
+        `or \${services.<name>.ports.<key>})`,
+    });
     return;
   }
 
@@ -685,7 +802,11 @@ function validateRefBody(
   errors.push({
     kind: "interp",
     location,
-    message: `unknown reference ${fullRef} (supported: worktree.*, services.<name>.host_port, owned.<name>.port, owned.<name>.ports.<key>)`,
+    message:
+      `unknown reference ${fullRef} (supported: worktree.*, ` +
+      `services.<name>.host_port, services.<name>.host_port_<idx>, ` +
+      `services.<name>.ports.<key>, owned.<name>.port, ` +
+      `owned.<name>.ports.<key>, owned.<name>.captured.<key>)`,
   });
 }
 
@@ -1388,7 +1509,10 @@ function buildProfileInterpolationContext(
 ): InterpolationContext {
   const services: InterpolationContext["services"] = {};
   for (const name of resolved.services) {
-    services[name] = { host_port: 1 };
+    services[name] = {
+      host_port: 1,
+      ports: stubServicePorts(config.services?.[name]?.ports),
+    };
   }
 
   const owned: InterpolationContext["owned"] = {};
@@ -1438,8 +1562,11 @@ function buildMaxInterpolationContext(
   config: LichConfig,
 ): InterpolationContext {
   const services: InterpolationContext["services"] = {};
-  for (const name of Object.keys(config.services ?? {})) {
-    services[name] = { host_port: 1 };
+  for (const [name, svc] of Object.entries(config.services ?? {})) {
+    services[name] = {
+      host_port: 1,
+      ports: stubServicePorts(svc?.ports),
+    };
   }
 
   const owned: InterpolationContext["owned"] = {};
@@ -1463,6 +1590,34 @@ function buildMaxInterpolationContext(
     services,
     owned,
   };
+}
+
+/**
+ * Stub a per-compose-service `ports:` declaration into the allocator's
+ * `Record<string, number>` shape so a synthetic InterpolationContext can
+ * resolve the multi-port shapes (`host_port_<idx>` / `ports.<key>`)
+ * during the per-profile simulation.
+ *
+ * Array-form: numeric-string keys ("0", "1", ...) so `host_port_<idx>`
+ * looks up successfully when the index is in range.
+ * Record-form: declared logical names ("api", "db", ...) so
+ * `ports.<key>` looks up successfully when the key is declared.
+ */
+function stubServicePorts(
+  portsDecl: ComposeService["ports"] | undefined,
+): Record<string, number> | undefined {
+  if (!portsDecl) return undefined;
+  const stub: Record<string, number> = {};
+  if (Array.isArray(portsDecl)) {
+    for (let i = 0; i < portsDecl.length; i++) {
+      stub[String(i)] = 1;
+    }
+  } else {
+    for (const key of Object.keys(portsDecl)) {
+      stub[key] = 1;
+    }
+  }
+  return stub;
 }
 
 /**

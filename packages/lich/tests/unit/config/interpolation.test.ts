@@ -19,8 +19,21 @@ function ctx(overrides: Partial<InterpolationContext> = {}): InterpolationContex
       path: "/tmp/worktrees/feature-x",
     },
     services: {
-      api: { host_port: 53210 },
-      postgres: { host_port: 54123 },
+      api: { host_port: 53210, ports: { "0": 53210 } },
+      postgres: { host_port: 54123, ports: { "0": 54123 } },
+      // Multi-port array-form service (allocator produces numeric-string
+      // keys for array-form `ports:` declarations).
+      mailhog: {
+        host_port: 51025,
+        ports: { "0": 51025, "1": 58025 },
+      },
+      // Multi-port Record-form service (keys are the declared logical
+      // names). `host_port` is the first declared port per insertion
+      // order.
+      web: {
+        host_port: 53000,
+        ports: { http: 53000, admin: 53001, metrics: 53002 },
+      },
       // A service entry without a host_port (e.g. allocation hasn't happened):
       bare: {},
     },
@@ -132,6 +145,179 @@ describe("interpolateString — services.<name>.host_port", () => {
     expect(() =>
       interpolateString("${services.api.bogus}", ctx()),
     ).toThrow(InterpolationError);
+  });
+});
+
+describe("interpolateString — services.<name>.host_port_<idx> (array form, LEV-461)", () => {
+  it("resolves ${services.<name>.host_port_0} to the first array-form port", () => {
+    expect(
+      interpolateString("${services.mailhog.host_port_0}", ctx()),
+    ).toBe("51025");
+  });
+
+  it("resolves ${services.<name>.host_port_1} to the second array-form port", () => {
+    expect(
+      interpolateString("${services.mailhog.host_port_1}", ctx()),
+    ).toBe("58025");
+  });
+
+  it("interpolates inside a URL", () => {
+    expect(
+      interpolateString(
+        "http://localhost:${services.mailhog.host_port_1}",
+        ctx(),
+      ),
+    ).toBe("http://localhost:58025");
+  });
+
+  it("throws out-of-range error when index exceeds declared port count", () => {
+    let err: InterpolationError | undefined;
+    try {
+      // mailhog has 2 ports (indices 0..1); index 2 is out of range.
+      interpolateString("${services.mailhog.host_port_2}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.reference).toBe("${services.mailhog.host_port_2}");
+    // The error message names the service, the count, and the valid range.
+    expect(err!.message).toContain('"mailhog"');
+    expect(err!.message).toContain("only 2 port");
+    expect(err!.message).toContain("out of range");
+    expect(err!.message).toContain("0..1");
+  });
+
+  it("throws out-of-range error for index 5 on a 2-port service", () => {
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${services.mailhog.host_port_5}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message).toContain("only 2 port");
+    expect(err!.message).toContain("out of range");
+  });
+
+  it("throws when the service does not exist", () => {
+    let err: unknown;
+    try {
+      interpolateString("${services.ghost.host_port_0}", ctx());
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect((err as InterpolationError).message).toContain(
+      'no compose service named "ghost"',
+    );
+  });
+
+  it("rejects non-numeric host_port_ suffix (typo routing to ports.<key>)", () => {
+    // `host_port_admin` looks like a host_port_<idx> reference but the
+    // suffix isn't numeric — should be a structural error, not a
+    // misleading "out of range" message.
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${services.web.host_port_admin}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message.toLowerCase()).toContain("unknown");
+  });
+});
+
+describe("interpolateString — services.<name>.ports.<key> (Record form, LEV-461)", () => {
+  it("resolves ${services.<name>.ports.<key>} for a Record-form service", () => {
+    expect(interpolateString("${services.web.ports.http}", ctx())).toBe(
+      "53000",
+    );
+    expect(interpolateString("${services.web.ports.admin}", ctx())).toBe(
+      "53001",
+    );
+    expect(interpolateString("${services.web.ports.metrics}", ctx())).toBe(
+      "53002",
+    );
+  });
+
+  it("interpolates inside a URL", () => {
+    expect(
+      interpolateString(
+        "http://localhost:${services.web.ports.admin}/dashboard",
+        ctx(),
+      ),
+    ).toBe("http://localhost:53001/dashboard");
+  });
+
+  it("throws when the port key is not declared", () => {
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${services.web.ports.nonexistent}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.reference).toBe("${services.web.ports.nonexistent}");
+    expect(err!.message).toContain('"nonexistent"');
+    expect(err!.message).toContain('"web"');
+    // The diagnostic lists the actually-declared keys so the user can
+    // spot a typo quickly.
+    expect(err!.message).toContain("http");
+    expect(err!.message).toContain("admin");
+  });
+
+  it("throws when the service does not exist", () => {
+    let err: InterpolationError | undefined;
+    try {
+      interpolateString("${services.ghost.ports.foo}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message).toContain('no compose service named "ghost"');
+  });
+
+  it("throws when the service has no ports map allocated", () => {
+    let err: InterpolationError | undefined;
+    try {
+      // `bare` has no `ports` in the context.
+      interpolateString("${services.bare.ports.foo}", ctx());
+    } catch (e) {
+      err = e as InterpolationError;
+    }
+    expect(err).toBeInstanceOf(InterpolationError);
+    expect(err!.message).toContain('"bare"');
+    expect(err!.message).toContain("no allocated ports map");
+  });
+});
+
+describe("interpolateString — services.<name>.host_port (backward compat for both shapes)", () => {
+  it("resolves to the primary (first) port on an array-form service", () => {
+    // mailhog has ports {"0": 51025, "1": 58025} — primary is 51025.
+    expect(
+      interpolateString("${services.mailhog.host_port}", ctx()),
+    ).toBe("51025");
+  });
+
+  it("resolves to the primary (first declared) port on a Record-form service", () => {
+    // web has ports { http: 53000, admin: 53001, metrics: 53002 } — the
+    // primary is `http` (first inserted), value 53000.
+    expect(interpolateString("${services.web.host_port}", ctx())).toBe(
+      "53000",
+    );
+  });
+
+  it("still resolves on a service whose ctx entry only has host_port (no ports map)", () => {
+    // The bare-host_port shape (no ports map at all) must still work
+    // because the env-resolve builder for the dogfood-stack used to
+    // populate only `host_port`. This preserves backward compat for any
+    // ctx producer that hasn't been updated.
+    const c = ctx({
+      services: {
+        legacy: { host_port: 42 },
+      },
+    });
+    expect(interpolateString("${services.legacy.host_port}", c)).toBe("42");
   });
 });
 
