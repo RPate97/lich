@@ -1,21 +1,28 @@
-// Main.tsx — the right-hand pane for a selected stack.
+// Main.tsx — right pane: header + services strip + logs.
 //
-// Adapted from the v0 dashboard. v1 differences:
-//   - No Metrics widget (CPU/RAM removed per the v1 design's non-goals).
-//   - Service rows render the full ServiceState union (`starting | healthy |
-//     initializing | ready | stopping | stopped | failed`) instead of v0's
-//     four-value health enum.
-//   - `primary_url` from the server is surfaced as an "open" button in the
-//     header (replaces v0's `urls` map).
-//   - Active profile shown in the header subtitle when present.
+// Ported directly from sample-dashboard/main.jsx with three intentional
+// deviations:
+//
+//   1. No CPU/MEM in the header meta — lich doesn't collect process
+//      metrics yet (and the daemon would need a sampler to do so).
+//
+//   2. No Metrics cards row — the sample's `Metrics` component is
+//      orphaned (defined but not rendered in its `Main`); the design
+//      intent is header → services strip → logs.
+//
+//   3. FailureDetail is rendered below failed service rows — the sample's
+//      mockup never has a failed service, but real stacks do, and the
+//      reason + log tail are critical triage signals.
 
 import { useState } from 'react';
 import {
+  deriveServiceHost,
+  deriveServiceUrl,
   fmtRelative,
   formatHealthCount,
   formatPortRange,
-  serviceColor,
-  stateBucket,
+  primaryPort,
+  serviceStatus,
   summarizeHealth,
 } from '../lib/format';
 import { Logs } from './Logs';
@@ -42,13 +49,15 @@ function MetaItem({
   return (
     <span className="meta">
       <span className="meta-label">{label}</span>
-      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined }}>{value}</span>
+      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined }}>
+        {value}
+      </span>
     </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// MainHeader — title row + subtitle + Restart/Stop buttons.
+// MainHeader — title + meta subtitle + Open / Restart / Stop actions.
 // ---------------------------------------------------------------------------
 
 function MainHeader({ stack }: { stack: StackView }) {
@@ -94,6 +103,18 @@ function MainHeader({ stack }: { stack: StackView }) {
     }
   }
 
+  // Primary URL display — hostname stripped from primary_url, truncated by
+  // CSS. Falls back to the raw URL string if parsing fails.
+  let primaryUrlHost: string | null = null;
+  if (stack.primary_url) {
+    try {
+      const u = new URL(stack.primary_url);
+      primaryUrlHost = u.host;
+    } catch {
+      primaryUrlHost = stack.primary_url;
+    }
+  }
+
   return (
     <header className="main-hd">
       <div className="main-hd-l">
@@ -110,10 +131,6 @@ function MainHeader({ stack }: { stack: StackView }) {
               <span className="sep" />
             </>
           )}
-          {/* When any service has failed, color the health pill red so the
-              "N/M services failed" delta is unmissable at a glance. The
-              MetaItem still renders the same text — only the .failed class
-              changes the color, keeping the failure flag a pure CSS tweak. */}
           <span
             className={
               summarizeHealth(stack.services).failed > 0
@@ -140,7 +157,7 @@ function MainHeader({ stack }: { stack: StackView }) {
         </div>
       </div>
       <div className="main-hd-r">
-        {stack.primary_url && (
+        {stack.primary_url && primaryUrlHost && (
           <a
             className="open-web"
             href={stack.primary_url}
@@ -148,20 +165,7 @@ function MainHeader({ stack }: { stack: StackView }) {
             rel="noopener noreferrer"
             title={`Open ${stack.primary_url}`}
           >
-            {/* Display the hostname inline so the operator sees where the
-                link goes before clicking. Falls back to the raw URL if the
-                URL fails to parse (shouldn't happen in practice — the
-                daemon always emits a well-formed primary_url). */}
-            <span className="open-web-url">
-              {(() => {
-                try {
-                  const u = new URL(stack.primary_url);
-                  return u.port ? `${u.host}` : u.host;
-                } catch {
-                  return stack.primary_url;
-                }
-              })()}
-            </span>
+            <span className="open-web-url">{primaryUrlHost}</span>
             <svg
               viewBox="0 0 16 16"
               fill="none"
@@ -212,127 +216,143 @@ function MainHeader({ stack }: { stack: StackView }) {
 }
 
 // ---------------------------------------------------------------------------
-// ServiceList — per-service rows with state, kind, ports.
+// ServicesStrip — multi-column compact grid: one row per service with
+// status dot, name, derived proxy host, port, and copy-URL button.
 //
-// LEV-417 (Plan 5 Task 15) extends this to highlight failed services with
-// their `failure_reason` + `failure_log_tail`. Failed rows get a red left
-// border (via the `.service-row[data-state="failed"]` CSS hook) and an
-// expandable detail block below the row.
+// Failed services get a FailureDetail panel rendered below the row with
+// failure_reason + collapsible failure_log_tail. (Sample doesn't have this
+// — its mockup never fails.)
 // ---------------------------------------------------------------------------
 
-function ServiceRow({ service }: { service: ServiceView }) {
-  const bucket = stateBucket(service.state);
-  const color = serviceColor(service.name);
-  const portEntries = service.ports ? Object.entries(service.ports) : [];
-  const isFailed = service.state === 'failed';
-  // Collapse the log tail by default so a single failed service doesn't
-  // dominate the layout. Operators triaging click to reveal the lines that
-  // preceded the failure.
-  const [logsOpen, setLogsOpen] = useState(false);
-  return (
-    <div className="service-row-wrap" data-state={service.state}>
+function ServicesStrip({ stack }: { stack: StackView }) {
+  if (stack.services.length === 0) {
+    return (
       <div
-        className="service-row"
-        data-state={service.state}
-        data-bucket={bucket}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(140px, 1fr) 90px 90px 1fr',
-          gap: 12,
-          alignItems: 'baseline',
-          padding: '8px 24px',
-          borderBottom: isFailed ? 'none' : '1px solid var(--border)',
+          padding: '20px 24px',
+          color: 'var(--muted-foreground)',
           fontSize: 13,
+          borderBottom: '1px solid var(--border)',
         }}
       >
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            fontFamily: 'var(--font-mono)',
-            color,
-            fontWeight: 500,
-          }}
-        >
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background: 'currentColor',
-              display: 'inline-block',
-            }}
-          />
-          {service.name}
-        </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11.5,
-            color: 'var(--subtle-foreground)',
-          }}
-        >
-          {service.kind}
-        </span>
-        <StateBadge state={service.state} />
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11.5,
-            color: 'var(--muted-foreground)',
-            wordBreak: 'break-all',
-          }}
-        >
-          {portEntries.length === 0
-            ? '—'
-            : portEntries.map(([k, v]) => `${k}:${v}`).join('  ')}
-        </span>
+        No services declared.
       </div>
-      {isFailed && (
-        <FailureDetail
-          service={service}
-          open={logsOpen}
-          onToggle={() => setLogsOpen((v) => !v)}
-        />
+    );
+  }
+  return (
+    <>
+      <div className="svc-strip">
+        {stack.services.map((svc) => (
+          <ServiceRow key={svc.name} stack={stack} service={svc} />
+        ))}
+      </div>
+      {stack.services
+        .filter((s) => s.state === 'failed')
+        .map((svc) => (
+          <FailureDetail key={`fail-${svc.name}`} service={svc} />
+        ))}
+    </>
+  );
+}
+
+function ServiceRow({
+  stack,
+  service,
+}: {
+  stack: StackView;
+  service: ServiceView;
+}) {
+  const status = serviceStatus(service.state);
+  const host = deriveServiceHost(stack, service);
+  const url = deriveServiceUrl(stack, service);
+  const port = primaryPort(service);
+
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard write blocked — silent */
+    }
+  }
+
+  return (
+    <div className="svc-row" data-status={status}>
+      <span className={`svc-dot ${status}`} />
+      <span className="svc-name">{service.name}</span>
+      {host && url ? (
+        <a
+          className="svc-host"
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`Open ${url}`}
+        >
+          {host}
+        </a>
+      ) : (
+        <span className="svc-host" style={{ opacity: 0.6 }}>
+          {service.state}
+        </span>
+      )}
+      {port != null && <span className="svc-port">:{port}</span>}
+      {url && (
+        <button
+          className="svc-copy"
+          onClick={copy}
+          title="Copy URL"
+          aria-label={`Copy ${host ?? 'service URL'}`}
+        >
+          {copied ? (
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 8.5 6.5 12 13 4.5" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="5" y="5" width="8" height="8" rx="1.2" />
+              <path d="M3 11V3.5C3 3.22 3.22 3 3.5 3H11" />
+            </svg>
+          )}
+        </button>
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// FailureDetail — inline triage panel rendered below a failed service row.
-//
-// Surfaces:
-//   - `failure_reason` (single line; the orchestrator already truncates the
-//     underlying message to a sane length in Plan 4's failure formatter)
-//   - `failure_log_tail` — collapsed by default; click to expand. Most stacks
-//     run clean, so the default-collapsed posture keeps the layout calm. When
-//     expanded, the tail renders as a `<pre>` so log whitespace + ANSI-stripped
-//     output retain their shape.
-//
-// Empty `failure_log_tail` arrays (failure detected before any output landed)
-// render as "(no log output captured)" rather than disappearing — the caller
-// still wants to know "yes, we tried to capture but there was nothing".
+// FailureDetail — inline triage panel for a failed service. Surfaces
+// failure_reason + a collapsible failure_log_tail. Default-collapsed so
+// healthy stacks stay calm.
 // ---------------------------------------------------------------------------
 
-function FailureDetail({
-  service,
-  open,
-  onToggle,
-}: {
-  service: ServiceView;
-  open: boolean;
-  onToggle: () => void;
-}) {
+function FailureDetail({ service }: { service: ServiceView }) {
   const reason = service.failure_reason ?? 'failed (no reason recorded)';
   const tail = service.failure_log_tail;
   const hasTail = tail !== undefined;
   const tailLineCount = tail?.length ?? 0;
+  const [open, setOpen] = useState(false);
+
   return (
     <div className="failure-detail" role="alert">
       <div className="failure-reason" title={reason}>
-        <span className="failure-label">reason</span>
+        <span className="failure-label">{service.name} · reason</span>
         <span className="failure-reason-text">{reason}</span>
       </div>
       {hasTail && (
@@ -340,10 +360,13 @@ function FailureDetail({
           <button
             className="failure-tail-toggle"
             type="button"
-            onClick={onToggle}
+            onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
           >
-            <span className="failure-tail-caret" data-open={open ? '1' : '0'}>
+            <span
+              className="failure-tail-caret"
+              data-open={open ? '1' : '0'}
+            >
               ▸
             </span>
             {open ? 'hide log tail' : 'show log tail'}
@@ -365,84 +388,6 @@ function FailureDetail({
   );
 }
 
-function StateBadge({ state }: { state: string }) {
-  const bucket = stateBucket(state);
-  const tone =
-    bucket === 'ok'
-      ? { bg: 'rgba(74, 222, 128, 0.12)', fg: 'var(--lich-green-glow)', border: 'rgba(74, 222, 128, 0.25)' }
-      : bucket === 'bad'
-        ? { bg: 'rgba(248, 113, 113, 0.14)', fg: '#fca5a5', border: 'rgba(248, 113, 113, 0.35)' }
-        : bucket === 'idle'
-          ? { bg: 'var(--muted)', fg: 'var(--subtle-foreground)', border: 'var(--border)' }
-          : { bg: 'rgba(96, 165, 250, 0.12)', fg: '#93c5fd', border: 'rgba(96, 165, 250, 0.25)' };
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        height: 22,
-        padding: '0 8px',
-        borderRadius: 999,
-        background: tone.bg,
-        color: tone.fg,
-        border: `1px solid ${tone.border}`,
-        fontSize: 11,
-        fontFamily: 'var(--font-mono)',
-        letterSpacing: 0.02,
-      }}
-    >
-      {state}
-    </span>
-  );
-}
-
-function ServiceList({ stack }: { stack: StackView }) {
-  if (stack.services.length === 0) {
-    return (
-      <div
-        style={{
-          padding: '20px 24px',
-          color: 'var(--muted-foreground)',
-          fontSize: 13,
-        }}
-      >
-        No services declared.
-      </div>
-    );
-  }
-  return (
-    <section
-      style={{
-        borderBottom: '1px solid var(--border)',
-      }}
-    >
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(140px, 1fr) 90px 90px 1fr',
-          gap: 12,
-          padding: '10px 24px',
-          background: 'var(--card)',
-          borderBottom: '1px solid var(--border)',
-          fontSize: 10.5,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color: 'var(--subtle-foreground)',
-          fontWeight: 500,
-        }}
-      >
-        <span>Service</span>
-        <span>Kind</span>
-        <span>State</span>
-        <span>Ports</span>
-      </div>
-      {stack.services.map((svc) => (
-        <ServiceRow key={svc.name} service={svc} />
-      ))}
-    </section>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -451,7 +396,7 @@ export function Main({ stack }: MainProps) {
   return (
     <main className="main">
       <MainHeader stack={stack} />
-      <ServiceList stack={stack} />
+      <ServicesStrip stack={stack} />
       <Logs stack={stack} />
     </main>
   );

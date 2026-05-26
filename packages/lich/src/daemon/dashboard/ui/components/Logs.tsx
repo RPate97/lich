@@ -146,21 +146,27 @@ function LogsHeader({
         >
           all
         </button>
-        {services.map((svc) => (
-          <button
-            key={svc.name}
-            className="filter-chip"
-            data-active={activeServices.has(svc.name) ? '1' : '0'}
-            onClick={() => onChipClick(svc.name)}
-            style={{ color: serviceColor(svc.name) }}
-          >
-            <span
-              className="swatch"
-              style={{ background: serviceColor(svc.name) }}
-            />
-            {svc.name}
-          </button>
-        ))}
+        {services.map((svc) => {
+          const active = activeServices.has(svc.name);
+          return (
+            <button
+              key={svc.name}
+              className="filter-chip"
+              data-active={active ? '1' : '0'}
+              onClick={() => onChipClick(svc.name)}
+              // Only adopt the service hue when active — inactive chips
+              // stay muted so the filter bar reads as "what's selected"
+              // rather than "every service forever colored."
+              style={active ? { color: serviceColor(svc.name) } : undefined}
+            >
+              <span
+                className="swatch"
+                style={{ background: serviceColor(svc.name) }}
+              />
+              {svc.name}
+            </button>
+          );
+        })}
       </div>
 
       <div className="log-toolbar">

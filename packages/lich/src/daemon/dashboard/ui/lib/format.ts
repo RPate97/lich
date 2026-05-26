@@ -152,3 +152,126 @@ export function stackHealthBucket(stack: StackView): 'healthy' | 'degraded' | 'u
   if (ready === total && total > 0) return 'healthy';
   return 'degraded';
 }
+
+/**
+ * Map a `ServiceState` to the three visual buckets the services strip uses:
+ *
+ *   - `healthy`   — `healthy` / `ready` (green dot)
+ *   - `unhealthy` — `failed` (red dot)
+ *   - `starting`  — `starting` / `initializing` / `stopping` (pulsing blue)
+ *   - `idle`      — `stopped` and unknown states (neutral)
+ *
+ * Mirrors the sample-dashboard's three-tier `data-status` attribute.
+ */
+export type ServiceStatus = 'healthy' | 'unhealthy' | 'starting' | 'idle';
+
+export function serviceStatus(state: string): ServiceStatus {
+  switch (state) {
+    case 'healthy':
+    case 'ready':
+      return 'healthy';
+    case 'failed':
+      return 'unhealthy';
+    case 'starting':
+    case 'initializing':
+    case 'stopping':
+      return 'starting';
+    default:
+      return 'idle';
+  }
+}
+
+/**
+ * Parsed proxy info derived from a stack's `primary_url`. The lich daemon
+ * routes friendly URLs in the form `<service>.<worktree>.lich.localhost:<port>`,
+ * so once we have the port and worktree segment we can build any service's
+ * URL ourselves rather than asking the server for a per-service URL map.
+ *
+ * Returns null when:
+ *   - `primary_url` is absent (stack has no routing entries yet)
+ *   - The URL fails to parse
+ *   - The hostname doesn't follow the lich friendly-URL shape (e.g. an
+ *     operator hit a raw URL — we don't try to derive in that case)
+ */
+export interface ProxyBase {
+  /** TCP port the daemon proxy is listening on (e.g. "3300"). */
+  port: string;
+  /**
+   * Worktree segment from the friendly URL — typically just the worktree
+   * slug, but may include extra dot-separated parts if the daemon ever
+   * starts emitting deeper hierarchies.
+   */
+  worktreeSeg: string;
+}
+
+export function deriveProxyBase(primaryUrl: string | undefined): ProxyBase | null {
+  if (!primaryUrl) return null;
+  try {
+    const u = new URL(primaryUrl);
+    const parts = u.hostname.split('.');
+    // Expect ≥4 parts: [service, worktree…, "lich", "localhost"].
+    if (
+      parts.length < 4 ||
+      parts[parts.length - 2] !== 'lich' ||
+      parts[parts.length - 1] !== 'localhost'
+    ) {
+      return null;
+    }
+    const worktreeSeg = parts.slice(1, -2).join('.');
+    return { port: u.port || '3300', worktreeSeg };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Full URL for a specific service on a given stack. Used by the services
+ * strip to give each service a clickable proxy URL + a copy button. Returns
+ * null when the stack has no derivable proxy base.
+ */
+export function deriveServiceUrl(
+  stack: StackView,
+  service: { name: string },
+): string | null {
+  const base = deriveProxyBase(stack.primary_url);
+  if (!base) return null;
+  return `http://${service.name}.${base.worktreeSeg}.lich.localhost:${base.port}/`;
+}
+
+/**
+ * Hostname (no protocol, no path) for a service — what the services strip
+ * shows in its compact row. Returns null when the proxy base can't be
+ * derived; callers fall back to the raw URL or empty placeholder.
+ */
+export function deriveServiceHost(
+  stack: StackView,
+  service: { name: string },
+): string | null {
+  const base = deriveProxyBase(stack.primary_url);
+  if (!base) return null;
+  return `${service.name}.${base.worktreeSeg}.lich.localhost:${base.port}`;
+}
+
+/**
+ * Apex host for the stack — `<worktree>.lich.localhost:<port>` (no service
+ * prefix). Used by the sidebar StackCard's secondary row. Doesn't route to
+ * anything on its own (only `<service>.<worktree>.lich.localhost` routes),
+ * but it's a useful identity string for "which worktree is this?".
+ */
+export function deriveStackHost(stack: StackView): string | null {
+  const base = deriveProxyBase(stack.primary_url);
+  if (!base) return null;
+  return `${base.worktreeSeg}.lich.localhost:${base.port}`;
+}
+
+/**
+ * The "primary port" to display on a service row — first value in the
+ * service's `ports` map. The map is small (1-3 entries) and the
+ * insertion-order iteration on plain objects gives the declared order
+ * from `lich.yaml`.
+ */
+export function primaryPort(service: { ports?: Record<string, number> }): number | null {
+  if (!service.ports) return null;
+  const vals = Object.values(service.ports);
+  return vals[0] ?? null;
+}
