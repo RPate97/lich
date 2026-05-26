@@ -1,8 +1,6 @@
-# yaml-language-server: $schema=https://lich.dev/schema/v1.json
 # Target lich.yaml for the dogfood stack.
 # This file is what lich must handle by end of v1.
 # Until then, lich up against this config is the failing test case.
-
 version: "1"
 
 runtime:
