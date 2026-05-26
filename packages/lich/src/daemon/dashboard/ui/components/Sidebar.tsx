@@ -12,7 +12,6 @@
 //      has no primary_url yet (typical mid-startup).
 
 import {
-  deriveStackHost,
   fmtRelative,
   formatHealthCount,
   stackHealthBucket,
@@ -63,7 +62,13 @@ function StackCard({
   const ageMs = stack.started_at
     ? Date.now() - new Date(stack.started_at).getTime()
     : 0;
-  const proxyHost = deriveStackHost(stack);
+  // Derive the apex host from proxy_port + worktree_name so we get a
+  // value even when no service-level routing entries exist yet. Falls
+  // back to status text mid-startup before proxy_port is known.
+  const proxyHost =
+    stack.proxy_port !== undefined
+      ? `${stack.worktree_name}.lich.localhost:${stack.proxy_port}`
+      : null;
 
   return (
     <button

@@ -89,7 +89,7 @@ describe("stacks-view failure-field projection", () => {
       ],
     });
 
-    const stacks = await loadStacksView(stateRoot);
+    const stacks = await loadStacksView(stateRoot, 3300);
     expect(stacks).toHaveLength(1);
 
     const api = stacks[0].services.find((s) => s.name === "api");
@@ -132,7 +132,7 @@ describe("stacks-view failure-field projection", () => {
       ],
     });
 
-    const stack = await loadStackView(stateRoot, "stack-1");
+    const stack = await loadStackView(stateRoot, "stack-1", 3300);
     expect(stack).not.toBeNull();
     expect(stack!.services).toHaveLength(1);
     expect(stack!.services[0].failure_reason).toBe("ready timeout");
@@ -166,7 +166,7 @@ describe("stacks-view failure-field projection", () => {
       ],
     });
 
-    const stacks = await loadStacksView(stateRoot);
+    const stacks = await loadStacksView(stateRoot, 3300);
     expect(stacks).toHaveLength(1);
     expect(stacks[0].services[0].failure_log_tail).toEqual([]);
     expect(stacks[0].services[0].failure_reason).toBe(
@@ -208,7 +208,7 @@ describe("stacks-view — no spurious failure fields on healthy services", () =>
       ],
     });
 
-    const stacks = await loadStacksView(stateRoot);
+    const stacks = await loadStacksView(stateRoot, 3300);
     expect(stacks).toHaveLength(1);
 
     for (const svc of stacks[0].services) {
@@ -240,7 +240,7 @@ describe("stacks-view — no spurious failure fields on healthy services", () =>
       ],
     });
 
-    const stacks = await loadStacksView(stateRoot);
+    const stacks = await loadStacksView(stateRoot, 3300);
     expect(stacks).toHaveLength(1);
     const svc = stacks[0].services[0];
 

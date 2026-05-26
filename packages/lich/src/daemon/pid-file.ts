@@ -15,6 +15,10 @@ function urlFilePath(opts?: PidFileOpts): string {
   return resolveLichHomeFile(opts, "daemon.url");
 }
 
+function proxyUrlFilePath(opts?: PidFileOpts): string {
+  return resolveLichHomeFile(opts, "daemon.proxy-url");
+}
+
 // LICH_HOME resolution: explicit opts → $LICH_HOME → ~/.lich.
 function resolveLichHomeFile(
   opts: PidFileOpts | undefined,
@@ -139,5 +143,61 @@ export async function readDaemonUrl(
 /** Idempotent — succeeds silently when the file is already absent. */
 export async function clearDaemonUrl(opts?: PidFileOpts): Promise<void> {
   const path = urlFilePath(opts);
+  await rm(path, { force: true });
+}
+
+/**
+ * Write the daemon's friendly proxy URL (`http://lich.localhost:<port>/`)
+ * to `<LICH_HOME>/daemon.proxy-url`. Parallel to {@link writeDaemonUrl} so
+ * the existing direct-URL file stays untouched (tests + internal tools
+ * that want to hit the dashboard server directly still use `daemon.url`);
+ * this file is what the auto-start browser-open path reads to land the
+ * user on the friendly URL instead of the raw bind address.
+ *
+ * Written AFTER `daemon.url` so consumers polling for daemon-ready can
+ * use the existence of `daemon.url` as the readiness signal and then
+ * read this file unconditionally (it'll exist by then).
+ */
+export async function writeDaemonProxyUrl(
+  url: string,
+  opts?: PidFileOpts,
+): Promise<void> {
+  const dest = proxyUrlFilePath(opts);
+  await mkdir(dirname(dest), { recursive: true });
+
+  const serialized = `${url}\n`;
+  const tmp = `${dest}.${randomBytes(8).toString("hex")}.tmp`;
+
+  try {
+    await writeFile(tmp, serialized, "utf8");
+    await rename(tmp, dest);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/** Returns the trimmed friendly proxy URL, or null if the file is absent or empty. */
+export async function readDaemonProxyUrl(
+  opts?: PidFileOpts,
+): Promise<string | null> {
+  const path = proxyUrlFilePath(opts);
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Idempotent — succeeds silently when the file is already absent. */
+export async function clearDaemonProxyUrl(opts?: PidFileOpts): Promise<void> {
+  const path = proxyUrlFilePath(opts);
   await rm(path, { force: true });
 }

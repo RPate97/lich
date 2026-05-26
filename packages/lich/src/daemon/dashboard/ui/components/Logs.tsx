@@ -94,8 +94,6 @@ interface LogsHeaderProps {
   services: ServiceView[];
   activeServices: Set<string>;
   onChipClick: (name: string | null) => void;
-  tail: boolean;
-  setTail: (t: boolean) => void;
 }
 
 function LogsHeader({
@@ -104,8 +102,6 @@ function LogsHeader({
   services,
   activeServices,
   onChipClick,
-  tail,
-  setTail,
 }: LogsHeaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -169,17 +165,6 @@ function LogsHeader({
         })}
       </div>
 
-      <div className="log-toolbar">
-        <button
-          className="tail-toggle"
-          data-on={tail ? '1' : '0'}
-          onClick={() => setTail(!tail)}
-          title={tail ? 'Pause live tail' : 'Resume live tail'}
-        >
-          <span className="tail-dot" />
-          {tail ? 'tailing' : 'paused'}
-        </button>
-      </div>
     </div>
   );
 }
@@ -188,7 +173,6 @@ function LogsHeader({
 
 export function Logs({ stack }: { stack: StackView }) {
   const [query, setQuery] = useState('');
-  const [tail, setTail] = useState(true);
   const [logs, setLogs] = useState<LogLine[]>([]);
   // Empty set = "all" (no filter). Non-empty = show only listed services.
   const [activeServices, setActiveServices] = useState<Set<string>>(new Set());
@@ -266,12 +250,14 @@ export function Logs({ stack }: { stack: StackView }) {
     );
   }, [serviceFiltered, query]);
 
-  // Auto-scroll while tailing.
+  // Auto-scroll on every new line — the tail toggle was removed (we
+  // always pin to the bottom). Operators who want to pause scrolling
+  // can scroll up manually; the next render snaps back to the bottom.
   useEffect(() => {
-    if (tail && viewportRef.current) {
+    if (viewportRef.current) {
       viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
     }
-  }, [filtered.length, tail]);
+  }, [filtered.length]);
 
   return (
     <div className="logs">
@@ -281,8 +267,6 @@ export function Logs({ stack }: { stack: StackView }) {
         services={stack.services}
         activeServices={activeServices}
         onChipClick={handleChipClick}
-        tail={tail}
-        setTail={setTail}
       />
       <div className="log-viewport" ref={viewportRef}>
         <LogStream logs={filtered} query={query} />

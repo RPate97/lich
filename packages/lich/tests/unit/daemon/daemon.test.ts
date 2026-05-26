@@ -582,7 +582,13 @@ describe("runDaemon — real dashboard + proxy startup", () => {
     }>;
     const found = stacks.find((s) => s.id === "test-routing");
     expect(found).toBeDefined();
-    expect(found?.primary_url).toBe("http://127.0.0.1:9123");
+    // primary_url is the friendly proxy URL — `<hostname>.lich.localhost:<proxy-port>` —
+    // built server-side from the first routing entry's hostname + the
+    // daemon's bound proxy port. The proxy port is derived from
+    // LICH_HOME (LEV-479) so we match by shape rather than literal.
+    expect(found?.primary_url).toMatch(
+      /^http:\/\/api\.feature-x\.lich\.localhost:\d+\/$/,
+    );
 
     controller.abort();
     await daemonPromise;
@@ -670,8 +676,13 @@ describe("runDaemon — real dashboard + proxy startup", () => {
       );
 
       // 3a. Dashboard refresh: poll /api/stacks until the new stack
-      // appears with the correct primary_url. The watcher debounce is
-      // 100ms; 2s with backoff is plenty even on slow CI.
+      // appears with a friendly-form primary_url. The watcher debounce
+      // is 100ms; 2s with backoff is plenty even on slow CI.
+      // primary_url is now the proxy URL — `http://api.added.lich.localhost:<proxy-port>/`
+      // — not the upstream. Match by shape since the proxy port is
+      // derived from LICH_HOME (LEV-479).
+      const friendlyUrlPattern =
+        /^http:\/\/api\.added\.lich\.localhost:\d+\/$/;
       let dashboardOk = false;
       const refreshDeadline = Date.now() + 2_000;
       while (Date.now() < refreshDeadline) {
@@ -681,7 +692,7 @@ describe("runDaemon — real dashboard + proxy startup", () => {
           primary_url?: string;
         }>;
         const added = stacks.find((s) => s.id === "added-stack");
-        if (added && added.primary_url === upstreamUrl) {
+        if (added?.primary_url && friendlyUrlPattern.test(added.primary_url)) {
           dashboardOk = true;
           break;
         }

@@ -4,9 +4,11 @@ import { join } from "node:path";
 
 import {
   clearDaemonPid,
+  clearDaemonProxyUrl,
   clearDaemonUrl,
   isDaemonAlive,
   writeDaemonPid,
+  writeDaemonProxyUrl,
   writeDaemonUrl,
   type PidFileOpts,
 } from "./pid-file.js";
@@ -36,8 +38,14 @@ export interface RunDaemonResult {
   exitCode: number;
 }
 
-const DEFAULT_SHUTDOWN_CHECK_MS = 10_000;
-const DEFAULT_SHUTDOWN_GRACE_TICKS = 3;
+// Auto-shutdown cadence. We poll every 2s and shut down after 2
+// consecutive empty ticks, AND the state watcher kicks an immediate
+// check on every snapshot change — so `lich down` of the last stack
+// surfaces a daemon exit within ~2-4s, not 30s. Two ticks (vs one) is
+// the cheap insurance against a down-then-up race where state briefly
+// shows zero before the new `lich up` writes its snapshot.
+const DEFAULT_SHUTDOWN_CHECK_MS = 2_000;
+const DEFAULT_SHUTDOWN_GRACE_TICKS = 2;
 
 const ALIVE_STATUSES: ReadonlySet<StackStatus> = new Set<StackStatus>([
   "starting",
@@ -145,6 +153,11 @@ export async function runDaemon(
   });
 
   let dashboardServer: DashboardServer | null = null;
+  // Forward-declared so the watcher's onChange can kick an auto-shutdown
+  // check on every state change (assigned below where the tick body
+  // closes over `emptyTicks` / `shutdownTimer`). Null-check guards the
+  // ~zero-likelihood window between watcher.start() and tick assignment.
+  let tickNow: (() => Promise<void>) | null = null;
   const watcher = new StateWatcher({
     stateRoot,
     onChange: () => {
@@ -157,6 +170,11 @@ export async function runDaemon(
           `routing table reload failed: ${(err as Error).message}`,
         );
       });
+      // Kick an immediate auto-shutdown check on every state change.
+      // Without this we'd wait up to `shutdownCheckMs` for the polling
+      // tick to notice the last stack went to "stopped" — feels lazy
+      // when the user just ran `lich down`.
+      if (tickNow) void tickNow().catch(() => {});
     },
   });
   await watcher.start();
@@ -167,6 +185,7 @@ export async function runDaemon(
     dashboardServer = await startDashboardServer({
       port: 0,
       stateRoot,
+      proxyPort,
       uiDir: opts.uiDir,
       embeddedUi: opts.embeddedUi,
       routingTable: {
@@ -207,6 +226,22 @@ export async function runDaemon(
     );
   }
 
+  // Friendly proxy URL — `http://lich.localhost:<proxy-port>/`. Written
+  // BEFORE daemon.url so that any consumer using daemon.url as the
+  // readiness signal can read this file unconditionally. The proxy may
+  // have failed to bind (proxy === null); skip in that case so we don't
+  // advertise a URL that won't resolve.
+  if (proxy !== null) {
+    try {
+      const u = new URL(proxy.url);
+      const friendly = `http://lich.localhost:${u.port}/`;
+      await writeDaemonProxyUrl(friendly, pidOpts);
+    } catch {
+      // Proxy URL didn't parse — skip. Auto-start falls back to
+      // daemon.url, which still works (just less pretty).
+    }
+  }
+
   // Write URL file only after Bun.serve has bound — the auto-start hook
   // polls this file to surface the URL in `lich up`.
   await writeDaemonUrl(dashboardServer.url, pidOpts);
@@ -225,6 +260,7 @@ export async function runDaemon(
         await proxy.stop().catch(() => {});
       }
       await clearDaemonUrl(pidOpts).catch(() => {});
+      await clearDaemonProxyUrl(pidOpts).catch(() => {});
       await clearDaemonPid(pidOpts).catch(() => {});
       if (opts.lichHome !== undefined) {
         if (prevLichHome === undefined) {
@@ -285,6 +321,11 @@ export async function runDaemon(
       shutdownTimer = setTimeout(tick, shutdownCheckMs);
     }
   };
+
+  // Wire the watcher's forward-declared hook to the real tick so every
+  // state.json change drives an immediate auto-shutdown check (in
+  // addition to the polling cadence below).
+  tickNow = tick;
 
   // Delay first tick by one full interval — `lich up` writes state.json
   // AFTER spawning the daemon, so an immediate count would auto-shutdown.

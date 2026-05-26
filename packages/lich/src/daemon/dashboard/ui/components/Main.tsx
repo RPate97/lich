@@ -14,10 +14,8 @@
 //      mockup never has a failed service, but real stacks do, and the
 //      reason + log tail are critical triage signals.
 
-import { useState } from 'react';
+import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  deriveServiceHost,
-  deriveServiceUrl,
   fmtRelative,
   formatHealthCount,
   formatPortRange,
@@ -103,18 +101,6 @@ function MainHeader({ stack }: { stack: StackView }) {
     }
   }
 
-  // Primary URL display — hostname stripped from primary_url, truncated by
-  // CSS. Falls back to the raw URL string if parsing fails.
-  let primaryUrlHost: string | null = null;
-  if (stack.primary_url) {
-    try {
-      const u = new URL(stack.primary_url);
-      primaryUrlHost = u.host;
-    } catch {
-      primaryUrlHost = stack.primary_url;
-    }
-  }
-
   return (
     <header className="main-hd">
       <div className="main-hd-l">
@@ -157,27 +143,6 @@ function MainHeader({ stack }: { stack: StackView }) {
         </div>
       </div>
       <div className="main-hd-r">
-        {stack.primary_url && primaryUrlHost && (
-          <a
-            className="open-web"
-            href={stack.primary_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Open ${stack.primary_url}`}
-          >
-            <span className="open-web-url">{primaryUrlHost}</span>
-            <svg
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M6 3h7v7M13 3 6.5 9.5M9 13H3.5C3.22 13 3 12.78 3 12.5V7" />
-            </svg>
-          </a>
-        )}
         <button
           className="btn"
           disabled={restarting || stopping}
@@ -243,7 +208,7 @@ function ServicesStrip({ stack }: { stack: StackView }) {
     <>
       <div className="svc-strip">
         {stack.services.map((svc) => (
-          <ServiceRow key={svc.name} stack={stack} service={svc} />
+          <ServiceRow key={svc.name} service={svc} />
         ))}
       </div>
       {stack.services
@@ -255,20 +220,20 @@ function ServicesStrip({ stack }: { stack: StackView }) {
   );
 }
 
-function ServiceRow({
-  stack,
-  service,
-}: {
-  stack: StackView;
-  service: ServiceView;
-}) {
+function ServiceRow({ service }: { service: ServiceView }) {
   const status = serviceStatus(service.state);
-  const host = deriveServiceHost(stack, service);
-  const url = deriveServiceUrl(stack, service);
+  const url = service.url;
+  // Display the URL without the protocol prefix — the row IS the link,
+  // the `http://` is noise once that's understood.
+  const host = url ? url.replace(/^https?:\/\//, '').replace(/\/$/, '') : null;
   const port = primaryPort(service);
 
   const [copied, setCopied] = useState(false);
-  async function copy() {
+  async function copy(e: ReactMouseEvent) {
+    // Stop the click from bubbling to the row's <a> wrapper — otherwise
+    // copying the URL also opens it.
+    e.preventDefault();
+    e.stopPropagation();
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -279,32 +244,34 @@ function ServiceRow({
     }
   }
 
-  return (
-    <div className="svc-row" data-status={status}>
+  // Row content shared between the clickable-link variant (when we have
+  // a URL) and the inert variant (when we don't — e.g. starting / stopped
+  // / no routing yet). Keeps the visual layout identical in both modes.
+  const content = (
+    <>
       <span className={`svc-dot ${status}`} />
       <span className="svc-name">{service.name}</span>
-      {host && url ? (
-        <a
-          className="svc-host"
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`Open ${url}`}
-        >
-          {host}
-        </a>
-      ) : (
-        <span className="svc-host" style={{ opacity: 0.6 }}>
-          {service.state}
-        </span>
-      )}
+      <span className="svc-host">{host ?? service.state}</span>
       {port != null && <span className="svc-port">:{port}</span>}
-      {url && (
+    </>
+  );
+
+  if (host && url) {
+    return (
+      <a
+        className="svc-row"
+        data-status={status}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`Open ${url}`}
+      >
+        {content}
         <button
           className="svc-copy"
           onClick={copy}
           title="Copy URL"
-          aria-label={`Copy ${host ?? 'service URL'}`}
+          aria-label={`Copy ${host}`}
         >
           {copied ? (
             <svg
@@ -331,7 +298,13 @@ function ServiceRow({
             </svg>
           )}
         </button>
-      )}
+      </a>
+    );
+  }
+
+  return (
+    <div className="svc-row" data-status={status} data-inert="1">
+      {content}
     </div>
   );
 }

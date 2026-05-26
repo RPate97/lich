@@ -3,7 +3,11 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { platform } from "node:os";
 
-import { isDaemonAlive, readDaemonUrl } from "./pid-file.js";
+import {
+  isDaemonAlive,
+  readDaemonProxyUrl,
+  readDaemonUrl,
+} from "./pid-file.js";
 
 export interface AutoStartOpts {
   lichHome?: string;
@@ -84,8 +88,16 @@ export async function ensureDaemonRunning(
 
   // Never re-open the browser on a reused daemon — handled by the early return above.
   if (opts.openBrowser === true) {
+    // Prefer the friendly proxy URL (http://lich.localhost:<port>/) so
+    // the user's browser address bar shows the brand URL rather than
+    // an ephemeral 127.0.0.1:<random-port>. The daemon writes that file
+    // BEFORE daemon.url, so it's guaranteed to exist by the time
+    // pollForUrl returns. Falls back to the direct URL if absent (e.g.
+    // proxy bind failed) so the open still works.
+    const friendly = await readDaemonProxyUrl(pidOpts).catch(() => null);
+    const targetUrl = friendly ?? url;
     try {
-      openInBrowser(url);
+      openInBrowser(targetUrl);
     } catch (err) {
       out.write(
         `[lich] warning: could not open browser: ${(err as Error).message}\n`,

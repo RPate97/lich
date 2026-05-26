@@ -400,35 +400,6 @@ button {
   justify-content: center;
 }
 
-/* Primary URL CTA — shadcn-primary treatment so the hostname is the
-   clear "click here" target. Hostname renders inline, truncated. */
-.open-web {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  background: var(--foreground);
-  color: #0a0a0a;
-  text-decoration: none;
-  border: 1px solid var(--foreground);
-  font-weight: 500;
-  transition: background .1s ease, transform .1s ease;
-}
-.open-web:hover { background: #e4e4e7; }
-.open-web:active { transform: translateY(1px); }
-.open-web svg { width: 13px; height: 13px; }
-.open-web-url {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 280px;
-}
-
 /* ---------- Services strip ---------- */
 
 .svc-strip {
@@ -449,11 +420,23 @@ button {
   font-size: 12.5px;
   background: transparent;
   border: 1px solid transparent;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
   transition: background .08s ease, border-color .08s ease;
 }
 .svc-row:hover {
   background: var(--muted);
   border-color: var(--border);
+}
+/* Rows with no derivable URL (starting / stopped / no routing yet)
+   render as a plain <div data-inert="1"> — no pointer affordance. */
+.svc-row[data-inert="1"] {
+  cursor: default;
+}
+.svc-row[data-inert="1"]:hover {
+  background: transparent;
+  border-color: transparent;
 }
 
 .svc-dot {
@@ -485,13 +468,14 @@ button {
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--muted-foreground);
-  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   transition: color .08s ease;
 }
-.svc-host:hover { color: var(--foreground); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+/* The whole row is the link now; on hover, raise the host text so the
+   "this opens that" affordance is unmistakable. */
+.svc-row:hover .svc-host { color: var(--foreground); }
 
 .svc-port {
   font-family: var(--font-mono);
@@ -683,41 +667,6 @@ button {
 }
 .filter-chip.all { font-style: italic; }
 .filter-chip.all .swatch { display: none; }
-
-.log-toolbar {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
-  align-items: center;
-}
-
-.tail-toggle {
-  height: 28px;
-  padding: 0 11px 0 9px;
-  border-radius: var(--radius-sm);
-  background: var(--muted);
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-  font-family: var(--font-mono);
-}
-.tail-toggle[data-on="1"] {
-  background: var(--muted-2);
-  border-color: var(--border-strong);
-  color: var(--foreground);
-}
-.tail-toggle .tail-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--subtle-foreground);
-}
-.tail-toggle[data-on="1"] .tail-dot {
-  background: var(--lich-green);
-}
 
 /* ---------- Log viewer (stream only) ---------- */
 

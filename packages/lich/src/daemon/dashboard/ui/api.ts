@@ -28,8 +28,8 @@ export type ServiceState =
 
 /**
  * Per-service detail. Mirrors `StackView["services"][number]` in
- * `stacks-view.ts`. `ports` and `failure_*` are omitted by the server when
- * empty, so they're optional here too.
+ * `stacks-view.ts`. `ports`, `failure_*`, and `url` are omitted by the
+ * server when not applicable, so they're optional here too.
  */
 export interface ServiceView {
   name: string;
@@ -38,6 +38,14 @@ export interface ServiceView {
   failure_reason?: string;
   failure_log_tail?: string[];
   ports?: Record<string, number>;
+  /**
+   * Friendly URL via the daemon's reverse proxy
+   * (`http://<service>.<worktree>.lich.localhost:<proxy-port>/`).
+   * Server-computed from the routing table + proxy port. Absent when
+   * the service has no routing entry yet (starting / stopped / no
+   * declared ports). Click target for the services strip.
+   */
+  url?: string;
 }
 
 /** Stack-level lifecycle status. Mirrors `StackStatus` in `state/snapshot.ts`. */
@@ -61,10 +69,19 @@ export interface StackView {
   active_profile?: string;
   services: ServiceView[];
   /**
-   * Clickable URL for the stack (derived from the first routing entry's
-   * `upstream_url` by the server). Omitted when the stack has no routing.
+   * Friendly URL for the stack as a whole — the first routing entry's
+   * `http://<service>.<worktree>.lich.localhost:<proxy-port>/`. Same
+   * format as the per-service `ServiceView["url"]`. Omitted when the
+   * stack has no routing yet.
    */
   primary_url?: string;
+  /**
+   * TCP port the daemon's reverse proxy is listening on. Surfaced so
+   * clients can render the apex worktree URL
+   * (`<worktree>.lich.localhost:<proxy-port>`) even when no service-level
+   * routing entry exists yet.
+   */
+  proxy_port?: number;
   /** ISO 8601 timestamp. */
   started_at?: string;
 }

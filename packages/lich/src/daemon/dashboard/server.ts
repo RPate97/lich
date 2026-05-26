@@ -128,6 +128,15 @@ export interface DashboardServerOpts {
    */
   stateRoot: string;
   /**
+   * TCP port the daemon's reverse proxy is listening on. Surfaced in
+   * each StackView so the SPA can render friendly URLs
+   * (`http://<service>.<worktree>.lich.localhost:<proxy-port>/`)
+   * without round-tripping for routing data. Defaults to `3300` (the
+   * conventional proxy port) so unit tests can omit it; production
+   * wires the actual bound port through from the daemon.
+   */
+  proxyPort?: number;
+  /**
    * Optional directory containing the compiled SPA assets. When set,
    * the server serves files from this directory and falls back to
    * `index.html` for any path that doesn't match a file. When unset,
@@ -284,7 +293,10 @@ export async function startDashboardServer(
     if (inflight) return inflight;
     inflight = (async () => {
       try {
-        const next = await loadStacksView(opts.stateRoot);
+        const next = await loadStacksView(
+          opts.stateRoot,
+          opts.proxyPort ?? 3300,
+        );
         // Atomic swap. Subsequent reads see the full new array; no
         // intermediate state is ever observable.
         cache = next;

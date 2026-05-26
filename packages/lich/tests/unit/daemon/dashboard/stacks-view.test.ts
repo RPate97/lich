@@ -68,7 +68,7 @@ function writeStateJson(
 
 describe("loadStacksView — empty / missing stateRoot", () => {
   it("returns an empty array for an empty stateRoot", async () => {
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toEqual([]);
   });
 
@@ -76,7 +76,7 @@ describe("loadStacksView — empty / missing stateRoot", () => {
     // Fresh-install scenario: <LICH_HOME>/stacks doesn't exist yet. The
     // daemon may legitimately call us before any `lich up` has run.
     const missing = join(stateRoot, "does-not-exist");
-    const result = await loadStacksView(missing);
+    const result = await loadStacksView(missing, 3300);
     expect(result).toEqual([]);
   });
 });
@@ -109,7 +109,7 @@ describe("loadStacksView — single stack", () => {
       ],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
 
     const stack = result[0];
@@ -165,7 +165,7 @@ describe("loadStacksView — multiple stacks", () => {
       services: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(3);
     // Sorted alphabetically by worktree_name for deterministic display.
     expect(result.map((s) => s.worktree_name)).toEqual([
@@ -199,7 +199,7 @@ describe("loadStacksView — no routing block", () => {
       // No `routing` field at all (pre-Plan-5 snapshot shape).
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].primary_url).toBeUndefined();
   });
@@ -234,15 +234,15 @@ describe("loadStacksView — with routing block", () => {
       ],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
-    // The dashboard wants a clickable friendly URL. The view layer
-    // takes the first routing entry's upstream_url as a default — the
-    // proxy port construction lives in the urls command path, not here.
-    // The friendly form is computed by the consumer if needed; for
-    // primary_url we just expose the upstream URL (matching the
-    // `commands/stacks.ts` pattern of "first allocated port wins").
-    expect(result[0].primary_url).toBe("http://127.0.0.1:9014");
+    // primary_url is the first routing entry's friendly form —
+    // `http://<hostname>.lich.localhost:<proxy-port>/` — built
+    // server-side so the SPA can render clickable URLs without
+    // reconstructing them from upstream addresses.
+    expect(result[0].primary_url).toBe(
+      "http://api.feature-x.lich.localhost:3300/",
+    );
   });
 
   it("leaves primary_url undefined when routing is empty array", async () => {
@@ -268,7 +268,7 @@ describe("loadStacksView — with routing block", () => {
       routing: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].primary_url).toBeUndefined();
   });
@@ -292,7 +292,7 @@ describe("loadStacksView — malformed state.json", () => {
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
 
     // The good stack still made it through; the broken one dropped out.
     expect(result).toHaveLength(1);
@@ -317,7 +317,7 @@ describe("loadStacksView — malformed state.json", () => {
       services: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].worktree_name).toBe("good-feature");
   });
@@ -334,7 +334,7 @@ describe("loadStacksView — malformed state.json", () => {
       services: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].worktree_name).toBe("good-feature");
   });
@@ -362,21 +362,21 @@ describe("loadStackView — single-stack lookup", () => {
       ],
     });
 
-    const result = await loadStackView(stateRoot, "stack-1");
+    const result = await loadStackView(stateRoot, "stack-1", 3300);
     expect(result).not.toBeNull();
     expect(result!.id).toBe("stack-1");
     expect(result!.worktree_name).toBe("feature-x");
   });
 
   it("returns null for a nonexistent stack id", async () => {
-    const result = await loadStackView(stateRoot, "nonexistent");
+    const result = await loadStackView(stateRoot, "nonexistent", 3300);
     expect(result).toBeNull();
   });
 
   it("returns null when state.json is malformed (no throw)", async () => {
     writeStateJson("broken", "not json");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await loadStackView(stateRoot, "broken");
+    const result = await loadStackView(stateRoot, "broken", 3300);
     expect(result).toBeNull();
     warn.mockRestore();
   });
@@ -409,7 +409,7 @@ describe("loadStacksView — failure metadata propagation", () => {
       ],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].services[0].failure_reason).toBe(
       "port 9014 already in use",
@@ -438,7 +438,7 @@ describe("loadStacksView — active_profile passthrough", () => {
       services: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].active_profile).toBe("frontend");
   });
@@ -453,7 +453,7 @@ describe("loadStacksView — active_profile passthrough", () => {
       services: [],
     });
 
-    const result = await loadStacksView(stateRoot);
+    const result = await loadStacksView(stateRoot, 3300);
     expect(result).toHaveLength(1);
     expect(result[0].active_profile).toBeUndefined();
   });
