@@ -10,7 +10,7 @@ import { schema } from "../../../src/config/schema.js";
 // directories up.
 const DOGFOOD_YAML = resolve(
   __dirname,
-  "../../../../../examples/dogfood-stack/lich.yaml"
+  "../../../../../packages/e2e/fixtures/dogfood-stack/lich.yaml"
 );
 
 function makeAjv() {

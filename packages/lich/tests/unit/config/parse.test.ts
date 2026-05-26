@@ -11,7 +11,7 @@ import type { LichConfig, OwnedService } from "../../../src/config/types.js";
 // the repo root is five `..` segments up.
 const DOGFOOD_YAML = resolve(
   __dirname,
-  "../../../../../examples/dogfood-stack/lich.yaml"
+  "../../../../../packages/e2e/fixtures/dogfood-stack/lich.yaml"
 );
 
 // ---------------------------------------------------------------------------

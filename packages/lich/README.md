@@ -43,7 +43,7 @@ SPA's `dist/` directory at runtime to serve static assets.
 ## End-to-end tests
 
 E2e tests live at `../../tests/e2e/`. They build the binary, copy
-`examples/dogfood-stack/` to a tmpdir, and exercise `lich` against it.
+`packages/e2e/fixtures/dogfood-stack/` to a tmpdir, and exercise `lich` against it.
 
 ```bash
 cd ../../tests/e2e && bun test

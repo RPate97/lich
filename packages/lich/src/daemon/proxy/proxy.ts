@@ -1,161 +1,31 @@
-/**
- * Friendly-URL reverse proxy (LEV-413, Plan 5 Task 11).
- *
- * The lich daemon hosts this single HTTP proxy on `runtime.proxy_port`
- * (default 3300). Browsers and CLIs hit `http://api.feature-x.lich.localhost:3300/`
- * and this server:
- *
- *   1. Reads the `Host` header.
- *   2. Strips the `:port` suffix and the `.lich.localhost` trailing
- *      label, leaving the `<service>.<worktree>` key.
- *   3. Looks that up in the {@link RoutingTable} the daemon shared in.
- *   4. On hit, forwards the request to the upstream URL (preserving
- *      method, headers, body, path, query).
- *   5. On miss, returns 404 with a plain-text body explaining the
- *      friendly URL pattern.
- *
- * ## Localhost-only binding
- *
- * The proxy binds to `localhost` (effectively `127.0.0.1`) explicitly.
- * Friendly URLs are a local-dev convenience; exposing them on
- * `0.0.0.0` would let any host on the network proxy traffic through
- * this daemon to arbitrary local upstreams, which is at minimum a
- * footgun. The `hostname` option in `Bun.serve` is the way to enforce
- * this.
- *
- * ## Hostname matching schema
- *
- * Per spec: `<service>.<worktree>.lich.localhost(:port)?`.
- *
- *   - `api.main.lich.localhost:3300`            -> key `api.main`
- *   - `supabase-db.feature-x.lich.localhost`    -> key `supabase-db.feature-x`
- *   - `localhost:3300` (no subdomain)           -> miss, 404
- *   - `example.com`                             -> miss, 404
- *
- * The match is case-insensitive both because RFC 9110 says so and
- * because the routing table itself lowercases keys.
- *
- * ## WebSocket limitation (HTTP only for v1)
- *
- * The proxy does not handle WebSocket upgrades. A request with
- * `Upgrade: websocket` will be forwarded as a regular HTTP request and
- * the upstream's 426/400 response will pass through. The documented
- * escape hatch is `lich urls --raw`, which prints the underlying
- * `localhost:<port>` URLs that bypass the proxy entirely. See the
- * design spec section "Friendly URLs" for rationale.
- *
- * ## Hop-by-hop headers
- *
- * HTTP/1.1 defines "hop-by-hop" headers that apply only to a single
- * transport-level hop and must not be forwarded by intermediaries.
- * We strip them from both the request (before forwarding to upstream)
- * and the response (before returning to client) so the proxy behaves
- * like a well-behaved intermediary rather than tunnelling them through.
- * See RFC 9110 § 7.6.1.
- */
-
 import { createHash } from "node:crypto";
 
 import type { RoutingTable } from "./routing.js";
 import { emptyStaticRoutes, type StaticRoutes } from "./static-routes.js";
 
 export interface ProxyOpts {
-  /**
-   * TCP port to listen on. Pass `0` for an ephemeral port (read it
-   * back via the returned `url`). Tests use `0` to avoid colliding
-   * with real daemons; production uses `runtime.proxy_port` (or the
-   * worktree-derived default per {@link deriveProxyPort}).
-   *
-   * If the requested port is already taken (EADDRINUSE), the proxy
-   * automatically falls back to `0` (OS-assigned) and logs a warning.
-   * This keeps multi-worktree workflows working when two stacks
-   * happen to resolve to the same preferred port — see LEV-479.
-   */
   port: number;
-  /**
-   * The routing table the daemon owns. The proxy doesn't reload it
-   * itself — that's the watcher's job. The proxy just calls `.get()`
-   * on every request.
-   */
   routingTable: RoutingTable;
-  /**
-   * LEV-481: daemon-wide static routes consulted BEFORE the per-stack
-   * routing table. The dashboard route (`Host: lich.localhost` →
-   * `http://127.0.0.1:<dashboard-port>`) is registered here so the
-   * apex of the proxy domain reaches the dashboard without needing a
-   * per-stack `state.json` entry.
-   *
-   * Optional. When omitted, the proxy behaves as if it received an
-   * empty static-routes table (no daemon-wide routes; every request
-   * falls through to the per-stack routing table).
-   */
   staticRoutes?: StaticRoutes;
-  /**
-   * Optional AbortSignal: when aborted, the server stops accepting
-   * new connections. The returned `stop()` method does the same;
-   * either path works. Tests prefer the signal pattern for clean
-   * teardown.
-   */
   signal?: AbortSignal;
 }
 
-/**
- * Lower (inclusive) bound for the worktree-derived proxy port range.
- * Picked to sit above common dev-server ports (3000, 5173, 8080, 8443)
- * and the typical ephemeral-port range macOS uses for outbound connects
- * (49152-65535 nominally, but most outbound picks land higher). Keeping
- * the range away from those buckets minimizes collisions with stacks
- * that pin their own friendly ports inside lich.yaml.
- */
+// 30000-49999: above common dev-server ports and macOS's typical
+// outbound ephemeral range, minimizing collisions with stack-pinned ports.
 const DERIVE_PROXY_PORT_LO = 30_000;
-
-/** Upper (exclusive) bound for the derived range — see {@link DERIVE_PROXY_PORT_LO}. */
 const DERIVE_PROXY_PORT_HI = 50_000;
-
-/** Span size for modulo bucketing (20_000 candidate ports). */
 const DERIVE_PROXY_PORT_SPAN = DERIVE_PROXY_PORT_HI - DERIVE_PROXY_PORT_LO;
 
-/**
- * Derive a stable proxy port from an opaque worktree-scoped identity
- * string. Same input always yields the same port (stable across
- * `lich down` / `lich up` cycles); different inputs almost certainly
- * yield different ports.
- *
- * Range: 30000-49999 (~20000 buckets). The birthday-paradox collision
- * threshold for that bucket size is ~167 simultaneous worktrees — well
- * above the 1-10 a single user typically has live at once. When a
- * collision DOES happen (the second daemon's preferred port is already
- * bound by the first), {@link startProxy}'s EADDRINUSE fallback kicks
- * the loser onto an OS-assigned port — see LEV-479 Option A.
- *
- * The identity is hashed with SHA-256 rather than something cheaper
- * (FNV, fnv1a32) because we don't need speed here — this runs once per
- * daemon startup — and SHA-256's avalanche properties keep nearby paths
- * (`~/.lich-a` vs `~/.lich-b`) in completely different buckets, which
- * matters for the multi-checkout case the issue describes.
- *
- * @param identity Stable per-daemon identity (typically LICH_HOME or a
- *   worktree id). Empty / undefined identities fall back to the lower
- *   bound so the function is total — but callers SHOULD pass a real
- *   identity; the empty-string fallback exists so misuse fails loudly
- *   with port collisions rather than crashes.
- */
+/** Stable per-identity port in 30000-49999. SHA-256 for avalanche (nearby paths land in different buckets). */
 export function deriveProxyPort(identity: string): number {
   const hash = createHash("sha256").update(identity).digest();
-  // Two bytes (16 bits = 0-65535) is more than enough resolution to map
-  // into our 20000-bucket span via modulo. Reading the first two bytes
-  // big-endian gives a stable cross-platform value.
   const rawSpan = hash.readUInt16BE(0);
   return DERIVE_PROXY_PORT_LO + (rawSpan % DERIVE_PROXY_PORT_SPAN);
 }
 
-/**
- * Hop-by-hop headers per RFC 9110 § 7.6.1 plus a few legacy ones we've
- * seen in the wild. These are stripped when we proxy a request or
- * response. `Host` is added by the upstream `fetch` call automatically
- * (it derives it from the URL), so we strip the incoming one to avoid
- * sending the friendly hostname to the upstream as well.
- */
+// Hop-by-hop headers per RFC 9110 § 7.6.1. Stripped from both proxied
+// requests and responses. `host` included so upstream sees its own bound
+// address rather than the friendly hostname.
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -165,32 +35,15 @@ const HOP_BY_HOP_HEADERS = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
-  // Not strictly hop-by-hop but we don't want to pass the friendly
-  // hostname through — upstream sees its own bound address.
   "host",
 ]);
 
-/**
- * Pull the key the routing table is indexed by out of an HTTP `Host`
- * header. Strips the `:port` suffix and the `.lich.localhost` trailing
- * label.
- *
- * Returns `null` if the host doesn't end in `.lich.localhost` — those
- * requests aren't for us (e.g. someone hitting `localhost:3300`
- * directly, or a stray request from a curious port scanner).
- *
- * Exported for unit testing; not part of the public proxy API.
- */
+/** Strip `:port` and `.lich.localhost` suffix; returns null when the host doesn't match the schema. */
 export function parseHostname(rawHost: string | null): string | null {
   if (!rawHost) return null;
 
-  // Drop `:port` suffix. Note: `URL.parse` would do this for us but it
-  // requires a scheme, and we don't want to fabricate one. A regex
-  // matches the actual grammar: host = name `:` port?
   const hostOnly = rawHost.replace(/:\d+$/, "").toLowerCase();
 
-  // Match `<key>.lich.localhost` exactly. Refuse bare `lich.localhost`
-  // (no service/worktree subdomain) — that has no route to point at.
   const suffix = ".lich.localhost";
   if (!hostOnly.endsWith(suffix)) return null;
 
@@ -200,26 +53,10 @@ export function parseHostname(rawHost: string | null): string | null {
   return key;
 }
 
-/**
- * Build the upstream Request given the incoming request and the
- * resolved upstream base URL.
- *
- * - Preserves path + query (the incoming request's pathname + search).
- * - Preserves method and body.
- * - Forwards headers except hop-by-hop ones (see HOP_BY_HOP_HEADERS).
- *
- * Returns a `Request` that can be passed straight to `fetch()`.
- */
 function buildUpstreamRequest(req: Request, upstreamBase: string): Request {
-  // Compose the upstream URL: `<upstream base origin><req path>`.
-  // `req.url` is an absolute URL (Bun normalizes Host + path), so we
-  // pull the pathname + search and append.
   const incoming = new URL(req.url);
   const base = new URL(upstreamBase);
-  // Preserve any subpath the upstream base URL may have (e.g.
-  // `http://localhost:9000/api`). We append the incoming pathname
-  // onto whatever pathname the base already had — with a single slash
-  // between them.
+  // Preserve any subpath on the base URL (e.g. http://localhost:9000/api).
   const basePath = base.pathname.replace(/\/$/, "");
   const reqPath = incoming.pathname.startsWith("/")
     ? incoming.pathname
@@ -232,9 +69,7 @@ function buildUpstreamRequest(req: Request, upstreamBase: string): Request {
     headers.set(name, value);
   }
 
-  // GET and HEAD must not carry a body per the Fetch spec; passing
-  // one to `new Request` throws. Other methods may have one (POST,
-  // PUT, PATCH, DELETE with body) — forward the original ReadableStream.
+  // GET/HEAD cannot carry a body per the Fetch spec.
   const method = req.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
 
@@ -242,42 +77,20 @@ function buildUpstreamRequest(req: Request, upstreamBase: string): Request {
     method,
     headers,
     body: hasBody ? req.body : undefined,
-    // Streaming uploads require this; Bun honors it.
-    // (Used to need a `@ts-expect-error` here when bun-types didn't
-    // declare `duplex` on RequestInit; current bun-types include it.)
     duplex: hasBody ? "half" : undefined,
     redirect: "manual",
   } as RequestInit & { duplex: "half" | undefined });
 }
 
-/**
- * Build the Response we send back to the client given the upstream's
- * Response. Strips hop-by-hop headers from the upstream response and
- * preserves status, body, and the remaining headers.
- *
- * ## Content-Encoding handling (LEV-458)
- *
- * Bun's `fetch()` (which the proxy uses to call the upstream) auto-
- * decompresses gzip/deflate/brotli bodies but **keeps** the original
- * `content-encoding` header on the Response. If we forward both the
- * (already-decompressed) body AND the `content-encoding: gzip` header,
- * the client tries to decompress the body a second time and explodes
- * with `Decompression error: ZlibError`. Bun-to-Bun proxying via
- * Next.js dev hit this constantly.
- *
- * We also strip `content-length` for the same reason: the decompressed
- * body has a different byte length than the header claims, and a
- * mismatch is worse than its absence (clients accept chunked encoding
- * when content-length is omitted).
- */
 function buildClientResponse(upstreamRes: Response): Response {
   const headers = new Headers();
   for (const [name, value] of upstreamRes.headers.entries()) {
     const lower = name.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(lower)) continue;
-    // See doc comment above — Bun's fetch decompressed the body but kept
-    // the encoding header; both content-encoding and content-length must
-    // be dropped to avoid client-side double-decompression / length lies.
+    // Bun's fetch auto-decompresses gzip/deflate/brotli but keeps the
+    // content-encoding header. Forwarding both makes the client double-
+    // decompress and explode. Drop content-length too — decompressed
+    // length differs from what the header claims.
     if (lower === "content-encoding" || lower === "content-length") continue;
     headers.set(name, value);
   }
@@ -289,17 +102,6 @@ function buildClientResponse(upstreamRes: Response): Response {
   });
 }
 
-/**
- * 404 body for misses. Explains the friendly URL schema so a user who
- * hit the proxy with the wrong hostname (typo, no `lich up` for that
- * worktree, stale browser tab) gets enough context to fix it.
- *
- * LEV-481: also lists daemon-wide static hosts (e.g. `lich.localhost`
- * for the dashboard) so a user who mis-typed the apex sees the correct
- * URL advertised. Static hosts are full hostnames (no `.lich.localhost`
- * suffix needed — they ARE the host); per-stack hosts get the suffix
- * appended for the user-facing URL.
- */
 function notFoundBody(
   proxyPort: number,
   knownHosts: string[],
@@ -332,41 +134,23 @@ function notFoundBody(
 }
 
 /**
- * Start the reverse proxy. Returns the bound URL (useful when `port: 0`)
- * and an idempotent `stop()` that drains in-flight requests before
- * resolving.
- *
- * The implementation is `Bun.serve({ fetch })` — Bun's HTTP server. We
- * pass `hostname: "localhost"` to bind 127.0.0.1 only (NOT 0.0.0.0;
- * see module docs). If `opts.signal` is provided, aborting it stops
- * the server too — convenient for tests using `AbortController`.
+ * Start the reverse proxy. Binds 127.0.0.1 only — friendly URLs are a
+ * local-dev convenience and binding 0.0.0.0 would expose every running
+ * stack's ports to the network.
  */
 export async function startProxy(opts: ProxyOpts): Promise<{
   url: string;
   stop(): Promise<void>;
 }> {
-  // Capture in a closure so we can reference it in the handler — Bun
-  // sets `server.port` after listen, but the proxy port we use in the
-  // 404 body should match the bound port (useful when port: 0).
   let actualPort = opts.port;
 
-  // LEV-481: daemon-wide static routes (e.g. the dashboard at the apex
-  // `lich.localhost`). Captured in a closure so the handler can consult
-  // them without re-resolving on every request. Defaults to an empty
-  // table when the caller doesn't supply one — preserves the pre-LEV-481
-  // behavior (every request goes through `parseHostname` → per-stack
-  // routing table).
   const staticRoutes = opts.staticRoutes ?? emptyStaticRoutes();
 
   const handler = async (req: Request): Promise<Response> => {
     const rawHost = req.headers.get("host");
 
-    // LEV-481: check daemon-wide static routes BEFORE the per-stack
-    // routing table. The apex `lich.localhost` lives here because it
-    // doesn't fit the subdomain grammar `parseHostname` expects — the
-    // helper would return null for the bare apex, so we'd never reach
-    // the routing table anyway. Static routes handle the apex (and any
-    // future daemon-wide hosts) naturally.
+    // Static routes (e.g. apex `lich.localhost` → dashboard) consulted
+    // first: the apex doesn't fit the subdomain grammar parseHostname expects.
     const staticUpstream = staticRoutes.lookup(rawHost);
     if (staticUpstream !== undefined) {
       try {
@@ -374,8 +158,6 @@ export async function startProxy(opts: ProxyOpts): Promise<{
         const upstreamRes = await fetch(upstreamReq);
         return buildClientResponse(upstreamRes);
       } catch (err) {
-        // Mirror the per-stack upstream-fetch failure shape so 502s read
-        // the same regardless of which routing tier matched.
         return new Response(
           `Upstream fetch failed for ${rawHost ?? "<no host>"} -> ${staticUpstream}\n${(err as Error).message}\n`,
           {
@@ -389,12 +171,6 @@ export async function startProxy(opts: ProxyOpts): Promise<{
     const key = parseHostname(rawHost);
 
     if (key === null) {
-      // Pull every known host so the body is actually useful for
-      // debugging. The routing table doesn't expose its keys directly;
-      // we don't need that interface beyond this debugging case, so
-      // we just include the request that arrived. Static-route hosts
-      // are listed alongside so a misrouted apex request sees
-      // `lich.localhost` advertised.
       return new Response(
         notFoundBody(
           actualPort,
@@ -428,10 +204,6 @@ export async function startProxy(opts: ProxyOpts): Promise<{
       const upstreamReq = buildUpstreamRequest(req, upstream);
       upstreamRes = await fetch(upstreamReq);
     } catch (err) {
-      // The upstream is unreachable — most common cause is the stack
-      // is mid-restart or its port shifted. Return 502 (Bad Gateway)
-      // with the underlying error so a debugging user can see what
-      // happened.
       return new Response(
         `Upstream fetch failed for ${key} -> ${upstream}\n${(err as Error).message}\n`,
         {
@@ -444,27 +216,14 @@ export async function startProxy(opts: ProxyOpts): Promise<{
     return buildClientResponse(upstreamRes);
   };
 
-  // LEV-459: bind BOTH IPv4 (127.0.0.1) and IPv6 (::1) loopback so
-  // clients hitting `http://127.0.0.1:<port>/` and `http://[::1]:<port>/`
-  // both reach the proxy. `hostname: "localhost"` (which we used to use)
-  // resolves to whichever family the OS prefers — on macOS that's `::1`,
-  // and a `curl http://127.0.0.1:<port>` then fails with ECONNREFUSED.
+  // Bind BOTH IPv4 (127.0.0.1) and IPv6 (::1) loopback. `hostname:
+  // "localhost"` picks one family — on macOS that's ::1, and then
+  // `curl http://127.0.0.1` fails with ECONNREFUSED. NOT 0.0.0.0:
+  // that would accept off-host connections.
   //
-  // We deliberately don't use `hostname: "0.0.0.0"` (would dual-stack
-  // bind on Linux but violates the spec's "loopback only" security
-  // guarantee — `0.0.0.0` accepts off-host connections).
-  //
-  // Sequence: bind IPv4 first to lock in the port (when `opts.port === 0`
-  // the OS picks one), read `serverV4.port`, then bind IPv6 on that same
-  // port. IPv6 bind is best-effort — if the host has IPv6 disabled, we
-  // log a warning and keep going with IPv4-only.
-  //
-  // LEV-479 Option A: if the preferred port is already in use, fall back
-  // to OS-assigned (port: 0). Multi-worktree workflows can have two
-  // daemons resolve to the same preferred port (either by both pinning
-  // the same value or by hash collision in `deriveProxyPort`); the
-  // first-to-bind wins and the loser shifts to an ephemeral port. We
-  // log a warning so a debugging operator can see the shift.
+  // Bind IPv4 first to lock in the port, then mirror on IPv6. On
+  // EADDRINUSE for the preferred port, fall back to OS-assigned and
+  // warn — covers two daemons resolving to the same derived port.
   let serverV4: ReturnType<typeof Bun.serve>;
   try {
     serverV4 = Bun.serve({
@@ -473,9 +232,6 @@ export async function startProxy(opts: ProxyOpts): Promise<{
       fetch: handler,
     });
   } catch (err) {
-    // Only EADDRINUSE triggers the fallback. Other bind failures
-    // (EACCES on a privileged port, ENOTSOCK from a corrupted state)
-    // are real configuration errors and should propagate.
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "EADDRINUSE" || opts.port === 0) {
       throw err;
@@ -490,9 +246,6 @@ export async function startProxy(opts: ProxyOpts): Promise<{
       fetch: handler,
     });
   }
-  // `Bun.serve`'s `.port` is typed `number | undefined` (it's undefined
-  // for unix-socket servers), but we always pass a numeric port, so it's
-  // always a number here. Assert to satisfy the typechecker.
   actualPort = serverV4.port as number;
 
   let serverV6: ReturnType<typeof Bun.serve> | null = null;
@@ -503,8 +256,7 @@ export async function startProxy(opts: ProxyOpts): Promise<{
       fetch: handler,
     });
   } catch (err) {
-    // IPv6 disabled, or some other bind failure on `::1`. Log + continue
-    // — IPv4 loopback is the more common path and is now bound.
+    // IPv6 disabled or some other bind failure on ::1. IPv4 already up — continue.
     // eslint-disable-next-line no-console
     console.warn(
       `proxy: IPv6 loopback bind on [::1]:${actualPort} failed (${(err as Error).message}); IPv4 only`,
@@ -515,18 +267,12 @@ export async function startProxy(opts: ProxyOpts): Promise<{
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
-    // `true` = stop in flight requests as well (don't drain — tests
-    // expect prompt teardown). Both servers must be stopped together.
     serverV4.stop(true);
     serverV6?.stop(true);
-    // Give the OS a tick to release the socket so a subsequent
-    // `fetch` to the same port immediately observes connection-refused
-    // rather than a stale connection. Empirically reliable.
+    // Yield so the OS releases the socket before any subsequent re-bind to the same port.
     await new Promise<void>((r) => setTimeout(r, 0));
   };
 
-  // Bridge the AbortSignal -> stop(). One-shot listener; aborting
-  // after `stop()` already ran is a no-op via the `stopped` guard.
   if (opts.signal) {
     if (opts.signal.aborted) {
       await stop();
@@ -542,28 +288,16 @@ export async function startProxy(opts: ProxyOpts): Promise<{
   }
 
   return {
-    // LEV-459: report the IPv4 URL — even though we also bind ::1, the
-    // explicit 127.0.0.1 URL is the safest default for callers and dodges
-    // the `localhost`-resolution-order issue that prompted this fix.
+    // Explicit 127.0.0.1 URL avoids the `localhost`-resolution-order issue described at the bind site.
     url: `http://127.0.0.1:${actualPort}`,
     stop,
   };
 }
 
-/**
- * Pull the routing table's known hostname keys for the 404 body.
- * The `RoutingTable` doesn't expose keys via its public API (we don't
- * want a general "list every route" API for callers), but the proxy
- * is a trusted internal consumer. We use a structural cast to read
- * the private `entries` map. If this turns into a real API surface
- * (e.g. dashboard wants to list all routes) we'd promote it; for now
- * it's a debugging affordance only the proxy uses.
- */
+// Structural cast to read the routing table's private entries map.
+// The 404 body wants every known hostname; promoting a `keys()` API for
+// only this use would force every consumer to deal with it.
 function knownHostsFromRouting(table: RoutingTable): string[] {
-  // The `entries` field is private in TS but accessible at runtime.
-  // We do this explicitly so the 404 body can be informative without
-  // forcing every RoutingTable consumer to deal with a `keys()` API
-  // they don't otherwise need.
   const internal = table as unknown as { entries: Map<string, string> };
   return Array.from(internal.entries.keys());
 }

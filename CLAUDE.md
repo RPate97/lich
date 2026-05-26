@@ -22,7 +22,7 @@ It's a single binary that wraps `docker compose` + host process supervision + an
    - Each plan filename is `YYYY-MM-DD-<topic>.md`. Match your task to one of the plans by scope.
    - When uncertain (multiple plans seem to overlap, or your task isn't clearly named anywhere), STOP and ask. Do not guess; doing the wrong plan's work is worse than waiting for clarification.
    - Once identified, read that plan **fully** — not just the task you've been given. Plans contain shared context (architecture, file structure, conventions) that earlier sections establish for later tasks. Tasks read out of context produce out-of-context code.
-4. **`examples/dogfood-stack/lich.yaml`** — the canonical example config. Postgres compose service + api/web/tunnel_demo owned services + profile coverage (dev:fast is the default; dev opt-in for DB; dev:env-override for env precedence demos).
+4. **`packages/e2e/fixtures/dogfood-stack/lich.yaml`** — the canonical example config. Postgres compose service + api/web/tunnel_demo owned services + profile coverage (dev:fast is the default; dev opt-in for DB; dev:env-override for env precedence demos).
 
 If you find yourself wanting to read anything under any `archive-v0/` directory, stop. Those describe a different system. They will mislead you.
 
@@ -36,14 +36,15 @@ packages/lich/                # the v1 codebase (single TS package, compiled to 
   dist/lich                   # compiled binary (after `bun run build`)
   dist/lich-daemon            # daemon companion binary
 
-examples/dogfood-stack/       # the canonical example — Next + Express + Postgres
+packages/e2e/fixtures/dogfood-stack/       # the canonical example — Next + Express + Postgres
   apps/web/                   # Next.js frontend
   apps/api/                   # Express API (Bun.sql against postgres)
   db/                         # migrations + seed
   compose.yaml                # postgres compose passthrough (image/healthcheck/tmpfs)
   lich.yaml                   # the stack config
 
-tests/e2e/                    # end-to-end tests; spawn real binary, run against dogfood-stack
+packages/e2e/                 # end-to-end tests; spawn real binary, run against dogfood-stack
+  tests/                      # per-feature .test.ts files
   helpers/                    # shared helpers (tmpdir, lich spawn, wait, dbmode, urls)
   vitest.workspace.ts         # dual-pool config (fast = dev:fast, compose = dev)
   _pool-manifest.ts           # which tests need the compose pool
@@ -85,10 +86,10 @@ cd packages/lich && bun run build
 cd packages/lich && bun test
 
 # Run e2e tests (both pools, ~5 min wall clock)
-cd tests/e2e && bun run test
+cd packages/e2e && bun run test
 
 # Run just the fast pool (no docker, ~3 min)
-cd tests/e2e && bunx vitest run --project fast
+cd packages/e2e && bunx vitest run --project fast
 
 # Run the lich binary directly
 ./packages/lich/dist/lich --help

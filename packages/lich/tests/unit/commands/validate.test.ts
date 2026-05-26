@@ -15,7 +15,7 @@ import {
 
 const DOGFOOD_YAML = resolve(
   __dirname,
-  "../../../../../examples/dogfood-stack/lich.yaml",
+  "../../../../../packages/e2e/fixtures/dogfood-stack/lich.yaml",
 );
 
 let tmp: string;

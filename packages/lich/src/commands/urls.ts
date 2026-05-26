@@ -1,38 +1,3 @@
-/**
- * `lich urls` — print URLs for the current worktree's stack.
- *
- * Two output modes:
- *
- *   Default (Plan 5+): friendly URLs that route through the per-machine
- *     reverse proxy daemon. One line per `routing` entry in the snapshot,
- *     formatted as `<service>[ (<key>)]: http://<hostname>.lich.localhost:<proxy-port>/`.
- *     This is what humans want — stable, memorable, works across worktrees
- *     without port-juggling.
- *
- *   `--raw` (Plan 1 behavior, kept as the escape hatch): direct upstream
- *     URLs of the form `<service>[.<key>]: http://127.0.0.1:<port>`. For
- *     users who can't or don't want to use `*.lich.localhost` (e.g. they
- *     have a corporate DNS or VPN that shadows it, or they need to point a
- *     tool at the raw port like a debugger or non-HTTP client).
- *
- * Both modes:
- *   - Read the per-worktree state snapshot.
- *   - If no stack exists for this worktree, emit a clear stderr error and
- *     exit 1.
- *
- * Empty-routing handling:
- *   - Default mode: if the snapshot has no routing entries (legacy
- *     pre-Plan-5 snapshot OR no services declared ports), print a helpful
- *     hint pointing the user at `lich up`.
- *   - `--raw` mode: if no service has allocated ports, print
- *     `(no ports allocated)` (the Plan 1 behavior) — keeping `--raw` a
- *     direct, drop-in replacement for what scripts may already depend on.
- *
- * This command intentionally does NOT verify the URLs are reachable — it
- * only reflects what's recorded in `state.json`. The e2e suite verifies
- * reachability by curling the printed URLs.
- */
-
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -47,18 +12,9 @@ import {
 } from "../urls/format.js";
 
 export interface RunUrlsInput {
-  /** Defaults to `process.cwd()`. */
   cwd?: string;
-  /** Defaults to `process.stdout`. */
   out?: NodeJS.WritableStream;
-  /** Defaults to `process.stderr`. */
   err?: NodeJS.WritableStream;
-  /**
-   * When true, print direct upstream URLs (`http://127.0.0.1:<port>`)
-   * instead of the friendly proxied URLs. The Plan 1 default behavior is
-   * kept under this flag as an escape hatch for users who can't use
-   * `*.lich.localhost`. See module-level JSDoc.
-   */
   raw?: boolean;
 }
 
@@ -66,21 +22,12 @@ export interface RunUrlsResult {
   exitCode: number;
 }
 
-/**
- * Print URL lines for the current worktree's stack. Default emits
- * friendly proxied URLs; `--raw` falls back to direct upstream URLs.
- */
 export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> {
   const cwd = input.cwd ?? process.cwd();
   const out = input.out ?? process.stdout;
   const err = input.err ?? process.stderr;
   const raw = Boolean(input.raw);
 
-  // ---- locate the worktree's stack ---------------------------------------
-  // detectWorktree throws if there's no lich.yaml above cwd. That's a
-  // distinct failure mode from "lich.yaml exists but no stack is running"
-  // — both should land the user in the same "run lich up first" mental
-  // model, so we collapse them into the same exit-1 message.
   let stackId: string;
   let worktreePath: string;
   try {
@@ -98,7 +45,6 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
     return { exitCode: 1 };
   }
 
-  // ---- --raw: emit direct upstream URLs (Plan 1 behavior) ----------------
   if (raw) {
     const rawUrls = buildRawUrls(snapshot.services);
     if (rawUrls.length === 0) {
