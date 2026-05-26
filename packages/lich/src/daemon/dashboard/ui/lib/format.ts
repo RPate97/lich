@@ -61,17 +61,18 @@ export function formatHealthCount(stack: StackView): string {
 }
 
 // Fixed palette — known service names get a stable hue; anything else falls
-// back to a hash into the palette.
+// back to a hash into the palette. Desaturated so the dashboard is calm to
+// read; each service is distinguishable but nothing screams.
 const KNOWN: Record<string, string> = {
-  postgres: '#60a5fa',
-  redis: '#f87171',
-  temporal: '#fbbf24',
-  api: '#a78bfa',
-  workers: '#4ade80',
-  web: '#22d3ee',
-  supabase: '#3ecf8e',
+  postgres: '#7a95c8',  // dusty blue
+  redis: '#c87a7a',     // dusty rose
+  temporal: '#c8a868',  // muted ochre
+  api: '#8b7ec8',       // muted lilac (matches brand purple)
+  workers: '#6b9e7a',   // sage (matches brand green)
+  web: '#7eb0b8',       // dusty cyan
+  supabase: '#6b9e7a',  // sage (alias for `workers` hue)
 };
-const PALETTE = ['#a78bfa', '#4ade80', '#22d3ee', '#fbbf24', '#f87171', '#60a5fa'];
+const PALETTE = ['#8b7ec8', '#6b9e7a', '#7eb0b8', '#c8a868', '#c87a7a', '#7a95c8'];
 
 /** Stable display color for a service, keyed by name. */
 export function serviceColor(name: string): string {

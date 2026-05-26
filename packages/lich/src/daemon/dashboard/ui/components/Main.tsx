@@ -104,8 +104,12 @@ function MainHeader({ stack }: { stack: StackView }) {
           </h1>
         </div>
         <div className="subtitle">
-          <MetaItem label="status" value={stack.status} />
-          <span className="sep" />
+          {stack.worktree_path && (
+            <>
+              <MetaItem label="worktree" value={stack.worktree_path} />
+              <span className="sep" />
+            </>
+          )}
           {/* When any service has failed, color the health pill red so the
               "N/M services failed" delta is unmissable at a glance. The
               MetaItem still renders the same text — only the .failed class
@@ -138,12 +142,26 @@ function MainHeader({ stack }: { stack: StackView }) {
       <div className="main-hd-r">
         {stack.primary_url && (
           <a
-            className="btn ghost"
+            className="open-web"
             href={stack.primary_url}
             target="_blank"
             rel="noopener noreferrer"
-            title={stack.primary_url}
+            title={`Open ${stack.primary_url}`}
           >
+            {/* Display the hostname inline so the operator sees where the
+                link goes before clicking. Falls back to the raw URL if the
+                URL fails to parse (shouldn't happen in practice — the
+                daemon always emits a well-formed primary_url). */}
+            <span className="open-web-url">
+              {(() => {
+                try {
+                  const u = new URL(stack.primary_url);
+                  return u.port ? `${u.host}` : u.host;
+                } catch {
+                  return stack.primary_url;
+                }
+              })()}
+            </span>
             <svg
               viewBox="0 0 16 16"
               fill="none"
@@ -152,11 +170,8 @@ function MainHeader({ stack }: { stack: StackView }) {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <path d="M6 3H3v10h10v-3" />
-              <path d="M9 3h4v4" />
-              <path d="M13 3 7 9" />
+              <path d="M6 3h7v7M13 3 6.5 9.5M9 13H3.5C3.22 13 3 12.78 3 12.5V7" />
             </svg>
-            open
           </a>
         )}
         <button

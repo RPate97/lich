@@ -16,19 +16,21 @@
   --input: #18181b;
   --ring: #3f3f46;
 
-  /* Lich brand — necro purple + phylactery green */
-  --lich-purple: #a78bfa;        /* primary accent */
-  --lich-purple-glow: #c4b5fd;
-  --lich-purple-dim: #6d28d9;
-  --lich-green: #4ade80;         /* healthy / phylactery */
-  --lich-green-glow: #86efac;
-  --lich-green-dim: #166534;
+  /* Lich brand — quiet accents, used sparingly. Desaturated to keep the
+     dashboard calm at rest; the eye should land on log lines and the
+     primary URL, not on the chrome. */
+  --lich-purple: #8b7ec8;        /* primary accent, desaturated */
+  --lich-purple-glow: #a89cd9;
+  --lich-purple-dim: #4c4470;
+  --lich-green: #6b9e7a;         /* healthy / phylactery, muted sage */
+  --lich-green-glow: #8fb89b;
+  --lich-green-dim: #2d4234;
 
   /* status */
   --status-healthy: var(--lich-green);
-  --status-unhealthy: #f87171;
-  --status-warning: #fbbf24;
-  --status-starting: #60a5fa;
+  --status-unhealthy: #c87a7a;
+  --status-warning: #c8a868;
+  --status-starting: #7a95c8;
 
   /* type */
   --font-sans: ui-sans-serif, -apple-system, "Inter", "Segoe UI", system-ui, sans-serif;
@@ -424,6 +426,37 @@ button {
 }
 .btn.primary:hover { background: var(--lich-purple-glow); }
 .btn svg { width: 14px; height: 14px; }
+
+/* Primary URL CTA in the main header — high-contrast inverted treatment
+   (shadcn-primary) so the hostname pops as the obvious target to click.
+   The URL is rendered inline (truncated to a sensible max-width) so the
+   operator can see where the link goes before clicking. */
+.open-web {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--foreground);
+  color: #0a0a0a;
+  text-decoration: none;
+  border: 1px solid var(--foreground);
+  font-weight: 500;
+  transition: background .1s ease, transform .1s ease;
+}
+.open-web:hover { background: #e4e4e7; }
+.open-web:active { transform: translateY(1px); }
+.open-web svg { width: 13px; height: 13px; }
+.open-web-url {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
 
 .icon-btn {
   width: 30px;
