@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
 
 Install the instrumentation skill:
 ```bash
-npx skills add https://github.com/rtpate97/lich-instrument
+npx skills add https://github.com/rtpate97/lich/skills/lich-instrument
 ```
 
 Setup lich with your favorite agent:
