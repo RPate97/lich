@@ -13,12 +13,23 @@ lich nuke      # tear down every stack on the machine from anywhere
 lich help      # include in skills for discoverability
 ```
 
-## Install
+## Get Started
 
 Available for macOS (arm64 / x64), Linux (arm64 / x64), and Windows via WSL.
 
+Install the CLI:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
+```
+
+Install the instrumentation skill:
+```bash
+npx skills add https://github.com/rtpate97/lich-instrument
+```
+
+Setup lich with your favorite agent:
+```bash
+/lich-instrument
 ```
 
 ## Why lich exists
