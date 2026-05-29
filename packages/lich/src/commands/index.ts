@@ -99,11 +99,14 @@ const restartHandler: CommandHandler = async (ctx) => {
     : ctx.argv.quiet
       ? "quiet"
       : "pretty";
+  const positionals = ctx.argv._.filter((a): a is string => typeof a === "string");
+  const services = ctx.argv.all ? ["--all"] : positionals;
   const result = await runRestart({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
+    services,
   });
-  return { ok: result.exitCode === 0, message: "" };
+  return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
 };
 
 const logsHandler: CommandHandler = async (ctx) => {

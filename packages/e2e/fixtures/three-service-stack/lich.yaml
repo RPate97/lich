@@ -1,0 +1,25 @@
+version: "1"
+
+profiles:
+  default:
+    default: true
+    services: []
+    owned: [svc-a, svc-b, svc-c]
+
+owned:
+  svc-a:
+    cmd: 'printf "svc-a ready\n"; sleep 9999'
+    ready_when:
+      log_match: "svc-a ready"
+
+  svc-b:
+    cmd: 'printf "svc-b ready\n"; sleep 9999'
+    depends_on: [svc-a]
+    ready_when:
+      log_match: "svc-b ready"
+
+  svc-c:
+    cmd: 'printf "svc-c ready\n"; sleep 9999'
+    depends_on: [svc-b]
+    ready_when:
+      log_match: "svc-c ready"

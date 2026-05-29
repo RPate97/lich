@@ -26,6 +26,7 @@ const argv = mri(process.argv.slice(2), {
     "raw",
     "browser",
     "context",
+    "all",
   ],
   string: ["env-group", "file"],
   default: { last: undefined },

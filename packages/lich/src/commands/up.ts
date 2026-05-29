@@ -1079,6 +1079,10 @@ async function startOwned(
     if (resolvedStopCmd !== undefined) svcSnap.stop_cmd = resolvedStopCmd;
     svcSnap.resolved_env = stringifyEnv(env);
     svcSnap.depends_on = def.depends_on ?? [];
+    svcSnap.service_cwd = spec.cwd;
+    if (def.ready_when !== undefined) {
+      svcSnap.ready_when = def.ready_when as Record<string, unknown>;
+    }
     if (def.lifecycle?.before_down && def.lifecycle.before_down.length > 0) {
       svcSnap.before_down = def.lifecycle.before_down.map((entry) => ({
         cmd: typeof entry === "string" ? entry : entry.cmd,

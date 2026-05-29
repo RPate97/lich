@@ -42,6 +42,10 @@ export interface ServiceSnapshot {
   depends_on?: string[];
   /** Per-service before_down hooks with pre-resolved env. */
   before_down?: SnapshotLifecycleEntry[];
+  /** Resolved service cwd (absolute path). Used by per-service restart. */
+  service_cwd?: string;
+  /** Serialized ready_when config. Used by per-service restart (avoids yaml re-parse). */
+  ready_when?: Record<string, unknown>;
 }
 
 export type StackStatus =
