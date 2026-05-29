@@ -5,6 +5,7 @@
 
 import type { FailureBlock } from "../failure/formatter.js";
 import {
+  formatHookFailureOutput,
   formatStderrSurface,
   type LifecycleEntryCompletion,
   type LifecycleEntryStart,
@@ -432,20 +433,41 @@ export function createPrettyOutput(
         stream.write(`${headlineColored}\n`);
       }
 
-      // Surface stderr inline if any, even on exit 0 (the `cmd || true`
-      // pattern). Returns null on empty tail so we don't spam no-output entries.
-      const stderrLine = formatStderrSurface({
-        phase: completion.phase,
-        index: completion.index,
-        total: completion.total,
-        cmd: completion.cmd,
-        stderrTail: completion.stderrTail,
-      });
-      if (stderrLine !== null) {
+      function writeLine(line: string): void {
         if (isTTY && activeSpinner) {
-          stream.write(`${CLEAR_LINE}${stderrLine}\n`);
+          stream.write(`${CLEAR_LINE}${line}\n`);
         } else {
-          stream.write(`${stderrLine}\n`);
+          stream.write(`${line}\n`);
+        }
+      }
+
+      if (completion.exitCode !== 0 && completion.logPath !== undefined) {
+        // Failure: dump full combined stdout+stderr from the log file (tailed, capped).
+        const result = formatHookFailureOutput({
+          phase: completion.phase,
+          index: completion.index,
+          total: completion.total,
+          cmd: completion.cmd,
+          exitCode: completion.exitCode,
+          logPath: completion.logPath,
+        });
+        if (result !== null) {
+          for (const line of result.lines) {
+            writeLine(`  ${line}`);
+          }
+          writeLine(paint(`  ${result.footer}`, "gray", color));
+        }
+      } else {
+        // Success (exit 0): surface stderr inline if any (the `cmd || true` pattern).
+        const stderrLine = formatStderrSurface({
+          phase: completion.phase,
+          index: completion.index,
+          total: completion.total,
+          cmd: completion.cmd,
+          stderrTail: completion.stderrTail,
+        });
+        if (stderrLine !== null) {
+          writeLine(stderrLine);
         }
       }
     },

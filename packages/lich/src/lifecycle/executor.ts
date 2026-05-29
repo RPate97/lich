@@ -10,7 +10,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 export type LifecyclePhase =
@@ -129,6 +134,51 @@ export function formatStderrSurface(args: {
     `▶ ${args.phase} (${args.index + 1}/${args.total}): ` +
     `${args.cmd} — stderr: ${tail}`
   );
+}
+
+const FAILURE_MAX_LINES = 500;
+const FAILURE_MAX_BYTES = 200_000;
+
+/**
+ * Format the full combined stdout+stderr from the log file for inline display
+ * on hook failure (exit ≠ 0). Returns `{ lines, footer }` where `lines` is the
+ * tailed output (capped at ~500 lines / 200KB) and `footer` is the log-path hint.
+ * Returns null when logPath is unset or the file cannot be read.
+ */
+export function formatHookFailureOutput(args: {
+  phase: LifecyclePhase;
+  index: number;
+  total: number;
+  cmd: string;
+  exitCode: number;
+  logPath: string;
+}): { lines: string[]; footer: string } | null {
+  let raw: string;
+  try {
+    const buf = readFileSync(args.logPath);
+    // Tail by bytes first to stay under 200KB budget.
+    const sliced =
+      buf.length > FAILURE_MAX_BYTES
+        ? buf.slice(buf.length - FAILURE_MAX_BYTES)
+        : buf;
+    raw = sliced.toString("utf8");
+  } catch {
+    return null;
+  }
+
+  const allLines = raw.split("\n");
+  // Strip trailing empty line left by a trailing newline before tailing.
+  if (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+    allLines.pop();
+  }
+  // Tail by lines — actual errors are at the bottom.
+  const tailed =
+    allLines.length > FAILURE_MAX_LINES
+      ? allLines.slice(allLines.length - FAILURE_MAX_LINES)
+      : allLines;
+
+  const footer = `(full log: ${args.logPath})`;
+  return { lines: tailed, footer };
 }
 
 interface NormalizedEntry {

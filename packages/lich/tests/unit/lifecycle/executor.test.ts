@@ -4,10 +4,12 @@ import {
   readFileSync,
   existsSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  formatHookFailureOutput,
   formatStderrSurface,
   runLifecycle,
   LifecycleHookError,
@@ -649,5 +651,121 @@ describe("runLifecycle", () => {
     expect(legacyCompletions[0]!.total).toBe(1);
     expect(modernCompletions[0]!.phase).toBe("before_up");
     expect(modernCompletions[0]!.total).toBe(1);
+  });
+});
+
+describe("formatHookFailureOutput", () => {
+  it("returns null when the log file does not exist", () => {
+    const result = formatHookFailureOutput({
+      phase: "before_up",
+      index: 0,
+      total: 1,
+      cmd: "pnpm db:reset",
+      exitCode: 1,
+      logPath: "/nonexistent/path/before_up-0.log",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns lines and footer for a readable log file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-"));
+    const logPath = join(dir, "before_up-0.log");
+    writeFileSync(logPath, "line one\nline two\nline three\n", "utf8");
+
+    const result = formatHookFailureOutput({
+      phase: "before_up",
+      index: 0,
+      total: 1,
+      cmd: "pnpm db:reset",
+      exitCode: 1,
+      logPath,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.lines).toEqual(["line one", "line two", "line three"]);
+    expect(result!.footer).toContain(logPath);
+    expect(result!.footer).toContain("full log");
+  });
+
+  it("tails to last 500 lines when output exceeds 500 lines", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-tail-"));
+    const logPath = join(dir, "before_up-0.log");
+    const allLines = Array.from({ length: 600 }, (_, i) => `line-${i}`);
+    writeFileSync(logPath, allLines.join("\n") + "\n", "utf8");
+
+    const result = formatHookFailureOutput({
+      phase: "before_up",
+      index: 0,
+      total: 1,
+      cmd: "pnpm db:reset",
+      exitCode: 2,
+      logPath,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.lines).toHaveLength(500);
+    // Tailed: should contain the last 500 lines (100–599)
+    expect(result!.lines[0]).toBe("line-100");
+    expect(result!.lines[499]).toBe("line-599");
+  });
+
+  it("includes combined stdout output (not just stderr) from the log file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-combined-"));
+    const logPath = join(dir, "before_up-0.log");
+    writeFileSync(
+      logPath,
+      "stdout: installing deps\nstderr: ERROR: missing package\n",
+      "utf8",
+    );
+
+    const result = formatHookFailureOutput({
+      phase: "before_up",
+      index: 0,
+      total: 2,
+      cmd: "pnpm install",
+      exitCode: 1,
+      logPath,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.lines.join("\n")).toContain("stdout: installing deps");
+    expect(result!.lines.join("\n")).toContain("stderr: ERROR: missing package");
+  });
+
+  it("strips trailing empty line from trailing newline in log file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-newline-"));
+    const logPath = join(dir, "after_up-0.log");
+    writeFileSync(logPath, "error: something went wrong\n", "utf8");
+
+    const result = formatHookFailureOutput({
+      phase: "after_up",
+      index: 0,
+      total: 1,
+      cmd: "run-migrations",
+      exitCode: 1,
+      logPath,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.lines).toEqual(["error: something went wrong"]);
+  });
+
+  it("returns lines for an empty log file (no crash)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-empty-"));
+    const logPath = join(dir, "before_up-0.log");
+    writeFileSync(logPath, "", "utf8");
+
+    const result = formatHookFailureOutput({
+      phase: "before_up",
+      index: 0,
+      total: 1,
+      cmd: "false",
+      exitCode: 1,
+      logPath,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.lines).toEqual([]);
+    expect(result!.footer).toContain(logPath);
   });
 });
