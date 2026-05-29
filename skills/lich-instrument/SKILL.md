@@ -221,6 +221,25 @@ Read these as needed — they're the source of truth for what lich supports.
 - **`references/recipes.md`** — common patterns past the basics: workspace tooling (turbo/nx), lockfile preflight (`pnpm install` caching via `before_up`), test-key overrides (Turnstile/Stripe/OAuth), external-CLI cross-link. Consult during Pass 3 when the stack has any of these wrinkles.
 - **`lich-feedback` skill** (separate install) — escalation target for the suggestion pattern above. Invoke when the user says yes to the "want me to write this up?" prompt during repeated-friction situations.
 
+## Skill version and refresh
+
+This skill ships a `VERSION` file alongside `SKILL.md`. The file contains a single version string that matches the lich release it was written against.
+
+If reference files produce incorrect yaml (validate rejects a property you proposed, or a pattern doesn't match what lich actually supports), check whether your installed copy is current:
+
+```bash
+# Compare installed version to what's in the repo
+cat ~/.claude/skills/lich-instrument/VERSION
+# expected: matches skills/lich-instrument/VERSION in the lich repo
+
+# Refresh via skills CLI
+npx skills update lich-instrument
+
+# If update isn't available, remove and re-add
+npx skills remove lich-instrument
+npx skills add https://github.com/rpate97/lich/skills/lich-instrument
+```
+
 ## What NOT to do
 
 - **Don't write a generic template without surveying.** Every stack is different. The interview catches the wrinkles.
