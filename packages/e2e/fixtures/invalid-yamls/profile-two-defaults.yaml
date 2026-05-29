@@ -1,0 +1,11 @@
+version: "1"
+owned:
+  api:
+    cmd: "x"
+profiles:
+  alpha:
+    default: true
+    owned: [api]
+  beta:
+    default: true
+    owned: [api]

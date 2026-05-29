@@ -1,0 +1,12 @@
+{
+  "name": "lich-dogfood-stack",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:web": "cd apps/web && bun run dev",
+    "dev:api": "cd apps/api && bun run dev",
+    "migrate": "psql \"$DATABASE_URL\" -f db/migrations/01_init.sql",
+    "seed": "psql \"$DATABASE_URL\" -f db/seed.sql"
+  }
+}

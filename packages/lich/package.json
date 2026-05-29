@@ -1,0 +1,32 @@
+{
+  "name": "@lich/lich",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "lich": "./dist/lich"
+  },
+  "scripts": {
+    "build": "npm run build:ui && npm run build:ui:embed && npm run build:schema && npm run build:cli && npm run build:daemon",
+    "build:cli": "bun build --compile --target=bun --outfile=dist/lich src/bin/lich.ts",
+    "build:daemon": "bun build --compile --target=bun --outfile=dist/lich-daemon src/bin/lich-daemon.ts",
+    "build:schema": "bun ./scripts/build-schema.ts",
+    "build:ui": "cd src/daemon/dashboard/ui && ([ -d node_modules ] || npm install --prefer-offline) && npm run build",
+    "build:ui:embed": "bun ./scripts/embed-ui.ts",
+    "dev": "bun run src/bin/lich.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "chokidar": "^5.0.0",
+    "mri": "^1.2.0",
+    "yaml": "^2.9.0"
+  }
+}

@@ -1,0 +1,165 @@
+# Troubleshooting
+
+Common gotchas, in roughly the order people hit them.
+
+## `command not found: turbo` (or nx, lage, wireit, prisma, etc.)
+
+Symptom: your `lich.yaml` has `cmd: turbo run dev` (or similar) and lich reports "command not found" — even though `turbo` is installed as a workspace dep at `node_modules/.bin/turbo`.
+
+Cause: spawned commands inherit `PATH` from the parent shell, but `node_modules/.bin` isn't on `PATH` by default unless you went through the package manager (`pnpm exec`, `yarn run`, `npm exec`).
+
+Fix: either route through the package manager:
+
+```yaml
+owned:
+  server:
+    cmd: pnpm exec turbo run dev --filter=server   # pnpm exec sets PATH correctly
+```
+
+Or rely on lich's auto-prepended `node_modules/.bin` (it's part of the resolved env now — newer versions of lich handle this for you).
+
+See [Recipes → Monorepo workspace tooling](/recipes/#recipe-2-monorepo-workspace-tooling-turbo-nx-lage-wireit) for the full pattern.
+
+## `supabase start` doesn't tear down on `lich down`
+
+Symptom: after `lich down`, `docker ps` still shows the supabase containers. The next `lich up` either collides on container names or silently attaches to the previous run's containers.
+
+Cause: you wrapped `supabase start` in `lifecycle.before_up` (or modeled it as a regular long-lived owned service). Either way, lich has nothing to invoke when it's time to tear the spawned containers down.
+
+Fix: model the launcher as a oneshot owned service with `stop_cmd:`:
+
+```yaml
+owned:
+  supabase:
+    cmd: supabase start
+    oneshot: true
+    stop_cmd: supabase stop
+    env:
+      SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # per-worktree namespace
+    # ... ports, ready_when, etc.
+```
+
+See [Oneshot services](/concepts/oneshot-services) for the full walkthrough.
+
+## Supabase auth links go to the wrong port
+
+Symptom: `supabase start` runs, you sign in via magic link, the email link points to a different port than your web app is actually on. Or worse: it points to a hardcoded port that conflicts with another worktree's stack.
+
+Cause: `supabase/config.toml`'s `auth.site_url` is pinned to a specific port, but lich allocates a different port per worktree.
+
+Fix: set `SUPABASE_AUTH_SITE_URL` on the supabase service's env so the env override beats the config.toml value:
+
+```yaml
+owned:
+  supabase:
+    cmd: supabase start
+    oneshot: true
+    stop_cmd: supabase stop
+    env:
+      SUPABASE_AUTH_SITE_URL: "http://localhost:${owned.web.port}"
+```
+
+This works because lich allocates `owned.web.port` before `supabase start` runs (see [interpolation port-allocation timing](/reference/interpolation#port-allocation-timing)).
+
+## `ready_when` times out without showing why
+
+Symptom: `lich up` waits the full `ready_when.timeout`, then fails with a generic "service X never became ready" message. You don't know if the process even started.
+
+Cause: without a `fail_when.log_match`, lich has no way to short-circuit the wait when the process logs an obvious failure (`EADDRINUSE`, `Cannot find module`, etc.).
+
+Fix: add a `fail_when.log_match` regex for common "won't recover" signals:
+
+```yaml
+owned:
+  api:
+    cmd: bun run dev
+    cwd: apps/api
+    port: { env: PORT }
+    ready_when:
+      http_get: /health
+      timeout: 30s
+    fail_when:
+      log_match: "EADDRINUSE|Cannot find module|SyntaxError|TypeError"
+```
+
+The regex matches against the service's log lines; a match fails the startup immediately (instead of waiting the full timeout) with the log tail surfaced inline.
+
+## Friendly URL 404s
+
+Symptom: `lich urls` prints `http://api.my-feature.lich.localhost:3300/`, but visiting it returns 404 from the lich proxy.
+
+Cause: the daemon's in-memory routing table is out of sync with `~/.lich/stacks/<id>/state.json`. This usually means a stale daemon that didn't pick up a recent stack-state update.
+
+Fix:
+
+```bash
+lich routing        # print the daemon's current routing table
+```
+
+Compare it to the entries you expect. If they don't match, restart the daemon:
+
+```bash
+lich nuke           # stops every stack AND the daemon
+# (the next `lich up` autostarts a fresh daemon)
+```
+
+Or kill the `lich-daemon` process directly; it'll respawn on the next CLI invocation that needs it.
+
+## `lich.yaml` rejects `build:` / `command:` / `restart:` on a compose service
+
+Symptom: `lich validate` rejects fields you'd normally use in a `docker-compose.yml`.
+
+Cause: lich's schema is closed (`additionalProperties: false`) on services. The allowed compose-spec passthroughs in v1 are: `image`, `environment`, `volumes`, `tmpfs`, `healthcheck`, `depends_on`, `networks`, `profiles`. Everything else (`command`, `entrypoint`, `working_dir`, `user`, `restart`, `build`, etc.) is rejected.
+
+Fix: write the unsupported fields to a sibling `compose.yaml` and reference it from `lich.yaml` via `compose_file:` / `service:` instead of inlining.
+
+## Two stacks collide on `supabase_db_myapp` (or similar container name)
+
+Symptom: running `lich up` from a second worktree fails because docker reports the container name is already in use.
+
+Cause: you forgot to include `${worktree.id}` in the supabase project_id (or whatever the per-worktree namespacing key is). Both worktrees default to the same project_id, both try to spawn a container with the same name.
+
+Fix:
+
+```yaml
+owned:
+  supabase:
+    env:
+      SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # was: "myapp"
+```
+
+Same pattern works for any external resource that needs per-instance namespacing — compose project names, KV namespaces, S3 prefixes, temporal task queues.
+
+## `lich up` reinstalls dependencies every time
+
+Symptom: every `lich up` spends 30-60s in `pnpm install` (or `yarn install` / `npm install`) even though the lockfile hasn't changed.
+
+Cause: you wrapped the install in `lifecycle.before_up` without a staleness check, so it runs unconditionally.
+
+Fix: compare the lockfile's mtime to the package manager's last-install marker and only reinstall if stale. See [Recipes → pnpm install preflight](/recipes/#recipe-3-pnpm-install-preflight-skip-cold-cache-reinstalls) for the recipe.
+
+## `lich validate` rejects `ready_when.port_open`
+
+Symptom: `lich validate` reports `additionalProperties: 'port_open' is not allowed` on `ready_when`.
+
+Cause: there is no `port_open` key. The TCP-level readiness probe is `tcp: "<host>:<port>"`.
+
+Fix:
+
+```yaml
+ready_when:
+  port_open: 5432              # WRONG — not a real key
+```
+
+```yaml
+ready_when:
+  tcp: "localhost:5432"        # right
+  # or, with interpolation against an allocated port:
+  tcp: "localhost:${services.postgres.host_port}"
+```
+
+## See also
+
+- [Common validate errors](/reference/lich-yaml#common-validate-errors) — full list of validate errors and remediation.
+- [Recipes](/recipes/) — patterns past the basics.
+- [Feedback](/feedback) — if you hit something that isn't here.

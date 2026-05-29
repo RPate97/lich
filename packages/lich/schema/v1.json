@@ -1,0 +1,1055 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/RPate97/lich/main/packages/lich/schema/v1.json",
+  "title": "lich.yaml (v1)",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "compose_cli": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "docker",
+            "podman",
+            "nerdctl"
+          ]
+        },
+        "compose": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "docker",
+            "podman",
+            "nerdctl"
+          ]
+        },
+        "proxy_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "port_range": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "ready_when_timeout": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)?$"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "kill_others_on_fail": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "compose_file": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "ports": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "env": {
+                          "type": "string"
+                        },
+                        "host_port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "container": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "container": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    "env": {
+                      "type": "string"
+                    },
+                    "host_port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    }
+                  },
+                  "required": [
+                    "container"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            ]
+          },
+          "lifecycle": {
+            "type": "object",
+            "properties": {
+              "before_start": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "after_ready": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "before_down": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "image": {
+            "type": "string"
+          },
+          "environment": {},
+          "healthcheck": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "volumes": {
+            "type": "array"
+          },
+          "networks": {},
+          "profiles": {
+            "type": "array"
+          },
+          "tmpfs": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "owned": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "port": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "env": {
+                    "type": "string"
+                  },
+                  "host_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "container": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "ports": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "env": {
+                      "type": "string"
+                    },
+                    "host_port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    "container": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "oneshot": {
+            "type": "boolean"
+          },
+          "stop_cmd": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "env_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env_from": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string"
+                    },
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "dotenv",
+                        "json"
+                      ]
+                    },
+                    "cwd": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "ready_when": {
+            "type": "object",
+            "properties": {
+              "http_get": {
+                "type": "string"
+              },
+              "tcp": {
+                "type": "string"
+              },
+              "log_match": {
+                "type": "string"
+              },
+              "cmd": {
+                "type": "string"
+              },
+              "timeout": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9]+(ms|s|m|h)?$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                ]
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "fail_when": {
+            "type": "object",
+            "properties": {
+              "log_match": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "lifecycle": {
+            "type": "object",
+            "properties": {
+              "before_start": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "after_ready": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "before_down": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "discover": {
+            "type": "object",
+            "properties": {
+              "glob": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name_template": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cmd_template": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cwd": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "glob",
+              "name_template",
+              "cmd_template"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "cmd"
+            ],
+            "not": {
+              "required": [
+                "discover"
+              ]
+            }
+          },
+          {
+            "required": [
+              "discover"
+            ],
+            "not": {
+              "required": [
+                "cmd"
+              ]
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      }
+    },
+    "env_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "env_from": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string"
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "dotenv",
+                  "json"
+                ]
+              },
+              "cwd": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cmd"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "before_up": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "type": "string"
+                  },
+                  "env_group": {
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "after_up": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "type": "string"
+                  },
+                  "env_group": {
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "before_down": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "type": "string"
+                  },
+                  "env_group": {
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "after_down": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "type": "string"
+                  },
+                  "env_group": {
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "env_groups": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "stack"
+        }
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "env_from": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string"
+                    },
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "dotenv",
+                        "json"
+                      ]
+                    },
+                    "cwd": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "extends": {
+            "type": "string"
+          },
+          "process_env": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "env_group": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "help": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cmd"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "owned": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extends": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "env_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env_from": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string"
+                    },
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "dotenv",
+                        "json"
+                      ]
+                    },
+                    "cwd": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "lifecycle": {
+            "type": "object",
+            "properties": {
+              "before_up": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "after_up": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "before_down": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "after_down": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cmd": {
+                          "type": "string"
+                        },
+                        "env_group": {
+                          "type": "string"
+                        },
+                        "cwd": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cmd"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false
+}

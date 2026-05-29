@@ -1,0 +1,283 @@
+# Target lich.yaml for the dogfood stack.
+# This file is what lich must handle by end of v1.
+# Until then, lich up against this config is the failing test case.
+version: "1"
+
+runtime:
+  # Plan 1: auto picks docker / podman / nerdctl from PATH. Pinned
+  # explicitly to document the dogfood-stack's expectation; `auto` is
+  # the default but having the block here exercises the runtime parser.
+  compose_cli: auto
+  # The daemon's reverse proxy port (Plan 5). 3300 is also the default;
+  # pinning makes friendly URLs deterministic across test environments.
+  proxy_port: 3300
+
+services:
+  # Plan 1 compose service. Replaces supabase (~3s startup vs ~35s).
+  # Single port → POSTGRES_HOST_PORT. Healthcheck via pg_isready.
+  #
+  # Fully inline (LEV-477): image / environment / healthcheck / tmpfs all
+  # live here in lich.yaml. Lich's compose override generator emits the
+  # entire service block (including the compose-spec passthroughs) into
+  # the per-stack `compose.override.yaml`, so no sibling compose file is
+  # needed. Pre-LEV-477 these had to live in a separate compose.yaml
+  # because the override generator silently dropped non-port/env fields.
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - { container: 5432, env: POSTGRES_HOST_PORT }
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dogfood
+    tmpfs:
+      # Ephemeral data directory — postgres state lives in RAM and goes
+      # away when the container is removed. Tests get a clean DB per
+      # `lich down → lich up` cycle without manual volume management.
+      # See docs/superpowers/specs/2026-05-25-e2e-suite-solid-and-fast-design.md
+      # Section 8 for rationale.
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dogfood"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+
+owned:
+  api:
+    cmd: bun run dev
+    cwd: apps/api
+    port: { env: PORT }
+    # No depends_on: [postgres] — the api gracefully tolerates missing
+    # DATABASE_URL (see apps/api/src/db.ts) so it can run under dev:fast
+    # without postgres. Under the `dev` profile, lich waits for postgres
+    # healthcheck before running after_up migrations, so the implicit
+    # ordering still holds for the only DB-touching operation.
+    ready_when:
+      http_get: /health
+      timeout: 30s
+    fail_when:
+      # Plan 4 fail_when demo: the Express dev server prints `EADDRINUSE` when
+      # the host port is occupied, and Node prints `Cannot find module` when a
+      # require/import resolves to nothing. Either failure mode means waiting
+      # on `ready_when.http_get` is pointless — fail_when short-circuits the
+      # ready loop and surfaces the offending log line inline.
+      log_match: "EADDRINUSE|Cannot find module"
+    # Per-service after_ready (LEV-472). `curl -f` against ${API_URL}/health
+    # is the timing assertion — only succeeds if api went ready first; a
+    # regression where the hook ran early would fail `lich up`.
+    lifecycle:
+      after_ready:
+        - 'printf "warmed_at=%s\nhealth=%s\n" "$(date -u +%FT%TZ)" "$(curl -fsS "${API_URL}/health")" > "${LICH_HOME}/api-warmup.log"'
+
+  web:
+    cmd: bun run dev
+    cwd: apps/web
+    port: { env: PORT }
+    depends_on: [api]
+    ready_when:
+      # Next.js dev server responds 200 on / once compilation finishes.
+      # More robust than log-matching framework cosmetic output.
+      http_get: /
+      timeout: 60s
+
+  # Plan 4 (LEV-368) ready_when.capture demo. Purely synthetic — this service
+  # exists to exercise the capture path end-to-end against a real owned
+  # process. The `echo … ; sleep 99999` pattern is deliberate: emit a log line
+  # that satisfies `ready_when.log_match`, then hang so the service stays
+  # alive (so `lich up` completes and downstream services / `lich env stack`
+  # can read the captured value). A future Plan 5 dashboard task reuses the
+  # same service for the "live log tail" demo.
+  tunnel_demo:
+    cmd: 'echo "starting"; sleep 0.5; echo "Listening on http://localhost:54999 (demo)"; sleep 99999'
+    ready_when:
+      log_match: "Listening on"
+      capture:
+        # Pull the URL out of the emitted log line and expose it as
+        # `${owned.tunnel_demo.captured.listen_url}` (used below in `env`).
+        # The literal port (54999) is hard-coded in `cmd` above — capture
+        # demonstrates the regex extraction, not dynamic port allocation.
+        listen_url: "http://localhost:\\d+"
+    fail_when:
+      # Sentinel patterns a real tunnel agent would emit on hard failure.
+      # tunnel_demo never emits these, so this is purely shape-coverage for
+      # the schema + watcher wiring.
+      log_match: "PANIC|FATAL"
+
+  # ready_when.cmd coverage. Probe curls api's /health; ready only when curl
+  # exits 0. Also touches $LICH_HOME/health-probe-ran so tests can prove the
+  # polling path actually executed.
+  health_probe:
+    cmd: "sleep 99999"
+    depends_on: [api]
+    ready_when:
+      cmd: 'touch "$LICH_HOME/health-probe-ran" && curl -fs http://localhost:${owned.api.port}/health > /dev/null'
+      timeout: 10s
+
+env_files:
+  - .env
+  - .env.local
+
+env:
+  # API wiring (used by the web app to call the API). Works under both
+  # dev and dev:fast since owned.api is in both profiles.
+  API_URL: "http://localhost:${owned.api.port}"
+
+  # DATABASE_URL is intentionally NOT at the top level — it interpolates
+  # ${services.postgres.host_port}, which doesn't resolve under dev:fast
+  # (no postgres). It lives in the `dev` profile's env (below) so that
+  # only profiles which run postgres see it. dev:env-override inherits
+  # via `extends: dev` and overrides the value with an intentionally
+  # non-resolving host for the profile-env-precedence demo.
+
+# Top-level env_from. Runs each cmd, parses stdout as dotenv (default), and
+# merges into the stack env. scripts/fake-secrets.sh stands in for a real
+# secret-manager CLI so e2e tests can assert on exact values. Reaches all
+# services + every env_group that extends `stack` + `lich exec` callers.
+env_from:
+  - cmd: "./scripts/fake-secrets.sh"
+    format: dotenv
+
+env_groups:
+  # Pattern C — "stack PLUS extras." Inherits the full resolved stack env
+  # (top-level env + ports + interpolated values) and layers an extra literal
+  # on top. Useful for integration tests that need stack wiring plus an extra
+  # flag.
+  stack-plus-test:
+    extends: stack
+    env:
+      TEST_MODE: "integration"
+
+  # Pattern B — "isolated standalone group." NO extends, so stack env does not
+  # leak in. `process_env: false` also blocks the user's shell env, giving a
+  # hermetic resolution. Exercised by the `tools:env-check` command below so
+  # e2e tests can prove the isolation guarantee.
+  isolated-tools:
+    process_env: false
+    env:
+      TOOL_MODE: "standalone"
+
+  # env_group-scoped env_from (LEV-470). Distinct from the top-level
+  # `env_from:` (Task 4) — this scoped variant only applies to callers that opt
+  # in via `env_group: from-cmd-secrets`. `process_env: false` blocks shell
+  # passthrough so resolution is reproducible regardless of the user's shell.
+  from-cmd-secrets:
+    process_env: false
+    env_from:
+      - cmd: "./scripts/fake-secrets.sh"
+        format: dotenv
+    env:
+      ENVIRONMENT: "ci"
+
+lifecycle:
+  # Long-form `after_up` entry exercises Plan 2 Task 13's env_group wiring
+  # (LEV-345 sentinel): the hook runs with the resolved `stack-plus-test`
+  # group's env (inherits `stack` vars + adds `TEST_MODE=integration`), and
+  # the e2e test in tests/e2e/lifecycle-env-group.test.ts asserts the marker
+  # file the script writes contains both the inherited DATABASE_URL and the
+  # layered TEST_MODE. If this hook ever silently drops back to the top-level
+  # env, TEST_MODE would be empty and the e2e test would fail loudly.
+  after_up:
+    - cmd: ./scripts/write-marker.sh
+      env_group: stack-plus-test
+
+  # Mirror coverage for `before_down` (LEV-473). Runs the teardown-marker
+  # script under the same `stack-plus-test` env_group so the e2e test can
+  # assert both that the hook fires AND that env_group resolution (plus
+  # post-LEV-485 top-level env/env_from propagation) reaches before_down.
+  before_down:
+    - cmd: ./scripts/teardown-marker.sh
+      env_group: stack-plus-test
+
+profiles:
+  # Default profile — no compose service, no DB. Most e2e tests use this
+  # for the speed (api + web come up in ~2-3s instead of ~5-8s with
+  # postgres). Routes that need DB (api's /api/things) return 503 here
+  # — the api code guards on DATABASE_URL presence (see apps/api/src/db.ts).
+  dev:fast:
+    default: true
+    services: []
+    owned: [api, web]
+    # No after_up — there's no DB to migrate.
+
+  # Full DB-backed stack. Tests that exercise postgres or
+  # lifecycle.after_up migrations opt in via `lich up dev`. The api's
+  # /health reports db: "live" under this profile (vs "stub" under dev:fast).
+  dev:
+    services: [postgres]
+    # `tunnel_demo` is included so `lich up dev` exercises the Plan 4 capture
+    # pipeline on every dev run — the captured listen_url flows into
+    # TUNNEL_DEMO_URL (see `env` above) before the after_up hooks fire.
+    # `health_probe` exercises ready_when.cmd (LEV-471).
+    owned: [api, web, tunnel_demo, health_probe]
+    env:
+      # Postgres connection (for migrate/seed via psql, and for any service
+      # that wants to talk to the database directly). Only defined under
+      # profiles that actually run postgres.
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
+    lifecycle:
+      after_up:
+        - psql "$DATABASE_URL" -f db/migrations/01_init.sql
+        - psql "$DATABASE_URL" -f db/seed.sql
+
+  # Minimal fast-iteration profile: keeps postgres + api + web, drops
+  # tunnel_demo + health_probe. Demonstrates the exclude-services pattern —
+  # the explicit owned list REPLACES the implicit "all declared" set rather
+  # than subtracting from it.
+  dev:lite:
+    services: [postgres]
+    owned: [api, web]
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
+    lifecycle:
+      after_up:
+        - psql "$DATABASE_URL" -f db/migrations/01_init.sql
+        - psql "$DATABASE_URL" -f db/seed.sql
+
+  # Plan 3 Task 18 demo: profile-scoped env precedence (LEV-392).
+  # Inherits `dev`'s services/owned list AND its lifecycle via `extends: dev`,
+  # so the same services start and the same after_up hooks run — only the env
+  # values below override what dev resolved. This exercises the layering rule
+  # (top-level → profile → per-service) without the per-profile depends_on
+  # tangle that an exclude-services profile would create against the api's
+  # `depends_on: [postgres]`. The hostname is intentionally non-resolving;
+  # e2e coverage asserts on the env Lich resolved (via `lich exec`), not on
+  # actually opening a DB connection. The "test-env without postgres"
+  # scenario (excluding services) is deferred to a Plan 3.x follow-up that
+  # adds per-profile depends_on overrides.
+  dev:env-override:
+    extends: dev
+    env:
+      DATABASE_URL: "postgresql://postgres:test@db.test.example.com:5432/dogfood"
+
+commands:
+  test:e2e:
+    cmd: echo "no e2e tests in dogfood-stack yet"
+    help: |
+      Placeholder for the dogfood-stack's own e2e tests.
+      Real tests come once the stack is working under lich.
+
+  db:psql:
+    cmd: psql "$DATABASE_URL"
+    help: |
+      Open a psql shell against the local Postgres.
+
+  tools:env-check:
+    cmd: printenv TOOL_MODE TEST_MODE LICH_WORKTREE
+    env_group: isolated-tools
+    help: |
+      Diagnostic: print the env vars that should be visible under the
+      `isolated-tools` env_group. Used by e2e tests to verify env_group
+      resolution end-to-end — because `isolated-tools` does NOT extend
+      `stack`, only TOOL_MODE should be set; TEST_MODE and DATABASE_URL
+      should be absent.
+
+  show:version:
+    cmd: 'echo "FAKE_SECRET_TOKEN=$FAKE_SECRET_TOKEN, region=$FAKE_SECRET_REGION, env=$ENVIRONMENT"'
+    env_group: from-cmd-secrets
+    help: |
+      Print values resolved via the `from-cmd-secrets` env_group: the
+      env_from shell-out (`scripts/fake-secrets.sh`) supplies
+      FAKE_SECRET_TOKEN + FAKE_SECRET_REGION, and the group's literal
+      `env:` supplies ENVIRONMENT. Exercises the env_from → env_group
+      → user-command end-to-end path.

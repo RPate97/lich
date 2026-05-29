@@ -1,0 +1,22 @@
+{
+  "name": "lich",
+  "private": true,
+  "packageManager": "bun@1.2.23",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "workspaces": ["packages/lich", "packages/e2e"],
+  "devDependencies": {
+    "bun-types": "^1.2.0",
+    "typescript": "^5.4.0"
+  },
+  "scripts": {
+    "build": "bun run --cwd packages/lich build",
+    "typecheck": "bun run --cwd packages/lich typecheck",
+    "test": "bun run --cwd packages/lich test",
+    "test:e2e": "bun run --cwd packages/e2e test",
+    "install-git-hooks": "bash scripts/install-git-hooks.sh",
+    "link": "bash scripts/link-local.sh",
+    "unlink": "bash scripts/unlink-local.sh"
+  }
+}

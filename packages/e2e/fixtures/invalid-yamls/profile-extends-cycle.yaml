@@ -1,0 +1,11 @@
+version: "1"
+owned:
+  api:
+    cmd: "x"
+profiles:
+  a:
+    extends: b
+    owned: [api]
+  b:
+    extends: a
+    owned: [api]

@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    // Path alias for ergonomic imports inside the e2e package. `@/`
+    // resolves to the package root so tests can write
+    // `import { LICH_BINARY } from "@/helpers/paths.js"` instead of
+    // `"../../../helpers/paths.js"`. Vitest doesn't auto-read tsconfig
+    // paths in 1.6 — the same alias is mirrored in vitest.config.ts via
+    // `resolve.alias`. Bun's test runner reads tsconfig paths natively
+    // so the alias works there with no extra wiring.
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
+
+    "types": ["node"]
+  },
+  "include": ["helpers/**/*.ts", "tests/**/*.ts", "*.ts"]
+}
