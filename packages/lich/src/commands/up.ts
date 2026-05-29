@@ -1832,7 +1832,6 @@ export interface CascadeKillInput {
   failedNames: Set<string>;
   /** Compose context for project-level `compose down`. Null when no compose services in the resolved profile. */
   composeCtx: RunnerCtx | null;
-  /** stop_cmd entries for oneshot services that already ran. Keyed by service name; values carry resolved cmd/cwd/env. */
   oneshotStopCmds?: Map<string, { cmd: string; cwd: string; env: NodeJS.ProcessEnv }>;
 }
 
@@ -1909,11 +1908,6 @@ export async function cascadeKillSiblings(
   return killed;
 }
 
-/**
- * Build the oneshotStopCmds map for {@link cascadeKillSiblings}.
- * Collects every owned service that has both `oneshot: true` and a `stop_cmd`, then
- * pairs the command with the resolved env + cwd already stashed in UpState.
- */
 function buildOneshotStopCmds(
   config: LichConfig,
   state: UpState,

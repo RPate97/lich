@@ -122,8 +122,7 @@ env:
   # API wiring (used by the web app to call the API). Works under both
   # dev and dev:fast since owned.api is in both profiles.
   API_URL: "http://localhost:${owned.api.port}"
-  # Plain literal — no interpolation needed. Used by the exec e2e test
-  # (LEV-515) to assert top-level env: literals reach `lich exec`.
+  # Asserted by exec e2e tests — don't remove (top-level literal canary).
   CANARY: "from-top-level"
 
   # DATABASE_URL is intentionally NOT at the top level — it interpolates
