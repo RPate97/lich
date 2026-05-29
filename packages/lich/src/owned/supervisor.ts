@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, openSync, realpathSync } from "node:fs";
+import { closeSync, openSync, realpathSync, statSync } from "node:fs";
 
 import { buildNodeBinAugmentedPath } from "../util/node-bin-path.js";
 
@@ -26,6 +26,8 @@ export interface OwnedHandle {
   name: string;
   pid: number;
   exited: Promise<ExitResult>;
+  /** Byte offset of the log file at spawn time. LogTail must start here to skip prior-run content. */
+  logStartOffset: number;
   /** Send SIGTERM, wait up to graceMs, then SIGKILL. Idempotent. Never rejects. */
   stop(graceMs?: number): Promise<void>;
   /** Non-null when the most recent stop() could not verify the process is gone. */
@@ -149,6 +151,14 @@ export async function startOwnedService(
     spec.cmd,
   );
 
+  // Record byte offset before appending so callers can tail only new content.
+  let logStartOffset = 0;
+  try {
+    logStartOffset = statSync(spec.logPath).size;
+  } catch {
+    /* ENOENT on first run — offset stays 0 */
+  }
+
   // Pass log fd directly as stdio: Node-piped stdout causes Next.js dev to wedge
   // in an infinite ERR_INVALID_URL loop after the first HTTP request.
   const logFd = openSync(spec.logPath, "a");
@@ -196,6 +206,7 @@ export async function startOwnedService(
     const noPidHandle: OwnedHandle = {
       name: spec.name,
       pid: Number.NaN,
+      logStartOffset,
       exited,
       stopWarning: null,
       stop: async (): Promise<void> => {
@@ -261,6 +272,7 @@ export async function startOwnedService(
   const handle: OwnedHandle = {
     name: spec.name,
     pid,
+    logStartOffset,
     exited,
     stop,
     get stopWarning() {

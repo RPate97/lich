@@ -496,3 +496,56 @@ describe("LogTail (AbortSignal shutdown)", () => {
     expect(removeCount).toBe(1);
   });
 });
+
+describe("LogTail (startOffset)", () => {
+  it("skips prior-run content when startOffset equals file size at spawn", async () => {
+    const dir = makeTmpDir();
+    const logPath = join(dir, "svc.log");
+    const priorContent = "prior-run-line-1\nprior-run-line-2\n";
+    writeFileSync(logPath, priorContent);
+    const offset = Buffer.byteLength(priorContent);
+
+    const tail = makeTail({ logPath, intervalMs: 10, startOffset: offset });
+    const received: string[] = [];
+    tail.onLine((line) => received.push(line));
+    await tail.start();
+
+    await sleep(40);
+    expect(received).toEqual([]);
+    expect(tail.buffer).toBe("");
+
+    appendFileSync(logPath, "new-run-line\n");
+    await waitFor(() => received.length >= 1);
+    expect(received).toEqual(["new-run-line"]);
+    expect(tail.buffer).toBe("new-run-line\n");
+  });
+
+  it("buffer excludes prior-run bytes so fail_when retroactive sweep sees only new content", async () => {
+    const dir = makeTmpDir();
+    const logPath = join(dir, "svc.log");
+    const stale = "STALE_SENTINEL\n";
+    writeFileSync(logPath, stale);
+    const offset = Buffer.byteLength(stale);
+
+    const tail = makeTail({ logPath, intervalMs: 10, startOffset: offset });
+    await tail.start();
+
+    appendFileSync(logPath, "clean-startup\n");
+    await waitFor(() => tail.buffer.includes("clean-startup"));
+
+    expect(tail.buffer).not.toContain("STALE_SENTINEL");
+    expect(tail.buffer).toContain("clean-startup");
+  });
+
+  it("startOffset of 0 behaves identically to omitting startOffset", async () => {
+    const dir = makeTmpDir();
+    const logPath = join(dir, "svc.log");
+    writeFileSync(logPath, "existing-line\n");
+
+    const tail = makeTail({ logPath, intervalMs: 10, startOffset: 0 });
+    await tail.start();
+
+    await waitFor(() => tail.buffer.includes("existing-line"));
+    expect(tail.buffer).toContain("existing-line");
+  });
+});

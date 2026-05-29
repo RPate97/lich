@@ -290,6 +290,71 @@ describe("watchFailWhen", () => {
   });
 });
 
+describe("watchFailWhen with startOffset (stale content immunity)", () => {
+  it("does not match a sentinel line written before the tail's startOffset", async () => {
+    // Simulates the second `lich up`: log file has ERR from prior shutdown but the
+    // new LogTail starts at the end of that content, so fail_when must not fire on it.
+    const dir = makeTmpDir();
+    const logPath = join(dir, "svc.log");
+    const stale = "ERR_STALE_SENTINEL prior run died here\n";
+    writeFileSync(logPath, stale);
+    const offset = Buffer.byteLength(stale);
+
+    // Tail starts at offset — prior content invisible to buffer and onLine.
+    const tail = new LogTail({ logPath, intervalMs: 10, startOffset: offset });
+    tails.push(tail);
+    await tail.start();
+    await sleep(40);
+
+    const controller = new AbortController();
+    const waiter = watchFailWhen({
+      tail,
+      pattern: /ERR_STALE_SENTINEL/,
+      signal: controller.signal,
+    });
+
+    const sentinel = sleep(200).then(() => "sentinel-won" as const);
+    const winner = await Promise.race([
+      waiter.then(() => "watcher-resolved" as const).catch(
+        () => "watcher-rejected" as const,
+      ),
+      sentinel,
+    ]);
+
+    expect(winner).toBe("sentinel-won");
+    controller.abort();
+    await expect(waiter).rejects.toThrow(/abort/i);
+  });
+
+  it("still fires on new content appended after the offset even when stale content matches the pattern", async () => {
+    const dir = makeTmpDir();
+    const logPath = join(dir, "svc.log");
+    const stale = "CRASH prior run\n";
+    writeFileSync(logPath, stale);
+    const offset = Buffer.byteLength(stale);
+
+    const tail = new LogTail({ logPath, intervalMs: 10, startOffset: offset });
+    tails.push(tail);
+    await tail.start();
+    await sleep(40);
+
+    const waiter = watchFailWhen({ tail, pattern: /CRASH/ });
+
+    setTimeout(() => {
+      appendFileSync(logPath, "CRASH new run also crashed\n");
+    }, 30);
+
+    await expect(waiter).rejects.toThrow(FailWhenMatchedError);
+    try {
+      await waiter;
+    } catch (err) {
+      expect((err as FailWhenMatchedError).matchedLine).toBe(
+        "CRASH new run also crashed",
+      );
+    }
+  });
+});
+
 describe("FailWhenMatchedError", () => {
   it("carries the matched line as a public field", () => {
     const err = new FailWhenMatchedError("EADDRINUSE port 8080");

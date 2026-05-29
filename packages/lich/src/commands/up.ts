@@ -1042,9 +1042,11 @@ async function startOwned(
   state.ownedHandles.set(name, handle);
 
   // One LogTail per service, shared by ready_when, fail_when, capture, and the dashboard live tail.
+  // Start at the pre-spawn offset so prior-run content is invisible to fail_when/ready_when.
   const tail = new LogTail({
     logPath: spec.logPath,
     signal: input.signal,
+    startOffset: handle.logStartOffset,
   });
   await tail.start();
   state.logTails.set(name, tail);

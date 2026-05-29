@@ -8,6 +8,8 @@ export interface LogTailOptions {
   logPath: string;
   intervalMs?: number;
   signal?: AbortSignal;
+  /** Skip bytes already in the file from a prior run. Defaults to 0 (read from start). */
+  startOffset?: number;
 }
 
 export type LogLineCallback = (line: string) => void;
@@ -27,7 +29,7 @@ export class LogTail {
   private readonly subscribers: Set<LogLineCallback> = new Set();
   private started = false;
   private stopped = false;
-  private offset = 0;
+  private offset: number;
   private pending = "";
   private bufferContent = "";
   private timer: NodeJS.Timeout | null = null;
@@ -37,6 +39,7 @@ export class LogTail {
     this.logPath = opts.logPath;
     this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.signal = opts.signal;
+    this.offset = opts.startOffset ?? 0;
 
     if (this.signal !== undefined) {
       if (this.signal.aborted) {
