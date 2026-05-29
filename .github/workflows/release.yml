@@ -68,6 +68,10 @@ jobs:
       - name: Install root deps
         run: bun install --frozen-lockfile
 
+      - name: Sync version.ts
+        run: |
+          sed -i 's/export const VERSION = .*/export const VERSION = "${{ inputs.version }}";/' packages/lich/src/version.ts
+
       - name: Build dashboard UI (Vite)
         run: bun run --cwd packages/lich build:ui
 
