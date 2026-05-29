@@ -63,6 +63,7 @@ docs/superpowers/
 4. **Stay scoped to the current task.** Don't reach forward into future tasks or future plans. If you spot a real issue that's out of scope, note it for later rather than fixing it now.
 5. **Don't read v0 docs.** Anything under any `archive-v0/` directory is stale guidance.
 6. **Follow the plan's testing/commit/verification structure exactly.** It exists to keep the feedback loop tight.
+7. **Comments: default to none.** The codebase had a comprehensive comment-cleanup pass; match that style. Only add a comment when the WHY is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug. Never write multi-paragraph docstrings or multi-line comment blocks; one short line is the maximum. Don't explain WHAT the code does (well-named identifiers do that). Don't reference the current task, fix, or callers ("added for X", "handles case from LEV-123") — those belong in the commit message and rot as the codebase evolves. If removing a comment wouldn't confuse a future reader, don't write it.
 
 ## Roadmap
 
