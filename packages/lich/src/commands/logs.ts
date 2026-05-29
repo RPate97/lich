@@ -1,21 +1,27 @@
-/**
- * `lich logs [service]` — read per-service log files from the state directory.
- * Without a service arg, aggregates all services with `[svc]` prefixes.
- */
-
 import { open, stat } from "node:fs/promises";
 
-import { serviceLogPath } from "../state/directory.js";
+import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
 import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
 import { detectWorktree } from "../worktree/detect.js";
+import type { LifecyclePhase } from "../lifecycle/executor.js";
 
 export interface RunLogsInput {
-  /** Optional service filter. If omitted, all services are aggregated. */
-  service?: string;
+  /** Source filter: service names or phase names. If omitted, all sources. */
+  sources?: string[];
   /** Follow mode (poll-tail). */
   follow: boolean;
-  /** Initial tail size in lines per service. */
-  tail: number;
+  /** Default page size (default 100). Overridable via --count. */
+  count: number;
+  /** Cursor for "before" pagination: show `count` lines before this line number. */
+  before?: number;
+  /** Cursor for "after" pagination: show lines after this line number. */
+  after?: number;
+  /** Regex filter string. */
+  grep?: string;
+  /** Emit all lines with no pagination. */
+  all: boolean;
+  /** Machine-readable JSON output. */
+  json: boolean;
   cwd?: string;
   out?: NodeJS.WritableStream;
   signal?: AbortSignal;
@@ -23,11 +29,32 @@ export interface RunLogsInput {
 
 export interface RunLogsResult {
   readonly exitCode: number;
-  /** Resolves after the initial dump (non-follow) or on abort (follow). */
   done: Promise<void>;
 }
 
 const POLL_INTERVAL_MS = 100;
+
+const PHASE_NAMES = new Set<string>([
+  "before_up",
+  "after_up",
+  "before_down",
+  "after_down",
+]);
+
+export interface LogLine {
+  n: number;
+  source: string;
+  text: string;
+}
+
+export interface LogPage {
+  lines: LogLine[];
+  cursor: { before: number; after: number };
+  total_lines: number;
+  has_more_before: boolean;
+  has_more_after: boolean;
+  new_since_after_cursor: number;
+}
 
 export function runLogs(input: RunLogsInput): RunLogsResult {
   const cwd = input.cwd ?? process.cwd();
@@ -51,87 +78,100 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
       return;
     }
 
-    const services = resolveServices(snapshot, input.service);
-    if (services === null) {
+    const resolved = resolveSources(snapshot, input.sources, out);
+    if (resolved === null) {
       holder.code = 1;
       return;
     }
 
-    const prefix = services.length > 1;
-
-    const offsets = new Map<string, number>();
-    for (const svc of services) {
-      const path = serviceLogPath(stackId, svc);
-      const { content, size } = await safeReadAll(path);
-      offsets.set(svc, size);
-      if (content.length === 0) continue;
-
-      const lines = tailLines(content, input.tail);
-      for (const line of lines) {
-        emitLine(out, prefix ? svc : null, line);
+    let grepRe: RegExp | null = null;
+    if (input.grep) {
+      try {
+        grepRe = new RegExp(input.grep, "u");
+      } catch {
+        writeLine(out, `lich logs: invalid --grep pattern: ${input.grep}`);
+        holder.code = 1;
+        return;
       }
     }
 
-    if (!input.follow) return;
+    if (input.follow) {
+      await runFollow(stackId, resolved, grepRe, input, out);
+      return;
+    }
 
-    const pending = new Map<string, string>();
-    for (const svc of services) pending.set(svc, "");
+    const merged = await readMerged(stackId, resolved);
+    const filtered = grepRe
+      ? merged.filter((l) => grepRe!.test(l.text))
+      : merged;
 
-    while (true) {
-      if (input.signal?.aborted) return;
+    if (input.after !== undefined) {
+      await runAfterCursor(filtered, input.after, out, input.json);
+      return;
+    }
 
-      for (const svc of services) {
-        if (input.signal?.aborted) return;
+    const count = input.count;
+    const total = filtered.length;
 
-        const path = serviceLogPath(stackId, svc);
-        let size: number | null = null;
-        try {
-          const st = await stat(path);
-          size = st.size;
-        } catch {
-          // file may appear later when the service starts writing
-          continue;
-        }
+    let page: LogLine[];
+    let startN: number;
+    let endN: number;
 
-        const prev = offsets.get(svc) ?? 0;
-        if (size <= prev) continue;
+    if (input.before !== undefined) {
+      const beforeIdx = input.before - 1;
+      const start = Math.max(0, beforeIdx - count);
+      page = filtered.slice(start, beforeIdx);
+      startN = start + 1;
+      endN = beforeIdx;
+    } else if (input.all) {
+      page = filtered;
+      startN = 1;
+      endN = total;
+    } else {
+      // default: last `count` lines
+      const start = Math.max(0, total - count);
+      page = filtered.slice(start);
+      startN = start + 1;
+      endN = total;
+    }
 
-        const length = size - prev;
-        const buf = Buffer.allocUnsafe(length);
-        const handle = await open(path, "r");
-        let bytesRead = 0;
-        try {
-          const r = await handle.read(buf, 0, length, prev);
-          bytesRead = r.bytesRead;
-        } finally {
-          try {
-            await handle.close();
-          } catch {
-            /* ignore */
-          }
-        }
-        offsets.set(svc, prev + bytesRead);
-        if (bytesRead === 0) continue;
+    if (input.json) {
+      const result: LogPage = {
+        lines: page,
+        cursor: {
+          before: startN,
+          after: endN,
+        },
+        total_lines: total,
+        has_more_before: startN > 1,
+        has_more_after: false,
+        new_since_after_cursor: 0,
+      };
+      writeLine(out, JSON.stringify(result));
+      return;
+    }
 
-        const chunk = buf.slice(0, bytesRead).toString("utf8");
-        const carry = pending.get(svc) ?? "";
-        const combined = carry + chunk;
+    const prefix = resolved.length > 1;
+    for (const line of page) {
+      emitLine(out, prefix ? line.source : null, line.text);
+    }
 
-        // Split on complete lines; carry trailing partial to next tick.
-        const lastNewline = combined.lastIndexOf("\n");
-        if (lastNewline < 0) {
-          pending.set(svc, combined);
-          continue;
-        }
-        const complete = combined.slice(0, lastNewline);
-        pending.set(svc, combined.slice(lastNewline + 1));
-
-        for (const line of complete.split(/\r?\n/)) {
-          emitLine(out, prefix ? svc : null, line);
-        }
+    if (!input.all && total > 0) {
+      const hasMoreBefore = startN > 1;
+      writeLine(out, "");
+      writeLine(
+        out,
+        `Showing lines ${startN}–${endN} of ${total} (newest first).`,
+      );
+      if (hasMoreBefore) {
+        writeLine(out, `Older: lich logs --before ${startN}`);
       }
-
-      await sleep(POLL_INTERVAL_MS, input.signal);
+      writeLine(out, `Newer: lich logs --after ${endN}`);
+      if (input.grep) {
+        writeLine(out, `Filter: --grep ${JSON.stringify(input.grep)}   Full: --all   Live: --follow`);
+      } else {
+        writeLine(out, `Full: --all   Live: --follow`);
+      }
     }
   })().catch((err) => {
     writeLine(out, `lich logs: ${(err as Error).message}`);
@@ -144,26 +184,199 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
     },
     done,
   };
+}
 
-  /** Returns the service names to stream, or null if `filter` is unknown (writes an error). */
-  function resolveServices(
-    snapshot: StackSnapshot,
-    filter: string | undefined,
-  ): string[] | null {
-    const allNames = snapshot.services.map((s) => s.name);
-    if (filter === undefined) return allNames;
-    if (allNames.includes(filter)) return [filter];
+async function runAfterCursor(
+  allLines: LogLine[],
+  afterCursor: number,
+  out: NodeJS.WritableStream,
+  json: boolean,
+): Promise<void> {
+  const newLines = allLines.filter((l) => l.n > afterCursor);
+  const total = allLines.length;
+  const newCount = newLines.length;
 
-    const available = allNames.length > 0 ? allNames.join(", ") : "(none)";
-    writeLine(
-      out,
-      `unknown service "${filter}"; available services: ${available}`,
-    );
-    return null;
+  if (json) {
+    const endN = total;
+    const result: LogPage = {
+      lines: newLines,
+      cursor: {
+        before: afterCursor + 1,
+        after: endN,
+      },
+      total_lines: total,
+      has_more_before: afterCursor > 0,
+      has_more_after: false,
+      new_since_after_cursor: newCount,
+    };
+    writeLine(out, JSON.stringify(result));
+    return;
+  }
+
+  if (newCount === 0) {
+    writeLine(out, `No new lines since cursor ${afterCursor}.`);
+    return;
+  }
+
+  const prefix = new Set(newLines.map((l) => l.source)).size > 1;
+  for (const line of newLines) {
+    emitLine(out, prefix ? line.source : null, line.text);
+  }
+  writeLine(out, "");
+  writeLine(out, `${newCount} new line${newCount === 1 ? "" : "s"} since cursor ${afterCursor}.`);
+  writeLine(out, `Next: lich logs --after ${total}`);
+}
+
+async function runFollow(
+  stackId: string,
+  sources: Source[],
+  grepRe: RegExp | null,
+  input: RunLogsInput,
+  out: NodeJS.WritableStream,
+): Promise<void> {
+  const offsets = new Map<string, number>();
+
+  for (const src of sources) {
+    const path = sourcePath(stackId, src);
+    const { content, size } = await safeReadAll(path);
+    offsets.set(src.name, size);
+    if (content.length === 0) continue;
+
+    const lines = tailLines(content, input.count);
+    const prefix = sources.length > 1;
+    for (const line of lines) {
+      if (grepRe && !grepRe.test(line)) continue;
+      emitLine(out, prefix ? src.name : null, line);
+    }
+  }
+
+  const pending = new Map<string, string>();
+  for (const src of sources) pending.set(src.name, "");
+
+  while (true) {
+    if (input.signal?.aborted) return;
+
+    for (const src of sources) {
+      if (input.signal?.aborted) return;
+
+      const path = sourcePath(stackId, src);
+      let size: number | null = null;
+      try {
+        const st = await stat(path);
+        size = st.size;
+      } catch {
+        continue;
+      }
+
+      const prev = offsets.get(src.name) ?? 0;
+      if (size <= prev) continue;
+
+      const length = size - prev;
+      const buf = Buffer.allocUnsafe(length);
+      const handle = await open(path, "r");
+      let bytesRead = 0;
+      try {
+        const r = await handle.read(buf, 0, length, prev);
+        bytesRead = r.bytesRead;
+      } finally {
+        try {
+          await handle.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      offsets.set(src.name, prev + bytesRead);
+      if (bytesRead === 0) continue;
+
+      const chunk = buf.slice(0, bytesRead).toString("utf8");
+      const carry = pending.get(src.name) ?? "";
+      const combined = carry + chunk;
+
+      const lastNewline = combined.lastIndexOf("\n");
+      if (lastNewline < 0) {
+        pending.set(src.name, combined);
+        continue;
+      }
+      const complete = combined.slice(0, lastNewline);
+      pending.set(src.name, combined.slice(lastNewline + 1));
+
+      const prefix = sources.length > 1;
+      for (const line of complete.split(/\r?\n/)) {
+        if (grepRe && !grepRe.test(line)) continue;
+        emitLine(out, prefix ? src.name : null, line);
+      }
+    }
+
+    await sleep(POLL_INTERVAL_MS, input.signal);
   }
 }
 
-/** Read an entire file as utf-8 plus its size. Returns empty/0 if absent. */
+interface Source {
+  name: string;
+  kind: "service" | "phase";
+}
+
+function sourcePath(stackId: string, src: Source): string {
+  if (src.kind === "phase") {
+    return phaseLogPath(stackId, src.name as LifecyclePhase);
+  }
+  return serviceLogPath(stackId, src.name);
+}
+
+/** Build the merged chronological line list from all sources. */
+async function readMerged(stackId: string, sources: Source[]): Promise<LogLine[]> {
+  const allLines: LogLine[] = [];
+
+  for (const src of sources) {
+    const path = sourcePath(stackId, src);
+    const { content } = await safeReadAll(path);
+    if (content.length === 0) continue;
+
+    const trimmed = content.endsWith("\n") ? content.slice(0, -1) : content;
+    const lines = trimmed.split(/\r?\n/);
+    for (const text of lines) {
+      allLines.push({ n: 0, source: src.name, text });
+    }
+  }
+
+  // Assign stable line numbers (1-based).
+  for (let i = 0; i < allLines.length; i++) {
+    allLines[i]!.n = i + 1;
+  }
+
+  return allLines;
+}
+
+function resolveSources(
+  snapshot: StackSnapshot,
+  filter: string[] | undefined,
+  out: NodeJS.WritableStream,
+): Source[] | null {
+  const serviceNames = snapshot.services.map((s) => s.name);
+  const phaseNames = [...PHASE_NAMES];
+  const allSourceNames = [...serviceNames, ...phaseNames];
+
+  if (!filter || filter.length === 0) {
+    const sources: Source[] = serviceNames.map((n) => ({ name: n, kind: "service" as const }));
+    return sources;
+  }
+
+  const result: Source[] = [];
+  for (const name of filter) {
+    if (serviceNames.includes(name)) {
+      result.push({ name, kind: "service" });
+    } else if (PHASE_NAMES.has(name)) {
+      result.push({ name, kind: "phase" });
+    } else {
+      const available = allSourceNames.length > 0 ? allSourceNames.join(", ") : "(none)";
+      writeLine(out, `unknown source "${name}"; available: ${available}`);
+      return null;
+    }
+  }
+
+  return result;
+}
+
 async function safeReadAll(
   path: string,
 ): Promise<{ content: string; size: number }> {
@@ -193,10 +406,6 @@ async function safeReadAll(
   }
 }
 
-/**
- * Last `n` lines of `content`. Includes a trailing partial line (matches
- * `tail`'s behavior, so a service's unterminated last line isn't dropped).
- */
 function tailLines(content: string, n: number): string[] {
   if (n <= 0) return [];
   const trimmed = content.endsWith("\n") ? content.slice(0, -1) : content;
@@ -222,7 +431,6 @@ function writeLine(out: NodeJS.WritableStream, line: string): void {
   out.write(`${line}\n`);
 }
 
-/** Sleep that returns early if `signal` aborts. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
     if (signal?.aborted) {

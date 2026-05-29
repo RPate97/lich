@@ -112,17 +112,48 @@ const restartHandler: CommandHandler = async (ctx) => {
 };
 
 const logsHandler: CommandHandler = async (ctx) => {
-  const [service] = ctx.argv._;
-  const follow = ctx.argv.follow !== false;
-  const tail =
-    typeof ctx.argv.tail === "number"
-      ? ctx.argv.tail
-      : typeof ctx.argv.tail === "string"
-        ? Number(ctx.argv.tail)
-        : follow
-          ? 50
-          : 200;
-  const result = runLogs({ service, follow, tail });
+  const sources = ctx.argv._.filter((a): a is string => typeof a === "string");
+  const follow = ctx.argv.follow === true;
+  const all = ctx.argv.all === true;
+  const json = ctx.argv.json === true;
+
+  const countRaw = ctx.argv.count ?? ctx.argv.n;
+  const count =
+    typeof countRaw === "number"
+      ? countRaw
+      : typeof countRaw === "string"
+        ? Number(countRaw)
+        : 100;
+
+  const beforeRaw = ctx.argv.before;
+  const before =
+    typeof beforeRaw === "number"
+      ? beforeRaw
+      : typeof beforeRaw === "string"
+        ? Number(beforeRaw)
+        : undefined;
+
+  const afterRaw = ctx.argv.after;
+  const after =
+    typeof afterRaw === "number"
+      ? afterRaw
+      : typeof afterRaw === "string"
+        ? Number(afterRaw)
+        : undefined;
+
+  const grep =
+    typeof ctx.argv.grep === "string" ? ctx.argv.grep : undefined;
+
+  const result = runLogs({
+    sources: sources.length > 0 ? sources : undefined,
+    follow,
+    count,
+    before,
+    after,
+    grep,
+    all,
+    json,
+  });
   await result.done;
   return { ok: result.exitCode === 0, message: "" };
 };
