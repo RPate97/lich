@@ -90,6 +90,45 @@ describe("lich exec", () => {
     );
   });
 
+  it("top-level env: literals reach the spawned command", () => {
+    const fix = fixture!;
+    const result = runLich(
+      ["exec", "--", "printenv", "CANARY"],
+      {
+        cwd: fix.stackPath,
+        env: { LICH_HOME: fix.lichHome },
+      },
+    );
+    if (result.exitCode !== 0) {
+      // eslint-disable-next-line no-console
+      console.error("lich exec stdout:", result.stdout);
+      // eslint-disable-next-line no-console
+      console.error("lich exec stderr:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("from-top-level");
+  });
+
+  it("--env-group=stack-plus-test layers group env on top of top-level env", () => {
+    const fix = fixture!;
+    const result = runLich(
+      ["exec", "--env-group=stack-plus-test", "--", "sh", "-c", "echo $CANARY-$TEST_MODE"],
+      {
+        cwd: fix.stackPath,
+        env: { LICH_HOME: fix.lichHome },
+      },
+    );
+    if (result.exitCode !== 0) {
+      // eslint-disable-next-line no-console
+      console.error("lich exec stdout:", result.stdout);
+      // eslint-disable-next-line no-console
+      console.error("lich exec stderr:", result.stderr);
+    }
+    expect(result.exitCode).toBe(0);
+    // CANARY comes from top-level env (via stack), TEST_MODE from the group's own env.
+    expect(result.stdout.trim()).toBe("from-top-level-integration");
+  });
+
   it("--env-group=<X> overrides the default stack group", () => {
     const fix = fixture!;
     const result = runLich(

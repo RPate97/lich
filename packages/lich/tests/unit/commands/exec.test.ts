@@ -139,6 +139,13 @@ env_groups:
     expect(b.stdout.trim()).toBe("from-beta");
   });
 
+  it("top-level env: literals reach the spawned command (LEV-515)", async () => {
+    writeYaml(`version: "1"\nenv:\n  CANARY: from-top-level\n  OTHER: also-present\n`);
+    const res = await execCapture(["printenv", "CANARY"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.trim()).toBe("from-top-level");
+  });
+
   it("user group without extends does NOT see stack env", async () => {
     writeYaml(`
 version: "1"
