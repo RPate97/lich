@@ -30,8 +30,13 @@ import {
   rebuildAllocatedPorts,
   injectOwnedPortEnv,
   writeSnapshot,
+  type AllocatedPorts,
   type StackSnapshot,
 } from "../state/snapshot.js";
+import {
+  interpolateString,
+  type InterpolationContext,
+} from "../config/interpolation.js";
 import { hooksDir, stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
@@ -86,6 +91,42 @@ const POLL_INTERVAL_MS = 50;
 const STOP_CMD_STDERR_RING_BYTES = 4 * 1024;
 /** Threshold above which a stop_cmd that exited 0 is flagged as slow — often symptom of a hung teardown. */
 const STOP_CMD_SLOW_MS = 5_000;
+
+function buildDownInterpCtx(
+  worktree: Worktree,
+  allocatedPorts: AllocatedPorts,
+): InterpolationContext {
+  const services: InterpolationContext["services"] = {};
+  for (const [svc, ports] of Object.entries(allocatedPorts.compose)) {
+    const keys = Object.keys(ports);
+    services[svc] = {
+      host_port: keys.length > 0 ? ports[keys[0]] : undefined,
+      ports: { ...ports },
+    };
+  }
+  const owned: InterpolationContext["owned"] = {};
+  for (const [svc, entry] of Object.entries(allocatedPorts.owned)) {
+    owned[svc] = { port: entry.port, ports: entry.ports };
+  }
+  return {
+    worktree: { name: worktree.name, id: worktree.id, path: worktree.path },
+    services,
+    owned,
+  };
+}
+
+function interpolateDownLifecycleEntries(
+  entries: Array<string | { cmd: string; env_group?: string }>,
+  ctx: InterpolationContext,
+  source: string,
+): Array<string | { cmd: string; env_group?: string }> {
+  return entries.map((entry, i) => {
+    if (typeof entry === "string") {
+      return interpolateString(entry, ctx, `${source}[${i}]`, true);
+    }
+    return { ...entry, cmd: interpolateString(entry.cmd, ctx, `${source}[${i}].cmd`, true) };
+  });
+}
 
 export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   const cwd = input.cwd ?? process.cwd();
@@ -162,6 +203,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     else if (svcSnap.kind === "compose") composeNames.push(name);
   }
 
+  // Compute once before teardown loops so per-service lifecycle hooks + stop_cmd can interpolate ports.
+  const snapAllocatedPorts = rebuildAllocatedPorts(snap);
+
   // Per-compose-service teardown is issued individually for ordering, then a single project-level
   // `down -v` at the end sweeps the volumes + network.
   let composeRan = false;
@@ -192,11 +236,12 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
 
         const lifecycle = config?.owned?.[name]?.lifecycle;
         if (lifecycle?.before_down && lifecycle.before_down.length > 0) {
+          const perSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
           await runPerServiceLifecycle(
             {
               serviceName: name,
               phase: "before_down",
-              entries: lifecycle.before_down,
+              entries: interpolateDownLifecycleEntries(lifecycle.before_down, perSvcCtx, `owned.${name}.lifecycle.before_down`),
               cwd: worktree.path,
               env: process.env,
             },
@@ -289,8 +334,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   let lifecycleResolveEnvGroup:
     | ((name: string) => Promise<NodeJS.ProcessEnv>)
     | undefined = undefined;
+  let allocatedPortsForLifecycle: AllocatedPorts = { compose: {}, owned: {} };
   if (config) {
-    const allocatedPortsForLifecycle = rebuildAllocatedPorts(snap);
+    allocatedPortsForLifecycle = snapAllocatedPorts;
     try {
       const topLevelEnv = await resolveTopLevelEnv({
         config,
@@ -352,10 +398,11 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
       }),
     );
     try {
+      const beforeDownCtx = buildDownInterpCtx(worktree, allocatedPortsForLifecycle);
       await runLifecycle(
         {
           phase: "before_down",
-          entries: beforeDownEntries,
+          entries: interpolateDownLifecycleEntries(beforeDownEntries, beforeDownCtx, "lifecycle.before_down"),
           cwd: worktree.path,
           env: lifecycleEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -411,11 +458,12 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
 
         const lifecycle = config?.services?.[name]?.lifecycle;
         if (lifecycle?.before_down && lifecycle.before_down.length > 0) {
+          const composeSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
           await runPerServiceLifecycle(
             {
               serviceName: name,
               phase: "before_down",
-              entries: lifecycle.before_down,
+              entries: interpolateDownLifecycleEntries(lifecycle.before_down, composeSvcCtx, `services.${name}.lifecycle.before_down`),
               cwd: worktree.path,
               env: process.env,
             },
@@ -484,10 +532,11 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
       }),
     );
     try {
+      const afterDownCtx = buildDownInterpCtx(worktree, allocatedPortsForLifecycle);
       await runLifecycle(
         {
           phase: "after_down",
-          entries: afterDownEntries,
+          entries: interpolateDownLifecycleEntries(afterDownEntries, afterDownCtx, "lifecycle.after_down"),
           cwd: worktree.path,
           env: lifecycleEnv,
           resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -585,6 +634,7 @@ async function stopOwnedService(
   if (ownedDef?.stop_cmd) {
     // Resolve per-service env via the same pipeline up.ts used at spawn — non-negotiable for any stop_cmd that addresses
     // external state by an interpolated identifier (supabase project_id, namespaced docker names, etc.).
+    const allocatedPortsForStop = rebuildAllocatedPorts(snapshot);
     let stopEnv: NodeJS.ProcessEnv = process.env;
     if (config) {
       try {
@@ -592,7 +642,7 @@ async function stopOwnedService(
           config,
           service: { kind: "owned", name },
           worktree,
-          allocatedPorts: rebuildAllocatedPorts(snapshot),
+          allocatedPorts: allocatedPortsForStop,
           projectRoot: worktree.path,
         });
       } catch {
@@ -605,7 +655,19 @@ async function stopOwnedService(
       (s) => s.kind === "owned" && s.name === name,
     );
     stopEnv = injectOwnedPortEnv(stopEnv, ownedDef, snapSvc?.allocated_ports);
-    const result = await runStopCmd(ownedDef.stop_cmd, worktree.path, stopEnv);
+    // Interpolate ${...} refs in stop_cmd using the same port context used for env.
+    let resolvedStopCmd = ownedDef.stop_cmd;
+    try {
+      resolvedStopCmd = interpolateString(
+        ownedDef.stop_cmd,
+        buildDownInterpCtx(worktree, allocatedPortsForStop),
+        `owned.${name}.stop_cmd`,
+        true,
+      );
+    } catch {
+      // Best-effort: unresolved refs fall back to the raw string.
+    }
+    const result = await runStopCmd(resolvedStopCmd, worktree.path, stopEnv);
     // Surface outcomes the user can act on: exit code + stderr tail for failures; slow-but-zero exit as info.
     if (result.timedOut) {
       const tail = formatStderrTail(result.stderrTail);

@@ -379,3 +379,70 @@ describe("dispatchUserCommand — group resolution errors", () => {
     ).rejects.toThrow(/imaginary/);
   });
 });
+
+describe("dispatchUserCommand — ${...} interpolation in cmd", () => {
+  it("resolves ${owned.X.port} in command.cmd before exec", async () => {
+    const marker = join(tmp, "port.txt");
+    const config: LichConfig = {
+      version: "1",
+      env: { OUT: marker },
+      commands: {
+        "show-port": {
+          cmd: `echo "\${owned.api.port}" > "$OUT"`,
+        },
+      },
+    };
+    const portsWithApi: AllocatedPorts = {
+      compose: {},
+      owned: { api: { port: 9001 } },
+    };
+    const result = await dispatchUserCommand(
+      baseInput({
+        name: "show-port",
+        config,
+        allocatedPorts: portsWithApi,
+      }),
+    );
+    expect(result.exitCode).toBe(0);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(marker, "utf8").trim()).toBe("9001");
+  });
+
+  it("resolves ${worktree.id} in command.cmd before exec", async () => {
+    const marker = join(tmp, "wtid.txt");
+    const config: LichConfig = {
+      version: "1",
+      env: { OUT: marker },
+      commands: {
+        "show-id": {
+          cmd: `echo "\${worktree.id}" > "$OUT"`,
+        },
+      },
+    };
+    const result = await dispatchUserCommand(
+      baseInput({ name: "show-id", config }),
+    );
+    expect(result.exitCode).toBe(0);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(marker, "utf8").trim()).toBe(worktree.id);
+  });
+
+  it("leaves plain shell vars like ${SHELL_VAR} unchanged (pass-through)", async () => {
+    const marker = join(tmp, "shell.txt");
+    const config: LichConfig = {
+      version: "1",
+      env: { OUT: marker, MY_ENV: "hello" },
+      commands: {
+        "use-shell-var": {
+          cmd: `echo "\${MY_ENV}" > "$OUT"`,
+        },
+      },
+    };
+    const result = await dispatchUserCommand(
+      baseInput({ name: "use-shell-var", config }),
+    );
+    expect(result.exitCode).toBe(0);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(marker, "utf8").trim()).toBe("hello");
+  });
+});

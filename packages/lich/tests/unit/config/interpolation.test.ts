@@ -628,3 +628,48 @@ describe("interpolation hints", () => {
     expect(err!.message).toContain("declared keys:");
   });
 });
+
+describe("interpolateString — passUnknownShapes (cmd-string mode)", () => {
+  it("passes through plain shell vars like ${VAR} unchanged", () => {
+    expect(interpolateString("echo ${VAR}", ctx(), undefined, true)).toBe("echo ${VAR}");
+  });
+
+  it("still resolves valid lich refs in the same string", () => {
+    expect(
+      interpolateString(
+        "PORT=${owned.api.port} cmd ${VAR}",
+        ctx(),
+        undefined,
+        true,
+      ),
+    ).toBe("PORT=4000 cmd ${VAR}");
+  });
+
+  it("still throws when a lich-shaped ref (owned.*) can't be resolved", () => {
+    expect(() =>
+      interpolateString("${owned.nonexistent.port}", ctx(), undefined, true),
+    ).toThrow(InterpolationError);
+  });
+
+  it("passes through multi-word unknown root like ${MY_VAR} unchanged", () => {
+    expect(
+      interpolateString("--port ${MY_PORT} --id ${worktree.id}", ctx(), undefined, true),
+    ).toBe(`--port \${MY_PORT} --id abc12345`);
+  });
+
+  it("still resolves worktree and services refs alongside unknown shell vars", () => {
+    const result = interpolateString(
+      "ADDR=${services.api.host_port} WT=${worktree.name} SHELL_VAR=${MY_VAR}",
+      ctx(),
+      undefined,
+      true,
+    );
+    expect(result).toBe("ADDR=53210 WT=feature-x SHELL_VAR=${MY_VAR}");
+  });
+
+  it("without passUnknownShapes, throws on unknown root", () => {
+    expect(() =>
+      interpolateString("${VAR}", ctx(), undefined, false),
+    ).toThrow(InterpolationError);
+  });
+});

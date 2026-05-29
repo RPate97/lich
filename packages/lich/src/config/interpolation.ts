@@ -351,11 +351,16 @@ function resolveReference(
  * unescaped to a literal `$`. Throws {@link InterpolationError} on the
  * first reference that can't be resolved. Strings with no `$` are returned
  * by reference.
+ *
+ * `passUnknownShapes`: when true, refs with an unrecognized root prefix (e.g.
+ * plain shell vars like `${VAR}`) are left as literals rather than throwing.
+ * Use for cmd strings that may mix lich refs with shell variable syntax.
  */
 export function interpolateString(
   value: string,
   ctx: InterpolationContext,
   source?: string,
+  passUnknownShapes?: boolean,
 ): string {
   if (value.indexOf("$") === -1) return value;
 
@@ -380,6 +385,14 @@ export function interpolateString(
           `empty reference: \${} is not a valid interpolation`,
           source,
         );
+      }
+      if (passUnknownShapes) {
+        const root = body.split(".")[0];
+        if (root !== "worktree" && root !== "services" && root !== "owned") {
+          out += fullRef;
+          lastIndex = m.index + m[0].length;
+          continue;
+        }
       }
       out += resolveReference(body, ctx, fullRef, source);
     }

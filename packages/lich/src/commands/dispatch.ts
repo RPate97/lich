@@ -11,6 +11,10 @@ import type { LichConfig } from "../config/types.js";
 import type { Worktree } from "../worktree/detect.js";
 import type { AllocatedPorts } from "../state/snapshot.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
+import {
+  interpolateString,
+  type InterpolationContext,
+} from "../config/interpolation.js";
 
 export interface DispatchInput {
   /** Looked up in `config.commands` — absent → exit 127. */
@@ -42,6 +46,29 @@ export interface DispatchResult {
 
 const EXIT_CODE_ABORTED = 130;
 const EXIT_CODE_UNKNOWN_COMMAND = 127;
+
+function buildDispatchInterpCtx(
+  worktree: Worktree,
+  allocatedPorts: AllocatedPorts,
+): InterpolationContext {
+  const services: InterpolationContext["services"] = {};
+  for (const [svc, ports] of Object.entries(allocatedPorts.compose)) {
+    const keys = Object.keys(ports);
+    services[svc] = {
+      host_port: keys.length > 0 ? ports[keys[0]] : undefined,
+      ports: { ...ports },
+    };
+  }
+  const owned: InterpolationContext["owned"] = {};
+  for (const [svc, entry] of Object.entries(allocatedPorts.owned)) {
+    owned[svc] = { port: entry.port, ports: entry.ports };
+  }
+  return {
+    worktree: { name: worktree.name, id: worktree.id, path: worktree.path },
+    services,
+    owned,
+  };
+}
 
 /**
  * Merge per-command env literals on top of the resolved group env.
@@ -94,6 +121,9 @@ export async function dispatchUserCommand(
   // Later wins: per-command env overrides the group's.
   const env = mergePerCommandEnv(groupEnv, command.env);
 
+  const interpCtx = buildDispatchInterpCtx(input.worktree, input.allocatedPorts);
+  const resolvedCmd = interpolateString(command.cmd, interpCtx, `commands.${input.name}.cmd`, true);
+
   // Shell invocation: `/bin/sh -c '<cmd>' -- $0-sentinel arg1 arg2 ...`
   //
   // The `--` separator is load-bearing — without it, a forwarded flag like
@@ -104,7 +134,7 @@ export async function dispatchUserCommand(
   // extraArgv visible at `$1+`/`"$@"`. "lich-cmd" because users debugging
   // via `$0` see something recognizable.
   const SH_NAME_SLOT_SENTINEL = "lich-cmd";
-  const args = ["-c", command.cmd, SH_NAME_SLOT_SENTINEL, ...input.extraArgv];
+  const args = ["-c", resolvedCmd, SH_NAME_SLOT_SENTINEL, ...input.extraArgv];
 
   // YAML-side `cwd:` is relative; resolve against projectRoot.
   const cwd = join(input.projectRoot, command.cwd ?? ".");

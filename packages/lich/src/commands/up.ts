@@ -470,10 +470,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     if (beforeUpEntries.length > 0) {
       const phase = output.phase("before_up");
       try {
+        const beforeUpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
         await runLifecycle(
           {
             phase: "before_up",
-            entries: beforeUpEntries,
+            entries: interpolateLifecycleEntries(beforeUpEntries, beforeUpCtx, "lifecycle.before_up"),
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -608,10 +609,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     if (afterUpEntries.length > 0) {
       const phase = output.phase("after_up");
       try {
+        const afterUpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
         await runLifecycle(
           {
             phase: "after_up",
-            entries: afterUpEntries,
+            entries: interpolateLifecycleEntries(afterUpEntries, afterUpCtx, "lifecycle.after_up"),
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
@@ -823,13 +825,14 @@ async function startOneService(input: StartOneInput): Promise<void> {
   }
   const isOwned = !!ownedDef;
   const lifecycle = (isOwned ? ownedDef!.lifecycle : composeDef!.lifecycle);
+  const interpCtxForService = buildInterpCtx(input.worktree, input.allocatedPorts, state.capturedValues);
 
   try {
     if (lifecycle?.before_start && lifecycle.before_start.length > 0) {
       await runPerServiceLifecycle({
         serviceName: name,
         phase: "before_start",
-        entries: lifecycle.before_start,
+        entries: interpolateLifecycleEntries(lifecycle.before_start, interpCtxForService, `owned.${name}.lifecycle.before_start`),
         cwd: input.worktree.path,
         env: input.topLevelEnv,
         resolveEnvGroup: input.resolveEnvGroup,
@@ -853,7 +856,7 @@ async function startOneService(input: StartOneInput): Promise<void> {
         runPerServiceLifecycle({
           serviceName: name,
           phase: "after_ready",
-          entries: lifecycle.after_ready,
+          entries: interpolateLifecycleEntries(lifecycle.after_ready, interpCtxForService, `owned.${name}.lifecycle.after_ready`),
           cwd: input.worktree.path,
           env: input.topLevelEnv,
           resolveEnvGroup: input.resolveEnvGroup,
@@ -965,6 +968,50 @@ function classifyFailure(opts: {
   return fallback;
 }
 
+/** Build an InterpolationContext from worktree + allocated ports + optional captures. */
+function buildInterpCtx(
+  worktree: import("../worktree/detect.js").Worktree,
+  allocatedPorts: AllocatedPorts,
+  capturedValues?: Record<string, Record<string, string>>,
+): InterpolationContext {
+  const services: InterpolationContext["services"] = {};
+  for (const [svc, ports] of Object.entries(allocatedPorts.compose)) {
+    const keys = Object.keys(ports);
+    services[svc] = {
+      host_port: keys.length > 0 ? ports[keys[0]] : undefined,
+      ports: { ...ports },
+    };
+  }
+  const owned: InterpolationContext["owned"] = {};
+  for (const [svc, entry] of Object.entries(allocatedPorts.owned)) {
+    const captured = capturedValues?.[svc];
+    owned[svc] = {
+      port: entry.port,
+      ports: entry.ports,
+      ...(captured !== undefined ? { captured } : {}),
+    };
+  }
+  return {
+    worktree: { name: worktree.name, id: worktree.id, path: worktree.path },
+    services,
+    owned,
+  };
+}
+
+/** Interpolate lich `${...}` refs in each lifecycle entry's cmd; unknown shapes (plain shell vars) pass through. */
+function interpolateLifecycleEntries(
+  entries: Array<string | { cmd: string; env_group?: string }>,
+  ctx: InterpolationContext,
+  source: string,
+): Array<string | { cmd: string; env_group?: string }> {
+  return entries.map((entry, i) => {
+    if (typeof entry === "string") {
+      return interpolateString(entry, ctx, `${source}[${i}]`, true);
+    }
+    return { ...entry, cmd: interpolateString(entry.cmd, ctx, `${source}[${i}].cmd`, true) };
+  });
+}
+
 async function startOwned(
   input: StartOneInput,
   def: OwnedService,
@@ -983,9 +1030,15 @@ async function startOwned(
     profile: state.resolvedProfile,
   });
 
+  const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
+  const resolvedCmd = interpolateString(def.cmd, interpCtx, `owned.${name}.cmd`, true);
+  const resolvedStopCmd = def.stop_cmd
+    ? interpolateString(def.stop_cmd, interpCtx, `owned.${name}.stop_cmd`, true)
+    : undefined;
+
   const spec: OwnedServiceSpec = {
     name,
-    cmd: def.cmd,
+    cmd: resolvedCmd,
     cwd: resolveOwnedCwd(def, worktree.path),
     env,
     logPath: serviceLogPath(worktree.stack_id, name),
@@ -1023,7 +1076,7 @@ async function startOwned(
   }
 
   if (def.oneshot) spec.oneshot = true;
-  if (def.stop_cmd) spec.stopCmd = def.stop_cmd;
+  if (resolvedStopCmd) spec.stopCmd = resolvedStopCmd;
   // Thread the abort signal — supabase-style setup CLIs ignore SIGTERM, so without it Ctrl-C during a oneshot is a no-op.
   if (input.signal) spec.signal = input.signal;
 
@@ -1035,8 +1088,8 @@ async function startOwned(
       stack_id: worktree.stack_id,
       kind: "owned",
       service: name,
-      cmd: def.cmd,
-      stop_cmd: def.stop_cmd,
+      cmd: resolvedCmd,
+      stop_cmd: resolvedStopCmd ?? def.stop_cmd,
       cwd: spec.cwd,
       env: stringifyEnv(env),
     });
@@ -1080,7 +1133,7 @@ async function startOwned(
       kind: "pid",
       service: name,
       pid: handle.pid,
-      cmd: def.cmd,
+      cmd: resolvedCmd,
       cwd: spec.cwd,
     });
   }
@@ -1089,8 +1142,8 @@ async function startOwned(
     stack_id: worktree.stack_id,
     kind: "owned",
     service: name,
-    cmd: def.cmd,
-    stop_cmd: def.stop_cmd,
+    cmd: resolvedCmd,
+    stop_cmd: resolvedStopCmd ?? def.stop_cmd,
     cwd: spec.cwd,
     env: stringifyEnv(env),
   });
