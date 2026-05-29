@@ -16,15 +16,6 @@ Install the instrumentation skill:
 npx skills add https://github.com/rpate97/lich/skills/lich-instrument
 ```
 
-To refresh an already-installed skill to the latest version:
-```bash
-npx skills update lich-instrument
-# or, if that isn't available in your skills CLI:
-npx skills remove lich-instrument && npx skills add https://github.com/rpate97/lich/skills/lich-instrument
-```
-
-The skill ships a `VERSION` file. Compare `~/.claude/skills/lich-instrument/VERSION` against `skills/lich-instrument/VERSION` in this repo to check whether your installed copy is current.
-
 Set lich up against your repo with your favorite agent:
 ```bash
 /lich-instrument
