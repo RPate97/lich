@@ -14,17 +14,7 @@ owned:
     oneshot: true
     stop_cmd: supabase stop
     env:
-      # Per-worktree project_id keeps parallel lich stacks from colliding on
-      # the same set of supabase containers. The supabase CLI honors this env
-      # var at runtime, overriding supabase/config.toml's project_id.
-      # ${worktree.id} is the 12-hex-char stable hash of the worktree path.
       SUPABASE_PROJECT_ID: "myapp-${worktree.id}"
-
-      # SITE_URL needs to point at the web app's allocated port. Lich allocates
-      # ports up-front (step 4 of `lich up`, before any service.cmd runs), so
-      # ${owned.web.port} is already a real integer here. The supabase CLI
-      # honors SUPABASE_AUTH_SITE_URL as the env override for config.toml's
-      # auth.site_url — no pinning, no pre-baking, no shell-script wrapper.
       SUPABASE_AUTH_SITE_URL: "http://localhost:${owned.web.port}"
 
     ports:
@@ -33,11 +23,8 @@ owned:
       studio: { env: SUPABASE_STUDIO_PORT }
 
     ready_when:
-      # Probe the side-effect, not the launcher. supabase start exits in
-      # ~5-10s; the containers it spawned are ready a moment after that
-      # when the API container's port starts accepting connections.
       tcp: "localhost:${owned.supabase.ports.api}"
-      timeout: 120s     # cold-cache image pulls on first run can be slow
+      timeout: 120s
 
   web:
     cmd: pnpm dev
@@ -49,6 +36,8 @@ env:
   NEXT_PUBLIC_SUPABASE_URL: "http://localhost:${owned.supabase.ports.api}"
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${owned.supabase.ports.db}/postgres"
 ```
+
+This is sufficient if your stack only calls `supabase start` and `supabase stop`. If you also call other supabase CLI subcommands — `supabase db reset`, `supabase gen types`, `supabase migration up` — read the next section before proceeding.
 
 ## Why each piece is there
 
@@ -69,6 +58,8 @@ The supabase CLI uses `project_id` to name the docker containers it spawns (`sup
 `${worktree.id}` is a stable 12-hex-char hash of the worktree's absolute path. Same worktree path → same id forever. Different worktrees → different ids. So `myapp-${worktree.id}` becomes `myapp-a4e87c8572d0` in one worktree and `myapp-b91d3e6f1c00` in another, and the two stacks coexist.
 
 This pattern works for anything that needs per-instance namespacing: docker compose project names, KV namespaces, S3 prefixes, temporal task queues, etc.
+
+**Important limitation:** `SUPABASE_PROJECT_ID` is honored at runtime by `supabase start` and `supabase stop`, but not by most other supabase subcommands. `supabase db reset`, `supabase gen types`, `supabase migration up`, and similar commands read `project_id` directly from `supabase/config.toml`, ignoring the env var. So with the above yaml, `supabase start` spawns containers named `supabase_db_myapp-a4e87c8572d0` (correct), but a subsequent `supabase db reset` looks for `supabase_db_<config-project-id>` (wrong containers — fails with "supabase start is not running"). See the next section for the fix.
 
 ### `ports:` declared up front
 
@@ -99,6 +90,71 @@ The reason `SUPABASE_AUTH_SITE_URL: "http://localhost:${owned.web.port}"` works 
 - Auth links emailed by supabase use port 53017, hit the right web app
 
 Without upfront allocation, this would be circular: web needs to know what port supabase is on, supabase needs to know what port web is on, both want a port from the same allocator. With upfront allocation, both are integers by the time anyone reads them.
+
+## Full per-worktree isolation: templated workdir
+
+If you call any supabase subcommand beyond `start`/`stop`, the `SUPABASE_PROJECT_ID` env var isn't enough. The full solution is to give each worktree its own `supabase/config.toml` with the correct `project_id` baked in, and pass `--workdir <path>` to every supabase invocation so the CLI reads from that workdir rather than the shared `supabase/` directory at the repo root.
+
+The shape:
+
+1. Keep a template config at `supabase/config.toml.template` in the repo (tracked in git). It contains `project_id = "myapp-WORKTREE_ID"` as a placeholder.
+2. On `lich up`, a `before_up` hook renders the template into a per-worktree workdir (e.g., `.lich/supabase-${worktree.id}/`) with the placeholder replaced by the real `${worktree.id}`.
+3. Every supabase invocation — `start`, `stop`, `db reset`, `gen types`, etc. — passes `--workdir .lich/supabase-${worktree.id}`.
+
+```yaml
+lifecycle:
+  before_up:
+    - cmd: |
+        set -euo pipefail
+        WORKDIR=".lich/supabase-${worktree.id}"
+        mkdir -p "$WORKDIR"
+        sed "s/WORKTREE_ID/${worktree.id}/g" supabase/config.toml.template > "$WORKDIR/config.toml"
+
+owned:
+  supabase:
+    cmd: supabase start --workdir ".lich/supabase-${worktree.id}"
+    cwd: .
+    oneshot: true
+    stop_cmd: supabase stop --workdir ".lich/supabase-${worktree.id}"
+    env:
+      SUPABASE_AUTH_SITE_URL: "http://localhost:${owned.web.port}"
+
+    ports:
+      api:    { env: SUPABASE_API_PORT }
+      db:     { env: SUPABASE_DB_PORT }
+      studio: { env: SUPABASE_STUDIO_PORT }
+
+    ready_when:
+      tcp: "localhost:${owned.supabase.ports.api}"
+      timeout: 120s
+```
+
+With this setup, `supabase db reset --workdir ".lich/supabase-${worktree.id}"` reads the per-worktree `config.toml` (which has the correct `project_id`) and operates on the right containers. Parallel worktrees no longer collide on any subcommand.
+
+The `supabase/config.toml.template` might look like:
+
+```toml
+project_id = "myapp-WORKTREE_ID"
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+```
+
+Add `.lich/` to `.gitignore` so the rendered workdirs aren't committed.
+
+**Custom commands:** if the stack exposes `db:reset` or `gen:types` as custom lich commands, pass `--workdir` there too:
+
+```yaml
+commands:
+  db:reset:
+    cmd: supabase db reset --workdir ".lich/supabase-${worktree.id}"
+  gen:types:
+    cmd: supabase gen types typescript --local --workdir ".lich/supabase-${worktree.id}" > src/types/supabase.ts
+```
 
 ## When this pattern fits
 
