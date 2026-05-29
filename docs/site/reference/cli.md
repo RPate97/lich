@@ -40,10 +40,25 @@ depends_on ordering.
 ## `lich logs`
 
 ```
-Usage: lich logs [service] [--tail=N] [--no-follow]
+Usage: lich logs [source...] [flags]
 
-Stream logs from the stack's services. Defaults to tailing all
-services with --follow. Pass a service name to filter to one.
+Read logs from the running stack. Sources are service names (api,
+web, …) or top-level lifecycle phase names (before_up, after_up,
+before_down, after_down). Multiple sources may be given.
+
+Defaults to the last 100 lines across all services, then exits.
+
+Flags:
+  --count N           Page size (default 100).
+  --before N          Show N lines before cursor N (older).
+  --after N           Show lines after cursor N (poll for new).
+  --grep <regex>      Filter lines matching pattern.
+  --all               Emit all lines without pagination.
+  --json              Machine-readable JSON with cursor metadata.
+  --follow            Blocking live stream (opt-in, for humans).
+
+Cursor model: --before / --after accept the absolute line numbers
+printed in the footer. Cursors are stable across live writes.
 ```
 
 ## `lich urls`
