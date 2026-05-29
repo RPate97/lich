@@ -15,8 +15,9 @@ describe("version.ts release-workflow sed compatibility", () => {
 
   it("release workflow sed pattern replaces VERSION correctly", () => {
     const targetVersion = "1.2.3";
-    // Mirrors the sed command in .github/workflows/release.yml:
-    //   sed -i 's/export const VERSION = .*/export const VERSION = "${{ inputs.version }}";/'
+    // Mirrors the sed command in .github/workflows/release.yml. The workflow
+    // uses `sed -i.bak ... && rm ...bak` for BSD (macOS) + GNU (Linux) portability;
+    // this test verifies the regex semantics only.
     const patched = content.replace(
       /export const VERSION = .*/,
       `export const VERSION = "${targetVersion}";`,

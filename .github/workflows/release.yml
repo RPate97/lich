@@ -70,7 +70,7 @@ jobs:
 
       - name: Sync version.ts
         run: |
-          sed -i 's/export const VERSION = .*/export const VERSION = "${{ inputs.version }}";/' packages/lich/src/version.ts
+          sed -i.bak 's/export const VERSION = .*/export const VERSION = "${{ inputs.version }}";/' packages/lich/src/version.ts && rm packages/lich/src/version.ts.bak
 
       - name: Build dashboard UI (Vite)
         run: bun run --cwd packages/lich build:ui
