@@ -30,6 +30,7 @@ import {
   type RoutingEntry,
   type ServiceSnapshot,
   type ServiceState,
+  type SnapshotLifecycleEntry,
   type StackSnapshot,
   type StackStatus,
 } from "../state/snapshot.js";
@@ -146,6 +147,10 @@ interface UpState {
   ownedCwd: Map<string, string>;
   /** Friendly-URL routing entries — undefined during startup/failure, set only on fully-ready stacks (and `[]` on `lich down` to evict). */
   routing?: RoutingEntry[];
+  /** Top-level + profile before_down hooks with pre-resolved envs, snapshotted at up time. */
+  stackBeforeDown?: SnapshotLifecycleEntry[];
+  /** Top-level + profile after_down hooks with pre-resolved envs, snapshotted at up time. */
+  stackAfterDown?: SnapshotLifecycleEntry[];
 }
 
 export async function runUp(input: RunUpInput): Promise<RunUpResult> {
@@ -667,6 +672,24 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     }
 
     state.status = "up";
+    // Snapshot teardown lifecycle entries before the final write so `lich down` never needs to re-parse yaml.
+    // before_down runs profile-first then top-level (LIFO); after_down mirrors that order.
+    state.stackBeforeDown = await resolveSnapshotLifecycle(
+      [
+        ...(resolvedProfile?.lifecycle.before_down ?? []),
+        ...(config.lifecycle?.before_down ?? []),
+      ],
+      lifecycleEnv,
+      lifecycleResolveEnvGroup,
+    );
+    state.stackAfterDown = await resolveSnapshotLifecycle(
+      [
+        ...(resolvedProfile?.lifecycle.after_down ?? []),
+        ...(config.lifecycle?.after_down ?? []),
+      ],
+      lifecycleEnv,
+      lifecycleResolveEnvGroup,
+    );
     // Populate routing BEFORE the final snapshot so the daemon's fs-watcher sees `routing` on its first read.
     state.routing = buildRoutingEntries(state);
     await writeStateSnapshot(state);
@@ -1049,6 +1072,21 @@ async function startOwned(
   state.ownedEnv.set(name, env);
   state.ownedCwd.set(name, spec.cwd);
 
+  // Snapshot teardown fields so `lich down` never needs to re-parse yaml.
+  const svcSnap = state.services.get(name);
+  if (svcSnap) {
+    svcSnap.cmd = resolvedCmd;
+    if (resolvedStopCmd !== undefined) svcSnap.stop_cmd = resolvedStopCmd;
+    svcSnap.resolved_env = stringifyEnv(env);
+    svcSnap.depends_on = def.depends_on ?? [];
+    if (def.lifecycle?.before_down && def.lifecycle.before_down.length > 0) {
+      svcSnap.before_down = def.lifecycle.before_down.map((entry) => ({
+        cmd: typeof entry === "string" ? entry : entry.cmd,
+        env: stringifyEnv(input.topLevelEnv),
+      }));
+    }
+  }
+
   if (def.port !== undefined) {
     const envVar = portDescriptorEnv(def.port);
     const allocated = allocatedPorts.owned[name]?.port;
@@ -1150,7 +1188,7 @@ async function startOwned(
 }
 
 async function startCompose(input: StartOneInput): Promise<void> {
-  const { name, composeCtx, worktree } = input;
+  const { name, composeCtx, worktree, config, state } = input;
   if (!composeCtx) {
     throw new Error(
       `internal: compose service "${name}" requested but compose context not built`,
@@ -1161,6 +1199,18 @@ async function startCompose(input: StartOneInput): Promise<void> {
     throw new Error(
       `compose up ${name} exited ${result.exitCode}:\n${result.stderr.trim() || result.stdout.trim()}`,
     );
+  }
+  // Snapshot depends_on for teardown ordering so down never needs to re-parse yaml.
+  const svcSnap = state.services.get(name);
+  if (svcSnap) {
+    const def = config.services?.[name];
+    svcSnap.depends_on = def?.depends_on ?? [];
+    if (def?.lifecycle?.before_down && def.lifecycle.before_down.length > 0) {
+      svcSnap.before_down = def.lifecycle.before_down.map((entry) => ({
+        cmd: typeof entry === "string" ? entry : entry.cmd,
+        env: {},
+      }));
+    }
   }
   // Logged per-invocation; idempotent at rescue time (`compose down -p` is a no-op on a down project).
   await appendStarted({
@@ -1859,6 +1909,12 @@ async function writeStateSnapshot(state: UpState): Promise<void> {
   if (state.routing !== undefined) {
     snapshot.routing = state.routing;
   }
+  if (state.stackBeforeDown !== undefined) {
+    snapshot.before_down = state.stackBeforeDown;
+  }
+  if (state.stackAfterDown !== undefined) {
+    snapshot.after_down = state.stackAfterDown;
+  }
   await writeSnapshot(snapshot);
   await ensureStackDir(state.worktree.stack_id).catch(() => {});
   // Keep stackDir referenced so tree-shaking doesn't drop the import.
@@ -2000,6 +2056,35 @@ function stringifyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
+async function resolveSnapshotLifecycle(
+  entries: import("../lifecycle/executor.js").LifecycleEntry[],
+  baseEnv: NodeJS.ProcessEnv,
+  resolveEnvGroup: (name: string) => Promise<NodeJS.ProcessEnv>,
+): Promise<SnapshotLifecycleEntry[]> {
+  const out: SnapshotLifecycleEntry[] = [];
+  for (const entry of entries) {
+    let cmd: string;
+    let envGroup: string | undefined;
+    if (typeof entry === "string") {
+      cmd = entry;
+      envGroup = undefined;
+    } else {
+      cmd = entry.cmd;
+      envGroup = entry.env_group;
+    }
+    let env: NodeJS.ProcessEnv = baseEnv;
+    if (envGroup !== undefined) {
+      try {
+        env = await resolveEnvGroup(envGroup);
+      } catch {
+        env = baseEnv;
+      }
+    }
+    out.push({ cmd, env: stringifyEnv(env) });
   }
   return out;
 }

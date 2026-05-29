@@ -31,13 +31,14 @@ import {
   injectOwnedPortEnv,
   writeSnapshot,
   type AllocatedPorts,
+  type SnapshotLifecycleEntry,
   type StackSnapshot,
 } from "../state/snapshot.js";
 import {
   interpolateString,
   type InterpolationContext,
 } from "../config/interpolation.js";
-import { hooksDir, stackDir } from "../state/directory.js";
+import { hooksDir, listStacks, stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
@@ -143,11 +144,15 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   let worktree: Worktree;
   try {
     worktree = detectWorktree(cwd);
-  } catch (err) {
-    // Raw stream (not Output) so the early-exit message shape matches the pre-Output-framework behavior tests pin.
-    writeLine(out, `no stack found for this worktree: ${errorMessage(err)}`);
-    await output.close();
-    return { exitCode: 0, warnings };
+  } catch {
+    // lich.yaml not found — try snapshot fallback (yaml may have been deleted after lich up).
+    const fallback = await findWorktreeBySnapshot(cwd);
+    if (!fallback) {
+      writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
+      await output.close();
+      return { exitCode: 0, warnings };
+    }
+    worktree = fallback;
   }
 
   const snap = await readSnapshot(worktree.stack_id).catch(() => null);
@@ -163,25 +168,35 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     return { exitCode: 0, warnings };
   }
 
-  // Snapshot doesn't carry lifecycle hooks or stop_cmd — re-parse the yaml. Missing/invalid: state-only teardown.
+  // Detect whether this snapshot carries full teardown data (post-LEV-513).
+  // New snapshots written by lich up have resolved_env on owned services and
+  // stack-level before_down/after_down. Legacy snapshots fall back to yaml re-parsing.
+  const hasFullTeardownData = snap.services.some(
+    (s) => s.kind === "owned" && s.resolved_env !== undefined,
+  ) || snap.before_down !== undefined || snap.after_down !== undefined;
+
+  // Legacy fallback: re-parse yaml only when the snapshot lacks full teardown data.
+  // New snapshots (post-LEV-513) never need this path; yaml edits between up and down are ignored.
   let config: LichConfig | null = null;
-  const configPath = join(worktree.path, "lich.yaml");
-  if (existsSync(configPath)) {
-    const parsed = await parseConfig(configPath);
-    if (parsed.ok) {
-      config = parsed.config;
+  if (!hasFullTeardownData) {
+    const configPath = join(worktree.path, "lich.yaml");
+    if (existsSync(configPath)) {
+      const parsed = await parseConfig(configPath);
+      if (parsed.ok) {
+        config = parsed.config;
+      } else {
+        warnings.push({
+          phase: "parse_config",
+          message:
+            "lich.yaml could not be parsed; proceeding with state-only teardown",
+        });
+      }
     } else {
       warnings.push({
         phase: "parse_config",
-        message:
-          "lich.yaml could not be parsed; proceeding with state-only teardown",
+        message: "lich.yaml not found; proceeding with state-only teardown",
       });
     }
-  } else {
-    warnings.push({
-      phase: "parse_config",
-      message: "lich.yaml not found; proceeding with state-only teardown",
-    });
   }
 
   // Surface a coherent intermediate status to observers (lich stacks, dashboard).
@@ -234,31 +249,64 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
         const svcSnap = snapsByName.get(name);
         if (!svcSnap) continue;
 
-        const lifecycle = config?.owned?.[name]?.lifecycle;
-        if (lifecycle?.before_down && lifecycle.before_down.length > 0) {
-          const perSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
-          await runPerServiceLifecycle(
-            {
-              serviceName: name,
-              phase: "before_down",
-              entries: interpolateDownLifecycleEntries(lifecycle.before_down, perSvcCtx, `owned.${name}.lifecycle.before_down`),
-              cwd: worktree.path,
-              env: process.env,
-            },
-            (w) => {
+        // Prefer snapshot before_down entries (post-LEV-513); fall back to yaml for legacy snapshots.
+        const ownedBeforeDownEntries: import("../lifecycle/per-service.js").LifecycleEntry[] =
+          svcSnap.before_down !== undefined
+            ? svcSnap.before_down.map((e) => e.cmd)
+            : (config?.owned?.[name]?.lifecycle?.before_down ?? []);
+        if (ownedBeforeDownEntries.length > 0) {
+          const ownedBeforeDownEnv =
+            svcSnap.before_down !== undefined
+              ? (svcSnap.before_down[0]?.env ?? process.env)
+              : process.env;
+          if (svcSnap.before_down !== undefined) {
+            await runPerServiceLifecycle(
+              {
+                serviceName: name,
+                phase: "before_down",
+                entries: ownedBeforeDownEntries,
+                cwd: worktree.path,
+                env: ownedBeforeDownEnv,
+              },
+              (w) => {
+                warnings.push({
+                  service: name,
+                  phase: "before_down",
+                  message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                });
+              },
+            ).catch((err) => {
               warnings.push({
                 service: name,
                 phase: "before_down",
-                message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                message: errorMessage(err),
               });
-            },
-          ).catch((err) => {
-            warnings.push({
-              service: name,
-              phase: "before_down",
-              message: errorMessage(err),
             });
-          });
+          } else {
+            const perSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
+            await runPerServiceLifecycle(
+              {
+                serviceName: name,
+                phase: "before_down",
+                entries: interpolateDownLifecycleEntries(ownedBeforeDownEntries, perSvcCtx, `owned.${name}.lifecycle.before_down`),
+                cwd: worktree.path,
+                env: process.env,
+              },
+              (w) => {
+                warnings.push({
+                  service: name,
+                  phase: "before_down",
+                  message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                });
+              },
+            ).catch((err) => {
+              warnings.push({
+                service: name,
+                phase: "before_down",
+                message: errorMessage(err),
+              });
+            });
+          }
         }
 
         // No explicit LogTail teardown — see top-of-file LogTail docblock.
@@ -267,6 +315,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
           const stopResult = await stopOwnedService(
             name,
             svcSnap.pid,
+            svcSnap,
             ownedDef,
             worktree,
             config,
@@ -305,47 +354,48 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     }
   }
 
-  // Resolve the active profile ONCE so before_down + after_down see the same composed entry list,
-  // and so any `profile_resolve` warning fires once per down rather than once per phase.
-  let resolvedProfileForDown: ReturnType<typeof resolveProfile> | null = null;
-  if (snap.active_profile && config) {
-    if (config.profiles?.[snap.active_profile]) {
-      try {
-        resolvedProfileForDown = resolveProfile(snap.active_profile, config);
-      } catch (err) {
-        warnings.push({
-          phase: "profile_resolve",
-          message: `failed to resolve profile "${snap.active_profile}" for before_down/after_down: ${errorMessage(err)}; proceeding with top-level entries only`,
-        });
-      }
-    } else {
-      warnings.push({
-        phase: "profile_resolve",
-        message: `active profile "${snap.active_profile}" recorded in state.json is no longer declared in lich.yaml; proceeding with top-level before_down/after_down entries only`,
-      });
-    }
-  }
+  // Determine before_down / after_down entries.
+  // New snapshots (post-LEV-513): snap.before_down/after_down carry pre-resolved envs — no yaml needed.
+  // Legacy snapshots: fall back to yaml-derived entries + reconstructed lifecycleEnv.
+  const snapshotHasStackHooks = snap.before_down !== undefined || snap.after_down !== undefined;
 
-  // Reconstruct the lifecycle env so before_down/after_down hooks see the same env layering as before_up/after_up
-  // (top-level env, profile env, env_from, env_files, port interpolation). Reconstruction goes through the
-  // state.json snapshot (not a fresh yaml parse) so we use the port allocations the stack actually ran with.
-  // Yaml-gone OR resolveTopLevelEnv throws → fall back to process.env + `lifecycle_env` warning.
-  let lifecycleEnv: NodeJS.ProcessEnv = process.env;
-  let lifecycleResolveEnvGroup:
+  let legacyLifecycleEnv: NodeJS.ProcessEnv = process.env;
+  let legacyLifecycleResolveEnvGroup:
     | ((name: string) => Promise<NodeJS.ProcessEnv>)
     | undefined = undefined;
-  let allocatedPortsForLifecycle: AllocatedPorts = { compose: {}, owned: {} };
-  if (config) {
-    allocatedPortsForLifecycle = snapAllocatedPorts;
+  let legacyAllocatedPortsForLifecycle: AllocatedPorts = { compose: {}, owned: {} };
+  let legacyBeforeDownEntries: LifecycleEntry[] = [];
+  let legacyAfterDownEntries: LifecycleEntry[] = [];
+
+  if (!snapshotHasStackHooks && config) {
+    let resolvedProfileForDown: ReturnType<typeof resolveProfile> | null = null;
+    if (snap.active_profile) {
+      if (config.profiles?.[snap.active_profile]) {
+        try {
+          resolvedProfileForDown = resolveProfile(snap.active_profile, config);
+        } catch (err) {
+          warnings.push({
+            phase: "profile_resolve",
+            message: `failed to resolve profile "${snap.active_profile}" for before_down/after_down: ${errorMessage(err)}; proceeding with top-level entries only`,
+          });
+        }
+      } else {
+        warnings.push({
+          phase: "profile_resolve",
+          message: `active profile "${snap.active_profile}" recorded in state.json is no longer declared in lich.yaml; proceeding with top-level before_down/after_down entries only`,
+        });
+      }
+    }
+
+    legacyAllocatedPortsForLifecycle = snapAllocatedPorts;
     try {
       const topLevelEnv = await resolveTopLevelEnv({
         config,
         worktree,
-        allocatedPorts: allocatedPortsForLifecycle,
+        allocatedPorts: legacyAllocatedPortsForLifecycle,
         projectRoot: worktree.path,
         profile: resolvedProfileForDown ?? undefined,
       });
-      // Layer per-owned-service port env vars on top. Iterate snapshot (NOT yaml `owned:`) so we only inject ports for services that actually ran.
       let enrichedEnv: NodeJS.ProcessEnv = { ...topLevelEnv };
       for (const svcSnap of snap.services) {
         if (svcSnap.kind !== "owned") continue;
@@ -357,74 +407,88 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
           svcSnap.allocated_ports,
         );
       }
-      lifecycleEnv = enrichedEnv;
+      legacyLifecycleEnv = enrichedEnv;
     } catch (err) {
       warnings.push({
         phase: "lifecycle_env",
         message: `failed to reconstruct lifecycle env from state.json (${errorMessage(err)}); before_down/after_down will run with bare process.env`,
       });
-      lifecycleEnv = process.env;
     }
 
-    // Closure for long-form lifecycle entries with env_group — mirrors up.ts's lifecycleResolveEnvGroup.
-    lifecycleResolveEnvGroup = (name: string): Promise<NodeJS.ProcessEnv> =>
+    legacyLifecycleResolveEnvGroup = (name: string): Promise<NodeJS.ProcessEnv> =>
       resolveEnvGroup({
         name,
         config,
         worktree,
-        allocatedPorts: allocatedPortsForLifecycle,
+        allocatedPorts: legacyAllocatedPortsForLifecycle,
         projectRoot: worktree.path,
         profile: resolvedProfileForDown ?? undefined,
       });
+
+    if (resolvedProfileForDown) {
+      legacyBeforeDownEntries.push(...resolvedProfileForDown.lifecycle.before_down);
+      legacyAfterDownEntries.push(...resolvedProfileForDown.lifecycle.after_down);
+    }
+    if (config.lifecycle?.before_down && config.lifecycle.before_down.length > 0) {
+      legacyBeforeDownEntries.push(...config.lifecycle.before_down);
+    }
+    if (config.lifecycle?.after_down && config.lifecycle.after_down.length > 0) {
+      legacyAfterDownEntries.push(...config.lifecycle.after_down);
+    }
   }
 
-  const beforeDownEntries: LifecycleEntry[] = [];
-  if (resolvedProfileForDown) {
-    beforeDownEntries.push(...resolvedProfileForDown.lifecycle.before_down);
-  }
-  if (
-    config?.lifecycle?.before_down &&
-    config.lifecycle.before_down.length > 0
-  ) {
-    beforeDownEntries.push(...config.lifecycle.before_down);
-  }
-  if (beforeDownEntries.length > 0) {
+  const hasBeforeDown = snapshotHasStackHooks
+    ? (snap.before_down?.length ?? 0) > 0
+    : legacyBeforeDownEntries.length > 0;
+
+  if (hasBeforeDown) {
+    const entryCount = snapshotHasStackHooks
+      ? snap.before_down!.length
+      : legacyBeforeDownEntries.length;
     const beforeDownPhase = output.phase(
       formatHooksPhaseName({
         verb: "running",
         which: "before_down",
         current: 1,
-        total: beforeDownEntries.length,
+        total: entryCount,
       }),
     );
     try {
-      const beforeDownCtx = buildDownInterpCtx(worktree, allocatedPortsForLifecycle);
-      await runLifecycle(
-        {
-          phase: "before_down",
-          entries: interpolateDownLifecycleEntries(beforeDownEntries, beforeDownCtx, "lifecycle.before_down"),
-          cwd: worktree.path,
-          env: lifecycleEnv,
-          resolveEnvGroup: lifecycleResolveEnvGroup,
-          logDir: hooksDir(worktree.stack_id),
-        },
-        {
-          onWarning: (w) => {
-            warnings.push({
-              phase: "before_down",
-              message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
-            });
+      if (snapshotHasStackHooks) {
+        await runSnapshotLifecycle(
+          "before_down",
+          snap.before_down!,
+          worktree.path,
+          hooksDir(worktree.stack_id),
+          (w) => warnings.push({ phase: "before_down", message: w }),
+          (start) => output.lifecycleEntryStart(start),
+          (completion) => output.lifecycleEntryComplete(completion),
+        );
+      } else {
+        const beforeDownCtx = buildDownInterpCtx(worktree, legacyAllocatedPortsForLifecycle);
+        await runLifecycle(
+          {
+            phase: "before_down",
+            entries: interpolateDownLifecycleEntries(legacyBeforeDownEntries, beforeDownCtx, "lifecycle.before_down"),
+            cwd: worktree.path,
+            env: legacyLifecycleEnv,
+            resolveEnvGroup: legacyLifecycleResolveEnvGroup,
+            logDir: hooksDir(worktree.stack_id),
           },
-          onEntryStart: (start) => output.lifecycleEntryStart(start),
-          onEntryComplete: (completion) =>
-            output.lifecycleEntryComplete(completion),
-        },
-      ).catch((err) => {
-        warnings.push({
-          phase: "before_down",
-          message: errorMessage(err),
+          {
+            onWarning: (w) => {
+              warnings.push({
+                phase: "before_down",
+                message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+              });
+            },
+            onEntryStart: (start) => output.lifecycleEntryStart(start),
+            onEntryComplete: (completion) => output.lifecycleEntryComplete(completion),
+          },
+        ).catch((err) => {
+          warnings.push({ phase: "before_down", message: errorMessage(err) });
         });
-      });
+      }
     } finally {
       beforeDownPhase.end("ok", "hooks done");
     }
@@ -456,31 +520,60 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
         const svcSnap = snapsByName.get(name);
         if (!svcSnap) continue;
 
-        const lifecycle = config?.services?.[name]?.lifecycle;
-        if (lifecycle?.before_down && lifecycle.before_down.length > 0) {
-          const composeSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
-          await runPerServiceLifecycle(
-            {
-              serviceName: name,
-              phase: "before_down",
-              entries: interpolateDownLifecycleEntries(lifecycle.before_down, composeSvcCtx, `services.${name}.lifecycle.before_down`),
-              cwd: worktree.path,
-              env: process.env,
-            },
-            (w) => {
+        // Prefer snapshot before_down entries (post-LEV-513); fall back to yaml for legacy snapshots.
+        const composeBeforeDownEntries: import("../lifecycle/per-service.js").LifecycleEntry[] =
+          svcSnap.before_down !== undefined
+            ? svcSnap.before_down.map((e) => e.cmd)
+            : (config?.services?.[name]?.lifecycle?.before_down ?? []);
+        if (composeBeforeDownEntries.length > 0) {
+          if (svcSnap.before_down !== undefined) {
+            await runPerServiceLifecycle(
+              {
+                serviceName: name,
+                phase: "before_down",
+                entries: composeBeforeDownEntries,
+                cwd: worktree.path,
+                env: process.env,
+              },
+              (w) => {
+                warnings.push({
+                  service: name,
+                  phase: "before_down",
+                  message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                });
+              },
+            ).catch((err) => {
               warnings.push({
                 service: name,
                 phase: "before_down",
-                message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                message: errorMessage(err),
               });
-            },
-          ).catch((err) => {
-            warnings.push({
-              service: name,
-              phase: "before_down",
-              message: errorMessage(err),
             });
-          });
+          } else {
+            const composeSvcCtx = buildDownInterpCtx(worktree, snapAllocatedPorts);
+            await runPerServiceLifecycle(
+              {
+                serviceName: name,
+                phase: "before_down",
+                entries: interpolateDownLifecycleEntries(composeBeforeDownEntries, composeSvcCtx, `services.${name}.lifecycle.before_down`),
+                cwd: worktree.path,
+                env: process.env,
+              },
+              (w) => {
+                warnings.push({
+                  service: name,
+                  phase: "before_down",
+                  message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+                });
+              },
+            ).catch((err) => {
+              warnings.push({
+                service: name,
+                phase: "before_down",
+                message: errorMessage(err),
+              });
+            });
+          }
         }
 
         composeRan = true;
@@ -509,56 +602,58 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     }
   }
 
-  // after_down runs AFTER services have stopped AND AFTER before_down — for external resource cleanup safe only post-teardown
-  // (drop supabase workdir, remove scratch dirs). Composition order mirrors before_down: profile first (undo specialization), then top-level.
-  // Same lifecycleEnv as before_down — reused since both phases have identical env requirements.
-  const afterDownEntries: LifecycleEntry[] = [];
-  if (resolvedProfileForDown) {
-    afterDownEntries.push(...resolvedProfileForDown.lifecycle.after_down);
-  }
-  if (
-    config?.lifecycle?.after_down &&
-    config.lifecycle.after_down.length > 0
-  ) {
-    afterDownEntries.push(...config.lifecycle.after_down);
-  }
-  if (afterDownEntries.length > 0) {
+  const hasAfterDown = snapshotHasStackHooks
+    ? (snap.after_down?.length ?? 0) > 0
+    : legacyAfterDownEntries.length > 0;
+
+  if (hasAfterDown) {
+    const entryCount = snapshotHasStackHooks
+      ? snap.after_down!.length
+      : legacyAfterDownEntries.length;
     const afterDownPhase = output.phase(
       formatHooksPhaseName({
         verb: "running",
         which: "after_down",
         current: 1,
-        total: afterDownEntries.length,
+        total: entryCount,
       }),
     );
     try {
-      const afterDownCtx = buildDownInterpCtx(worktree, allocatedPortsForLifecycle);
-      await runLifecycle(
-        {
-          phase: "after_down",
-          entries: interpolateDownLifecycleEntries(afterDownEntries, afterDownCtx, "lifecycle.after_down"),
-          cwd: worktree.path,
-          env: lifecycleEnv,
-          resolveEnvGroup: lifecycleResolveEnvGroup,
-          logDir: hooksDir(worktree.stack_id),
-        },
-        {
-          onWarning: (w) => {
-            warnings.push({
-              phase: "after_down",
-              message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
-            });
+      if (snapshotHasStackHooks) {
+        await runSnapshotLifecycle(
+          "after_down",
+          snap.after_down!,
+          worktree.path,
+          hooksDir(worktree.stack_id),
+          (w) => warnings.push({ phase: "after_down", message: w }),
+          (start) => output.lifecycleEntryStart(start),
+          (completion) => output.lifecycleEntryComplete(completion),
+        );
+      } else {
+        const afterDownCtx = buildDownInterpCtx(worktree, legacyAllocatedPortsForLifecycle);
+        await runLifecycle(
+          {
+            phase: "after_down",
+            entries: interpolateDownLifecycleEntries(legacyAfterDownEntries, afterDownCtx, "lifecycle.after_down"),
+            cwd: worktree.path,
+            env: legacyLifecycleEnv,
+            resolveEnvGroup: legacyLifecycleResolveEnvGroup,
+            logDir: hooksDir(worktree.stack_id),
           },
-          onEntryStart: (start) => output.lifecycleEntryStart(start),
-          onEntryComplete: (completion) =>
-            output.lifecycleEntryComplete(completion),
-        },
-      ).catch((err) => {
-        warnings.push({
-          phase: "after_down",
-          message: errorMessage(err),
+          {
+            onWarning: (w) => {
+              warnings.push({
+                phase: "after_down",
+                message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
+              });
+            },
+            onEntryStart: (start) => output.lifecycleEntryStart(start),
+            onEntryComplete: (completion) => output.lifecycleEntryComplete(completion),
+          },
+        ).catch((err) => {
+          warnings.push({ phase: "after_down", message: errorMessage(err) });
         });
-      });
+      }
     } finally {
       afterDownPhase.end("ok", "hooks done");
     }
@@ -621,6 +716,7 @@ interface StopOwnedResult {
 async function stopOwnedService(
   name: string,
   pid: number | undefined,
+  svcSnap: import("../state/snapshot.js").ServiceSnapshot,
   ownedDef: OwnedService | undefined,
   worktree: Worktree,
   config: LichConfig | null,
@@ -630,13 +726,18 @@ async function stopOwnedService(
   const warnings: string[] = [];
   let info: string | undefined;
 
+  // Prefer snapshotted stop_cmd; fall back to yaml for legacy snapshots.
+  const stopCmd = svcSnap.stop_cmd ?? ownedDef?.stop_cmd;
+
   // stop_cmd takes priority — used by self-managing tools (e.g. supabase).
-  if (ownedDef?.stop_cmd) {
-    // Resolve per-service env via the same pipeline up.ts used at spawn — non-negotiable for any stop_cmd that addresses
-    // external state by an interpolated identifier (supabase project_id, namespaced docker names, etc.).
-    const allocatedPortsForStop = rebuildAllocatedPorts(snapshot);
-    let stopEnv: NodeJS.ProcessEnv = process.env;
-    if (config) {
+  if (stopCmd) {
+    let stopEnv: NodeJS.ProcessEnv;
+    if (svcSnap.resolved_env !== undefined) {
+      // New snapshot: use the fully resolved env from up time — no yaml re-parse needed.
+      stopEnv = svcSnap.resolved_env;
+    } else if (config) {
+      // Legacy snapshot: reconstruct env from yaml (old behavior).
+      const allocatedPortsForStop = rebuildAllocatedPorts(snapshot);
       try {
         stopEnv = await resolveEnvForService({
           config,
@@ -646,29 +747,44 @@ async function stopOwnedService(
           projectRoot: worktree.path,
         });
       } catch {
-        // Best-effort: fall back to process.env so stop_cmd at least runs.
         stopEnv = process.env;
       }
+      stopEnv = injectOwnedPortEnv(stopEnv, ownedDef, svcSnap.allocated_ports);
+      // Interpolate ${...} refs in stop_cmd using the same port context used for env.
+      const allocatedPortsForInterp = rebuildAllocatedPorts(snapshot);
+      let resolvedStopCmdLegacy = stopCmd;
+      try {
+        resolvedStopCmdLegacy = interpolateString(
+          stopCmd,
+          buildDownInterpCtx(worktree, allocatedPortsForInterp),
+          `owned.${name}.stop_cmd`,
+          true,
+        );
+      } catch {
+        // Best-effort: unresolved refs fall back to the raw string.
+      }
+      const result = await runStopCmd(resolvedStopCmdLegacy, worktree.path, stopEnv);
+      if (result.timedOut) {
+        const tail = formatStderrTail(result.stderrTail);
+        const tailSection = tail ? ` stderr tail: "${tail}"` : "";
+        warnings.push(`stop_cmd exceeded ${STOP_CMD_TIMEOUT_MS}ms timeout and was SIGKILL'd;${tailSection}`);
+      } else if (typeof result.exitCode === "number" && result.exitCode !== 0) {
+        const tail = formatStderrTail(result.stderrTail);
+        const tailSection = tail ? ` stderr tail: "${tail}"` : "";
+        warnings.push(`stop_cmd exited ${result.exitCode};${tailSection}`);
+      } else if (result.exitCode === null && !result.timedOut) {
+        const tail = formatStderrTail(result.stderrTail);
+        const tailSection = tail ? ` stderr tail: "${tail}"` : "";
+        warnings.push(`stop_cmd terminated abnormally (no exit code);${tailSection}`);
+      } else if (result.durationMs > STOP_CMD_SLOW_MS) {
+        const seconds = (result.durationMs / 1000).toFixed(1);
+        info = `stop_cmd took ${seconds}s — verify resources are actually gone`;
+      }
+      return { warnings, info };
+    } else {
+      stopEnv = process.env;
     }
-    // ALSO inject per-port env vars (`SUPABASE_API_PORT=9000` etc.) so tools like `supabase stop` can parse `port = "env(SUPABASE_API_PORT)"` in config files.
-    const snapSvc = snapshot.services.find(
-      (s) => s.kind === "owned" && s.name === name,
-    );
-    stopEnv = injectOwnedPortEnv(stopEnv, ownedDef, snapSvc?.allocated_ports);
-    // Interpolate ${...} refs in stop_cmd using the same port context used for env.
-    let resolvedStopCmd = ownedDef.stop_cmd;
-    try {
-      resolvedStopCmd = interpolateString(
-        ownedDef.stop_cmd,
-        buildDownInterpCtx(worktree, allocatedPortsForStop),
-        `owned.${name}.stop_cmd`,
-        true,
-      );
-    } catch {
-      // Best-effort: unresolved refs fall back to the raw string.
-    }
-    const result = await runStopCmd(resolvedStopCmd, worktree.path, stopEnv);
-    // Surface outcomes the user can act on: exit code + stderr tail for failures; slow-but-zero exit as info.
+    const result = await runStopCmd(stopCmd, worktree.path, stopEnv);
     if (result.timedOut) {
       const tail = formatStderrTail(result.stderrTail);
       const tailSection = tail ? ` stderr tail: "${tail}"` : "";
@@ -682,7 +798,6 @@ async function stopOwnedService(
         `stop_cmd exited ${result.exitCode};${tailSection}`,
       );
     } else if (result.exitCode === null && !result.timedOut) {
-      // External SIGKILL or spawn-level failure (sh missing, etc.).
       const tail = formatStderrTail(result.stderrTail);
       const tailSection = tail ? ` stderr tail: "${tail}"` : "";
       warnings.push(
@@ -909,15 +1024,40 @@ async function forceRemoveContainer(cli: string, id: string): Promise<void> {
   });
 }
 
-/**
- * Compute teardown order. With yaml: reverse-topo from depends_on, with extras (services in snapshot but not yaml) appended.
- * No yaml or graph-error: fall back to reversed snapshot order (`up` writes in startup order). Cycle/missing-dep emits a warning.
- */
 function computeTeardownOrder(
-  serviceSnaps: Array<{ name: string; kind: "compose" | "owned" }>,
+  serviceSnaps: Array<{ name: string; kind: "compose" | "owned"; depends_on?: string[] }>,
   config: LichConfig | null,
   warnings: DownWarning[],
 ): string[] {
+  // Use snapshot depends_on if all services carry it (post-LEV-513 snapshots).
+  const allHaveDepsOnSnapshot = serviceSnaps.every((s) => s.depends_on !== undefined);
+
+  if (allHaveDepsOnSnapshot) {
+    const sourceDecls: NodeDecl[] = serviceSnaps.map((s) => ({
+      name: s.name,
+      kind: s.kind,
+      depends_on: s.depends_on!,
+    }));
+    try {
+      const graph = buildGraph(sourceDecls);
+      return shutdownOrder(graph);
+    } catch (err) {
+      if (err instanceof CycleError) {
+        warnings.push({
+          phase: "compute_order",
+          message: `cycle in depends_on (${err.cycle.join(" → ")}); using snapshot order`,
+        });
+      } else {
+        warnings.push({
+          phase: "compute_order",
+          message: `failed to compute teardown order: ${errorMessage(err)}; using snapshot order`,
+        });
+      }
+      return [...serviceSnaps].reverse().map((s) => s.name);
+    }
+  }
+
+  // Legacy fallback: use yaml depends_on.
   if (!config) {
     return [...serviceSnaps].reverse().map((s) => s.name);
   }
@@ -953,6 +1093,68 @@ function computeTeardownOrder(
     }
     return [...serviceSnaps].reverse().map((s) => s.name);
   }
+}
+
+async function runSnapshotLifecycle(
+  phase: "before_down" | "after_down",
+  entries: SnapshotLifecycleEntry[],
+  cwd: string,
+  logDir: string,
+  onWarning: (msg: string) => void,
+  onEntryStart: (s: import("../lifecycle/executor.js").LifecycleEntryStart) => void,
+  onEntryComplete: (c: import("../lifecycle/executor.js").LifecycleEntryCompletion) => void,
+): Promise<void> {
+  const total = entries.length;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    onEntryStart({ phase, index, total, cmd: entry.cmd });
+    await runLifecycle(
+      {
+        phase,
+        entries: [entry.cmd],
+        cwd,
+        env: entry.env,
+        logDir,
+      },
+      {
+        onWarning: (w) => {
+          onWarning(`entry #${w.index} exited ${w.exitCode}: ${w.cmd}`);
+        },
+        onEntryComplete: (c) => {
+          onEntryComplete({ ...c, index, total });
+        },
+      },
+    ).catch((err) => {
+      onWarning(errorMessage(err));
+    });
+  }
+}
+
+async function findWorktreeBySnapshot(cwd: string): Promise<Worktree | null> {
+  const { realpathSync, existsSync: fsExists } = await import("node:fs");
+  const { hashPath, sanitizeName } = await import("../worktree/detect.js");
+  const { basename } = await import("node:path");
+
+  const safeReal = (p: string): string => {
+    try { return realpathSync(p); } catch { return p; }
+  };
+  const cwdReal = safeReal(cwd);
+
+  const stackIds = await listStacks();
+  for (const stackId of stackIds) {
+    const snap = await readSnapshot(stackId).catch(() => null);
+    if (!snap || snap.status === "stopped") continue;
+
+    const snapPath = safeReal(snap.worktree_path);
+    if (!cwdReal.startsWith(snapPath)) continue;
+
+    if (!fsExists(snapPath)) continue;
+
+    const name = sanitizeName(basename(snapPath));
+    const id = hashPath(snapPath);
+    return { name, id, path: snapPath, stack_id: `${name}-${id.slice(0, 8)}` };
+  }
+  return null;
 }
 
 interface OwnedPhaseInput {

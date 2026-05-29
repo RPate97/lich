@@ -12,6 +12,12 @@ export type ServiceState =
   | "stopped"
   | "failed";
 
+/** Lifecycle hook entry with pre-resolved env — snapshotted at up time so down never re-parses yaml. */
+export interface SnapshotLifecycleEntry {
+  cmd: string;
+  env: Record<string, string>;
+}
+
 export interface ServiceSnapshot {
   name: string;
   kind: "compose" | "owned";
@@ -26,6 +32,16 @@ export interface ServiceSnapshot {
   failure_reason?: string;
   /** Last ~20 log lines at failure time, oldest-first. Only persisted when state is "failed". */
   failure_log_tail?: string[];
+  /** Resolved stop_cmd (post-interpolation). Snapshotted at up time. */
+  stop_cmd?: string;
+  /** Resolved cmd (post-interpolation). Snapshotted at up time. */
+  cmd?: string;
+  /** Fully resolved env the service ran with — used by down to run stop_cmd with the correct env. */
+  resolved_env?: Record<string, string>;
+  /** depends_on edges from the yaml at up time — used by down for reverse-topo teardown ordering. */
+  depends_on?: string[];
+  /** Per-service before_down hooks with pre-resolved env. */
+  before_down?: SnapshotLifecycleEntry[];
 }
 
 export type StackStatus =
@@ -62,6 +78,10 @@ export interface StackSnapshot {
    * Readers and the proxy must preserve that distinction.
    */
   routing?: RoutingEntry[];
+  /** Top-level + profile before_down hooks with pre-resolved env, snapshotted at up time. */
+  before_down?: SnapshotLifecycleEntry[];
+  /** Top-level + profile after_down hooks with pre-resolved env, snapshotted at up time. */
+  after_down?: SnapshotLifecycleEntry[];
 }
 
 function snapshotPath(stackId: string): string {
