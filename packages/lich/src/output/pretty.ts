@@ -442,7 +442,6 @@ export function createPrettyOutput(
       }
 
       if (completion.exitCode !== 0 && completion.logPath !== undefined) {
-        // Failure: dump full combined stdout+stderr from the log file (tailed, capped).
         const result = formatHookFailureOutput({
           phase: completion.phase,
           index: completion.index,
@@ -458,7 +457,6 @@ export function createPrettyOutput(
           writeLine(paint(`  ${result.footer}`, "gray", color));
         }
       } else {
-        // Success (exit 0): surface stderr inline if any (the `cmd || true` pattern).
         const stderrLine = formatStderrSurface({
           phase: completion.phase,
           index: completion.index,

@@ -139,12 +139,6 @@ export function formatStderrSurface(args: {
 const FAILURE_MAX_LINES = 500;
 const FAILURE_MAX_BYTES = 200_000;
 
-/**
- * Format the full combined stdout+stderr from the log file for inline display
- * on hook failure (exit ≠ 0). Returns `{ lines, footer }` where `lines` is the
- * tailed output (capped at ~500 lines / 200KB) and `footer` is the log-path hint.
- * Returns null when logPath is unset or the file cannot be read.
- */
 export function formatHookFailureOutput(args: {
   phase: LifecyclePhase;
   index: number;
