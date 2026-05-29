@@ -646,3 +646,103 @@ describe("profile lifecycle merge with top-level (LEV-499)", () => {
     ]).toEqual(["profile:only-down"]);
   });
 });
+
+describe("resolveProfile — discover parent expansion in owned:", () => {
+  it("expands a discover parent name in profile owned: to its materialized children", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        default: { owned: ["api", "web", "events-workers"] },
+      },
+      _discoverParents: new Map([
+        ["events-workers", ["billing-worker", "events-worker", "notifications-worker"]],
+      ]),
+    };
+
+    const resolved = resolveProfile("default", config);
+
+    expect(resolved.owned).toEqual([
+      "api",
+      "web",
+      "billing-worker",
+      "events-worker",
+      "notifications-worker",
+    ]);
+  });
+
+  it("back-compat: per-name listing of materialized services still works without a discover map", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        default: { owned: ["api", "billing-worker", "events-worker"] },
+      },
+    };
+
+    const resolved = resolveProfile("default", config);
+    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+  });
+
+  it("deduplicates when a child name appears both explicitly and via parent expansion", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        default: { owned: ["api", "billing-worker", "events-workers"] },
+      },
+      _discoverParents: new Map([
+        ["events-workers", ["billing-worker", "events-worker"]],
+      ]),
+    };
+
+    const resolved = resolveProfile("default", config);
+    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+  });
+
+  it("expands discover parent names inherited via extends chain", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        base: { owned: ["api"] },
+        full: { extends: "base", owned: ["events-workers"] },
+      },
+      _discoverParents: new Map([
+        ["events-workers", ["billing-worker", "events-worker"]],
+      ]),
+    };
+
+    const resolved = resolveProfile("full", config);
+    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+  });
+
+  it("handles a discover parent with zero matches (empty children list)", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        default: { owned: ["api", "events-workers"] },
+      },
+      _discoverParents: new Map([["events-workers", []]]),
+    };
+
+    const resolved = resolveProfile("default", config);
+    expect(resolved.owned).toEqual(["api"]);
+  });
+
+  it("leaves unknown names (non-discover) in owned: unchanged", () => {
+    const config: LichConfig = {
+      version: "1",
+      profiles: {
+        default: { owned: ["api", "events-workers", "web"] },
+      },
+      _discoverParents: new Map([
+        ["events-workers", ["billing-worker", "events-worker"]],
+      ]),
+    };
+
+    const resolved = resolveProfile("default", config);
+    expect(resolved.owned).toEqual([
+      "api",
+      "billing-worker",
+      "events-worker",
+      "web",
+    ]);
+  });
+});
