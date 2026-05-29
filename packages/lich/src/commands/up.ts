@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
@@ -565,6 +567,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
                     env: topLevelEnv,
                   }
                 : null,
+              oneshotStopCmds: buildOneshotStopCmds(effectiveConfig, state),
             });
           }
           const baseDetail =
@@ -638,6 +641,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
                   env: topLevelEnv,
                 }
               : null,
+            oneshotStopCmds: buildOneshotStopCmds(effectiveConfig, state),
           });
         }
         const baseDetail = (err as Error).message;
@@ -760,6 +764,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           failedNames: new Set(),
           // composeCtx may not be built yet at this point — owned handles still get SIGTERM'd; compose cleanup falls to `lich down`.
           composeCtx: null,
+          oneshotStopCmds: config ? buildOneshotStopCmds(config, state) : undefined,
         });
       }
       const baseDetail = describeError(err);
@@ -1827,6 +1832,8 @@ export interface CascadeKillInput {
   failedNames: Set<string>;
   /** Compose context for project-level `compose down`. Null when no compose services in the resolved profile. */
   composeCtx: RunnerCtx | null;
+  /** stop_cmd entries for oneshot services that already ran. Keyed by service name; values carry resolved cmd/cwd/env. */
+  oneshotStopCmds?: Map<string, { cmd: string; cwd: string; env: NodeJS.ProcessEnv }>;
 }
 
 /**
@@ -1847,6 +1854,26 @@ export async function cascadeKillSiblings(
     if (input.failedNames.has(name)) continue;
     killed.push(name);
     ownedTasks.push(handle.stop().catch(() => {}));
+  }
+
+  // Oneshot services have no handle (process already exited) but their stop_cmd must still fire
+  // to tear down external side-effects (e.g. supabase containers).
+  if (input.oneshotStopCmds) {
+    for (const [name, { cmd, cwd, env }] of input.oneshotStopCmds.entries()) {
+      if (input.failedNames.has(name)) continue;
+      ownedTasks.push(
+        new Promise<void>((resolve) => {
+          const child = spawn("/bin/sh", ["-c", cmd], {
+            cwd,
+            env,
+            stdio: "ignore",
+            detached: false,
+          });
+          child.once("exit", () => resolve());
+          child.once("error", () => resolve());
+        }).catch(() => {}),
+      );
+    }
   }
 
   // Project-level `compose down` is more robust than per-service down (which leaves the network + orphans behind).
@@ -1880,6 +1907,26 @@ export async function cascadeKillSiblings(
 
   killed.sort();
   return killed;
+}
+
+/**
+ * Build the oneshotStopCmds map for {@link cascadeKillSiblings}.
+ * Collects every owned service that has both `oneshot: true` and a `stop_cmd`, then
+ * pairs the command with the resolved env + cwd already stashed in UpState.
+ */
+function buildOneshotStopCmds(
+  config: LichConfig,
+  state: UpState,
+): Map<string, { cmd: string; cwd: string; env: NodeJS.ProcessEnv }> {
+  const result = new Map<string, { cmd: string; cwd: string; env: NodeJS.ProcessEnv }>();
+  for (const [name, def] of Object.entries(config.owned ?? {})) {
+    if (!def?.oneshot || typeof def.stop_cmd !== "string" || def.stop_cmd.length === 0) continue;
+    const env = state.ownedEnv.get(name);
+    const cwd = state.ownedCwd.get(name);
+    if (!env || !cwd) continue;
+    result.set(name, { cmd: def.stop_cmd, cwd, env });
+  }
+  return result;
 }
 
 /** Read `runtime.kill_others_on_fail` with default-true semantics. */

@@ -319,3 +319,111 @@ describe("lich up — runtime.kill_others_on_fail", () => {
     60_000,
   );
 });
+
+describe("lich up — oneshot stop_cmd on cascade-kill", () => {
+  // Verifies LEV-511: stop_cmd fires on every teardown path, not just clean `lich down`.
+  // Uses a sentinel file created by stop_cmd to prove it ran.
+
+  it(
+    "invokes oneshot stop_cmd when after_up fails (cascade-kill teardown)",
+    async () => {
+      const sentinelDir = mkdtempSync(join(tmpdir(), "lich-e2e-stop-cmd-sentinel-"));
+      const sentinelFile = join(sentinelDir, "stop_cmd_ran");
+
+      const yaml = `version: "1"
+
+owned:
+  sidecar:
+    oneshot: true
+    cmd: 'true'
+    stop_cmd: 'touch ${sentinelFile}'
+
+lifecycle:
+  after_up:
+    - cmd: 'false'
+
+profiles:
+  dev:
+    default: true
+    owned: [sidecar]
+`;
+
+      fixture = makeFixture(yaml);
+      const { stackPath, lichHome } = fixture;
+
+      const upResult = runLich(["up", "--no-browser"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+        timeout: 30_000,
+      });
+
+      expect(upResult.exitCode).not.toBe(0);
+
+      // Wait for the sentinel file — stop_cmd may still be running when lich up returns.
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(sentinelFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      expect(
+        existsSync(sentinelFile),
+        `stop_cmd sentinel file was not created — stop_cmd did not run on after_up failure teardown\n` +
+          `lich up stdout:\n${upResult.stdout}\n` +
+          `lich up stderr:\n${upResult.stderr}`,
+      ).toBe(true);
+
+      rmSync(sentinelDir, { recursive: true, force: true });
+    },
+    30_000,
+  );
+
+  it(
+    "invokes oneshot stop_cmd when a sibling service fails the startup race",
+    async () => {
+      const sentinelDir = mkdtempSync(join(tmpdir(), "lich-e2e-stop-cmd-sentinel-"));
+      const sentinelFile = join(sentinelDir, "stop_cmd_ran");
+
+      const yaml = `version: "1"
+
+owned:
+  sidecar:
+    oneshot: true
+    cmd: 'true'
+    stop_cmd: 'touch ${sentinelFile}'
+  exiter:
+    cmd: 'exit 1'
+
+profiles:
+  dev:
+    default: true
+    owned: [sidecar, exiter]
+`;
+
+      fixture = makeFixture(yaml);
+      const { stackPath, lichHome } = fixture;
+
+      const upResult = runLich(["up", "--no-browser"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+        timeout: 30_000,
+      });
+
+      expect(upResult.exitCode).not.toBe(0);
+
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(sentinelFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      expect(
+        existsSync(sentinelFile),
+        `stop_cmd sentinel file was not created — stop_cmd did not run on sibling failure cascade\n` +
+          `lich up stdout:\n${upResult.stdout}\n` +
+          `lich up stderr:\n${upResult.stderr}`,
+      ).toBe(true);
+
+      rmSync(sentinelDir, { recursive: true, force: true });
+    },
+    30_000,
+  );
+});

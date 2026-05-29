@@ -1,3 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -293,5 +297,111 @@ describe("cascadeKillSiblings — startup-race teardown", () => {
     } finally {
       composeExec.current = originalExec;
     }
+  });
+
+  it("invokes stop_cmd for oneshot services that ran before the failure", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "lich-unit-cascade-kill-"));
+    const markerFile = join(tmpDir, "stop_cmd_ran");
+    try {
+      const ownedHandles = new Map();
+      const services = makeServiceMap([
+        { name: "supabase", kind: "owned", state: "ready" },
+        { name: "api", kind: "owned", state: "failed" },
+      ]);
+
+      const oneshotStopCmds = new Map([
+        [
+          "supabase",
+          {
+            cmd: `touch ${markerFile}`,
+            cwd: tmpDir,
+            env: { ...process.env },
+          },
+        ],
+      ]);
+
+      const killed = await cascadeKillSiblings({
+        ownedHandles,
+        services,
+        failedNames: new Set(["api"]),
+        composeCtx: null,
+        oneshotStopCmds,
+      });
+
+      // stop_cmd was run — wait briefly for the spawned process to complete
+      const deadline = Date.now() + 3_000;
+      while (!existsSync(markerFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(existsSync(markerFile), "stop_cmd marker file was not created — stop_cmd did not run").toBe(true);
+      // supabase not in killed list — oneshotStopCmds side-effects run silently; the service is already "done"
+      expect(killed).toEqual([]);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips oneshot stop_cmd for the failed service", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "lich-unit-cascade-kill-"));
+    const markerFailed = join(tmpDir, "failed_stop_ran");
+    const markerOk = join(tmpDir, "ok_stop_ran");
+    try {
+      const ownedHandles = new Map();
+      const services = makeServiceMap([
+        { name: "db", kind: "owned", state: "failed" },
+        { name: "cache", kind: "owned", state: "ready" },
+      ]);
+
+      const oneshotStopCmds = new Map([
+        ["db", { cmd: `touch ${markerFailed}`, cwd: tmpDir, env: { ...process.env } }],
+        ["cache", { cmd: `touch ${markerOk}`, cwd: tmpDir, env: { ...process.env } }],
+      ]);
+
+      await cascadeKillSiblings({
+        ownedHandles,
+        services,
+        failedNames: new Set(["db"]),
+        composeCtx: null,
+        oneshotStopCmds,
+      });
+
+      const deadline = Date.now() + 3_000;
+      while (!existsSync(markerOk) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(existsSync(markerOk), "cache stop_cmd should have run").toBe(true);
+      expect(existsSync(markerFailed), "failed service stop_cmd should NOT have run").toBe(false);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("swallows oneshot stop_cmd errors so cascade proceeds", async () => {
+    const ownedHandles = new Map();
+    const services = makeServiceMap([
+      { name: "bad_oneshot", kind: "owned", state: "ready" },
+    ]);
+
+    const oneshotStopCmds = new Map([
+      [
+        "bad_oneshot",
+        {
+          cmd: "exit 99",
+          cwd: "/tmp",
+          env: { ...process.env },
+        },
+      ],
+    ]);
+
+    // Should not throw even though stop_cmd exits non-zero
+    const result = await cascadeKillSiblings({
+      ownedHandles,
+      services,
+      failedNames: new Set(),
+      composeCtx: null,
+      oneshotStopCmds,
+    });
+    expect(Array.isArray(result)).toBe(true);
   });
 });
