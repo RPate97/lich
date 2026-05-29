@@ -20,7 +20,7 @@ import {
 } from "../env/resolve.js";
 import {
   ensureStackDir,
-  hooksDir,
+  phaseLogPath,
   serviceLogPath,
   stackDir,
 } from "../state/directory.js";
@@ -483,7 +483,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
-            logDir: hooksDir(worktree.stack_id),
+            logPath: phaseLogPath(worktree.stack_id, "before_up"),
           },
           {
             onEntryStart: (start) => output.lifecycleEntryStart(start),
@@ -622,7 +622,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
-            logDir: hooksDir(worktree.stack_id),
+            logPath: phaseLogPath(worktree.stack_id, "after_up"),
           },
           {
             onEntryStart: (start) => output.lifecycleEntryStart(start),

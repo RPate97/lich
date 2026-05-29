@@ -271,9 +271,9 @@ describe("runLifecycle", () => {
     expect(completions[0]!.index).toBe(0);
   });
 
-  it("writes per-hook log file with combined stdout+stderr", async () => {
+  it("writes phase log file with combined stdout+stderr from all entries", async () => {
     const cwd = freshTmpDir();
-    const logDir = freshTmpDir();
+    const logPath = join(freshTmpDir(), "before_up.log");
 
     await runLifecycle({
       phase: "before_up",
@@ -282,19 +282,18 @@ describe("runLifecycle", () => {
       ],
       cwd,
       env: { ...process.env },
-      logDir,
+      logPath,
     });
 
-    const logPath = join(logDir, "before_up-0.log");
     expect(existsSync(logPath)).toBe(true);
     const contents = readFileSync(logPath, "utf8");
     expect(contents).toContain("from-stdout");
     expect(contents).toContain("from-stderr");
   });
 
-  it("log path matches `<logDir>/<phase>-<idx>.log` convention", async () => {
+  it("all entries append to the same phase log file with command headers", async () => {
     const cwd = freshTmpDir();
-    const logDir = freshTmpDir();
+    const logPath = join(freshTmpDir(), "after_down.log");
     const completions: LifecycleEntryCompletion[] = [];
 
     await runLifecycle(
@@ -303,25 +302,25 @@ describe("runLifecycle", () => {
         entries: ["echo a", "echo b", "echo c"],
         cwd,
         env: { ...process.env },
-        logDir,
+        logPath,
       },
       undefined,
       (c) => completions.push(c),
     );
 
-    expect(existsSync(join(logDir, "after_down-0.log"))).toBe(true);
-    expect(existsSync(join(logDir, "after_down-1.log"))).toBe(true);
-    expect(existsSync(join(logDir, "after_down-2.log"))).toBe(true);
-    expect(completions.map((c) => c.logPath)).toEqual([
-      join(logDir, "after_down-0.log"),
-      join(logDir, "after_down-1.log"),
-      join(logDir, "after_down-2.log"),
-    ]);
+    expect(existsSync(logPath)).toBe(true);
+    const contents = readFileSync(logPath, "utf8");
+    // All entries land in one file with headers
+    expect(contents).toContain("after_down[0]");
+    expect(contents).toContain("after_down[1]");
+    expect(contents).toContain("after_down[2]");
+    // All completions reference the same phase log path
+    expect(completions.map((c) => c.logPath)).toEqual([logPath, logPath, logPath]);
   });
 
   it("log file truncated to ~1 MB cap on a runaway hook", async () => {
     const cwd = freshTmpDir();
-    const logDir = freshTmpDir();
+    const logPath = join(freshTmpDir(), "before_up.log");
     const ONE_MB = 1_000_000;
 
     await runLifecycle({
@@ -332,32 +331,30 @@ describe("runLifecycle", () => {
       ],
       cwd,
       env: { ...process.env },
-      logDir,
+      logPath,
     });
 
-    const logPath = join(logDir, "before_up-0.log");
     expect(existsSync(logPath)).toBe(true);
     const size = statSync(logPath).size;
     expect(size).toBeGreaterThan(0);
     expect(size).toBeLessThanOrEqual(ONE_MB);
   });
 
-  it("entry that produces no output writes an empty log file", async () => {
+  it("entry that produces no output still writes command header to log file", async () => {
     const cwd = freshTmpDir();
-    const logDir = freshTmpDir();
+    const logPath = join(freshTmpDir(), "after_up.log");
 
     await runLifecycle({
       phase: "after_up",
       entries: ["true"],
       cwd,
       env: { ...process.env },
-      logDir,
+      logPath,
     });
 
-    const logPath = join(logDir, "after_up-0.log");
-    if (existsSync(logPath)) {
-      expect(statSync(logPath).size).toBe(0);
-    }
+    expect(existsSync(logPath)).toBe(true);
+    const contents = readFileSync(logPath, "utf8");
+    expect(contents).toContain("after_up[0]");
   });
 
   it("onEntryComplete fires for every entry regardless of exit code", async () => {
@@ -385,7 +382,7 @@ describe("runLifecycle", () => {
     expect(completions[2]!.stderrTail).toBe("");
   });
 
-  it("when logDir is unset, no log files are written but completion still fires", async () => {
+  it("when logPath is unset, no log files are written but completion still fires", async () => {
     const cwd = freshTmpDir();
     const completions: LifecycleEntryCompletion[] = [];
 
@@ -406,21 +403,20 @@ describe("runLifecycle", () => {
   });
 
   it(
-    "log file write survives a non-existent logDir (auto-creates)",
+    "log file write survives a non-existent parent dir (auto-creates)",
     async () => {
       const cwd = freshTmpDir();
-      const logDir = join(freshTmpDir(), "subdir-that-does-not-exist");
-      expect(existsSync(logDir)).toBe(false);
+      const logPath = join(freshTmpDir(), "subdir-that-does-not-exist", "before_up.log");
+      expect(existsSync(logPath)).toBe(false);
 
       await runLifecycle({
         phase: "before_up",
         entries: ["echo hello-from-hook"],
         cwd,
         env: { ...process.env },
-        logDir,
+        logPath,
       });
 
-      const logPath = join(logDir, "before_up-0.log");
       expect(existsSync(logPath)).toBe(true);
       expect(readFileSync(logPath, "utf8")).toContain("hello-from-hook");
     },
@@ -662,14 +658,14 @@ describe("formatHookFailureOutput", () => {
       total: 1,
       cmd: "pnpm db:reset",
       exitCode: 1,
-      logPath: "/nonexistent/path/before_up-0.log",
+      logPath: "/nonexistent/path/before_up.log",
     });
     expect(result).toBeNull();
   });
 
   it("returns lines and footer for a readable log file", () => {
     const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-"));
-    const logPath = join(dir, "before_up-0.log");
+    const logPath = join(dir, "before_up.log");
     writeFileSync(logPath, "line one\nline two\nline three\n", "utf8");
 
     const result = formatHookFailureOutput({
@@ -689,7 +685,7 @@ describe("formatHookFailureOutput", () => {
 
   it("tails to last 500 lines when output exceeds 500 lines", () => {
     const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-tail-"));
-    const logPath = join(dir, "before_up-0.log");
+    const logPath = join(dir, "before_up.log");
     const allLines = Array.from({ length: 600 }, (_, i) => `line-${i}`);
     writeFileSync(logPath, allLines.join("\n") + "\n", "utf8");
 
@@ -711,7 +707,7 @@ describe("formatHookFailureOutput", () => {
 
   it("includes combined stdout output (not just stderr) from the log file", () => {
     const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-combined-"));
-    const logPath = join(dir, "before_up-0.log");
+    const logPath = join(dir, "before_up.log");
     writeFileSync(
       logPath,
       "stdout: installing deps\nstderr: ERROR: missing package\n",
@@ -734,7 +730,7 @@ describe("formatHookFailureOutput", () => {
 
   it("strips trailing empty line from trailing newline in log file", () => {
     const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-newline-"));
-    const logPath = join(dir, "after_up-0.log");
+    const logPath = join(dir, "after_up.log");
     writeFileSync(logPath, "error: something went wrong\n", "utf8");
 
     const result = formatHookFailureOutput({
@@ -752,7 +748,7 @@ describe("formatHookFailureOutput", () => {
 
   it("returns lines for an empty log file (no crash)", () => {
     const dir = mkdtempSync(join(tmpdir(), "lich-fhfo-empty-"));
-    const logPath = join(dir, "before_up-0.log");
+    const logPath = join(dir, "before_up.log");
     writeFileSync(logPath, "", "utf8");
 
     const result = formatHookFailureOutput({

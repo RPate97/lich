@@ -7,6 +7,7 @@ import {
   envDir,
   listStacks,
   logsDir,
+  phaseLogPath,
   removeStackDir,
   serviceEnvPath,
   serviceLogPath,
@@ -76,6 +77,15 @@ describe("path helpers", () => {
       join(home, "stacks", "abc123", "env", "api.env"),
     );
   });
+
+  it("phaseLogPath is <logsDir>/<phase>.log", () => {
+    expect(phaseLogPath("abc123", "before_up")).toBe(
+      join(home, "stacks", "abc123", "logs", "before_up.log"),
+    );
+    expect(phaseLogPath("abc123", "after_down")).toBe(
+      join(home, "stacks", "abc123", "logs", "after_down.log"),
+    );
+  });
 });
 
 describe("ensureStackDir", () => {
@@ -84,6 +94,9 @@ describe("ensureStackDir", () => {
     expect(statSync(stackDir("s1")).isDirectory()).toBe(true);
     expect(statSync(logsDir("s1")).isDirectory()).toBe(true);
     expect(statSync(envDir("s1")).isDirectory()).toBe(true);
+    // hooks/ subdirectory is no longer created
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(stackDir("s1"), "hooks"))).toBe(false);
   });
 
   it("is idempotent on an already-existing layout", async () => {

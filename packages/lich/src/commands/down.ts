@@ -38,7 +38,7 @@ import {
   interpolateString,
   type InterpolationContext,
 } from "../config/interpolation.js";
-import { hooksDir, listStacks, stackDir } from "../state/directory.js";
+import { listStacks, phaseLogPath, stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
@@ -459,7 +459,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
           "before_down",
           snap.before_down!,
           worktree.path,
-          hooksDir(worktree.stack_id),
+          phaseLogPath(worktree.stack_id, "before_down"),
           (w) => warnings.push({ phase: "before_down", message: w }),
           (start) => output.lifecycleEntryStart(start),
           (completion) => output.lifecycleEntryComplete(completion),
@@ -473,7 +473,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
             cwd: worktree.path,
             env: legacyLifecycleEnv,
             resolveEnvGroup: legacyLifecycleResolveEnvGroup,
-            logDir: hooksDir(worktree.stack_id),
+            logPath: phaseLogPath(worktree.stack_id, "before_down"),
           },
           {
             onWarning: (w) => {
@@ -624,7 +624,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
           "after_down",
           snap.after_down!,
           worktree.path,
-          hooksDir(worktree.stack_id),
+          phaseLogPath(worktree.stack_id, "after_down"),
           (w) => warnings.push({ phase: "after_down", message: w }),
           (start) => output.lifecycleEntryStart(start),
           (completion) => output.lifecycleEntryComplete(completion),
@@ -638,7 +638,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
             cwd: worktree.path,
             env: legacyLifecycleEnv,
             resolveEnvGroup: legacyLifecycleResolveEnvGroup,
-            logDir: hooksDir(worktree.stack_id),
+            logPath: phaseLogPath(worktree.stack_id, "after_down"),
           },
           {
             onWarning: (w) => {
@@ -1099,7 +1099,7 @@ async function runSnapshotLifecycle(
   phase: "before_down" | "after_down",
   entries: SnapshotLifecycleEntry[],
   cwd: string,
-  logDir: string,
+  logPath: string,
   onWarning: (msg: string) => void,
   onEntryStart: (s: import("../lifecycle/executor.js").LifecycleEntryStart) => void,
   onEntryComplete: (c: import("../lifecycle/executor.js").LifecycleEntryCompletion) => void,
@@ -1114,7 +1114,7 @@ async function runSnapshotLifecycle(
         entries: [entry.cmd],
         cwd,
         env: entry.env,
-        logDir,
+        logPath,
       },
       {
         onWarning: (w) => {

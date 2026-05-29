@@ -95,15 +95,10 @@ lifecycle:
         ).toHaveLength(1);
         const stackId = stackIds[0]!;
 
-        const hookLogPath = join(
-          stacksDir,
-          stackId,
-          "hooks",
-          "before_up-0.log",
-        );
+        const hookLogPath = join(stacksDir, stackId, "logs", "before_up.log");
         expect(
           existsSync(hookLogPath),
-          `expected per-hook log file at ${hookLogPath}`,
+          `expected phase log file at ${hookLogPath}`,
         ).toBe(true);
 
         const logContents = readFileSync(hookLogPath, "utf8");
@@ -201,7 +196,7 @@ lifecycle:
         const stackIds = readdirSync(stacksDir);
         expect(stackIds).toHaveLength(1);
         const stackId = stackIds[0]!;
-        const hookLogPath = join(stacksDir, stackId, "hooks", "before_up-0.log");
+        const hookLogPath = join(stacksDir, stackId, "logs", "before_up.log");
         expect(existsSync(hookLogPath)).toBe(true);
         const logContents = readFileSync(hookLogPath, "utf8");
         expect(logContents).toContain("stdout-line-1");
@@ -286,12 +281,7 @@ lifecycle:
         const stackIds = readdirSync(stacksDir);
         expect(stackIds).toHaveLength(1);
         const stackId = stackIds[0]!;
-        const hookLogPath = join(
-          stacksDir,
-          stackId,
-          "hooks",
-          "before_down-0.log",
-        );
+        const hookLogPath = join(stacksDir, stackId, "logs", "before_down.log");
         expect(existsSync(hookLogPath)).toBe(true);
         expect(readFileSync(hookLogPath, "utf8")).toContain("down-time stderr");
       } finally {

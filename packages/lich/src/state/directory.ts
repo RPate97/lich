@@ -2,6 +2,8 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { LifecyclePhase } from "../lifecycle/executor.js";
+
 /** Root directory for per-stack state: `$LICH_HOME/stacks` or `~/.lich/stacks`. */
 export function stateRoot(): string {
   const override = process.env.LICH_HOME;
@@ -16,7 +18,7 @@ export function stackDir(stackId: string): string {
   return join(stateRoot(), stackId);
 }
 
-/** Per-service log directory: `<stackDir>/logs/`. */
+/** Log directory for all sources: `<stackDir>/logs/`. */
 export function logsDir(stackId: string): string {
   return join(stackDir(stackId), "logs");
 }
@@ -26,14 +28,14 @@ export function envDir(stackId: string): string {
   return join(stackDir(stackId), "env");
 }
 
-/** Per-hook log directory: `<stackDir>/hooks/<phase>-<idx>.log`. */
-export function hooksDir(stackId: string): string {
-  return join(stackDir(stackId), "hooks");
-}
-
 /** Path to a service log file: `<stackDir>/logs/<service>.log`. */
 export function serviceLogPath(stackId: string, serviceName: string): string {
   return join(logsDir(stackId), `${serviceName}.log`);
+}
+
+/** Path to a top-level lifecycle phase log file: `<stackDir>/logs/<phase>.log`. */
+export function phaseLogPath(stackId: string, phase: LifecyclePhase): string {
+  return join(logsDir(stackId), `${phase}.log`);
 }
 
 /** Path to a service env file: `<stackDir>/env/<service>.env`. */
@@ -41,12 +43,11 @@ export function serviceEnvPath(stackId: string, serviceName: string): string {
   return join(envDir(stackId), `${serviceName}.env`);
 }
 
-/** Creates the stack directory and its `logs/`, `env/`, `hooks/` subdirs. Idempotent. */
+/** Creates the stack directory and its `logs/` and `env/` subdirs. Idempotent. */
 export async function ensureStackDir(stackId: string): Promise<void> {
   await mkdir(stackDir(stackId), { recursive: true });
   await mkdir(logsDir(stackId), { recursive: true });
   await mkdir(envDir(stackId), { recursive: true });
-  await mkdir(hooksDir(stackId), { recursive: true });
 }
 
 /** Removes the stack directory recursively. Idempotent. */

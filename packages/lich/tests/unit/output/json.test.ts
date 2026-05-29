@@ -355,7 +355,7 @@ describe("json output", () => {
       exitCode: 0,
       elapsedMs: 32_100,
       stderrTail: "warn: peer dep",
-      logPath: "/tmp/lich/hooks/before_up-0.log",
+      logPath: "/tmp/lich/logs/before_up.log",
     });
     await out.close();
 
@@ -376,7 +376,7 @@ describe("json output", () => {
         exit_code: 0,
         elapsed_ms: 32_100,
         stderr_tail: "warn: peer dep",
-        log_path: "/tmp/lich/hooks/before_up-0.log",
+        log_path: "/tmp/lich/logs/before_up.log",
       },
     ]);
   });

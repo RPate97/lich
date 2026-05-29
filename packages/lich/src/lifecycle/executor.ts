@@ -1,22 +1,10 @@
-/**
- * Lifecycle hook executor. Runs entries from `lifecycle.{before,after}_{up,down}`
- * in order via `/bin/sh -c`. Up-phase failures throw `LifecycleHookError`;
- * down-phase failures call `onWarning` and continue (teardown is best-effort).
- *
- * For every entry, combined stdout+stderr is captured to
- * `<logDir>/<phase>-<idx>.log` (when set, capped ~1 MB), and the stderr tail
- * is reported via `onEntryComplete` regardless of exit code — surfaces
- * stderr from `cmd || true` patterns that would otherwise silently fail.
- */
-
 import { spawn } from "node:child_process";
 import {
   appendFileSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 export type LifecyclePhase =
   | "before_up"
@@ -37,8 +25,8 @@ export interface RunLifecycleInput {
   env: NodeJS.ProcessEnv;
   /** Resolver for long-form entries with `env_group`. Throws if missing when needed. */
   resolveEnvGroup?: (name: string) => Promise<NodeJS.ProcessEnv>;
-  /** Directory for per-hook `<phase>-<idx>.log` files. When unset, no logs are written. */
-  logDir?: string;
+  /** Path to the phase log file. All entries for this phase are appended here. When unset, no logs are written. */
+  logPath?: string;
 }
 
 export interface LifecycleWarning {
@@ -60,7 +48,7 @@ export interface LifecycleEntryStart {
  * Per-entry completion callback. Fires for EVERY entry — exit 0 or not — so
  * callers can surface stderr from `cmd || true` patterns that silently exit 0.
  * `stderrTail` is the last `STDERR_TAIL_BYTES` of stderr; `logPath` is set
- * iff `RunLifecycleInput.logDir` was supplied.
+ * iff `RunLifecycleInput.logPath` was supplied.
  */
 export interface LifecycleEntryCompletion {
   phase: LifecyclePhase;
@@ -106,8 +94,7 @@ export class LifecycleHookError extends Error {
 
 const STDERR_TAIL_BYTES = 4096;
 
-// 1 MB cap; runaway hooks would otherwise fill disk. Users wanting more
-// should redirect via `cmd >> /custom/log 2>&1`.
+// 1 MB cap per phase; runaway hooks would otherwise fill disk.
 const LOG_FILE_CAP_BYTES = 1_000_000;
 
 /**
@@ -192,33 +179,54 @@ interface SpawnResult {
   stderr: string;
 }
 
+function formatTimestamp(): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 /**
- * Per-hook log writer. Truncates on open; appends combined stdout+stderr
- * until `LOG_FILE_CAP_BYTES`. Sync I/O avoids the async-flush race where
- * a test reads the log before buffered writes drain.
+ * Appends to the phase log file. Creates parent dirs on first use.
+ * `written` tracks bytes appended in this executor call (not the file's total).
  */
-function makeLogWriter(logPath: string): (chunk: Buffer | string) => void {
-  try {
-    mkdirSync(dirname(logPath), { recursive: true });
-    writeFileSync(logPath, "");
-  } catch {
-    // can't open the log file — give up silently rather than mask the
-    // underlying hook failure with an fs error
-    return () => {};
+function makePhaseLogAppender(logPath: string): {
+  write: (chunk: Buffer | string) => void;
+  writeLine: (line: string) => void;
+} {
+  let initialized = false;
+  let written = 0;
+
+  function ensureDir(): boolean {
+    if (initialized) return true;
+    try {
+      mkdirSync(dirname(logPath), { recursive: true });
+      initialized = true;
+      return true;
+    } catch {
+      initialized = true;
+      return false;
+    }
   }
 
-  let written = 0;
-  return (chunk: Buffer | string): void => {
-    if (written >= LOG_FILE_CAP_BYTES) return;
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    const remaining = LOG_FILE_CAP_BYTES - written;
-    const toWrite = text.length <= remaining ? text : text.slice(0, remaining);
-    try {
-      appendFileSync(logPath, toWrite);
-      written += toWrite.length;
-    } catch {
-      written = LOG_FILE_CAP_BYTES;
-    }
+  return {
+    write(chunk: Buffer | string): void {
+      if (written >= LOG_FILE_CAP_BYTES) return;
+      if (!ensureDir()) return;
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const remaining = LOG_FILE_CAP_BYTES - written;
+      const toWrite = text.length <= remaining ? text : text.slice(0, remaining);
+      try {
+        appendFileSync(logPath, toWrite);
+        written += toWrite.length;
+      } catch {
+        written = LOG_FILE_CAP_BYTES;
+      }
+    },
+    writeLine(line: string): void {
+      this.write(line + "\n");
+    },
   };
 }
 
@@ -226,7 +234,7 @@ function runOne(
   cmd: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  logPath: string | undefined,
+  appender: ReturnType<typeof makePhaseLogAppender> | null,
 ): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("/bin/sh", ["-c", cmd], {
@@ -236,12 +244,9 @@ function runOne(
     });
 
     let stderrTail = "";
-    const writeLog = logPath ? makeLogWriter(logPath) : null;
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
-      // stdout → log file only; inline surfacing is stderr-only (stdout
-      // from `npm install` etc. is noisy)
-      if (writeLog) writeLog(chunk);
+      if (appender) appender.write(chunk);
     });
 
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -251,7 +256,7 @@ function runOne(
       if (stderrTail.length > STDERR_TAIL_BYTES) {
         stderrTail = stderrTail.slice(stderrTail.length - STDERR_TAIL_BYTES);
       }
-      if (writeLog) writeLog(chunk);
+      if (appender) appender.write(chunk);
     });
 
     child.on("error", (err) => {
@@ -317,8 +322,11 @@ export async function runLifecycle(
     callbacks = callbacksOrOnWarning ?? {};
   }
 
-  const { phase, entries, cwd, env, resolveEnvGroup, logDir } = input;
+  const { phase, entries, cwd, env, resolveEnvGroup, logPath } = input;
   const bestEffort = phase === "before_down" || phase === "after_down";
+
+  // One appender shared across all entries in the phase.
+  const appender = logPath ? makePhaseLogAppender(logPath) : null;
 
   for (let index = 0; index < entries.length; index++) {
     const { cmd, envGroup } = normalize(entries[index]!);
@@ -336,7 +344,10 @@ export async function runLifecycle(
       entryEnv = env;
     }
 
-    const logPath = logDir ? join(logDir, `${phase}-${index}.log`) : undefined;
+    // Write command header into the phase log before spawning.
+    if (appender) {
+      appender.writeLine(`[${formatTimestamp()}] $ ${phase}[${index}]: ${cmd}`);
+    }
 
     if (callbacks.onEntryStart) {
       callbacks.onEntryStart({
@@ -348,7 +359,7 @@ export async function runLifecycle(
     }
 
     const startMs = Date.now();
-    const result = await runOne(cmd, cwd, entryEnv, logPath);
+    const result = await runOne(cmd, cwd, entryEnv, appender);
     const elapsedMs = Date.now() - startMs;
 
     if (callbacks.onEntryComplete) {
