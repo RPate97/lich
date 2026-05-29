@@ -93,7 +93,7 @@ describe("lich logs filtering", () => {
   it(
     "aggregates all services and prefixes each line with [service]",
     () => {
-      const result = runLich(["logs", "--tail", "50", "--no-follow"], {
+      const result = runLich(["logs", "--count", "50"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
         timeout: 5_000,
@@ -108,7 +108,7 @@ describe("lich logs filtering", () => {
   it(
     "filters to a single service and omits the [service] prefix",
     () => {
-      const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
+      const result = runLich(["logs", "api", "--count", "50"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
         timeout: 5_000,
@@ -121,24 +121,27 @@ describe("lich logs filtering", () => {
   );
 
   it(
-    "limits initial output via --tail N",
+    "limits initial output via --count N",
     () => {
-      const result = runLich(["logs", "api", "--tail", "1", "--no-follow"], {
+      const result = runLich(["logs", "api", "--count", "1"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
         timeout: 5_000,
       });
       expect(result.exitCode).toBe(0);
-      const lines = result.stdout.split("\n").filter((l) => l.length > 0);
+      // Content lines only (not footer lines)
+      const lines = result.stdout.split("\n").filter(
+        (l) => l.length > 0 && !l.startsWith("Showing") && !l.startsWith("Older") && !l.startsWith("Newer") && !l.startsWith("Full"),
+      );
       expect(lines.length).toBeLessThanOrEqual(1);
     },
   );
 
   it(
-    "--no-follow exits promptly after printing existing content",
+    "exits promptly after printing existing content (non-follow by default)",
     () => {
       const start = Date.now();
-      const result = runLich(["logs", "--tail", "10", "--no-follow"], {
+      const result = runLich(["logs", "--count", "10"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
         timeout: 5_000,
@@ -154,7 +157,7 @@ describe("lich logs filtering", () => {
   it(
     "contains api content after the api has handled a request",
     () => {
-      const result = runLich(["logs", "api", "--tail", "50", "--no-follow"], {
+      const result = runLich(["logs", "api", "--count", "50"], {
         cwd: projectPath!,
         env: { LICH_HOME: lichHome! },
         timeout: 5_000,
@@ -169,7 +172,7 @@ describe("lich logs filtering", () => {
     "exits non-zero and lists available services for an unknown name",
     () => {
       const result = runLich(
-        ["logs", "definitely-not-a-real-service", "--no-follow"],
+        ["logs", "definitely-not-a-real-service"],
         {
           cwd: projectPath!,
           env: { LICH_HOME: lichHome! },
