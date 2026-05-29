@@ -89,6 +89,29 @@ function appendDeduped(dst: string[], src: readonly string[] | undefined): void 
   }
 }
 
+function appendOwnedDeduped(
+  dst: string[],
+  src: readonly string[] | undefined,
+  discoverParents: Map<string, string[]> | undefined,
+): void {
+  if (!src) return;
+  const seen = new Set(dst);
+  for (const name of src) {
+    const children = discoverParents?.get(name);
+    if (children !== undefined) {
+      for (const child of children) {
+        if (!seen.has(child)) {
+          dst.push(child);
+          seen.add(child);
+        }
+      }
+    } else if (!seen.has(name)) {
+      dst.push(name);
+      seen.add(name);
+    }
+  }
+}
+
 // duplicated in commands/validate.ts, commands/help.ts, groups/resolve.ts
 function suggest(needle: string, haystack: string[]): string | null {
   if (haystack.length === 0) return null;
@@ -128,6 +151,7 @@ function resolveInternal(
   name: string,
   profiles: Record<string, ProfileDef>,
   memo: Map<string, ResolvedProfile>,
+  discoverParents: Map<string, string[]> | undefined,
 ): ResolvedProfile {
   const cached = memo.get(name);
   if (cached) return cached;
@@ -140,7 +164,7 @@ function resolveInternal(
   }
 
   const parents = normalizeExtends(def.extends).map((parentName) =>
-    resolveInternal(parentName, profiles, memo),
+    resolveInternal(parentName, profiles, memo, discoverParents),
   );
 
   const services: string[] = [];
@@ -168,7 +192,7 @@ function resolveInternal(
 
   // child layered last
   appendDeduped(services, def.services);
-  appendDeduped(owned, def.owned);
+  appendOwnedDeduped(owned, def.owned, discoverParents);
   if (def.env) Object.assign(env, def.env);
   if (def.env_files) env_files.push(...def.env_files);
   if (def.env_from) env_from.push(...def.env_from);
@@ -224,5 +248,5 @@ export function resolveProfile(
   }
 
   const memo = new Map<string, ResolvedProfile>();
-  return resolveInternal(name, profiles, memo);
+  return resolveInternal(name, profiles, memo, config._discoverParents);
 }

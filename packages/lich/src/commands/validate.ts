@@ -845,10 +845,12 @@ function checkProfiles(
 
     const owned = profile.owned;
     if (Array.isArray(owned)) {
+      const discoverParents = config._discoverParents;
       for (let i = 0; i < owned.length; i++) {
         const target = owned[i];
         if (typeof target !== "string") continue;
         if (ownedSet.has(target)) continue;
+        if (discoverParents?.has(target)) continue;
         const suggestion = suggest(target, ownedNames);
         const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
         errors.push({
@@ -961,9 +963,10 @@ function checkProfileUnusedServices(
 
   const usedCompose = new Set<string>();
   const usedOwned = new Set<string>();
+  const discoverParents = config._discoverParents;
 
   for (const profileName of Object.keys(profiles)) {
-    const resolved = resolveProfileServiceSet(profileName, profiles);
+    const resolved = resolveProfileServiceSet(profileName, profiles, discoverParents);
     for (const s of resolved.services) usedCompose.add(s);
     for (const o of resolved.owned) usedOwned.add(o);
   }
@@ -1000,6 +1003,7 @@ function checkProfileUnusedServices(
 function resolveProfileServiceSet(
   name: string,
   profiles: Record<string, ProfileDef>,
+  discoverParents?: Map<string, string[]>,
 ): { services: string[]; owned: string[] } {
   const services: string[] = [];
   const owned: string[] = [];
@@ -1029,9 +1033,19 @@ function resolveProfileServiceSet(
     }
     if (Array.isArray(profile.owned)) {
       for (const o of profile.owned) {
-        if (typeof o !== "string" || seenOwned.has(o)) continue;
-        seenOwned.add(o);
-        owned.push(o);
+        if (typeof o !== "string") continue;
+        const children = discoverParents?.get(o);
+        if (children !== undefined) {
+          for (const child of children) {
+            if (!seenOwned.has(child)) {
+              seenOwned.add(child);
+              owned.push(child);
+            }
+          }
+        } else if (!seenOwned.has(o)) {
+          seenOwned.add(o);
+          owned.push(o);
+        }
       }
     }
   }

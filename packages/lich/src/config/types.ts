@@ -190,4 +190,6 @@ export interface LichConfig {
   commands?: Record<string, UserCommandDef>;
   /** When absent or empty, every declared service / owned process starts. */
   profiles?: Record<string, ProfileDef>;
+  /** Populated by expandDiscover: maps each discover parent name to its materialized child service names. Not in the schema; set post-AJV. */
+  _discoverParents?: Map<string, string[]>;
 }

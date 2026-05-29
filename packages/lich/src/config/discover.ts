@@ -80,6 +80,8 @@ export async function expandDiscover(
     }
   }
 
+  const discoverParents = new Map<string, string[]>();
+
   for (const parentName of originalNames) {
     const parent = config.owned[parentName];
     if (!parent?.discover) continue;
@@ -101,6 +103,7 @@ export async function expandDiscover(
 
     instances.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
+    const childNames: string[] = [];
     for (const { name, svc } of instances) {
       if (name in expanded) {
         throw new DiscoverError(
@@ -110,10 +113,13 @@ export async function expandDiscover(
         );
       }
       expanded[name] = svc;
+      childNames.push(name);
     }
+    discoverParents.set(parentName, childNames);
   }
 
   config.owned = expanded;
+  config._discoverParents = discoverParents;
 }
 
 /**
