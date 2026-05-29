@@ -24,8 +24,8 @@ export interface RunRestartInput {
   outputMode?: OutputMode;
   out?: NodeJS.WritableStream;
   signal?: AbortSignal;
-  /** Named services to restart. Empty/undefined or ["--all"] = whole-stack restart. */
   services?: string[];
+  profile?: string;
 }
 
 export interface RunRestartResult {
@@ -55,8 +55,21 @@ export async function runRestart(
 async function runWholeStackRestart(
   input: RunRestartInput,
 ): Promise<RunRestartResult> {
+  const cwd = input.cwd ?? process.cwd();
+
+  let snapshotProfile: string | undefined;
+  if (input.profile === undefined) {
+    try {
+      const worktree = detectWorktree(cwd);
+      const snap = await readSnapshot(worktree.stack_id);
+      snapshotProfile = snap?.active_profile;
+    } catch {
+      // best-effort — let up pick its own default if read fails
+    }
+  }
+
   const downResult = await runDown({
-    cwd: input.cwd,
+    cwd,
     outputMode: input.outputMode,
     out: input.out,
     signal: input.signal,
@@ -66,10 +79,11 @@ async function runWholeStackRestart(
   }
 
   const upResult = await runUp({
-    cwd: input.cwd,
+    cwd,
     outputMode: input.outputMode,
     out: input.out,
     signal: input.signal,
+    profile: input.profile ?? snapshotProfile,
   });
 
   return {

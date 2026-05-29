@@ -101,10 +101,12 @@ const restartHandler: CommandHandler = async (ctx) => {
       : "pretty";
   const positionals = ctx.argv._.filter((a): a is string => typeof a === "string");
   const services = ctx.argv.all ? ["--all"] : positionals;
+  const profile = typeof ctx.argv.profile === "string" ? ctx.argv.profile : undefined;
   const result = await runRestart({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
     services,
+    profile,
   });
   return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
 };

@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mock } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Capture REAL modules BEFORE installing the mocks. Bun's `mock.module`
 // (which `vi.mock` desugars to) is GLOBAL — without restoration in afterAll,
@@ -25,17 +28,38 @@ vi.mock("../../../src/commands/up.js", () => ({
 }));
 
 import { runRestart } from "../../../src/commands/restart.js";
+import { detectWorktree } from "../../../src/worktree/detect.js";
+import { writeSnapshot, type StackSnapshot } from "../../../src/state/snapshot.js";
+
+let lichHome: string;
+let prevLichHome: string | undefined;
+let stackPath: string;
 
 beforeEach(() => {
   runDownSpy.mockClear();
   runUpSpy.mockClear();
   runDownSpy.mockImplementation(async () => ({ exitCode: 0, warnings: [] }));
   runUpSpy.mockImplementation(async () => ({ exitCode: 0 }));
+
+  lichHome = mkdtempSync(join(tmpdir(), "lich-restart-test-home-"));
+  prevLichHome = process.env.LICH_HOME;
+  process.env.LICH_HOME = lichHome;
+
+  stackPath = mkdtempSync(join(tmpdir(), "stack-restart-test-"));
+  writeFileSync(join(stackPath, "lich.yaml"), 'version: "1"\nowned:\n  api:\n    cmd: "echo hi"\n');
 });
 
 afterEach(() => {
   runDownSpy.mockReset();
   runUpSpy.mockReset();
+
+  if (prevLichHome === undefined) {
+    delete process.env.LICH_HOME;
+  } else {
+    process.env.LICH_HOME = prevLichHome;
+  }
+  rmSync(lichHome, { recursive: true, force: true });
+  rmSync(stackPath, { recursive: true, force: true });
 });
 
 afterAll(() => {
@@ -49,6 +73,18 @@ afterAll(() => {
     runUp: realUpModule.runUp,
   }));
 });
+
+function makeSnapshotForStack(stackId: string, profile?: string): StackSnapshot {
+  return {
+    stack_id: stackId,
+    worktree_name: "main",
+    worktree_path: stackPath,
+    status: "up",
+    started_at: "2026-05-23T10:00:00.000Z",
+    services: [],
+    ...(profile !== undefined && { active_profile: profile }),
+  };
+}
 
 describe("runRestart — happy path: down + up", () => {
   it("invokes runDown first, then runUp, returns exit 0 when both succeed", async () => {
@@ -229,5 +265,51 @@ describe("runRestart — AbortSignal mid-flight", () => {
     expect(result.exitCode).toBe(1);
     expect(runDownSpy).toHaveBeenCalledTimes(1);
     expect(runUpSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runRestart — profile preservation from snapshot", () => {
+  it("passes active_profile from the prior snapshot to runUp when no explicit profile given", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(makeSnapshotForStack(wt.stack_id, "dev:lite"));
+
+    await runRestart({ cwd: stackPath });
+
+    expect(runUpSpy.mock.calls[0][0]).toMatchObject({ profile: "dev:lite" });
+  });
+
+  it("passes undefined profile to runUp when snapshot has no active_profile", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(makeSnapshotForStack(wt.stack_id));
+
+    await runRestart({ cwd: stackPath });
+
+    expect(runUpSpy.mock.calls[0][0]).toMatchObject({ profile: undefined });
+  });
+
+  it("passes undefined profile to runUp when no snapshot exists", async () => {
+    await runRestart({ cwd: stackPath });
+
+    expect(runUpSpy.mock.calls[0][0]).toMatchObject({ profile: undefined });
+  });
+
+  it("uses explicit profile over snapshot active_profile", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(makeSnapshotForStack(wt.stack_id, "dev:lite"));
+
+    await runRestart({ cwd: stackPath, profile: "dev:fast" });
+
+    expect(runUpSpy.mock.calls[0][0]).toMatchObject({ profile: "dev:fast" });
+  });
+
+  it("proceeds gracefully when the worktree has no lich.yaml (no snapshot read attempted)", async () => {
+    const noLichDir = mkdtempSync(join(tmpdir(), "no-lich-"));
+    try {
+      const result = await runRestart({ cwd: noLichDir });
+      expect(result.exitCode).toBe(0);
+      expect(runUpSpy.mock.calls[0][0]).toMatchObject({ profile: undefined });
+    } finally {
+      rmSync(noLichDir, { recursive: true, force: true });
+    }
   });
 });
