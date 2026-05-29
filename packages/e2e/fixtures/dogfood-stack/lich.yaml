@@ -69,6 +69,8 @@ owned:
     lifecycle:
       after_ready:
         - 'printf "warmed_at=%s\nhealth=%s\n" "$(date -u +%FT%TZ)" "$(curl -fsS "${API_URL}/health")" > "${LICH_HOME}/api-warmup.log"'
+        # LEV-514: ${owned.api.port} resolved directly in cmd: (not via env: mirror)
+        - 'printf "api_port=${owned.api.port}\n" > "${LICH_HOME}/api-port-direct.log"'
 
   web:
     cmd: bun run dev
@@ -258,6 +260,14 @@ commands:
     help: |
       Placeholder for the dogfood-stack's own e2e tests.
       Real tests come once the stack is working under lich.
+
+  # LEV-514: ${owned.api.port} resolved directly in cmd: (not via env: mirror).
+  # Verifies that interpolation reaches commands.*.cmd at dispatch time.
+  show:api-port:
+    cmd: 'echo "api_port=${owned.api.port}"'
+    help: |
+      Print the api service's allocated port. Used by e2e tests to verify
+      that ${...} interpolation reaches commands.*.cmd directly.
 
   db:psql:
     cmd: psql "$DATABASE_URL"
