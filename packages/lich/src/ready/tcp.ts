@@ -54,10 +54,19 @@ export async function waitForTcpReady(spec: TcpReadySpec): Promise<void> {
 
 function parseTarget(target: string): { host: string; port: number } {
   const malformed = () =>
-    new Error(`invalid tcp target: ${target} (expected host:port)`);
+    new Error(`invalid tcp target: ${target} (expected host:port or bare port)`);
 
   if (typeof target !== "string" || target.length === 0) {
     throw malformed();
+  }
+
+  // Bare numeric port — default host to localhost.
+  if (/^\d+$/.test(target)) {
+    const port = Number(target);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw malformed();
+    }
+    return { host: "localhost", port };
   }
 
   // Split on the LAST colon so future IPv6 bracket forms can be added.

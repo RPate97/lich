@@ -142,6 +142,14 @@ describe("waitForTcpReady", () => {
     // assertion on elapsed time is the load-bearing one.
   });
 
+  it("accepts a bare numeric port and defaults host to localhost", async () => {
+    const { port } = await startServer();
+
+    const start = Date.now();
+    await waitForTcpReady({ target: String(port), intervalMs: 25 });
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+
   it("rejects immediately on a malformed target — 'not-a-host-port'", async () => {
     const start = Date.now();
     await expect(
