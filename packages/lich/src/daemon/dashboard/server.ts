@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { LogTail } from "../../logs/tail.js";
 import { runLichAction, type ActionResult } from "./actions.js";
@@ -14,7 +14,9 @@ export interface LogTailLike {
 }
 
 /** Constructor for tail instances. Default factory builds a real LogTail; tests inject fakes. */
-export type TailFactory = (opts: { logPath: string }) => LogTailLike;
+export type TailFactory = (opts: { logPath: string; startOffset?: number }) => LogTailLike;
+
+const TAIL_LINES = 200;
 
 /** In-memory SPA asset source, e.g. the generated embedded-ui manifest. Lets the daemon binary ship without a sidecar dist dir. */
 export interface EmbeddedAssetSource {
@@ -111,7 +113,7 @@ export async function startDashboardServer(
   const resolvedUiDir = opts.uiDir ? resolve(opts.uiDir) : null;
 
   const tailFactory: TailFactory =
-    opts.tailFactory ?? ((o) => new LogTail({ logPath: o.logPath }));
+    opts.tailFactory ?? ((o) => new LogTail({ logPath: o.logPath, startOffset: o.startOffset ?? 0 }));
 
   const runAction = opts.runAction ?? runLichAction;
 
@@ -386,6 +388,54 @@ function logPathFor(
   return join(stateRoot, stackId, "logs", `${serviceName}.log`);
 }
 
+/** Return the byte offset at which to start tailing so at most `tailLines` lines are replayed. */
+export async function computeTailOffset(logPath: string, tailLines: number): Promise<number> {
+  let fileSize: number;
+  try {
+    const st = await stat(logPath);
+    fileSize = st.size;
+  } catch {
+    return 0;
+  }
+  if (fileSize === 0) return 0;
+
+  // Read a chunk from the end large enough to contain tailLines lines.
+  // Average ~200 bytes/line × tailLines × 2 safety factor, capped at fileSize.
+  const chunkSize = Math.min(fileSize, tailLines * 400);
+  const readFrom = fileSize - chunkSize;
+
+  const buf = Buffer.allocUnsafe(chunkSize);
+  let handle;
+  try {
+    handle = await open(logPath, "r");
+  } catch {
+    return 0;
+  }
+  let bytesRead = 0;
+  try {
+    const r = await handle.read(buf, 0, chunkSize, readFrom);
+    bytesRead = r.bytesRead;
+  } catch {
+    return 0;
+  } finally {
+    try { await handle.close(); } catch { /* ignore */ }
+  }
+
+  if (bytesRead <= 0) return 0;
+
+  const chunk = buf.slice(0, bytesRead).toString("utf8");
+  let newlineCount = 0;
+  let pos = chunk.length - 1;
+  // Skip a trailing newline so we don't count an empty final "line".
+  if (chunk[pos] === "\n") pos--;
+  while (pos >= 0 && newlineCount < tailLines) {
+    if (chunk[pos] === "\n") newlineCount++;
+    pos--;
+  }
+  // pos is now just before the first character of the (tailLines+1)th-from-end line.
+  return readFrom + pos + 1;
+}
+
 interface BuildStreamOpts {
   stateRoot: string;
   stackId: string;
@@ -417,12 +467,13 @@ function buildSingleServiceStream(
   };
 
   return new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       controller.enqueue(SSE_HEARTBEAT);
 
-      tail = opts.tailFactory({
-        logPath: logPathFor(opts.stateRoot, opts.stackId, opts.service),
-      });
+      const logPath = logPathFor(opts.stateRoot, opts.stackId, opts.service);
+      const startOffset = await computeTailOffset(logPath, TAIL_LINES);
+
+      tail = opts.tailFactory({ logPath, startOffset });
 
       // Wire onLine BEFORE start() so we don't miss a line emitted
       // synchronously on the first poll tick.
@@ -482,13 +533,21 @@ function buildMergedStream(
   };
 
   return new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       controller.enqueue(SSE_HEARTBEAT);
 
-      for (const service of opts.services) {
-        const tail = opts.tailFactory({
-          logPath: logPathFor(opts.stateRoot, opts.stackId, service),
-        });
+      // Compute per-service offsets independently so a chatty service log
+      // doesn't starve quieter ones in the merged stream.
+      const logPaths = opts.services.map((s) =>
+        logPathFor(opts.stateRoot, opts.stackId, s),
+      );
+      const offsets = await Promise.all(
+        logPaths.map((p) => computeTailOffset(p, TAIL_LINES)),
+      );
+
+      for (let i = 0; i < opts.services.length; i++) {
+        const service = opts.services[i];
+        const tail = opts.tailFactory({ logPath: logPaths[i], startOffset: offsets[i] });
         tails.push(tail);
 
         tail.onLine((line) => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   startDashboardServer,
+  computeTailOffset,
   type DashboardServer,
   type LogTailLike,
   type TailFactory,
@@ -13,13 +14,15 @@ import {
 /** Observable, deterministic LogTail fake — no real polling. */
 class FakeLogTail implements LogTailLike {
   readonly logPath: string;
+  readonly startOffset: number;
   started = false;
   stopped = false;
   stopCalls = 0;
   private subscribers: Array<(line: string) => void> = [];
 
-  constructor(logPath: string) {
+  constructor(logPath: string, startOffset = 0) {
     this.logPath = logPath;
+    this.startOffset = startOffset;
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -50,7 +53,7 @@ class FakeLogTail implements LogTailLike {
 class FakeTailRegistry {
   readonly tails: FakeLogTail[] = [];
   readonly factory: TailFactory = (opts) => {
-    const tail = new FakeLogTail(opts.logPath);
+    const tail = new FakeLogTail(opts.logPath, opts.startOffset ?? 0);
     this.tails.push(tail);
     return tail;
   };
@@ -544,5 +547,135 @@ describe("SSE log stream — real LogTail smoke test", () => {
     const frames = await readNFrames(res, 1, { timeoutMs: 2000 });
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual({ service: "api", line: "line one" });
+  });
+});
+
+describe("computeTailOffset", () => {
+  it("returns 0 for a non-existent file", async () => {
+    const offset = await computeTailOffset("/tmp/does-not-exist-lich.log", 10);
+    expect(offset).toBe(0);
+  });
+
+  it("returns 0 for an empty file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-tail-offset-"));
+    try {
+      const logPath = join(dir, "empty.log");
+      writeFileSync(logPath, "", "utf8");
+      const offset = await computeTailOffset(logPath, 10);
+      expect(offset).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 0 when the file has fewer lines than tailLines", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-tail-offset-"));
+    try {
+      const logPath = join(dir, "short.log");
+      writeFileSync(logPath, "line1\nline2\nline3\n", "utf8");
+      const offset = await computeTailOffset(logPath, 10);
+      expect(offset).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an offset that skips all but the last tailLines lines", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lich-tail-offset-"));
+    try {
+      const logPath = join(dir, "many.log");
+      const lines = Array.from({ length: 50 }, (_, i) => `line${i + 1}`);
+      writeFileSync(logPath, lines.join("\n") + "\n", "utf8");
+
+      const tailLines = 10;
+      const offset = await computeTailOffset(logPath, tailLines);
+
+      // The offset should land us at "line41" (the 41st line, 10 from the end).
+      const { readFileSync } = await import("node:fs");
+      const content = readFileSync(logPath, "utf8");
+      const fromOffset = content.slice(offset);
+      const gotLines = fromOffset.split("\n").filter((l) => l.length > 0);
+      expect(gotLines).toHaveLength(tailLines);
+      expect(gotLines[0]).toBe("line41");
+      expect(gotLines[gotLines.length - 1]).toBe("line50");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SSE log stream — per-service tail isolation (merged)", () => {
+  it("each service tail receives an independent startOffset from its own log file", async () => {
+    writeStateJson("stack-1", {
+      stack_id: "stack-1",
+      worktree_name: "feature-x",
+      worktree_path: "/tmp/feature-x",
+      status: "up",
+      started_at: "2026-05-24T10:00:00.000Z",
+      services: [
+        { name: "web", kind: "owned", state: "ready" },
+        { name: "tunnel", kind: "owned", state: "ready" },
+      ],
+    });
+
+    // web log has many lines (chatty); tunnel log has few lines (quiet).
+    const webLogsDir = join(stateRoot, "stack-1", "logs");
+    mkdirSync(webLogsDir, { recursive: true });
+    const webLines = Array.from({ length: 300 }, (_, i) => `web-line-${i + 1}`).join("\n") + "\n";
+    const tunnelLines = "tunnel-startup\ntunnel-ready\n";
+    writeFileSync(join(webLogsDir, "web.log"), webLines, "utf8");
+    writeFileSync(join(webLogsDir, "tunnel.log"), tunnelLines, "utf8");
+
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      tailFactory: registry.factory,
+    });
+
+    const fetchPromise = fetch(url("/api/stacks/stack-1/logs"));
+    await waitFor(() => registry.tails.length === 2);
+
+    const webTail = registry.byLogPathSuffix("/logs/web.log");
+    const tunnelTail = registry.byLogPathSuffix("/logs/tunnel.log");
+    expect(webTail).toBeDefined();
+    expect(tunnelTail).toBeDefined();
+
+    // web has 300 lines — offset should be > 0 (skip old lines).
+    expect(webTail!.startOffset).toBeGreaterThan(0);
+    // tunnel has only 2 lines — offset should be 0 (read all).
+    expect(tunnelTail!.startOffset).toBe(0);
+
+    const res = await fetchPromise;
+    await res.body?.cancel();
+  });
+
+  it("each service tail receives an independent startOffset (single-service)", async () => {
+    writeStateJson("stack-1", {
+      stack_id: "stack-1",
+      worktree_name: "feature-x",
+      worktree_path: "/tmp/feature-x",
+      status: "up",
+      started_at: "2026-05-24T10:00:00.000Z",
+      services: [{ name: "web", kind: "owned", state: "ready" }],
+    });
+
+    const logsDir = join(stateRoot, "stack-1", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const webLines = Array.from({ length: 300 }, (_, i) => `web-line-${i + 1}`).join("\n") + "\n";
+    writeFileSync(join(logsDir, "web.log"), webLines, "utf8");
+
+    server = await startDashboardServer({
+      port: 0,
+      stateRoot,
+      tailFactory: registry.factory,
+    });
+
+    const fetchPromise = fetch(url("/api/stacks/stack-1/logs?service=web"));
+    await waitFor(() => registry.tails.length === 1);
+
+    expect(registry.tails[0].startOffset).toBeGreaterThan(0);
+
+    const res = await fetchPromise;
+    await res.body?.cancel();
   });
 });
