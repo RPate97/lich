@@ -30,7 +30,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Get started", link: "/getting-started/" },
-      { text: "Reference", link: "/reference/lich-yaml" },
+      { text: "Reference", link: "/reference/lich-yaml-spec" },
       { text: "Concepts", link: "/concepts/worktrees-isolation" },
       { text: "Recipes", link: "/recipes/" },
       { text: "Dashboard", link: "/dashboard" },
@@ -54,7 +54,7 @@ export default defineConfig({
       {
         text: "Reference",
         items: [
-          { text: "lich.yaml", link: "/reference/lich-yaml" },
+          { text: "lich.yaml", link: "/reference/lich-yaml-spec" },
           { text: "Interpolation", link: "/reference/interpolation" },
           { text: "CLI commands", link: "/reference/cli" },
         ],
