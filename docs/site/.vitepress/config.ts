@@ -2,10 +2,9 @@ import { defineConfig } from "vitepress";
 
 // VitePress config for the lich docs site.
 //
-// Generated reference pages (reference/lich-yaml.md, recipes/index.md)
-// are synced from skills/lich-instrument/references/ by
-// scripts/sync-skill-content.mjs at build time. Edit the skill references,
-// not the generated files.
+// Generated reference pages are synced from docs/content/ by
+// packages/lich/scripts/sync-content.ts. Edit the canonical sources under
+// docs/content/, not the generated mirrors.
 export default defineConfig({
   title: "Lich",
   description:

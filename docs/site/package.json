@@ -4,10 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predocs:dev": "node scripts/sync-skill-content.mjs",
     "docs:dev": "vitepress dev",
-    "prebuild": "node scripts/sync-skill-content.mjs",
-    "predocs:build": "node scripts/sync-skill-content.mjs",
     "docs:build": "vitepress build",
     "build": "vitepress build",
     "docs:preview": "vitepress preview"
