@@ -23,7 +23,12 @@ const TARGETS: TargetSpec[] = [
   },
   {
     dir: join(ROOT, "docs/site/recipes"),
-    map: (rel) => (rel.startsWith("recipes/") ? rel.slice("recipes/".length) : null),
+    map: (rel) => {
+      if (!rel.startsWith("recipes/")) return null;
+      const sub = rel.slice("recipes/".length);
+      if (sub === "index.md") return null;
+      return sub;
+    },
   },
   {
     dir: join(ROOT, "skills/lich-instrument/references"),

@@ -84,7 +84,14 @@ export default defineConfig({
       },
       {
         text: "Recipes",
-        items: [{ text: "All recipes", link: "/recipes/" }],
+        items: [
+          { text: "All recipes", link: "/recipes/" },
+          { text: "External CLI services", link: "/recipes/external-cli-services" },
+          { text: "Monorepo task runners", link: "/recipes/monorepo-task-runners" },
+          { text: "Install caching", link: "/recipes/install-caching" },
+          { text: "Test key overrides", link: "/recipes/test-key-overrides" },
+          { text: "Worker pools", link: "/recipes/worker-pools" },
+        ],
       },
       {
         text: "Operations",
