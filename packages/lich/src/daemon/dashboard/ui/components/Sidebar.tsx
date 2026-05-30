@@ -149,7 +149,7 @@ export function Sidebar({
           <span className="pulse-dot" />
           <span>daemon</span>
         </span>
-        <span>v1</span>
+        <span>v{__LICH_VERSION__}</span>
       </div>
     </aside>
   );
