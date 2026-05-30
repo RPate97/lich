@@ -34,6 +34,16 @@ describe("expandIncludes", () => {
     expect(expandIncludes(input, sourceFile)).toBe("row1\nrow2");
   });
 
+  it("expands a section include with a hyphenated anchor slug", () => {
+    writeFileSync(
+      join(tmp, "_generated", "snippet.md"),
+      "## lifecycle-per-service\n\nrow1\nrow2\n\n## env-groups\n\nrow3\n",
+    );
+    const sourceFile = join(tmp, "spec.md");
+    const input = "<!-- @include: ./_generated/snippet.md#lifecycle-per-service -->";
+    expect(expandIncludes(input, sourceFile)).toBe("row1\nrow2");
+  });
+
   it("throws when include file is missing", () => {
     const sourceFile = join(tmp, "spec.md");
     expect(() =>

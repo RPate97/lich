@@ -37,7 +37,7 @@ const TARGETS: TargetSpec[] = [
   },
 ];
 
-const INCLUDE_RE = /<!--\s*@include:\s*([^\s#]+)(?:#([^\s-]+))?\s*-->/g;
+const INCLUDE_RE = /<!--\s*@include:\s*([^\s#]+)(?:#(\S+?))?\s*-->/g;
 
 export function expandIncludes(content: string, sourceFile: string): string {
   return content.replace(INCLUDE_RE, (_full, refPath: string, anchor: string | undefined) => {
