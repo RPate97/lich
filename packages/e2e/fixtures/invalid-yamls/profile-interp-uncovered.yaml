@@ -9,7 +9,7 @@ env:
 owned:
   supabase:
     cmd: "supabase start"
-    port: { env: SUPA }
+    port: { published_env: SUPA }
   api:
     cmd: "echo hi"
 profiles:

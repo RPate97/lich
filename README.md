@@ -1,79 +1,110 @@
-# Lich
+# lich
 
-lich runs your dev stack with per-worktree isolation, so you can have as many stacks alive as you have coding agents.
+> Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.
 
-## Get Started
+**What it is:** A single binary that reads a `lich.yaml` file describing your stack (docker containers, host processes, env, lifecycle) and brings it up with per-worktree isolation — dynamic port allocation, isolated state, automatic routing. Run `lich up` in two worktrees, get two independent stacks, no port collisions, no compose project conflicts.
 
-Available for macOS (arm64 / x64), Linux (arm64 / x64), and Windows via WSL.
+**Who it's for:**
+- Developers running parallel branches via git worktrees
+- Teams where multiple stacks must coexist on one machine
+- Agent-driven workflows that spin up isolated dev environments
 
-Install the CLI:
+**What it isn't:** Not a container runtime (it drives one), not a framework (it drives yours), not a scaffolder, not opinionated about your stack. It's a thin wrapper that gives your existing dev stack a uniform interface.
+
+## Why
+
+Compose alone can't run two copies of the same stack on one machine — ports collide, container names collide, project names collide. Manual port juggling works for one stack; it falls apart at two and is unusable at four. Lich solves the multiplexing problem so you can have N stacks alive simultaneously, one per worktree.
+
+## Install
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
 ```
 
-Install the instrumentation skill:
+Or download a release tarball from [GitHub Releases](https://github.com/RPate97/lich/releases) and put `lich` on your PATH.
+
+## Quickstart
+
 ```bash
-npx skills add https://github.com/rpate97/lich/skills/lich-instrument
+cd your-project
+lich init               # writes a starter lich.yaml
+lich up                 # brings the stack up
+lich logs               # tail logs
+lich down               # stop it
 ```
 
-Set lich up against your repo with your favorite agent:
-```bash
-/lich-instrument
-```
+In another worktree of the same repo, `lich up` again — both stacks run side by side.
 
-## Run N stacks in N worktrees
-
-This is the entire point of lich.
-
-`lich up` spins up your stack from any worktree, allocates ports dynamically, maps environment variables, namespaces a separate compose project, sets up state tracking, and routes logs to an isolated file. Two worktrees → two stacks running side by side. Ten worktrees → ten stacks. 
-
-The lich CLI automatically detects the worktree it's in and targets the correct stack:
-```bash
-lich up        -> start an isolated stack
-lich logs      -> pull logs from the correct worktree services
-lich exec      -> run a command with the correct env variables to target the stack
-lich down      -> tear down this worktrees stack
-lich urls      -> show reachable urls
-lich dashboard -> pull up a dashboard with logs and status of all running stacks
-lich nuke      -> tear down every stack on the machine, from anywhere
-```
-
-A single shared daemon exposes a friendly URL per service per stack:
-```
-http://<service>.<worktree>.lich.localhost:3300/
-```
-
-No DNS setup, `*.localhost` resolves to the loopback on every OS. No port management, the daemon's reverse proxy figures out where each service is listening. The URL pattern is consistent across worktrees.
-
-## What's in a lich.yaml
+## Minimal lich.yaml
 
 ```yaml
-version: "1"
+version: 1
 
-# docker-compose services
-services:                                
+services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     ports:
-      - { container: 5432, env: POSTGRES_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
+    environment:
+      POSTGRES_PASSWORD: dev
 
-# processes lich runs directly
-owned:                                   
+owned:
   api:
-    cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
-    ready_when:
-      http_get: /health
-
-env:
-  DATABASE_URL: "postgresql://postgres@localhost:${services.postgres.host_port}/myapp"
+    cmd: pnpm dev
+    port: { published_env: PORT }
+    env:
+      DATABASE_URL: "postgres://postgres:dev@localhost:${services.postgres.host_port}/app"
 ```
 
-Two service types: `services` for anything `docker compose` runs, `owned` for processes lich starts directly on the host. Port allocation is automatic; `host_port` / `port` interpolation wires everything together at startup. lich isn't opinionated about your framework, container runtime, or process layout. It wraps whatever you already use.
+## Docs
 
-> lich.yaml has more advanced features (lifecycle hooks, profiles, env_groups, custom commands, and oneshot services for external CLIs like supabase). The full documentation site is being built under [`docs/site/`](docs/site/); until it's live, the canonical reference is in [`skills/lich-instrument/references/`](skills/lich-instrument/references/).
+The full documentation site lives under [`docs/site/`](docs/site/) (a deployed URL is coming soon). Useful entry points:
+
+- [Getting started](docs/site/getting-started/index.md)
+- [lich.yaml reference](docs/site/reference/lich-yaml-spec.md)
+- [CLI reference](docs/site/reference/cli.md)
+- [Recipes](docs/site/recipes/index.md)
+- [Worktree isolation](docs/site/concepts/worktrees-isolation.md)
+- [Troubleshooting](docs/site/troubleshooting.md)
+
+## Agent skills
+
+Lich ships agent skills that let Claude (or other agents) work with lich effectively:
+
+- [`lich`](skills/lich/) — daily-driver on-ramp; understand the CLI surface and use it
+- [`lich-instrument`](skills/lich-instrument/) — guides an agent through writing your first `lich.yaml`
+
+Add a skill:
+
+```bash
+npx skills add https://github.com/RPate97/lich/skills/lich
+npx skills add https://github.com/RPate97/lich/skills/lich-instrument
+```
+
+## Contributing
+
+Setup:
+
+```bash
+git clone https://github.com/RPate97/lich
+cd lich
+bash scripts/install-git-hooks.sh
+```
+
+Build:
+
+```bash
+cd packages/lich && bun install && bun run build
+```
+
+Test:
+
+```bash
+cd packages/lich && bun test                                 # unit
+cd packages/e2e && bun run test                              # end-to-end
+```
 
 ## License
 
-MIT
+MIT.

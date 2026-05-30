@@ -9,8 +9,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runExec } from "../../../src/commands/exec.js";
-import { writeSnapshot } from "../../../src/state/snapshot.js";
+import { preflightWarning, runExec } from "../../../src/commands/exec.js";
+import {
+  writeSnapshot,
+  type StackSnapshot,
+  type StackStatus,
+} from "../../../src/state/snapshot.js";
 import { ensureStackDir } from "../../../src/state/directory.js";
 import { detectWorktree } from "../../../src/worktree/detect.js";
 
@@ -46,6 +50,8 @@ async function execCapture(
     envGroupName?: string;
     signal?: AbortSignal;
     cwd?: string;
+    noPreflight?: boolean;
+    now?: () => Date;
   } = {},
 ): Promise<{
   exitCode: number;
@@ -65,6 +71,8 @@ async function execCapture(
     cwd: opts.cwd ?? tmp,
     signal: opts.signal,
     stdio: "pipe",
+    noPreflight: opts.noPreflight,
+    now: opts.now,
     stderr: (s) => {
       diagnostics += s;
     },
@@ -244,15 +252,18 @@ describe("runExec — cwd", () => {
   });
 });
 
-async function seedSnapshot(activeProfile?: string): Promise<void> {
+async function seedSnapshot(
+  activeProfile?: string,
+  opts: { status?: StackStatus; startedAt?: string } = {},
+): Promise<void> {
   const wt = detectWorktree(tmp);
   await ensureStackDir(wt.stack_id);
   await writeSnapshot({
     stack_id: wt.stack_id,
     worktree_name: wt.name,
     worktree_path: wt.path,
-    status: "up",
-    started_at: new Date().toISOString(),
+    status: opts.status ?? "up",
+    started_at: opts.startedAt ?? new Date().toISOString(),
     services: [],
     ...(activeProfile ? { active_profile: activeProfile } : {}),
   });
@@ -330,5 +341,136 @@ profiles:
     const res = await execCapture(["printenv DATABASE_URL"]);
     expect(res.exitCode).toBe(0);
     expect(res.stdout.trim()).toBe("top");
+  });
+});
+
+describe("runExec — preflight stack-up check", () => {
+  it("warns when no snapshot exists (stack was never up)", async () => {
+    writeYaml(`version: "1"\n`);
+    const res = await execCapture(["echo hi"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).toContain("[lich] warning: no lich stack in this worktree");
+  });
+
+  it("warns when snapshot says stack is stopped", async () => {
+    writeYaml(`version: "1"\n`);
+    await seedSnapshot(undefined, {
+      status: "stopped",
+      startedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+    });
+    const res = await execCapture(["echo hi"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).toMatch(/\[lich\] warning: stack '.+' is not up/);
+    expect(res.diagnostics).toContain("last seen: 12m ago");
+  });
+
+  it("warns when status is partial/failed (anything not 'up')", async () => {
+    writeYaml(`version: "1"\n`);
+    await seedSnapshot(undefined, { status: "failed" });
+    const res = await execCapture(["echo hi"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).toContain("[lich] warning: stack");
+    expect(res.diagnostics).toContain("is not up");
+  });
+
+  it("does NOT warn when stack is up", async () => {
+    writeYaml(`version: "1"\n`);
+    await seedSnapshot();
+    const res = await execCapture(["echo hi"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).not.toContain("[lich] warning");
+  });
+
+  it("--no-preflight suppresses the warning when stack is down", async () => {
+    writeYaml(`version: "1"\n`);
+    await seedSnapshot(undefined, { status: "stopped" });
+    const res = await execCapture(["echo hi"], { noPreflight: true });
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).not.toContain("warning");
+  });
+
+  it("--no-preflight suppresses the no-snapshot warning too", async () => {
+    writeYaml(`version: "1"\n`);
+    const res = await execCapture(["echo hi"], { noPreflight: true });
+    expect(res.exitCode).toBe(0);
+    expect(res.diagnostics).not.toContain("warning");
+  });
+
+  it("preserves the child's exit code even when warning is printed", async () => {
+    writeYaml(`version: "1"\n`);
+    await seedSnapshot(undefined, { status: "stopped" });
+    const res = await execCapture(["exit 42"]);
+    expect(res.exitCode).toBe(42);
+    expect(res.diagnostics).toContain("warning");
+  });
+});
+
+describe("preflightWarning — pure helper", () => {
+  const wt = "feature-x";
+  const now = new Date("2026-05-30T12:00:00Z");
+
+  function snap(overrides: Partial<StackSnapshot>): StackSnapshot {
+    return {
+      stack_id: "stack-id",
+      worktree_name: wt,
+      worktree_path: "/tmp/foo",
+      status: "up",
+      started_at: now.toISOString(),
+      services: [],
+      ...overrides,
+    };
+  }
+
+  it("returns null when stack is up", () => {
+    expect(preflightWarning(snap({ status: "up" }), wt, now)).toBeNull();
+  });
+
+  it("returns no-stack message when snapshot is null", () => {
+    expect(preflightWarning(null, wt, now)).toContain("no lich stack in this worktree");
+  });
+
+  it("formats seconds-old age", () => {
+    const startedAt = new Date(now.getTime() - 30_000).toISOString();
+    const msg = preflightWarning(
+      snap({ status: "stopped", started_at: startedAt }),
+      wt,
+      now,
+    );
+    expect(msg).toContain("last seen: 30s ago");
+  });
+
+  it("formats minutes-old age", () => {
+    const startedAt = new Date(now.getTime() - 12 * 60_000).toISOString();
+    const msg = preflightWarning(
+      snap({ status: "stopped", started_at: startedAt }),
+      wt,
+      now,
+    );
+    expect(msg).toContain("last seen: 12m ago");
+  });
+
+  it("formats hours-old age", () => {
+    const startedAt = new Date(now.getTime() - 3 * 60 * 60_000).toISOString();
+    const msg = preflightWarning(
+      snap({ status: "stopped", started_at: startedAt }),
+      wt,
+      now,
+    );
+    expect(msg).toContain("last seen: 3h ago");
+  });
+
+  it("formats days-old age", () => {
+    const startedAt = new Date(now.getTime() - 5 * 24 * 60 * 60_000).toISOString();
+    const msg = preflightWarning(
+      snap({ status: "stopped", started_at: startedAt }),
+      wt,
+      now,
+    );
+    expect(msg).toContain("last seen: 5d ago");
+  });
+
+  it("includes the worktree name in the warning", () => {
+    const msg = preflightWarning(snap({ status: "stopped" }), "my-feature", now);
+    expect(msg).toContain("'my-feature'");
   });
 });

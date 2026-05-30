@@ -93,7 +93,7 @@ services:                                # docker-compose services lich manages
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -103,14 +103,14 @@ owned:                                   # host processes lich runs directly
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
 
   web:
     cmd: bun run dev
     cwd: apps/web
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [api]
     ready_when:
       http_get: /
@@ -122,7 +122,13 @@ env:
 
 Then ask: **"Look right? Anything to swap out?"** Wait for the OK before writing. If they want changes, revise the yaml and re-present.
 
-If the survey turned up anything beyond a vanilla single-app shape — a workspace task runner (turbo/nx/lage/wireit), a slow `pnpm install` step the user wants cached, integrations with test-key-friendly services (Turnstile/Stripe/OAuth), or an external CLI launcher (supabase/dbmate/firebase emulators) — consult **`references/recipes.md`** for the canonical shape before drafting. It covers the patterns past the basics: monorepo tooling, lockfile preflight, test-key overrides, external CLIs.
+If the survey turned up anything beyond a vanilla single-app shape, consult the relevant recipe file in `references/` before drafting:
+
+- Workspace task runner (turbo/nx/lage/wireit): **`references/monorepo-task-runners.md`**
+- Slow `pnpm install` the user wants cached: **`references/install-caching.md`**
+- Integrations with test-key-friendly services (Turnstile/Stripe/OAuth): **`references/test-key-overrides.md`**
+- N near-identical worker processes (`*Worker.ts` / `*Processor.ts`): **`references/worker-pools.md`**
+- External CLI launcher (supabase/dbmate/firebase emulators): **`references/external-cli-services.md`**
 
 ## Pass 4: Write + Verify
 
@@ -139,77 +145,6 @@ If the user doesn't have `lich` installed, point them at:
 curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
 ```
 
-## Feedback hooks
-
-While you're running this skill, you're in the best position anywhere to notice when lich (or this skill) is wrong about something. Don't swallow that signal — surface it. There are two patterns: auto-submit obvious problems, and suggest the dedicated `lich-feedback` skill when you've hit repeated friction the user is clearly feeling.
-
-Both patterns are **user-confirmed, never silent.** You always show one sentence describing what you spotted, then a `[Y/n]` confirm (default Y). The point is to make reporting the easy path, not to spam the lich team.
-
-### Auto-submit obvious problems
-
-Watch for these during a run:
-
-- **`lich validate` rejected a property the skill's references advertised as supported.** Signal: the references drifted from the implementation (same class of bug as the LEV-484 audit). Example: you propose `ready_when.port_open: 3000` because `framework-patterns.md` shows it, and validate rejects it because the actual property is `ready_when.tcp`.
-- **Generated yaml fails validate more than twice in a row.** Signal: the skill is producing wrong output for this codebase shape. (One failure is normal — schemas have wrinkles. Three failures in a row is a pattern.)
-- **A specific recipe doesn't match the codebase.** Example: "detected pnpm workspaces but `framework-patterns.md` has no section for that combo," or "found `bunx vitest` but no recipe entry covers vitest watch mode."
-- **The user overrode your proposed yaml in a specific way more than once in the same session.** Example: you keep proposing `cwd: apps/api` and they keep changing it to `cwd: services/api` — the skill's monorepo-layout heuristic is wrong for this stack.
-
-For each, do exactly this: ONE sentence to the user describing what you spotted, then a `[Y/n]` confirm with Y as the default, then call `lich feedback --file <path>` with an auto-generated payload. Make Y the easy path.
-
-Worked example (validate rejects an advertised property):
-
-```
-I just proposed `ready_when.port_open: 3000` based on framework-patterns.md,
-but `lich validate` rejected it — the actual property is `ready_when.tcp`.
-That looks like the skill's references drifted from the implementation.
-Want me to file this as feedback so the lich team can fix it? [Y/n]
-```
-
-If Y (or empty), write a short payload like the following to a tmp file and call `lich feedback --file <that path>`:
-
-```markdown
-## What happened
-
-While instrumenting <repo>, the lich-instrument skill proposed `ready_when.port_open: 3000`
-for an Express service, citing `references/framework-patterns.md`. `lich validate` rejected
-the property; the suggested fix was `ready_when.tcp: { port: 3000 }`.
-
-## Likely cause
-
-References drift between `skills/lich-instrument/references/framework-patterns.md` and the
-validator's actual schema. Same class as LEV-484.
-
-## Suggested next step
-
-Audit `framework-patterns.md` against the live schema. The `ready_when` examples in
-particular look stale.
-```
-
-The `lich feedback` command will gather safe context (lich version, OS, redacted yaml, daemon status) and show the full payload before any submission — you don't need to repeat that work. Just give it the description.
-
-### Suggest the lich-feedback skill on repeated friction
-
-Some friction is too big or too tangled to capture in a one-line auto-payload. For those, point the user at the dedicated `lich-feedback` skill (separate install) — it walks them through a structured report.
-
-Triggers:
-
-- **More than 3 validate cycles in one instrumentation session.** You're not just hitting bad luck; the skill or the validator is failing this stack and a longer write-up will help more than another auto-submit.
-- **User expresses frustration.** Watch for repeated "doesn't work", "this is annoying", "why doesn't X", "is this thing broken", etc. — verbal signal that the friction has crossed from quirk to grievance.
-- **You couldn't propose a working yaml after 2+ revisions.** The skill isn't getting this stack right; a structured report will help more than silently moving on.
-
-Suggestion shape (verbatim or close to it):
-
-> "We've gone back-and-forth a few times on this. Want me to use the `lich-feedback` skill to write up what's tripping us up? Takes about 5 minutes; goes to the lich team."
-
-Then wait for their answer — don't invoke another skill without their go-ahead.
-
-### Anti-patterns
-
-- **NEVER submit feedback silently.** Always confirm with the user. The whole point of auto-submission is that it lowers the cost, not that it removes their consent.
-- **Don't auto-submit pure user errors.** If the user typo'd a property name once and fixed it on the next try, that's not feedback — that's noise. The bar is "the skill or lich was wrong about something," not "something went wrong."
-- **Don't escalate to the `lich-feedback` skill for one-off friction.** The bar there is "this happened more than twice in the same session." One revision cycle is normal; three is a pattern.
-- **NEVER include redacted values in your auto-generated payloads.** Don't paste `env_from` secrets, `.env` contents, or resolved env values into the payload body — defer to `lich feedback`'s built-in redaction (it redacts `env_from cmd:` values in the attached yaml automatically). Stick to describing what happened and pointing at file paths.
-
 ## Reference files
 
 Read these as needed — they're the source of truth for what lich supports.
@@ -218,8 +153,11 @@ Read these as needed — they're the source of truth for what lich supports.
 - **`references/dogfood-example.md`** — a canonical lich.yaml (postgres + api + web + profiles + lifecycle hooks), annotated. Read when you need to see "what good looks like" with most features in one file.
 - **`references/framework-patterns.md`** — per-framework cookbook: Next/Express/Django/Rails/FastAPI/Vite/Bun.serve/etc. — port defaults, dev commands, `ready_when` patterns. Read when surveying to identify what each app needs.
 - **`references/external-cli-services.md`** — the supabase / dbmate / prisma-style CLI-launcher pattern: `oneshot: true` + `stop_cmd:` + `${worktree.id}` for per-worktree isolation. Read when the survey turns up `supabase start` or any similar external CLI that spawns its own containers/daemons.
-- **`references/recipes.md`** — common patterns past the basics: workspace tooling (turbo/nx), lockfile preflight (`pnpm install` caching via `before_up`), test-key overrides (Turnstile/Stripe/OAuth), external-CLI cross-link. Consult during Pass 3 when the stack has any of these wrinkles.
-- **`lich-feedback` skill** (separate install) — escalation target for the suggestion pattern above. Invoke when the user says yes to the "want me to write this up?" prompt during repeated-friction situations.
+- **`references/monorepo-task-runners.md`** — workspace tooling (turbo/nx/lage/wireit): when the package graph means naive `pnpm run dev` skips dependency builds. Consult during Pass 3 if the repo has internal-package deps.
+- **`references/install-caching.md`** — `before_up` pattern that skips `pnpm install` when the lockfile is unchanged. Consult during Pass 3 if cold-cache reinstalls are slow.
+- **`references/test-key-overrides.md`** — local-dev test-key overrides for Turnstile/Stripe/OAuth/etc. via env-precedence rules. Consult during Pass 3 if the app integrates a service with "always-pass" test keys.
+- **`references/worker-pools.md`** — `discover:` block for N near-identical workers (`*Worker.ts` / `*Processor.ts`). Consult during Pass 3 if the stack has 3+ owned services with the same shape.
+- **`references/cli.md`** — auto-generated reference for every `lich` subcommand. Consult when you need exact flag syntax or behavior for a command you'd suggest the user run (e.g., `lich validate`, `lich up`, `lich exec`).
 
 ## Skill version and refresh
 

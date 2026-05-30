@@ -25,7 +25,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -47,7 +47,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     # No depends_on: [postgres] — the api gracefully tolerates missing
     # DATABASE_URL (see apps/api/src/db.ts) so it can run under dev:fast
     # without postgres. Under the `dev` profile, lich waits for postgres
@@ -75,7 +75,7 @@ owned:
   web:
     cmd: bun run dev
     cwd: apps/web
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [api]
     ready_when:
       # Next.js dev server responds 200 on / once compilation finishes.

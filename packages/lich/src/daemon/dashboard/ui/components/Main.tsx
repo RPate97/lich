@@ -7,9 +7,22 @@ import {
   serviceStatus,
   summarizeHealth,
 } from '../lib/format';
+import {
+  cpuLoad,
+  formatBytes,
+  formatCpuPct,
+  memLoad,
+} from '../lib/metrics';
 import { Logs } from './Logs';
+import { Sparkline } from './Sparkline';
+import { ProcessTreeDetail } from './ProcessTree';
 import { restartStack, stopStack } from '../api';
-import type { ServiceView, StackView } from '../api';
+import {
+  findServiceMetrics,
+  useStackMetrics,
+  type StackMetricsState,
+} from '../hooks/useStackMetrics';
+import type { ServiceMetrics, ServiceView, StackView } from '../api';
 
 interface MainProps {
   stack: StackView;
@@ -34,7 +47,13 @@ function MetaItem({
   );
 }
 
-function MainHeader({ stack }: { stack: StackView }) {
+function MainHeader({
+  stack,
+  metrics,
+}: {
+  stack: StackView;
+  metrics: StackMetricsState;
+}) {
   const ageMs = stack.started_at
     ? Date.now() - new Date(stack.started_at).getTime()
     : 0;
@@ -77,6 +96,10 @@ function MainHeader({ stack }: { stack: StackView }) {
     }
   }
 
+  const totalCpu = metrics.latest?.total.cpu_pct ?? 0;
+  const totalMem = metrics.latest?.total.mem_bytes ?? 0;
+  const cpuKind = cpuLoad(totalCpu);
+
   return (
     <header className="main-hd">
       <div className="main-hd-l">
@@ -110,6 +133,23 @@ function MainHeader({ stack }: { stack: StackView }) {
               <MetaItem label="up" value={fmtRelative(ageMs)} />
             </>
           )}
+          <span className="sep" />
+          <span className="meta meta-metric">
+            <span className="meta-label">cpu</span>
+            <span className={`metric-value load-${cpuKind}`}>
+              {formatCpuPct(totalCpu)}
+            </span>
+          </span>
+          <span className="meta meta-metric">
+            <span className="meta-label">mem</span>
+            <span className="metric-value">{formatBytes(totalMem)}</span>
+            <Sparkline
+              values={metrics.totalMemBytes}
+              width={64}
+              height={18}
+              title={`stack memory: ${formatBytes(totalMem)} (last 60s)`}
+            />
+          </span>
         </div>
       </div>
       <div className="main-hd-r">
@@ -150,7 +190,13 @@ function MainHeader({ stack }: { stack: StackView }) {
   );
 }
 
-function ServicesStrip({ stack }: { stack: StackView }) {
+function ServicesStrip({
+  stack,
+  metrics,
+}: {
+  stack: StackView;
+  metrics: StackMetricsState;
+}) {
   if (stack.services.length === 0) {
     return (
       <div
@@ -169,7 +215,14 @@ function ServicesStrip({ stack }: { stack: StackView }) {
     <>
       <div className="svc-strip">
         {stack.services.map((svc) => (
-          <ServiceRow key={svc.name} service={svc} />
+          <ServiceRow
+            key={svc.name}
+            stackId={stack.id}
+            service={svc}
+            metric={findServiceMetrics(metrics.latest, svc.name)}
+            memHistory={metrics.memBytesByService[svc.name] ?? []}
+            cpuHistory={metrics.cpuPctByService[svc.name] ?? []}
+          />
         ))}
       </div>
       {stack.services
@@ -181,15 +234,30 @@ function ServicesStrip({ stack }: { stack: StackView }) {
   );
 }
 
-function ServiceRow({ service }: { service: ServiceView }) {
+interface ServiceRowProps {
+  stackId: string;
+  service: ServiceView;
+  metric: ServiceMetrics | undefined;
+  memHistory: number[];
+  cpuHistory: number[];
+}
+
+function ServiceRow({
+  stackId,
+  service,
+  metric,
+  memHistory,
+  cpuHistory,
+}: ServiceRowProps) {
   const status = serviceStatus(service.state);
   const url = service.url;
   const host = url ? url.replace(/^https?:\/\//, '').replace(/\/$/, '') : null;
   const port = primaryPort(service);
 
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
   async function copy(e: ReactMouseEvent) {
-    // prevent bubbling to row <a> — otherwise copy also opens the URL
     e.preventDefault();
     e.stopPropagation();
     if (!url) return;
@@ -202,17 +270,92 @@ function ServiceRow({ service }: { service: ServiceView }) {
     }
   }
 
+  const canExpand = metric?.kind === 'owned';
+  function toggleExpand(e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (canExpand) setExpanded((v) => !v);
+  }
+
+  const cpuPct = metric?.cpu_pct ?? 0;
+  const memBytes = metric?.mem_bytes ?? 0;
+  const memLimit =
+    metric?.kind === 'compose' ? metric.mem_limit_bytes : undefined;
+  const procCount =
+    metric?.kind === 'owned' ? metric.process_count : undefined;
+  const cpuKind = cpuLoad(cpuPct);
+  const memKind = memLoad(memBytes, memLimit);
+
+  const metricsBlock = metric ? (
+    <>
+      <span
+        className={`svc-metric svc-cpu load-${cpuKind}`}
+        title={`CPU: ${formatCpuPct(cpuPct)}`}
+      >
+        {formatCpuPct(cpuPct)}
+      </span>
+      <span
+        className={`svc-metric svc-mem load-${memKind}`}
+        title={
+          memLimit
+            ? `Memory: ${formatBytes(memBytes)} / ${formatBytes(memLimit)}`
+            : `Memory: ${formatBytes(memBytes)}`
+        }
+      >
+        {formatBytes(memBytes)}
+        {memLimit ? (
+          <span className="svc-mem-limit"> / {formatBytes(memLimit)}</span>
+        ) : null}
+      </span>
+      <Sparkline
+        values={memHistory}
+        width={56}
+        height={16}
+        title={`memory (last 60s): ${memHistory.length} samples`}
+      />
+    </>
+  ) : (
+    <span className="svc-metric svc-metric-pending" title="awaiting first sample">
+      …
+    </span>
+  );
+
+  const expandToggle = canExpand ? (
+    <button
+      className="svc-tree-toggle"
+      type="button"
+      onClick={toggleExpand}
+      title={expanded ? 'Hide process tree' : 'Show process tree'}
+      aria-expanded={expanded}
+      aria-label={
+        expanded
+          ? `Hide process tree for ${service.name}`
+          : `Show process tree for ${service.name}`
+      }
+    >
+      <span className="svc-tree-caret" data-open={expanded ? '1' : '0'}>
+        ▸
+      </span>
+      {procCount !== undefined && procCount > 1 ? (
+        <span className="svc-proc-count">{procCount}</span>
+      ) : null}
+    </button>
+  ) : null;
+
   const content = (
     <>
       <span className={`svc-dot ${status}`} />
       <span className="svc-name">{service.name}</span>
       <span className="svc-host">{host ?? service.state}</span>
       {port != null && <span className="svc-port">:{port}</span>}
+      <span className="svc-metrics-group">{metricsBlock}</span>
+      {expandToggle}
     </>
   );
 
+  let rowEl: JSX.Element;
   if (host && url) {
-    return (
+    rowEl = (
       <a
         className="svc-row"
         data-status={status}
@@ -255,11 +398,25 @@ function ServiceRow({ service }: { service: ServiceView }) {
         </button>
       </a>
     );
+  } else {
+    rowEl = (
+      <div className="svc-row" data-status={status} data-inert="1">
+        {content}
+      </div>
+    );
   }
 
   return (
-    <div className="svc-row" data-status={status} data-inert="1">
-      {content}
+    <div className="svc-row-wrap">
+      {rowEl}
+      {expanded && canExpand && (
+        <ProcessTreeDetail
+          stackId={stackId}
+          service={service.name}
+          cpuHistory={cpuHistory}
+          memHistory={memHistory}
+        />
+      )}
     </div>
   );
 }
@@ -311,10 +468,11 @@ function FailureDetail({ service }: { service: ServiceView }) {
 }
 
 export function Main({ stack }: MainProps) {
+  const metrics = useStackMetrics(stack.id);
   return (
     <main className="main">
-      <MainHeader stack={stack} />
-      <ServicesStrip stack={stack} />
+      <MainHeader stack={stack} metrics={metrics} />
+      <ServicesStrip stack={stack} metrics={metrics} />
       <Logs stack={stack} />
     </main>
   );

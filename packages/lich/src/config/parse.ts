@@ -115,6 +115,14 @@ export async function parseConfig(filePath: string): Promise<ParseResult> {
   // Whitespace-only docs toJS to null — schema rejects via missing `version`.
   const value = doc.toJS();
 
+  // Port-shape pre-checks: detect pre-LEV-525 names (`container`, `env`) and
+  // bare `{ container_port: N }` block form. These produce friendlier errors
+  // than AJV's generic `additionalProperties`/`oneOf` failures.
+  const portErrors = validatePortShapes(value, doc, lineCounter, filePath);
+  if (portErrors.length > 0) {
+    return { ok: false, sourcePath: filePath, errors: portErrors };
+  }
+
   const validate = getValidator();
   const ok = validate(value);
   if (!ok) {
@@ -152,6 +160,125 @@ export async function parseConfig(filePath: string): Promise<ParseResult> {
     sourcePath: filePath,
     config,
   };
+}
+
+/**
+ * Friendly errors for the LEV-525 port shape:
+ *   - Old `{ container, env }` → suggest `{ container_port, published_env }`
+ *   - Bare `{ container_port: N }` block (no `published_env`) → suggest scalar
+ * AJV would also reject these but with generic `additionalProperties`/`oneOf`
+ * failures that don't show the user the new shape.
+ */
+function validatePortShapes(
+  value: unknown,
+  doc: Document.Parsed,
+  lineCounter: LineCounter,
+  filePath: string,
+): ParseError[] {
+  const errors: ParseError[] = [];
+  if (!value || typeof value !== "object") return errors;
+  const root = value as Record<string, unknown>;
+
+  const services = root.services;
+  if (services && typeof services === "object" && !Array.isArray(services)) {
+    for (const [svcName, svc] of Object.entries(services as Record<string, unknown>)) {
+      if (!svc || typeof svc !== "object") continue;
+      const ports = (svc as Record<string, unknown>).ports;
+      walkPorts(ports, ["services", svcName, "ports"], errors, doc, lineCounter, filePath);
+    }
+  }
+
+  const owned = root.owned;
+  if (owned && typeof owned === "object" && !Array.isArray(owned)) {
+    for (const [svcName, svc] of Object.entries(owned as Record<string, unknown>)) {
+      if (!svc || typeof svc !== "object") continue;
+      const port = (svc as Record<string, unknown>).port;
+      checkDescriptor(port, ["owned", svcName, "port"], errors, doc, lineCounter, filePath);
+      const ports = (svc as Record<string, unknown>).ports;
+      walkPorts(ports, ["owned", svcName, "ports"], errors, doc, lineCounter, filePath);
+    }
+  }
+
+  return errors;
+}
+
+function walkPorts(
+  ports: unknown,
+  pathSegments: string[],
+  errors: ParseError[],
+  doc: Document.Parsed,
+  lineCounter: LineCounter,
+  filePath: string,
+): void {
+  if (ports == null) return;
+  if (Array.isArray(ports)) {
+    for (let i = 0; i < ports.length; i++) {
+      checkDescriptor(
+        ports[i],
+        [...pathSegments, String(i)],
+        errors,
+        doc,
+        lineCounter,
+        filePath,
+      );
+    }
+  } else if (typeof ports === "object") {
+    for (const [key, desc] of Object.entries(ports as Record<string, unknown>)) {
+      checkDescriptor(
+        desc,
+        [...pathSegments, key],
+        errors,
+        doc,
+        lineCounter,
+        filePath,
+      );
+    }
+  }
+}
+
+function checkDescriptor(
+  desc: unknown,
+  pathSegments: string[],
+  errors: ParseError[],
+  doc: Document.Parsed,
+  lineCounter: LineCounter,
+  filePath: string,
+): void {
+  if (desc == null || typeof desc !== "object" || Array.isArray(desc)) return;
+  const d = desc as Record<string, unknown>;
+  const path = "/" + pathSegments.join("/");
+  const location = locateInstancePath(path, doc, lineCounter, filePath) ?? filePath;
+
+  const hasOldContainer = Object.prototype.hasOwnProperty.call(d, "container");
+  const hasOldEnv = Object.prototype.hasOwnProperty.call(d, "env");
+  if (hasOldContainer || hasOldEnv) {
+    const renames: string[] = [];
+    if (hasOldContainer) renames.push("`container` → `container_port`");
+    if (hasOldEnv) renames.push("`env` → `published_env`");
+    errors.push({
+      kind: "schema",
+      location,
+      message:
+        `${path} uses the pre-LEV-525 port shape — rename ${renames.join(", ")}. ` +
+        `New block form: \`{ container_port: <N>, published_env: <ENV_VAR> }\`. ` +
+        `For ports with no env var, use the scalar shorthand: \`<N>\`.`,
+    });
+    return;
+  }
+
+  const hasContainerPort = Object.prototype.hasOwnProperty.call(d, "container_port");
+  const hasPublishedEnv = Object.prototype.hasOwnProperty.call(d, "published_env");
+  const hasHostPort = Object.prototype.hasOwnProperty.call(d, "host_port");
+  if (hasContainerPort && !hasPublishedEnv && !hasHostPort) {
+    errors.push({
+      kind: "schema",
+      location,
+      message:
+        `${path} is a bare \`{ container_port: <N> }\` block — use the scalar ` +
+        `shorthand \`<N>\` instead. The block form is reserved for entries that ` +
+        `also set \`published_env\` or \`host_port\`.`,
+    });
+  }
 }
 
 function ajvErrorToParseError(

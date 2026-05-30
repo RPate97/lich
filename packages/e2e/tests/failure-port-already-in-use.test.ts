@@ -134,10 +134,10 @@ describe("lich up — port already in use on a pinned owned port", () => {
         stubPort,
       };
 
-      // Both api + web share `port: { env: PORT }`; anchor on api's prefix.
+      // Both api + web share `port: { published_env: PORT }`; anchor on api's prefix.
       const lichYamlPath = join(stack.path, "lich.yaml");
       const original = readFileSync(lichYamlPath, "utf8");
-      const needle = "cwd: apps/api\n    port: { env: PORT }";
+      const needle = "cwd: apps/api\n    port: { published_env: PORT }";
       const occurrences = original.split(needle).length - 1;
       expect(
         occurrences,
@@ -148,7 +148,7 @@ describe("lich up — port already in use on a pinned owned port", () => {
       ).toBe(1);
       const mutated = original.replace(
         needle,
-        `cwd: apps/api\n    port: { env: PORT, host_port: ${stubPort} }`,
+        `cwd: apps/api\n    port: { published_env: PORT, host_port: ${stubPort} }`,
       );
       writeFileSync(lichYamlPath, mutated, "utf8");
 

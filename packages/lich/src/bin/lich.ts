@@ -16,7 +16,6 @@ import { join } from "node:path";
 const argv = mri(process.argv.slice(2), {
   alias: { v: "version", h: "help", y: "yes" },
   // Declare booleans explicitly so mri doesn't swallow a trailing positional as the flag value.
-  // `context` covers the `--no-context` negation form for `lich feedback`.
   boolean: [
     "version",
     "help",
@@ -25,10 +24,11 @@ const argv = mri(process.argv.slice(2), {
     "rescue",
     "raw",
     "browser",
-    "context",
     "all",
+    "preflight",
+    "follow",
   ],
-  string: ["env-group", "file"],
+  string: ["env-group", "worktree", "tree", "sort"],
   default: { last: undefined },
 });
 
@@ -78,6 +78,14 @@ const onSigint = (): void => {
 process.on("SIGINT", onSigint);
 
 if (isCommand(commandName)) {
+  if (typeof argv.worktree === "string" && argv.worktree.length > 0) {
+    const rejection = rejectWorktreeFlag(commandName);
+    if (rejection !== null) {
+      process.stderr.write(rejection);
+      process.exit(2);
+    }
+  }
+
   const handler = COMMANDS[commandName];
   const result = await handler({
     argv: { ...argv, _: rest },
@@ -150,4 +158,31 @@ function printUnknownCommand(name: string): number {
   process.stderr.write(`lich: unknown command '${name}'\n`);
   process.stderr.write(`Run 'lich --help' to see available commands.\n`);
   return 2;
+}
+
+/**
+ * `--worktree` flag gating. `nuke` is destructive — cd-first is the safety
+ * net; cross-worktree recovery flows through `--rescue`. `init` / `validate`
+ * are cwd-bound by definition. `up`, `stacks`, `dashboard` operate from cwd
+ * or are stack-set-wide and have no per-stack target to override.
+ */
+function rejectWorktreeFlag(commandName: string): string | null {
+  if (commandName === "nuke") {
+    return (
+      "lich nuke: --worktree is not supported (destructive; cd into the worktree first, or use `lich nuke --rescue` to clean cross-worktree leftovers)\n"
+    );
+  }
+  if (commandName === "init" || commandName === "validate") {
+    return `lich ${commandName}: --worktree is not supported (this command operates on the current directory)\n`;
+  }
+  if (commandName === "up") {
+    return "lich up: --worktree is not supported (up always brings up the current worktree's stack)\n";
+  }
+  if (commandName === "stacks") {
+    return "lich stacks: --worktree is not supported (lists every stack)\n";
+  }
+  if (commandName === "dashboard") {
+    return "lich dashboard: --worktree is not supported (the dashboard is stack-set-wide)\n";
+  }
+  return null;
 }

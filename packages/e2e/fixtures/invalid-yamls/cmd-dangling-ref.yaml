@@ -1,0 +1,13 @@
+version: "1"
+owned:
+  api:
+    cmd: echo hi
+    port: { published_env: PORT }
+    env:
+      SERVER_URL: "http://localhost:${owned.serverr.port}"
+lifecycle:
+  after_up:
+    - "echo \"hook port=${owned.bogus.port}\""
+commands:
+  show:
+    cmd: 'echo "api_port=${owned.serverr.port}"'

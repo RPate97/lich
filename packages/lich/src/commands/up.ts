@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
-import { runLifecycle } from "../lifecycle/executor.js";
+import { runLifecycle, LifecycleHookError } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
@@ -26,7 +27,10 @@ import {
 } from "../state/directory.js";
 import {
   readSnapshot,
+  truncateFailedCmd,
   writeSnapshot,
+  type LifecyclePhaseStatus,
+  type LifecycleSnapshotStatus,
   type RoutingEntry,
   type ServiceSnapshot,
   type ServiceState,
@@ -58,6 +62,7 @@ import {
 import { waitForLogMatch } from "../ready/log-match.js";
 import { LogTail } from "../logs/tail.js";
 import { withTimeout, parseDuration, ReadyTimeoutError } from "../ready/timeout.js";
+import { withProgressTimeout } from "../ready/progress-timeout.js";
 import { runCapture, CaptureMissError } from "../ready/capture.js";
 import { failOnExitDuringReady } from "../ready/process-exit-race.js";
 import { watchFailWhen, FailWhenMatchedError } from "../failure/fail-when.js";
@@ -98,6 +103,16 @@ import {
 } from "../urls/format.js";
 import { join } from "node:path";
 
+/** Snapshot replay payload — `lich restart` hands pre-resolved env/cmd/cwd/stop_cmd to re-up. */
+export interface OwnedSnapshotOverride {
+  env: Record<string, string>;
+  cmd: string;
+  stop_cmd?: string;
+  cwd: string;
+  /** Resolved owned_containers filter (post-interpolation). Snapshotted at original up time. */
+  owned_containers?: { label?: string; name_pattern?: string };
+}
+
 export interface RunUpInput {
   /** Defaults to process.cwd(). */
   cwd?: string;
@@ -113,6 +128,8 @@ export interface RunUpInput {
   noBrowser?: boolean;
   /** Emit raw upstream URLs in the summary instead of friendly proxied URLs. */
   raw?: boolean;
+  /** Per-owned-service snapshot replay map — bypasses yaml env resolution for matching services. */
+  ownedSnapshotOverrides?: Map<string, OwnedSnapshotOverride>;
 }
 
 export interface RunUpResult {
@@ -132,6 +149,8 @@ interface UpState {
   ownedHandles: Map<string, OwnedHandle>;
   status: StackStatus;
   startedAt: string;
+  /** Stamped into each per-service log marker for cross-service correlation in one `lich up`. */
+  runId: string;
   activeProfile?: string;
   resolvedProfile?: ResolvedProfile;
   /** Per-owned-service LogTail registry. Stays RUNNING after a successful `lich up` returns so post-startup `fail_when` matches still fire — torn down by `lich down`. */
@@ -151,6 +170,8 @@ interface UpState {
   stackBeforeDown?: SnapshotLifecycleEntry[];
   /** Top-level + profile after_down hooks with pre-resolved envs, snapshotted at up time. */
   stackAfterDown?: SnapshotLifecycleEntry[];
+  /** Per-phase lifecycle status accumulated during up; persisted onto the snapshot. */
+  lifecycleStatus: LifecycleSnapshotStatus;
 }
 
 export async function runUp(input: RunUpInput): Promise<RunUpResult> {
@@ -294,6 +315,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       ownedHandles: new Map(),
       status: "starting",
       startedAt: new Date().toISOString(),
+      runId: randomUUID(),
       logTails: new Map(),
       capturedValues: {},
       exitWatchers: new Map(),
@@ -302,6 +324,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       ownedCwd: new Map(),
       activeProfile: resolvedProfile?.name,
       resolvedProfile: resolvedProfile ?? undefined,
+      lifecycleStatus: {},
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
@@ -474,6 +497,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     );
     if (beforeUpEntries.length > 0) {
       const phase = output.phase("before_up");
+      const beforeUpLogPath = phaseLogPath(worktree.stack_id, "before_up");
       try {
         const beforeUpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
         await runLifecycle(
@@ -483,7 +507,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
-            logPath: phaseLogPath(worktree.stack_id, "before_up"),
+            logPath: beforeUpLogPath,
           },
           {
             onEntryStart: (start) => output.lifecycleEntryStart(start),
@@ -493,6 +517,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         );
       } catch (err) {
         phase.end("fail");
+        state.lifecycleStatus.before_up = phaseStatusFromError(
+          err,
+          beforeUpEntries.length,
+          beforeUpLogPath,
+        );
         output.error({
           title: "lifecycle.before_up failed",
           detail: (err as Error).message,
@@ -501,6 +530,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         await output.close();
         return { exitCode: 1, stackId: worktree.stack_id };
       }
+      state.lifecycleStatus.before_up = { status: "ok" };
       phase.end("ok");
     }
 
@@ -532,6 +562,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             output,
             signal,
             resolveEnvGroup: lifecycleResolveEnvGroup,
+            ownedSnapshotOverride: input.ownedSnapshotOverrides?.get(name),
           }),
         ),
       );
@@ -613,6 +644,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     ];
     if (afterUpEntries.length > 0) {
       const phase = output.phase("after_up");
+      const afterUpLogPath = phaseLogPath(worktree.stack_id, "after_up");
       try {
         const afterUpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
         await runLifecycle(
@@ -622,7 +654,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             cwd: worktree.path,
             env: lifecycleEnv,
             resolveEnvGroup: lifecycleResolveEnvGroup,
-            logPath: phaseLogPath(worktree.stack_id, "after_up"),
+            logPath: afterUpLogPath,
           },
           {
             onEntryStart: (start) => output.lifecycleEntryStart(start),
@@ -632,6 +664,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         );
       } catch (err) {
         phase.end("fail");
+        state.lifecycleStatus.after_up = phaseStatusFromError(
+          err,
+          afterUpEntries.length,
+          afterUpLogPath,
+        );
         // after_up runs after all services are ready but before the stack is marked up — cascade-kill since no siblings remain useful.
         let killedNames: string[] = [];
         if (killOthersEnabled(config.runtime)) {
@@ -668,6 +705,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           services: snapshotServiceStates(state),
         };
       }
+      state.lifecycleStatus.after_up = { status: "ok" };
       phase.end("ok");
     }
 
@@ -829,6 +867,8 @@ interface StartOneInput {
   output: Output;
   signal: AbortSignal | undefined;
   resolveEnvGroup: (name: string) => Promise<NodeJS.ProcessEnv>;
+  /** Snapshot replay for this service — bypasses yaml env resolution. */
+  ownedSnapshotOverride?: OwnedSnapshotOverride;
 }
 
 /** Start a single service to "ready". Throws on any failure — caller's Promise.allSettled aggregates failures across a level. */
@@ -1041,30 +1081,45 @@ async function startOwned(
 ): Promise<void> {
   const { name, config, worktree, allocatedPorts, state } = input;
 
-  // capturedValues threads `${owned.<earlier>.captured.<key>}` from earlier services into env interpolation.
-  // Same-level services CAN'T see each other's captures — start in parallel; declare a depends_on edge to force ordering.
-  const env = await resolveEnvForService({
-    config,
-    service: { kind: "owned", name },
-    worktree,
-    allocatedPorts,
-    projectRoot: worktree.path,
-    capturedValues: state.capturedValues,
-    profile: state.resolvedProfile,
-  });
+  let env: NodeJS.ProcessEnv;
+  let resolvedCmd: string;
+  let resolvedStopCmd: string | undefined;
+  let resolvedCwd: string;
 
-  const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
-  const resolvedCmd = interpolateString(def.cmd, interpCtx, `owned.${name}.cmd`, true);
-  const resolvedStopCmd = def.stop_cmd
-    ? interpolateString(def.stop_cmd, interpCtx, `owned.${name}.stop_cmd`, true)
-    : undefined;
+  if (input.ownedSnapshotOverride !== undefined) {
+    // Snapshot replay (lich restart) — skip yaml re-resolution to match LEV-513's down invariant.
+    env = input.ownedSnapshotOverride.env;
+    resolvedCmd = input.ownedSnapshotOverride.cmd;
+    resolvedStopCmd = input.ownedSnapshotOverride.stop_cmd;
+    resolvedCwd = input.ownedSnapshotOverride.cwd;
+  } else {
+    // capturedValues threads `${owned.<earlier>.captured.<key>}` from earlier services into env interpolation.
+    // Same-level services CAN'T see each other's captures — start in parallel; declare a depends_on edge to force ordering.
+    env = await resolveEnvForService({
+      config,
+      service: { kind: "owned", name },
+      worktree,
+      allocatedPorts,
+      projectRoot: worktree.path,
+      capturedValues: state.capturedValues,
+      profile: state.resolvedProfile,
+    });
+
+    const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
+    resolvedCmd = interpolateString(def.cmd, interpCtx, `owned.${name}.cmd`, true);
+    resolvedStopCmd = def.stop_cmd
+      ? interpolateString(def.stop_cmd, interpCtx, `owned.${name}.stop_cmd`, true)
+      : undefined;
+    resolvedCwd = resolveOwnedCwd(def, worktree.path);
+  }
 
   const spec: OwnedServiceSpec = {
     name,
     cmd: resolvedCmd,
-    cwd: resolveOwnedCwd(def, worktree.path),
+    cwd: resolvedCwd,
     env,
     logPath: serviceLogPath(worktree.stack_id, name),
+    runId: state.runId,
   };
 
   // Stash the resolved env + cwd so `ready_when.cmd` (run before the service is
@@ -1077,14 +1132,52 @@ async function startOwned(
   if (svcSnap) {
     svcSnap.cmd = resolvedCmd;
     if (resolvedStopCmd !== undefined) svcSnap.stop_cmd = resolvedStopCmd;
+    if (input.ownedSnapshotOverride?.owned_containers !== undefined) {
+      svcSnap.owned_containers = { ...input.ownedSnapshotOverride.owned_containers };
+    } else if (def.owned_containers !== undefined) {
+      const interpCtxForContainers = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
+      const oc: { label?: string; name_pattern?: string } = {};
+      if (def.owned_containers.label !== undefined) {
+        oc.label = interpolateString(def.owned_containers.label, interpCtxForContainers, `owned.${name}.owned_containers.label`, true);
+      }
+      if (def.owned_containers.name_pattern !== undefined) {
+        oc.name_pattern = interpolateString(def.owned_containers.name_pattern, interpCtxForContainers, `owned.${name}.owned_containers.name_pattern`, true);
+      }
+      svcSnap.owned_containers = oc;
+    }
     svcSnap.resolved_env = stringifyEnv(env);
     svcSnap.depends_on = def.depends_on ?? [];
     svcSnap.service_cwd = spec.cwd;
     if (def.ready_when !== undefined) {
       svcSnap.ready_when = def.ready_when as Record<string, unknown>;
     }
+    if (def.fail_when !== undefined) {
+      svcSnap.fail_when = def.fail_when as Record<string, unknown>;
+    }
     if (def.lifecycle?.before_down && def.lifecycle.before_down.length > 0) {
       svcSnap.before_down = def.lifecycle.before_down.map((entry) => ({
+        cmd: typeof entry === "string" ? entry : entry.cmd,
+        env: stringifyEnv(input.topLevelEnv),
+      }));
+    }
+    if (def.lifecycle?.before_start && def.lifecycle.before_start.length > 0) {
+      const interpCtxForLifecycle = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
+      svcSnap.before_start = interpolateLifecycleEntries(
+        def.lifecycle.before_start,
+        interpCtxForLifecycle,
+        `owned.${name}.lifecycle.before_start`,
+      ).map((entry) => ({
+        cmd: typeof entry === "string" ? entry : entry.cmd,
+        env: stringifyEnv(input.topLevelEnv),
+      }));
+    }
+    if (def.lifecycle?.after_ready && def.lifecycle.after_ready.length > 0) {
+      const interpCtxForLifecycle = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
+      svcSnap.after_ready = interpolateLifecycleEntries(
+        def.lifecycle.after_ready,
+        interpCtxForLifecycle,
+        `owned.${name}.lifecycle.after_ready`,
+      ).map((entry) => ({
         cmd: typeof entry === "string" ? entry : entry.cmd,
         env: stringifyEnv(input.topLevelEnv),
       }));
@@ -1307,10 +1400,23 @@ async function waitReady(
   const readyPromise = buildReadyEvaluator(input, def, isOwned, interpCtx);
   const timeoutMs = resolveReadyTimeoutMs(ready, isOwned, input.config.runtime);
   const phaseLabel = identifyReadyPhase(ready);
-  const racedReady =
-    timeoutMs !== null
-      ? withTimeout(readyPromise, { ms: timeoutMs, phase: phaseLabel })
-      : readyPromise;
+  // extend_on_progress reinterprets `timeout` as "max acceptable silence between log lines".
+  // Only meaningful when we have a tail to subscribe to (owned services); compose has no LogTail.
+  const useProgress =
+    ready.extend_on_progress === true && tail !== undefined && timeoutMs !== null;
+  let racedReady: Promise<void>;
+  if (useProgress) {
+    const progOpts: Parameters<typeof withProgressTimeout>[1] = {
+      ms: timeoutMs!,
+      tail: tail!,
+    };
+    if (phaseLabel !== undefined) progOpts.phase = phaseLabel;
+    racedReady = withProgressTimeout(readyPromise, progOpts);
+  } else if (timeoutMs !== null) {
+    racedReady = withTimeout(readyPromise, { ms: timeoutMs, phase: phaseLabel });
+  } else {
+    racedReady = readyPromise;
+  }
 
   // Flip stage BEFORE wrapping with failOnExitDuringReady so readSignal returns `before_ready` at exit time.
   if (state.stageRefs.has(name)) {
@@ -1640,10 +1746,15 @@ function buildPortPlan(config: LichConfig): PortPlan {
     if (Array.isArray(def.ports)) {
       for (let i = 0; i < def.ports.length; i++) {
         const entry = def.ports[i];
-        if (!entry) continue;
-        const pinned = typeof entry.host_port === "number" ? entry.host_port : null;
-        // Skip entries with neither a container port nor an env var — nothing to allocate for.
-        if (typeof entry.container === "number" || typeof entry.env === "string") {
+        if (entry === undefined || entry === null) continue;
+        const pinned = pinnedFromDescriptor(entry);
+        // Skip entries with no container port AND no env var — nothing to allocate for.
+        const hasContainer =
+          typeof entry === "number" ||
+          (typeof entry === "object" && typeof entry.container_port === "number");
+        const hasEnv =
+          typeof entry === "object" && typeof entry.published_env === "string";
+        if (hasContainer || hasEnv) {
           logicalPorts[`compose:${name}:${i}`] = pinned;
         }
       }
@@ -1679,8 +1790,8 @@ function pinnedFromDescriptor(desc: PortDescriptor): number | null {
 
 function portDescriptorEnv(desc: PortDescriptor): string | undefined {
   if (typeof desc === "number") return undefined;
-  if (typeof desc === "object" && desc !== null && typeof desc.env === "string") {
-    return desc.env;
+  if (typeof desc === "object" && desc !== null && typeof desc.published_env === "string") {
+    return desc.published_env;
   }
   return undefined;
 }
@@ -1919,10 +2030,37 @@ async function writeStateSnapshot(state: UpState): Promise<void> {
   if (state.stackAfterDown !== undefined) {
     snapshot.after_down = state.stackAfterDown;
   }
+  if (Object.keys(state.lifecycleStatus).length > 0) {
+    snapshot.lifecycle = state.lifecycleStatus;
+  }
   await writeSnapshot(snapshot);
   await ensureStackDir(state.worktree.stack_id).catch(() => {});
   // Keep stackDir referenced so tree-shaking doesn't drop the import.
   void stackDir;
+}
+
+/** Build a {@link LifecyclePhaseStatus} from a thrown error inside `runLifecycle`. */
+function phaseStatusFromError(
+  err: unknown,
+  total: number,
+  logPath: string,
+): LifecyclePhaseStatus {
+  if (err instanceof LifecycleHookError) {
+    return {
+      status: "failed",
+      failed_index: err.index,
+      total,
+      failed_cmd: truncateFailedCmd(err.cmd),
+      log_path: logPath,
+    };
+  }
+  return {
+    status: "failed",
+    failed_index: 0,
+    total,
+    failed_cmd: truncateFailedCmd((err as Error)?.message ?? "<unknown>"),
+    log_path: logPath,
+  };
 }
 
 async function markFailed(state: UpState, serviceName: string): Promise<void> {

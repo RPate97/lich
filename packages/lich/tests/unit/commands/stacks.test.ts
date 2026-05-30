@@ -335,6 +335,150 @@ describe("runStacks — primary_url", () => {
   });
 });
 
+describe("runStacks — lifecycle hook failure surfacing (LEV-531)", () => {
+  it("table: replaces bare `failed` with `failed (after_up i/n: <cmd>)`", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh1",
+        worktree_name: "afteruphook",
+        status: "failed",
+        services: [
+          { name: "a", kind: "owned", state: "ready" },
+          { name: "b", kind: "owned", state: "ready" },
+          { name: "c", kind: "owned", state: "ready" },
+        ],
+        lifecycle: {
+          before_up: { status: "ok" },
+          after_up: {
+            status: "failed",
+            failed_index: 1,
+            total: 3,
+            failed_cmd: "pnpm db:reset",
+            log_path: "/home/.lich/stacks/lh1/logs/after_up.log",
+          },
+        },
+      }),
+    );
+
+    const { sink, out } = makeSink();
+    await runStacks({ out });
+    const text = sink.text();
+    expect(text).toContain("failed (after_up 2/3: pnpm db:reset)");
+    // 3/3 ready services still report — load-bearing per the bug description
+    expect(text).toContain("3/3");
+  });
+
+  it("table: leaves status column bare when no lifecycle field is present (legacy snapshot)", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh-legacy",
+        worktree_name: "legacy",
+        status: "failed",
+        services: [{ name: "a", kind: "owned", state: "failed" }],
+      }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out });
+    const text = sink.text();
+    // STATUS column should not gain a "(phase i/n: cmd)" suffix
+    expect(text).not.toContain("failed (");
+  });
+
+  it("table: status untouched when lifecycle is present but all phases are ok", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh-ok",
+        worktree_name: "okhooks",
+        status: "up",
+        services: [{ name: "a", kind: "owned", state: "ready" }],
+        lifecycle: {
+          before_up: { status: "ok" },
+          after_up: { status: "ok" },
+        },
+      }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out });
+    const text = sink.text();
+    const dataLine = text.trimEnd().split("\n").pop()!;
+    expect(dataLine).toContain("up");
+    expect(dataLine).not.toContain("(after_up");
+  });
+
+  it("json: emits `lifecycle` per phase including ok/failed entries", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh-json",
+        worktree_name: "jsonhooks",
+        status: "failed",
+        services: [{ name: "a", kind: "owned", state: "ready" }],
+        lifecycle: {
+          before_up: { status: "ok" },
+          after_up: {
+            status: "failed",
+            failed_index: 0,
+            total: 1,
+            failed_cmd: "pnpm db:reset",
+            log_path: "/home/.lich/stacks/lh-json/logs/after_up.log",
+          },
+        },
+      }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out, json: true });
+    const [entry] = JSON.parse(sink.text());
+    expect(entry.lifecycle).toEqual({
+      before_up: { status: "ok" },
+      after_up: {
+        status: "failed",
+        failed_index: 0,
+        total: 1,
+        failed_cmd: "pnpm db:reset",
+        log_path: "/home/.lich/stacks/lh-json/logs/after_up.log",
+      },
+    });
+  });
+
+  it("json: omits lifecycle field when the snapshot has none (legacy)", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh-json-none",
+        worktree_name: "none",
+        services: [{ name: "a", kind: "owned", state: "ready" }],
+      }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out, json: true });
+    const [entry] = JSON.parse(sink.text());
+    expect("lifecycle" in entry).toBe(false);
+  });
+
+  it("table: surfaces before_up failure suffix as well", async () => {
+    await writeSnapshot(
+      snap({
+        stack_id: "lh-before",
+        worktree_name: "beforehook",
+        status: "failed",
+        services: [],
+        lifecycle: {
+          before_up: {
+            status: "failed",
+            failed_index: 0,
+            total: 2,
+            failed_cmd: "echo nope && false",
+            log_path: "/home/.lich/stacks/lh-before/logs/before_up.log",
+          },
+        },
+      }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out });
+    expect(sink.text()).toContain(
+      "failed (before_up 1/2: echo nope && false)",
+    );
+  });
+});
+
 describe("runStacks — active_profile (json wire format)", () => {
   it("includes active_profile in the JSON when the snapshot recorded one", async () => {
     await writeSnapshot(

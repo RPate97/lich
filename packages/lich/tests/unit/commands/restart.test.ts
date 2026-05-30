@@ -29,7 +29,11 @@ vi.mock("../../../src/commands/up.js", () => ({
 
 import { runRestart } from "../../../src/commands/restart.js";
 import { detectWorktree } from "../../../src/worktree/detect.js";
-import { writeSnapshot, type StackSnapshot } from "../../../src/state/snapshot.js";
+import {
+  writeSnapshot,
+  type ServiceSnapshot,
+  type StackSnapshot,
+} from "../../../src/state/snapshot.js";
 
 let lichHome: string;
 let prevLichHome: string | undefined;
@@ -74,14 +78,18 @@ afterAll(() => {
   }));
 });
 
-function makeSnapshotForStack(stackId: string, profile?: string): StackSnapshot {
+function makeSnapshotForStack(
+  stackId: string,
+  profile?: string,
+  services: ServiceSnapshot[] = [],
+): StackSnapshot {
   return {
     stack_id: stackId,
     worktree_name: "main",
     worktree_path: stackPath,
     status: "up",
     started_at: "2026-05-23T10:00:00.000Z",
-    services: [],
+    services,
     ...(profile !== undefined && { active_profile: profile }),
   };
 }
@@ -311,5 +319,163 @@ describe("runRestart — profile preservation from snapshot", () => {
     } finally {
       rmSync(noLichDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("runRestart — owned snapshot overrides passed to runUp (LEV-527)", () => {
+  it("forwards a per-owned-service envOverride map built from snapshot resolved_env / cmd / cwd / stop_cmd", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(
+      makeSnapshotForStack(wt.stack_id, undefined, [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          stop_cmd: "echo bye",
+          service_cwd: "/abs/api",
+          resolved_env: { DATABASE_URL: "postgresql://localhost:12345/d", FOO: "bar" },
+        },
+        {
+          name: "web",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run web",
+          service_cwd: "/abs/web",
+          resolved_env: { FOO: "bar" },
+        },
+      ]),
+    );
+
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      ownedSnapshotOverrides?: Map<
+        string,
+        { env: Record<string, string>; cmd: string; cwd: string; stop_cmd?: string }
+      >;
+    };
+    expect(upArg.ownedSnapshotOverrides).toBeInstanceOf(Map);
+    const apiOverride = upArg.ownedSnapshotOverrides!.get("api");
+    expect(apiOverride).toEqual({
+      env: { DATABASE_URL: "postgresql://localhost:12345/d", FOO: "bar" },
+      cmd: "bun run dev",
+      stop_cmd: "echo bye",
+      cwd: "/abs/api",
+    });
+    const webOverride = upArg.ownedSnapshotOverrides!.get("web");
+    expect(webOverride).toEqual({
+      env: { FOO: "bar" },
+      cmd: "bun run web",
+      cwd: "/abs/web",
+    });
+  });
+
+  it("skips compose services in the overrides map (compose env is regenerated via override file)", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(
+      makeSnapshotForStack(wt.stack_id, undefined, [
+        {
+          name: "postgres",
+          kind: "compose",
+          state: "ready",
+          allocated_ports: { POSTGRES_HOST_PORT: 54321 },
+        },
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          service_cwd: "/abs/api",
+          resolved_env: { FOO: "bar" },
+        },
+      ]),
+    );
+
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      ownedSnapshotOverrides?: Map<string, unknown>;
+    };
+    expect(upArg.ownedSnapshotOverrides?.has("postgres")).toBe(false);
+    expect(upArg.ownedSnapshotOverrides?.has("api")).toBe(true);
+  });
+
+  it("omits ownedSnapshotOverrides entirely when snapshot is legacy (no resolved_env on any owned service)", async () => {
+    const wt = detectWorktree(stackPath);
+    // Legacy: owned service with only name/kind/state — no resolved_env, no cmd, no service_cwd
+    await writeSnapshot(
+      makeSnapshotForStack(wt.stack_id, undefined, [
+        { name: "api", kind: "owned", state: "ready" },
+      ]),
+    );
+
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      ownedSnapshotOverrides?: Map<string, unknown>;
+    };
+    // Either absent or undefined — the contract is "no override mode" so re-resolution wins
+    expect(upArg.ownedSnapshotOverrides).toBeUndefined();
+  });
+
+  it("omits an owned service from the overrides map when its snapshot lacks resolved_env (mixed legacy / new)", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(
+      makeSnapshotForStack(wt.stack_id, undefined, [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          service_cwd: "/abs/api",
+          resolved_env: { FOO: "bar" },
+        },
+        // legacy entry — must NOT show up in overrides
+        { name: "legacy", kind: "owned", state: "ready" },
+      ]),
+    );
+
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      ownedSnapshotOverrides?: Map<string, unknown>;
+    };
+    expect(upArg.ownedSnapshotOverrides!.has("api")).toBe(true);
+    expect(upArg.ownedSnapshotOverrides!.has("legacy")).toBe(false);
+  });
+
+  it("omits ownedSnapshotOverrides entirely when no snapshot exists at all", async () => {
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      ownedSnapshotOverrides?: Map<string, unknown>;
+    };
+    expect(upArg.ownedSnapshotOverrides).toBeUndefined();
+  });
+
+  it("forwards both ownedSnapshotOverrides AND profile in the same call", async () => {
+    const wt = detectWorktree(stackPath);
+    await writeSnapshot(
+      makeSnapshotForStack(wt.stack_id, "dev:fast", [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          service_cwd: "/abs/api",
+          resolved_env: { FOO: "bar" },
+        },
+      ]),
+    );
+
+    await runRestart({ cwd: stackPath });
+
+    const upArg = runUpSpy.mock.calls[0][0] as {
+      profile?: string;
+      ownedSnapshotOverrides?: Map<string, unknown>;
+    };
+    expect(upArg.profile).toBe("dev:fast");
+    expect(upArg.ownedSnapshotOverrides?.has("api")).toBe(true);
   });
 });

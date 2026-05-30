@@ -13,7 +13,7 @@ export const BUILTIN_COMMAND_NAMES = [
   "env",
   "routing",
   "dashboard",
-  "feedback",
+  "top",
 ] as const;
 
 export type BuiltinCommandName = (typeof BUILTIN_COMMAND_NAMES)[number];

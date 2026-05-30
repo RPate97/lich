@@ -84,12 +84,12 @@ owned:
     cmd: 'printf "api=%s db=%s studio=%s" "$SVC_API_PORT" "$SVC_DB_PORT" "$SVC_STUDIO_PORT" > ${portsDump}'
     oneshot: true
     ports:
-      api:    { env: SVC_API_PORT }
-      db:     { env: SVC_DB_PORT }
-      studio: { env: SVC_STUDIO_PORT }
+      api:    { published_env: SVC_API_PORT }
+      db:     { published_env: SVC_DB_PORT }
+      studio: { published_env: SVC_STUDIO_PORT }
   web:
     cmd: "echo READY; sleep 60"
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [svc]
     ready_when:
       log_match: "READY"
@@ -153,12 +153,12 @@ owned:
     cmd: "true"
     oneshot: true
     ports:
-      api:    { env: SVC_API_PORT }
-      db:     { env: SVC_DB_PORT }
-      studio: { env: SVC_STUDIO_PORT }
+      api:    { published_env: SVC_API_PORT }
+      db:     { published_env: SVC_DB_PORT }
+      studio: { published_env: SVC_STUDIO_PORT }
   web:
     cmd: "echo READY; sleep 60"
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [svc]
     ready_when:
       log_match: "READY"

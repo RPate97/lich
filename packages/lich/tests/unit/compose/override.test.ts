@@ -24,7 +24,7 @@ const SINGLE_SERVICE_CONFIG = makeConfig({
   api: {
     image: "node:20",
     ports: {
-      http: { container: 3000, env: "PORT" },
+      http: { container_port: 3000, published_env: "PORT" },
     },
   },
 });
@@ -84,8 +84,8 @@ describe("generateComposeOverride", () => {
   it("gives each of multiple services its own block", () => {
     const input: OverrideInput = {
       config: makeConfig({
-        api: { ports: { http: { container: 3000, env: "PORT" } } },
-        web: { ports: { http: { container: 3001, env: "PORT" } } },
+        api: { ports: { http: { container_port: 3000, published_env: "PORT" } } },
+        web: { ports: { http: { container_port: 3001, published_env: "PORT" } } },
       }),
       allocatedPorts: {
         compose: { api: { http: 5000 }, web: { http: 5001 } },
@@ -105,7 +105,7 @@ describe("generateComposeOverride", () => {
   it("omits a service that has no fields at all to emit", () => {
     const input: OverrideInput = {
       config: makeConfig({
-        api: { ports: { http: { container: 3000, env: "PORT" } } },
+        api: { ports: { http: { container_port: 3000, published_env: "PORT" } } },
         worker: { compose_file: "extra.yaml" },
       }),
       allocatedPorts: { compose: { api: { http: 5000 } } },
@@ -133,7 +133,7 @@ describe("generateComposeOverride", () => {
   it("emits only `ports:` when a service has ports but no env", () => {
     const input: OverrideInput = {
       config: makeConfig({
-        api: { ports: { http: { container: 3000, env: "PORT" } } },
+        api: { ports: { http: { container_port: 3000, published_env: "PORT" } } },
       }),
       allocatedPorts: { compose: { api: { http: 5000 } } },
       resolvedEnv: { api: {} },
@@ -173,8 +173,8 @@ describe("generateComposeOverride", () => {
       config: makeConfig({
         api: {
           ports: [
-            { container: 3000, env: "PORT" },
-            { container: 9229, env: "DEBUG_PORT" },
+            { container_port: 3000, published_env: "PORT" },
+            { container_port: 9229, published_env: "DEBUG_PORT" },
           ],
         },
       }),
@@ -187,27 +187,26 @@ describe("generateComposeOverride", () => {
     expect(parsed.services.api.ports).toEqual(["5000:3000", "5001:9229"]);
   });
 
-  it("skips port entries with no container declaration", () => {
+  it("treats scalar `<port>` as container_port shorthand", () => {
     const input: OverrideInput = {
       config: makeConfig({
         api: {
           ports: {
-            // bare-number form: pins host but no container to bind
-            pinned: 8080,
-            http: { container: 3000, env: "PORT" },
+            admin: 8080,
+            http: { container_port: 3000, published_env: "PORT" },
           },
         },
       }),
-      allocatedPorts: { compose: { api: { pinned: 8080, http: 5000 } } },
+      allocatedPorts: { compose: { api: { admin: 9001, http: 5000 } } },
       resolvedEnv: { api: {} },
-      stackId: "stack-skip-pinned",
+      stackId: "stack-scalar-container",
     };
     const parsed = yamlParse(generateComposeOverride(input));
-    expect(parsed.services.api.ports).toEqual(["5000:3000"]);
+    expect(parsed.services.api.ports.sort()).toEqual(["5000:3000", "9001:8080"]);
   });
 
-  it("accepts a strongly-typed PortDescriptor with `container`", () => {
-    const httpPort: PortDescriptor = { container: 3000, env: "PORT" };
+  it("accepts a strongly-typed PortDescriptor with `container_port`", () => {
+    const httpPort: PortDescriptor = { container_port: 3000, published_env: "PORT" };
     const input: OverrideInput = {
       config: makeConfig({
         api: {
@@ -223,8 +222,8 @@ describe("generateComposeOverride", () => {
     expect(parsed.services.api.ports).toEqual(["4242:3000"]);
   });
 
-  it("skips a typed PortDescriptor with no `container` field", () => {
-    const noContainer: PortDescriptor = { env: "PORT" };
+  it("skips a typed PortDescriptor with no `container_port` field (published_env only)", () => {
+    const noContainer: PortDescriptor = { published_env: "PORT" };
     const input: OverrideInput = {
       config: makeConfig({
         api: {
@@ -246,8 +245,8 @@ describe("generateComposeOverride", () => {
       config: makeConfig({
         api: {
           ports: {
-            http: { container: 3000, env: "PORT" },
-            admin: { container: 3001, env: "ADMIN_PORT" },
+            http: { container_port: 3000, published_env: "PORT" },
+            admin: { container_port: 3001, published_env: "ADMIN_PORT" },
           },
         },
       }),
@@ -259,8 +258,8 @@ describe("generateComposeOverride", () => {
       config: makeConfig({
         api: {
           ports: {
-            admin: { container: 3001, env: "ADMIN_PORT" },
-            http: { container: 3000, env: "PORT" },
+            admin: { container_port: 3001, published_env: "ADMIN_PORT" },
+            http: { container_port: 3000, published_env: "PORT" },
           },
         },
       }),
@@ -287,7 +286,7 @@ describe("generateComposeOverride", () => {
   it("emits no `services:` entries for compose services not declared in config", () => {
     const input: OverrideInput = {
       config: makeConfig({
-        api: { ports: { http: { container: 3000, env: "PORT" } } },
+        api: { ports: { http: { container_port: 3000, published_env: "PORT" } } },
       }),
       allocatedPorts: {
         compose: {
@@ -450,7 +449,7 @@ describe("generateComposeOverride", () => {
       config: makeConfig({
         postgres: {
           image: "postgres:16-alpine",
-          ports: { db: { container: 5432, env: "POSTGRES_HOST_PORT" } },
+          ports: { db: { container_port: 5432, published_env: "POSTGRES_HOST_PORT" } },
           environment: { POSTGRES_DB: "dogfood" },
           healthcheck: { test: ["CMD-SHELL", "pg_isready"] },
           volumes: ["shared:/shared"],

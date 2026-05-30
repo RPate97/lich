@@ -383,17 +383,17 @@ describe("pretty output (TTY) — spinner truncation on update", () => {
 
 describe("pretty output (TTY) — spinner truncation", () => {
   const ELEVEN_SERVICES = [
-    "agentic-workflows-worker",
-    "alerts-worker",
-    "bulk-upload-worker",
-    "compliance-worker",
-    "data-sync-worker",
-    "metrics-worker",
-    "notifications-worker",
-    "person-edd-worker",
-    "reports-worker",
-    "scheduled-jobs-worker",
-    "transaction-worker",
+    "background-job-processor",
+    "worker-b",
+    "worker-c",
+    "worker-d",
+    "worker-e",
+    "worker-f",
+    "worker-g",
+    "worker-h",
+    "worker-i",
+    "worker-j",
+    "worker-k",
   ];
   const PHASE_NAME = `start 2/2 (${ELEVEN_SERVICES.join(", ")})`;
 

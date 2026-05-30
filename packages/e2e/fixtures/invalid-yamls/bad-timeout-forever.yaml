@@ -3,7 +3,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
       # `forever` is the canonical user typo — fails the schema's duration

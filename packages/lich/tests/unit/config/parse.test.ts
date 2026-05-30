@@ -263,9 +263,9 @@ describe("parseConfig", () => {
 
     it("materializes one synthetic owned service per matched file", async () => {
       // non-matching file proves the glob actually filters
-      touch("workers/EmailTemporalWorker.ts");
-      touch("workers/PaymentTemporalWorker.ts");
-      touch("workers/CleanupTemporalWorker.ts");
+      touch("workers/AlphaTemporalWorker.ts");
+      touch("workers/BetaTemporalWorker.ts");
+      touch("workers/GammaTemporalWorker.ts");
       touch("workers/index.ts");
 
       const p = writeYaml(
@@ -273,7 +273,7 @@ describe("parseConfig", () => {
         [
           'version: "1"',
           "owned:",
-          "  cronjob-workers:",
+          "  workers:",
           "    discover:",
           '      glob: "workers/*TemporalWorker.ts"',
           '      name_template: "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker"',
@@ -287,16 +287,16 @@ describe("parseConfig", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
-      expect("cronjob-workers" in result.config.owned!).toBe(false);
+      expect("workers" in result.config.owned!).toBe(false);
       expect(Object.keys(result.config.owned!).sort()).toEqual([
-        "cleanup-worker",
-        "email-worker",
-        "payment-worker",
+        "alpha-worker",
+        "beta-worker",
+        "gamma-worker",
       ]);
-      expect(result.config.owned!["email-worker"].cmd).toBe(
-        "node EmailTemporalWorker.js",
+      expect(result.config.owned!["alpha-worker"].cmd).toBe(
+        "node AlphaTemporalWorker.js",
       );
-      expect(result.config.owned!["email-worker"].ready_when?.log_match).toBe(
+      expect(result.config.owned!["alpha-worker"].ready_when?.log_match).toBe(
         "Worker created",
       );
     });
@@ -387,6 +387,127 @@ describe("parseConfig", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.errors.some((e) => e.kind === "schema")).toBe(true);
+    });
+  });
+
+  describe("port shape (LEV-525)", () => {
+    it("rejects the pre-LEV-525 `{ container, env }` shape with a rename hint", async () => {
+      const p = writeYaml(
+        "old-shape-array.yaml",
+        [
+          'version: "1"',
+          "services:",
+          "  postgres:",
+          "    image: postgres:16",
+          "    ports:",
+          "      - { container: 5432, env: POSTGRES_HOST_PORT }",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => /pre-LEV-525/.test(e.message));
+      expect(err).toBeDefined();
+      expect(err!.message).toContain("`container` → `container_port`");
+      expect(err!.message).toContain("`env` → `published_env`");
+      expect(err!.message).toContain("container_port");
+      expect(err!.message).toContain("published_env");
+    });
+
+    it("rejects the pre-LEV-525 `{ env }` shape in an owned `port:` block", async () => {
+      const p = writeYaml(
+        "old-shape-owned.yaml",
+        [
+          'version: "1"',
+          "owned:",
+          "  api:",
+          "    cmd: bun run dev",
+          "    port: { env: PORT }",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => /pre-LEV-525/.test(e.message));
+      expect(err).toBeDefined();
+      expect(err!.message).toContain("`env` → `published_env`");
+    });
+
+    it("rejects a bare `{ container_port: N }` block with a scalar-shorthand hint", async () => {
+      const p = writeYaml(
+        "bare-block.yaml",
+        [
+          'version: "1"',
+          "services:",
+          "  postgres:",
+          "    image: postgres:16",
+          "    ports:",
+          "      - { container_port: 5432 }",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const err = result.errors.find((e) => /bare/.test(e.message));
+      expect(err).toBeDefined();
+      expect(err!.message).toContain("scalar");
+    });
+
+    it("accepts the new scalar form `- 5432` in the list shape", async () => {
+      const p = writeYaml(
+        "scalar-list.yaml",
+        [
+          'version: "1"',
+          "services:",
+          "  postgres:",
+          "    image: postgres:16",
+          "    ports:",
+          "      - 5432",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(true);
+    });
+
+    it("accepts the new block form `{ container_port, published_env }`", async () => {
+      const p = writeYaml(
+        "block-list.yaml",
+        [
+          'version: "1"',
+          "services:",
+          "  postgres:",
+          "    image: postgres:16",
+          "    ports:",
+          "      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(true);
+    });
+
+    it("accepts mixed scalar + block in the keyed multi-port shape", async () => {
+      const p = writeYaml(
+        "mixed-keyed.yaml",
+        [
+          'version: "1"',
+          "services:",
+          "  api:",
+          "    image: node:20",
+          "    ports:",
+          "      http:",
+          "        container_port: 3000",
+          "        published_env: PORT",
+          "      admin: 3001",
+        ].join("\n") + "\n",
+      );
+
+      const result = await parseConfig(p);
+      expect(result.ok).toBe(true);
     });
   });
 });

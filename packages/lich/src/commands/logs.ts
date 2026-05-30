@@ -2,7 +2,7 @@ import { open, stat } from "node:fs/promises";
 
 import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
 import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
-import { detectWorktree } from "../worktree/detect.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import type { LifecyclePhase } from "../lifecycle/executor.js";
 
 export interface RunLogsInput {
@@ -22,6 +22,8 @@ export interface RunLogsInput {
   all: boolean;
   /** Machine-readable JSON output. */
   json: boolean;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   cwd?: string;
   out?: NodeJS.WritableStream;
   signal?: AbortSignal;
@@ -63,15 +65,29 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
 
   const done = (async () => {
     let stackId: string;
+    let snapshot: StackSnapshot | null;
     try {
-      stackId = detectWorktree(cwd).stack_id;
-    } catch {
-      writeLine(out, "no stack found for this worktree");
+      const resolved = await resolveStackId({
+        cwd,
+        ...(input.worktreeArg !== undefined && { worktreeArg: input.worktreeArg }),
+      });
+      stackId = resolved.stackId;
+      snapshot = resolved.snapshot;
+    } catch (err) {
+      // Cwd-detect failure preserves the legacy "no stack found" message;
+      // --worktree failures surface the resolver's specific catalog error.
+      if (input.worktreeArg) {
+        writeLine(out, (err as Error).message);
+      } else {
+        writeLine(out, "no stack found for this worktree");
+      }
       holder.code = 1;
       return;
     }
 
-    const snapshot = await readSnapshot(stackId);
+    if (snapshot === null) {
+      snapshot = await readSnapshot(stackId);
+    }
     if (snapshot === null) {
       writeLine(out, "no stack found for this worktree");
       holder.code = 1;

@@ -22,7 +22,7 @@ import { suggestProperty } from "../util/levenshtein.js";
 /**
  * Discover-block failure. Caught by parse.ts and surfaced as a `ParseError`.
  * `location` is a JSON-pointer-style path into the original config
- * (e.g. `/owned/cronjob-workers/discover/cmd_template`).
+ * (e.g. `/owned/workers/discover/cmd_template`).
  */
 export class DiscoverError extends Error {
   constructor(
@@ -47,9 +47,9 @@ type KnownFilter = (typeof KNOWN_FILTERS)[number];
 
 /** Per-file context fed into template expansion. */
 export interface DiscoverContext {
-  /** Filename including extension. Example: `EmailTemporalWorker.ts`. */
+  /** Filename including extension. Example: `AlphaTemporalWorker.ts`. */
   basename: string;
-  /** Filename minus the final extension. Example: `EmailTemporalWorker`. */
+  /** Filename minus the final extension. Example: `AlphaTemporalWorker`. */
   basename_no_ext: string;
   /** Parent dir, relative to the glob root. Empty string when at the root. */
   dirname: string;
@@ -400,7 +400,7 @@ function applyFilter(
 
 /**
  * Slugify for `kebab` / `snake`. Inserts boundaries before uppercase
- * letters so `EmailTemporalWorker` becomes `email-temporal-worker` (not
+ * letters so `AlphaTemporalWorker` becomes `email-temporal-worker` (not
  * `emailtemporalworker`).
  */
 function slugify(input: string, sep: string): string {

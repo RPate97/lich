@@ -13,7 +13,10 @@ import type {
   ComposeService,
   EnvMap,
   LichConfig,
+  LifecycleList,
+  PerServiceLifecycle,
   ProfileDef,
+  TopLevelLifecycle,
 } from "../config/types.js";
 import { BUILTIN_COMMAND_NAMES } from "./builtin-names.js";
 import { detectExtendsCycle } from "../groups/validate-extends.js";
@@ -365,6 +368,167 @@ function checkInterpolations(
       );
     }
   }
+
+  // cmd-context refs (owned.cmd/stop_cmd, lifecycle, commands): runtime uses passUnknownShapes=true, mirror that here.
+  for (const [name, svc] of Object.entries(config.owned ?? {})) {
+    if (!svc) continue;
+    if (typeof svc.cmd === "string") {
+      checkValueRefs(
+        svc.cmd,
+        `${path} (/owned/${name}/cmd)`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+        true,
+      );
+    }
+    if (typeof svc.stop_cmd === "string") {
+      checkValueRefs(
+        svc.stop_cmd,
+        `${path} (/owned/${name}/stop_cmd)`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+        true,
+      );
+    }
+    if (svc.lifecycle) {
+      checkPerServiceLifecycleRefs(
+        svc.lifecycle,
+        path,
+        `/owned/${name}/lifecycle`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+      );
+    }
+  }
+
+  if (config.lifecycle) {
+    checkTopLifecycleRefs(
+      config.lifecycle,
+      path,
+      `/lifecycle`,
+      composeNames,
+      ownedNames,
+      config,
+      errors,
+    );
+  }
+
+  for (const [name, cmd] of Object.entries(config.commands ?? {})) {
+    if (cmd && typeof cmd.cmd === "string") {
+      checkValueRefs(
+        cmd.cmd,
+        `${path} (/commands/${name}/cmd)`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+        true,
+      );
+    }
+  }
+
+  for (const [pname, profile] of Object.entries(config.profiles ?? {})) {
+    if (profile?.lifecycle) {
+      checkTopLifecycleRefs(
+        profile.lifecycle,
+        path,
+        `/profiles/${pname}/lifecycle`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+      );
+    }
+  }
+}
+
+function checkLifecycleListRefs(
+  entries: LifecycleList,
+  path: string,
+  yamlPath: string,
+  composeNames: Set<string>,
+  ownedNames: Set<string>,
+  config: LichConfig,
+  errors: ValidationError[],
+): void {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (typeof entry === "string") {
+      checkValueRefs(
+        entry,
+        `${path} (${yamlPath}/${i})`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+        true,
+      );
+    } else if (entry && typeof entry.cmd === "string") {
+      checkValueRefs(
+        entry.cmd,
+        `${path} (${yamlPath}/${i}/cmd)`,
+        composeNames,
+        ownedNames,
+        config,
+        errors,
+        true,
+      );
+    }
+  }
+}
+
+function checkTopLifecycleRefs(
+  lifecycle: TopLevelLifecycle,
+  path: string,
+  yamlPath: string,
+  composeNames: Set<string>,
+  ownedNames: Set<string>,
+  config: LichConfig,
+  errors: ValidationError[],
+): void {
+  for (const phase of ["before_up", "after_up", "before_down", "after_down"] as const) {
+    const entries = lifecycle[phase];
+    if (!entries) continue;
+    checkLifecycleListRefs(
+      entries,
+      path,
+      `${yamlPath}/${phase}`,
+      composeNames,
+      ownedNames,
+      config,
+      errors,
+    );
+  }
+}
+
+function checkPerServiceLifecycleRefs(
+  lifecycle: PerServiceLifecycle,
+  path: string,
+  yamlPath: string,
+  composeNames: Set<string>,
+  ownedNames: Set<string>,
+  config: LichConfig,
+  errors: ValidationError[],
+): void {
+  for (const phase of ["before_start", "after_ready", "before_down"] as const) {
+    const entries = lifecycle[phase];
+    if (!entries) continue;
+    checkLifecycleListRefs(
+      entries,
+      path,
+      `${yamlPath}/${phase}`,
+      composeNames,
+      ownedNames,
+      config,
+      errors,
+    );
+  }
 }
 
 const REF_RE = /\$\$|\$\{([^}]*)\}/g;
@@ -376,6 +540,7 @@ function checkValueRefs(
   ownedNames: Set<string>,
   config: LichConfig,
   errors: ValidationError[],
+  passUnknownShapes = false,
 ): void {
   if (value.indexOf("$") === -1) return;
   REF_RE.lastIndex = 0;
@@ -390,6 +555,12 @@ function checkValueRefs(
         message: `empty interpolation \${}`,
       });
       continue;
+    }
+    if (passUnknownShapes) {
+      const root = body.split(".")[0];
+      if (root !== "worktree" && root !== "services" && root !== "owned") {
+        continue;
+      }
     }
     validateRefBody(body, m[0], location, composeNames, ownedNames, config, errors);
   }
@@ -1121,6 +1292,132 @@ function checkProfileInterpolations(
         });
       }
     }
+
+    const cmdSites = collectProfileCmdSites(profileName, resolved, config, path);
+    for (const site of cmdSites) {
+      if (site.value.indexOf("$") === -1) continue;
+      try {
+        interpolateString(
+          site.value,
+          profileCtx,
+          `validate:${profileName}:${site.location}`,
+          true,
+        );
+      } catch (e) {
+        if (!(e instanceof InterpolationError)) throw e;
+        if (failsInContext(site.value, maxCtx, true)) continue;
+        errors.push({
+          kind: "interp",
+          location: site.location,
+          message: profileInterpMessage(e, profileName),
+        });
+      }
+    }
+  }
+}
+
+interface CmdSite {
+  value: string;
+  location: string;
+}
+
+function collectProfileCmdSites(
+  profileName: string,
+  resolved: ReturnType<typeof resolveProfile>,
+  config: LichConfig,
+  path: string,
+): CmdSite[] {
+  const sites: CmdSite[] = [];
+
+  for (const [name, cmd] of Object.entries(config.commands ?? {})) {
+    if (cmd && typeof cmd.cmd === "string") {
+      sites.push({
+        value: cmd.cmd,
+        location: `${path} (/commands/${name}/cmd)`,
+      });
+    }
+  }
+
+  if (config.lifecycle) {
+    collectTopLifecycleSites(config.lifecycle, path, `/lifecycle`, sites);
+  }
+  const profile = config.profiles?.[profileName];
+  if (profile?.lifecycle) {
+    collectTopLifecycleSites(
+      profile.lifecycle,
+      path,
+      `/profiles/${profileName}/lifecycle`,
+      sites,
+    );
+  }
+
+  for (const name of resolved.owned) {
+    const svc = config.owned?.[name];
+    if (!svc) continue;
+    if (typeof svc.cmd === "string") {
+      sites.push({
+        value: svc.cmd,
+        location: `${path} (/owned/${name}/cmd)`,
+      });
+    }
+    if (typeof svc.stop_cmd === "string") {
+      sites.push({
+        value: svc.stop_cmd,
+        location: `${path} (/owned/${name}/stop_cmd)`,
+      });
+    }
+    if (svc.lifecycle) {
+      collectPerServiceLifecycleSites(
+        svc.lifecycle,
+        path,
+        `/owned/${name}/lifecycle`,
+        sites,
+      );
+    }
+  }
+
+  return sites;
+}
+
+function collectTopLifecycleSites(
+  lifecycle: TopLevelLifecycle,
+  path: string,
+  yamlPath: string,
+  sites: CmdSite[],
+): void {
+  for (const phase of ["before_up", "after_up", "before_down", "after_down"] as const) {
+    const entries = lifecycle[phase];
+    if (!entries) continue;
+    collectLifecycleListSites(entries, path, `${yamlPath}/${phase}`, sites);
+  }
+}
+
+function collectPerServiceLifecycleSites(
+  lifecycle: PerServiceLifecycle,
+  path: string,
+  yamlPath: string,
+  sites: CmdSite[],
+): void {
+  for (const phase of ["before_start", "after_ready", "before_down"] as const) {
+    const entries = lifecycle[phase];
+    if (!entries) continue;
+    collectLifecycleListSites(entries, path, `${yamlPath}/${phase}`, sites);
+  }
+}
+
+function collectLifecycleListSites(
+  entries: LifecycleList,
+  path: string,
+  yamlPath: string,
+  sites: CmdSite[],
+): void {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (typeof entry === "string") {
+      sites.push({ value: entry, location: `${path} (${yamlPath}/${i})` });
+    } else if (entry && typeof entry.cmd === "string") {
+      sites.push({ value: entry.cmd, location: `${path} (${yamlPath}/${i}/cmd)` });
+    }
   }
 }
 
@@ -1229,9 +1526,13 @@ function stubServicePorts(
 }
 
 /** Does `interpolateString` throw against `ctx`? Used to dedupe vs the structural check. */
-function failsInContext(value: string, ctx: InterpolationContext): boolean {
+function failsInContext(
+  value: string,
+  ctx: InterpolationContext,
+  passUnknownShapes = false,
+): boolean {
   try {
-    interpolateString(value, ctx);
+    interpolateString(value, ctx, undefined, passUnknownShapes);
     return false;
   } catch (e) {
     return e instanceof InterpolationError;

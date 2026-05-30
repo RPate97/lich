@@ -8,12 +8,13 @@
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree } from "../worktree/detect.js";
+import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
   type AllocatedPorts,
 } from "../state/snapshot.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import {
   resolveEnvGroup,
   GroupResolveError,
@@ -28,6 +29,8 @@ export interface EnvCmdOptions {
   /** First positional after `env`. Absent → usage + exit 2. */
   groupName?: string;
   cwd?: string;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
   processEnv?: NodeJS.ProcessEnv;
@@ -50,7 +53,42 @@ export async function runEnvCmd(
   }
   const groupName = opts.groupName;
 
-  const yamlPath = join(cwd, "lich.yaml");
+  let worktree: Worktree;
+  let snap;
+  if (opts.worktreeArg !== undefined && opts.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: opts.worktreeArg });
+      snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        err(`lich: no snapshot for stack '${resolved.stackId}'`);
+        return { exitCode: 1 };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (e) {
+      err(`lich: ${(e as Error).message}`);
+      return { exitCode: 1 };
+    }
+  } else {
+    // Legacy order: parseConfig first so "lich.yaml not found" is the
+    // user-facing error (clearer than detectWorktree's walk-up error).
+    const yamlPathCwd = join(cwd, "lich.yaml");
+    const parsedCwd = await parseConfig(yamlPathCwd);
+    if (!parsedCwd.ok) {
+      for (const e of parsedCwd.errors) {
+        err(`lich: ${e.location}: ${e.message}`);
+      }
+      return { exitCode: 1 };
+    }
+    try {
+      worktree = detectWorktree(cwd);
+    } catch (e) {
+      err(`lich: ${(e as Error).message}`);
+      return { exitCode: 1 };
+    }
+    snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  }
+
+  const yamlPath = join(worktree.path, "lich.yaml");
   const parsed = await parseConfig(yamlPath);
   if (!parsed.ok) {
     for (const e of parsed.errors) {
@@ -60,15 +98,6 @@ export async function runEnvCmd(
   }
   const config = parsed.config;
 
-  let worktree;
-  try {
-    worktree = detectWorktree(cwd);
-  } catch (e) {
-    err(`lich: ${(e as Error).message}`);
-    return { exitCode: 1 };
-  }
-
-  const snap = await readSnapshot(worktree.stack_id).catch(() => null);
   const allocatedPorts: AllocatedPorts = snap
     ? rebuildAllocatedPorts(snap)
     : { compose: {}, owned: {} };
@@ -109,6 +138,14 @@ export async function runEnvCmd(
     out(line);
   }
   return { exitCode: 0 };
+}
+
+/** Rebuild a `Worktree` from a snapshot for cross-worktree command targeting. */
+function worktreeFromSnapshot(snap: import("../state/snapshot.js").StackSnapshot): Worktree {
+  const path = snap.worktree_path;
+  const name = sanitizeName(snap.worktree_name);
+  const id = hashPath(path);
+  return { name, id, path, stack_id: snap.stack_id };
 }
 
 /**

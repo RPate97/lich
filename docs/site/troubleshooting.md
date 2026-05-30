@@ -2,6 +2,49 @@
 
 Common gotchas, in roughly the order people hit them.
 
+## Basic failures
+
+### `lich up` fails immediately with "no lich.yaml found"
+
+You're not in a directory with a `lich.yaml`. Either `cd` to the project root, or run `lich init` to create one.
+
+### A service won't come up
+
+Check the service's logs:
+
+```bash
+lich logs <service-name>
+```
+
+Common causes:
+- **Env var unresolved:** `${services.foo.host_port}` references a service that doesn't exist or hasn't allocated a port yet. Check the spelling and that the referenced service is in the active profile.
+- **Port already in use:** Lich allocates ports dynamically, so this shouldn't happen for compose services. For owned services with hardcoded `ports:`, switch to lich-allocated ports.
+- **Healthcheck timeout:** The service starts but doesn't pass `ready_when` in time. Increase the timeout in `ready_when:` or fix what's actually wrong.
+
+### Can't reach a service via its friendly URL
+
+Friendly URLs (`http://<service>.<worktree>.lich.localhost:3300/`) need the daemon to be running. Check:
+
+```bash
+lich stacks
+```
+
+If your stack isn't listed, the daemon may not have picked it up. Run `lich up` again or check daemon logs at `<LICH_HOME>/daemon/daemon.log`.
+
+### `lich down` doesn't fully clean up
+
+If a service was killed externally (e.g. `docker kill`), state may be inconsistent. Try:
+
+```bash
+lich nuke --rescue
+```
+
+This sweeps orphaned stacks and cleans them up.
+
+---
+
+## Advanced gotchas
+
 ## `command not found: turbo` (or nx, lage, wireit, prisma, etc.)
 
 Symptom: your `lich.yaml` has `cmd: turbo run dev` (or similar) and lich reports "command not found" — even though `turbo` is installed as a workspace dep at `node_modules/.bin/turbo`.
@@ -74,7 +117,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
       timeout: 30s
@@ -162,4 +205,3 @@ ready_when:
 
 - [Common validate errors](/reference/lich-yaml#common-validate-errors) — full list of validate errors and remediation.
 - [Recipes](/recipes/) — patterns past the basics.
-- [Feedback](/feedback) — if you hit something that isn't here.

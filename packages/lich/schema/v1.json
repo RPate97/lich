@@ -5,7 +5,8 @@
   "type": "object",
   "properties": {
     "version": {
-      "type": "string"
+      "type": "string",
+      "description": "Schema version. Only `\"1\"` is supported."
     },
     "runtime": {
       "type": "object",
@@ -17,7 +18,8 @@
             "docker",
             "podman",
             "nerdctl"
-          ]
+          ],
+          "description": "Which compose CLI to shell out to. `auto` detects what's installed (default and usually correct)."
         },
         "compose": {
           "type": "string",
@@ -26,12 +28,14 @@
             "docker",
             "podman",
             "nerdctl"
-          ]
+          ],
+          "description": "Deprecated alias for `compose_cli`. Prefer `compose_cli`."
         },
         "proxy_port": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 65535
+          "maximum": 65535,
+          "description": "Pin the dashboard reverse-proxy port. Default 3300; override via env LICH_PROXY_PORT."
         },
         "port_range": {
           "type": "array",
@@ -41,7 +45,8 @@
             "maximum": 65535
           },
           "minItems": 2,
-          "maxItems": 2
+          "maxItems": 2,
+          "description": "Two-element `[min, max]` range lich allocates dynamic host ports from."
         },
         "ready_when_timeout": {
           "oneOf": [
@@ -53,13 +58,16 @@
               "type": "integer",
               "minimum": 1
             }
-          ]
+          ],
+          "description": "Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides."
         },
         "kill_others_on_fail": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Cascade-kill siblings if one service fails during `lich up` startup. Default true."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Compose CLI selection, proxy port pin, default ready-when timeout, and other engine knobs."
     },
     "services": {
       "type": "object",
@@ -67,10 +75,12 @@
         "type": "object",
         "properties": {
           "compose_file": {
-            "type": "string"
+            "type": "string",
+            "description": "Path to a sibling compose file holding this service (defaults to compose.yaml at the worktree root)."
           },
           "service": {
-            "type": "string"
+            "type": "string",
+            "description": "Name of the service inside the compose file. Defaults to the key under `services:` in lich.yaml."
           },
           "ports": {
             "oneOf": [
@@ -86,18 +96,21 @@
                     {
                       "type": "object",
                       "properties": {
-                        "env": {
-                          "type": "string"
+                        "container_port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535,
+                          "description": "Container-side port being published."
+                        },
+                        "published_env": {
+                          "type": "string",
+                          "description": "Env var name lich exposes the allocated host port as."
                         },
                         "host_port": {
                           "type": "integer",
                           "minimum": 1,
-                          "maximum": 65535
-                        },
-                        "container": {
-                          "type": "integer",
-                          "minimum": 1,
-                          "maximum": 65535
+                          "maximum": 65535,
+                          "description": "Pin the host port to this exact value instead of letting lich allocate one."
                         }
                       },
                       "additionalProperties": false
@@ -108,29 +121,39 @@
               {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "properties": {
-                    "container": {
+                  "oneOf": [
+                    {
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 65535
                     },
-                    "env": {
-                      "type": "string"
-                    },
-                    "host_port": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 65535
+                    {
+                      "type": "object",
+                      "properties": {
+                        "container_port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535,
+                          "description": "Container-side port being published."
+                        },
+                        "published_env": {
+                          "type": "string",
+                          "description": "Env var name lich exposes the allocated host port as."
+                        },
+                        "host_port": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535,
+                          "description": "Pin the host port to this exact value instead of letting lich allocate one."
+                        }
+                      },
+                      "additionalProperties": false
                     }
-                  },
-                  "required": [
-                    "container"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               }
-            ]
+            ],
+            "description": "Ports to publish from container to host. Lich allocates host ports dynamically per worktree."
           },
           "lifecycle": {
             "type": "object",
@@ -146,13 +169,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -161,7 +187,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before this service starts."
               },
               "after_ready": {
                 "type": "array",
@@ -174,13 +201,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -189,7 +219,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run once this service is ready."
               },
               "before_down": {
                 "type": "array",
@@ -202,13 +233,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -217,31 +251,42 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before this service stops."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Per-service hooks (before_start, after_ready, before_down)."
           },
           "depends_on": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Other services this one waits on before starting. Healthchecks gate readiness."
           },
           "image": {
-            "type": "string"
+            "type": "string",
+            "description": "Container image reference (e.g. `postgres:16-alpine`). Compose-spec passthrough."
           },
-          "environment": {},
+          "environment": {
+            "description": "Env vars set inside the container. Compose-spec passthrough."
+          },
           "healthcheck": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Compose-spec healthcheck definition. Gates `depends_on` readiness."
           },
           "volumes": {
-            "type": "array"
+            "type": "array",
+            "description": "Host or named volume mounts. Compose-spec passthrough."
           },
-          "networks": {},
+          "networks": {
+            "description": "Compose networks the service joins. Compose-spec passthrough."
+          },
           "profiles": {
-            "type": "array"
+            "type": "array",
+            "description": "Compose-spec profiles for this service."
           },
           "tmpfs": {
             "oneOf": [
@@ -254,11 +299,13 @@
                   "type": "string"
                 }
               }
-            ]
+            ],
+            "description": "In-RAM mount paths. Use for dev databases that should disappear on `lich down`."
           }
         },
         "additionalProperties": false
-      }
+      },
+      "description": "Docker-compose services lich orchestrates. Each entry becomes a compose service."
     },
     "owned": {
       "type": "object",
@@ -266,16 +313,19 @@
         "type": "object",
         "properties": {
           "cmd": {
-            "type": "string"
+            "type": "string",
+            "description": "Shell command to run for this service. Required unless `discover:` is set."
           },
           "cwd": {
-            "type": "string"
+            "type": "string",
+            "description": "Working directory for the cmd, relative to the repo root. Defaults to the root."
           },
           "depends_on": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Other owned or compose services that must be ready before this one starts."
           },
           "port": {
             "oneOf": [
@@ -287,23 +337,27 @@
               {
                 "type": "object",
                 "properties": {
-                  "env": {
-                    "type": "string"
+                  "container_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Container-side port being published."
+                  },
+                  "published_env": {
+                    "type": "string",
+                    "description": "Env var name lich exposes the allocated host port as."
                   },
                   "host_port": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 65535
-                  },
-                  "container": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 65535
+                    "maximum": 65535,
+                    "description": "Pin the host port to this exact value instead of letting lich allocate one."
                   }
                 },
                 "additionalProperties": false
               }
-            ]
+            ],
+            "description": "Single allocated port for this service. Lich injects the host port as the named env var."
           },
           "ports": {
             "type": "object",
@@ -317,30 +371,75 @@
                 {
                   "type": "object",
                   "properties": {
-                    "env": {
-                      "type": "string"
+                    "container_port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535,
+                      "description": "Container-side port being published."
+                    },
+                    "published_env": {
+                      "type": "string",
+                      "description": "Env var name lich exposes the allocated host port as."
                     },
                     "host_port": {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 65535
-                    },
-                    "container": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 65535
+                      "maximum": 65535,
+                      "description": "Pin the host port to this exact value instead of letting lich allocate one."
                     }
                   },
                   "additionalProperties": false
                 }
               ]
-            }
+            },
+            "description": "Multi-port shape — map of port-key to descriptor. Each gets its own injected env var."
           },
           "oneshot": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "If true, lich runs cmd to completion (non-zero = fail) instead of supervising it. Pair with `stop_cmd`."
           },
           "stop_cmd": {
-            "type": "string"
+            "type": "string",
+            "description": "Teardown command invoked on `lich down` / `lich nuke`. Used with `oneshot` to clean up side-effects."
+          },
+          "owned_containers": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Docker label filter, e.g. `com.supabase.cli.project=${worktree.id}`. Survivors matching `docker ps -aq --filter label=<value>` are force-removed."
+              },
+              "name_pattern": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Docker name filter, e.g. `supabase_*_${worktree.id}`. Survivors matching `docker ps -aq --filter name=<value>` are force-removed. Less precise than `label`; prefer `label` when the wrapped CLI sets one."
+              }
+            },
+            "oneOf": [
+              {
+                "required": [
+                  "label"
+                ],
+                "not": {
+                  "required": [
+                    "name_pattern"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "name_pattern"
+                ],
+                "not": {
+                  "required": [
+                    "label"
+                  ]
+                }
+              }
+            ],
+            "additionalProperties": false,
+            "description": "Docker label or name pattern. After `stop_cmd` runs, lich force-removes any container matching the filter (`docker rm -f`). Pick exactly one of `label` or `name_pattern`."
           },
           "env": {
             "type": "object",
@@ -351,13 +450,15 @@
                 "boolean",
                 "null"
               ]
-            }
+            },
+            "description": "Service-scoped env vars. Merges with top-level `env:` — per-service wins on collision."
           },
           "env_files": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Service-scoped dotenv files to load. Merges with top-level `env_files:`."
           },
           "env_from": {
             "type": "array",
@@ -370,17 +471,20 @@
                   "type": "object",
                   "properties": {
                     "cmd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Shell command to execute. Its stdout supplies env vars in the chosen format."
                     },
                     "format": {
                       "type": "string",
                       "enum": [
                         "dotenv",
                         "json"
-                      ]
+                      ],
+                      "description": "How to parse the cmd's stdout. `dotenv` (KEY=VALUE lines) or `json` (flat object)."
                     },
                     "cwd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Working directory for the cmd, relative to the repo root."
                     }
                   },
                   "required": [
@@ -389,22 +493,27 @@
                   "additionalProperties": false
                 }
               ]
-            }
+            },
+            "description": "Service-scoped shell-out env sources. Merges with top-level — per-service wins on collision."
           },
           "ready_when": {
             "type": "object",
             "properties": {
               "http_get": {
-                "type": "string"
+                "type": "string",
+                "description": "Path to probe (relative to the service's port). 200 OK = ready."
               },
               "tcp": {
-                "type": "string"
+                "type": "string",
+                "description": "TCP `host:port` to probe. A successful connect = ready (no HTTP body check)."
               },
               "log_match": {
-                "type": "string"
+                "type": "string",
+                "description": "Regex matched against the service's log stream. A match = ready."
               },
               "cmd": {
-                "type": "string"
+                "type": "string",
+                "description": "Shell command run periodically. Exit 0 = ready."
               },
               "timeout": {
                 "oneOf": [
@@ -416,25 +525,34 @@
                     "type": "integer",
                     "minimum": 1
                   }
-                ]
+                ],
+                "description": "How long to wait for ready before giving up. Duration string (`30s`, `2m`) or positive integer ms."
               },
               "capture": {
                 "type": "object",
                 "additionalProperties": {
                   "type": "string"
-                }
+                },
+                "description": "Map of `key -> regex` for capturing values from logs (e.g. ephemeral tunnel URLs)."
+              },
+              "extend_on_progress": {
+                "type": "boolean",
+                "description": "If true, `timeout` is the max acceptable silence between log lines (resets on each new line) instead of a wall-clock deadline. Total wait is unbounded as long as the service keeps producing output. Use for services that make real progress under contention. Default false."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Readiness probe for this service. Pick http_get, tcp, log_match, or cmd."
           },
           "fail_when": {
             "type": "object",
             "properties": {
               "log_match": {
-                "type": "string"
+                "type": "string",
+                "description": "Regex matched against the log stream. A match marks the service as failed (short-circuits ready_when)."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Hard-fail signal for this service. A match short-circuits ready_when and fails the stack."
           },
           "lifecycle": {
             "type": "object",
@@ -450,13 +568,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -465,7 +586,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before this service starts."
               },
               "after_ready": {
                 "type": "array",
@@ -478,13 +600,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -493,7 +618,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run once this service is ready."
               },
               "before_down": {
                 "type": "array",
@@ -506,13 +632,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -521,28 +650,34 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before this service stops."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Per-service hooks (before_start, after_ready, before_down)."
           },
           "discover": {
             "type": "object",
             "properties": {
               "glob": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Micromatch-style pattern matched against files under `discover.cwd` (or parent cwd)."
               },
               "name_template": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Template producing each synthetic service name. Supports `${var | filter}` grammar."
               },
               "cmd_template": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Template producing each synthetic service's shell command. Supports `${var | filter}` grammar."
               },
               "cwd": {
-                "type": "string"
+                "type": "string",
+                "description": "Glob root and per-instance working dir. Defaults to the parent entry's `cwd`."
               }
             },
             "required": [
@@ -550,7 +685,8 @@
               "name_template",
               "cmd_template"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Glob-based expansion: produces N synthetic owned services, one per matched file."
           }
         },
         "oneOf": [
@@ -576,7 +712,8 @@
           }
         ],
         "additionalProperties": false
-      }
+      },
+      "description": "Host processes lich starts directly. Logs captured to `<LICH_HOME>/stacks/<id>/logs/<service>.log`."
     },
     "env": {
       "type": "object",
@@ -587,13 +724,15 @@
           "boolean",
           "null"
         ]
-      }
+      },
+      "description": "Env vars exposed to every owned service. Use `${...}` interpolation to wire services together."
     },
     "env_files": {
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Dotenv files loaded into the stack env (gitignored `.env` is the common pattern)."
     },
     "env_from": {
       "type": "array",
@@ -606,17 +745,20 @@
             "type": "object",
             "properties": {
               "cmd": {
-                "type": "string"
+                "type": "string",
+                "description": "Shell command to execute. Its stdout supplies env vars in the chosen format."
               },
               "format": {
                 "type": "string",
                 "enum": [
                   "dotenv",
                   "json"
-                ]
+                ],
+                "description": "How to parse the cmd's stdout. `dotenv` (KEY=VALUE lines) or `json` (flat object)."
               },
               "cwd": {
-                "type": "string"
+                "type": "string",
+                "description": "Working directory for the cmd, relative to the repo root."
               }
             },
             "required": [
@@ -625,7 +767,8 @@
             "additionalProperties": false
           }
         ]
-      }
+      },
+      "description": "Shell-out sources for stack env (e.g. secret-manager exports like Infisical/1Password/Doppler)."
     },
     "lifecycle": {
       "type": "object",
@@ -641,13 +784,16 @@
                 "type": "object",
                 "properties": {
                   "cmd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Shell command to run for this lifecycle entry."
                   },
                   "env_group": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                   },
                   "cwd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Working directory for the cmd, relative to the repo root."
                   }
                 },
                 "required": [
@@ -656,7 +802,8 @@
                 "additionalProperties": false
               }
             ]
-          }
+          },
+          "description": "Commands to run before any service starts."
         },
         "after_up": {
           "type": "array",
@@ -669,13 +816,16 @@
                 "type": "object",
                 "properties": {
                   "cmd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Shell command to run for this lifecycle entry."
                   },
                   "env_group": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                   },
                   "cwd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Working directory for the cmd, relative to the repo root."
                   }
                 },
                 "required": [
@@ -684,7 +834,8 @@
                 "additionalProperties": false
               }
             ]
-          }
+          },
+          "description": "Commands to run once all services are ready. Common spot for migrations and seeds."
         },
         "before_down": {
           "type": "array",
@@ -697,13 +848,16 @@
                 "type": "object",
                 "properties": {
                   "cmd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Shell command to run for this lifecycle entry."
                   },
                   "env_group": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                   },
                   "cwd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Working directory for the cmd, relative to the repo root."
                   }
                 },
                 "required": [
@@ -712,7 +866,8 @@
                 "additionalProperties": false
               }
             ]
-          }
+          },
+          "description": "Commands to run before any service stops. Services are still alive here."
         },
         "after_down": {
           "type": "array",
@@ -725,13 +880,16 @@
                 "type": "object",
                 "properties": {
                   "cmd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Shell command to run for this lifecycle entry."
                   },
                   "env_group": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                   },
                   "cwd": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Working directory for the cmd, relative to the repo root."
                   }
                 },
                 "required": [
@@ -740,10 +898,12 @@
                 "additionalProperties": false
               }
             ]
-          }
+          },
+          "description": "Commands to run after all services have stopped. Use for external resource cleanup."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Top-level hooks at stack boundaries: before_up, after_up, before_down, after_down."
     },
     "env_groups": {
       "type": "object",
@@ -766,17 +926,20 @@
                   "type": "object",
                   "properties": {
                     "cmd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Shell command to execute. Its stdout supplies env vars in the chosen format."
                     },
                     "format": {
                       "type": "string",
                       "enum": [
                         "dotenv",
                         "json"
-                      ]
+                      ],
+                      "description": "How to parse the cmd's stdout. `dotenv` (KEY=VALUE lines) or `json` (flat object)."
                     },
                     "cwd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Working directory for the cmd, relative to the repo root."
                     }
                   },
                   "required": [
@@ -785,7 +948,8 @@
                   "additionalProperties": false
                 }
               ]
-            }
+            },
+            "description": "Shell-out env sources for this group (inherited env vars or dynamic exports)."
           },
           "env": {
             "type": "object",
@@ -796,17 +960,21 @@
                 "boolean",
                 "null"
               ]
-            }
+            },
+            "description": "Literal env vars for this group. Use `null` to unset an inherited key."
           },
           "extends": {
-            "type": "string"
+            "type": "string",
+            "description": "Name of another env_group whose resolved env this group inherits from."
           },
           "process_env": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether to inherit the parent shell's env (default true). Set false for a sealed group."
           }
         },
         "additionalProperties": false
-      }
+      },
+      "description": "Named env-var bundles for `lich exec --env-group` and `lifecycle.*[].env_group:`."
     },
     "commands": {
       "type": "object",
@@ -814,13 +982,16 @@
         "type": "object",
         "properties": {
           "cmd": {
-            "type": "string"
+            "type": "string",
+            "description": "Shell command run when the user invokes `lich <command-name>`."
           },
           "cwd": {
-            "type": "string"
+            "type": "string",
+            "description": "Working directory for the cmd, relative to the repo root."
           },
           "env_group": {
-            "type": "string"
+            "type": "string",
+            "description": "Name of an env_group whose env this command runs with (instead of the default stack env)."
           },
           "env": {
             "type": "object",
@@ -831,17 +1002,20 @@
                 "boolean",
                 "null"
               ]
-            }
+            },
+            "description": "Extra env vars set when running this command. Merges with the stack or named group env."
           },
           "help": {
-            "type": "string"
+            "type": "string",
+            "description": "Help text printed by `lich <command-name> --help`."
           }
         },
         "required": [
           "cmd"
         ],
         "additionalProperties": false
-      }
+      },
+      "description": "Custom CLI commands invoked via `lich <name>`. Inherit the stack's env by default."
     },
     "profiles": {
       "type": "object",
@@ -852,13 +1026,15 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Subset of top-level `services:` to start under this profile."
           },
           "owned": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Subset of top-level `owned:` to start under this profile."
           },
           "extends": {
             "oneOf": [
@@ -871,10 +1047,12 @@
                   "type": "string"
                 }
               }
-            ]
+            ],
+            "description": "Name or list of names of profiles this one inherits services, owned, env, and lifecycle from."
           },
           "default": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "If true, `lich up` (no arg) picks this profile. Exactly one profile may set this."
           },
           "env": {
             "type": "object",
@@ -885,13 +1063,15 @@
                 "boolean",
                 "null"
               ]
-            }
+            },
+            "description": "Profile-scoped env vars. Override top-level on collision."
           },
           "env_files": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Profile-scoped dotenv files. Merge with top-level."
           },
           "env_from": {
             "type": "array",
@@ -904,17 +1084,20 @@
                   "type": "object",
                   "properties": {
                     "cmd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Shell command to execute. Its stdout supplies env vars in the chosen format."
                     },
                     "format": {
                       "type": "string",
                       "enum": [
                         "dotenv",
                         "json"
-                      ]
+                      ],
+                      "description": "How to parse the cmd's stdout. `dotenv` (KEY=VALUE lines) or `json` (flat object)."
                     },
                     "cwd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Working directory for the cmd, relative to the repo root."
                     }
                   },
                   "required": [
@@ -923,7 +1106,8 @@
                   "additionalProperties": false
                 }
               ]
-            }
+            },
+            "description": "Profile-scoped shell-out env sources. Merge with top-level."
           },
           "lifecycle": {
             "type": "object",
@@ -939,13 +1123,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -954,7 +1141,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before any service starts."
               },
               "after_up": {
                 "type": "array",
@@ -967,13 +1155,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -982,7 +1173,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run once all services are ready. Common spot for migrations and seeds."
               },
               "before_down": {
                 "type": "array",
@@ -995,13 +1187,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -1010,7 +1205,8 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run before any service stops. Services are still alive here."
               },
               "after_down": {
                 "type": "array",
@@ -1023,13 +1219,16 @@
                       "type": "object",
                       "properties": {
                         "cmd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Shell command to run for this lifecycle entry."
                         },
                         "env_group": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of an env_group whose env this entry runs with (instead of the default stack env)."
                         },
                         "cwd": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Working directory for the cmd, relative to the repo root."
                         }
                       },
                       "required": [
@@ -1038,14 +1237,17 @@
                       "additionalProperties": false
                     }
                   ]
-                }
+                },
+                "description": "Commands to run after all services have stopped. Use for external resource cleanup."
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Profile-scoped lifecycle hooks. Merge with top-level (LIFO on the down phases)."
           }
         },
         "additionalProperties": false
-      }
+      },
+      "description": "Named subsets of the stack — pick a service set and env for a given run."
     }
   },
   "required": [

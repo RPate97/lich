@@ -1,7 +1,15 @@
 import { readDaemonUrl } from "../daemon/pid-file.js";
+import { resolveStackId } from "../state/resolve-stack.js";
+import { readSnapshot } from "../state/snapshot.js";
 
 export interface RunRoutingInput {
   json?: boolean;
+  cwd?: string;
+  /**
+   * Stack ID or worktree name (`--worktree`); when set, filter entries to
+   * the matching worktree's routes. Without it, the full daemon table prints.
+   */
+  worktreeArg?: string;
   out?: NodeJS.WritableStream;
   err?: NodeJS.WritableStream;
 }
@@ -75,6 +83,27 @@ export async function runRouting(
       `lich routing: failed to parse /api/routing response: ${(e as Error).message}\n`,
     );
     return { exitCode: 1 };
+  }
+
+  if (input.worktreeArg !== undefined && input.worktreeArg.length > 0) {
+    let targetWorktreeName: string;
+    try {
+      const resolved = await resolveStackId({
+        cwd: input.cwd ?? process.cwd(),
+        worktreeArg: input.worktreeArg,
+      });
+      const snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        err.write(`lich routing: no snapshot for stack '${resolved.stackId}'\n`);
+        return { exitCode: 1 };
+      }
+      targetWorktreeName = snap.worktree_name;
+    } catch (e) {
+      err.write(`lich routing: ${(e as Error).message}\n`);
+      return { exitCode: 1 };
+    }
+    const suffix = `.${targetWorktreeName}`;
+    entries = entries.filter((e) => e.hostname.endsWith(suffix) || e.hostname === targetWorktreeName);
   }
 
   if (input.json) {

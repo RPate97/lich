@@ -2,10 +2,9 @@ import { defineConfig } from "vitepress";
 
 // VitePress config for the lich docs site.
 //
-// Generated reference pages (reference/lich-yaml.md, recipes/index.md)
-// are synced from skills/lich-instrument/references/ by
-// scripts/sync-skill-content.mjs at build time. Edit the skill references,
-// not the generated files.
+// Generated reference pages are synced from docs/content/ by
+// packages/lich/scripts/sync-content.ts. Edit the canonical sources under
+// docs/content/, not the generated mirrors.
 export default defineConfig({
   title: "Lich",
   description:
@@ -31,7 +30,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Get started", link: "/getting-started/" },
-      { text: "Reference", link: "/reference/lich-yaml" },
+      { text: "Reference", link: "/reference/lich-yaml-spec" },
       { text: "Concepts", link: "/concepts/worktrees-isolation" },
       { text: "Recipes", link: "/recipes/" },
       { text: "Dashboard", link: "/dashboard" },
@@ -46,6 +45,7 @@ export default defineConfig({
         text: "Getting started",
         items: [
           { text: "Install + first stack", link: "/getting-started/" },
+          { text: "Why lich", link: "/getting-started/why-lich" },
           {
             text: "Instrument with an agent",
             link: "/getting-started/instrument",
@@ -55,7 +55,7 @@ export default defineConfig({
       {
         text: "Reference",
         items: [
-          { text: "lich.yaml", link: "/reference/lich-yaml" },
+          { text: "lich.yaml", link: "/reference/lich-yaml-spec" },
           { text: "Interpolation", link: "/reference/interpolation" },
           { text: "CLI commands", link: "/reference/cli" },
         ],
@@ -85,13 +85,19 @@ export default defineConfig({
       },
       {
         text: "Recipes",
-        items: [{ text: "All recipes", link: "/recipes/" }],
+        items: [
+          { text: "All recipes", link: "/recipes/" },
+          { text: "External CLI services", link: "/recipes/external-cli-services" },
+          { text: "Monorepo task runners", link: "/recipes/monorepo-task-runners" },
+          { text: "Install caching", link: "/recipes/install-caching" },
+          { text: "Test key overrides", link: "/recipes/test-key-overrides" },
+          { text: "Worker pools", link: "/recipes/worker-pools" },
+        ],
       },
       {
         text: "Operations",
         items: [
           { text: "Dashboard", link: "/dashboard" },
-          { text: "Feedback", link: "/feedback" },
           {
             text: "Troubleshooting",
             link: "/troubleshooting",

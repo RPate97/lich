@@ -207,7 +207,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `env:\n  FOO: "http://localhost:\${owned.nonexistent.port}"\n` +
-        `owned:\n  api:\n    cmd: echo hi\n    port: { env: PORT }\n`,
+        `owned:\n  api:\n    cmd: echo hi\n    port: { published_env: PORT }\n`,
     );
     const res = await run({ path: p });
     expect(res.exitCode).toBe(1);
@@ -234,7 +234,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `env:\n  FOO: "\${owned.supabase.port}"\n` +
-        `owned:\n  supabase:\n    cmd: supabase start\n    ports:\n      api: { env: SUPA_API }\n`,
+        `owned:\n  supabase:\n    cmd: supabase start\n    ports:\n      api: { published_env: SUPA_API }\n`,
     );
     const res = await run({ path: p });
     expect(res.exitCode).toBe(1);
@@ -248,7 +248,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `env:\n  FOO: "\${owned.supabase.ports.nope}"\n` +
-        `owned:\n  supabase:\n    cmd: supabase start\n    ports:\n      api: { env: SUPA_API }\n`,
+        `owned:\n  supabase:\n    cmd: supabase start\n    ports:\n      api: { published_env: SUPA_API }\n`,
     );
     const res = await run({ path: p });
     expect(res.exitCode).toBe(1);
@@ -1335,7 +1335,7 @@ describe("runValidate", () => {
         `env:\n` +
         `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
         `owned:\n` +
-        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  dev:\n` +
@@ -1367,7 +1367,7 @@ describe("runValidate", () => {
         `env:\n` +
         `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
         `owned:\n` +
-        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  lite:\n` +
@@ -1414,7 +1414,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `owned:\n` +
-        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  test:\n` +
@@ -1444,7 +1444,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `env:\n  Y: "\${owned.api.port}"\n` +
-        `owned:\n  api:\n    cmd: echo hi\n    port: { env: PORT }\n`,
+        `owned:\n  api:\n    cmd: echo hi\n    port: { published_env: PORT }\n`,
     );
     const res = await run({ path: p });
     expect(res.exitCode).toBe(0);
@@ -1463,7 +1463,7 @@ describe("runValidate", () => {
       "lich.yaml",
       `version: "1"\n` +
         `env:\n  DATABASE_URL: "postgresql://localhost:\${owned.api.port}/x"\n` +
-        `owned:\n  api:\n    cmd: echo hi\n    port: { env: PORT }\n` +
+        `owned:\n  api:\n    cmd: echo hi\n    port: { published_env: PORT }\n` +
         `profiles:\n  dev:\n    owned: [api]\n`,
     );
     const res = await run({ path: p });
@@ -1481,7 +1481,7 @@ describe("runValidate", () => {
         `env:\n` +
         `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
         `owned:\n` +
-        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  base:\n    owned: [supabase]\n` +
@@ -1503,7 +1503,7 @@ describe("runValidate", () => {
         `env:\n` +
         `  DATABASE_URL: "postgresql://localhost:\${owned.supabase.port}/x"\n` +
         `owned:\n` +
-        `  supabase:\n    cmd: supabase start\n    port: { env: SUPA }\n` +
+        `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  lite:\n    owned: [api]\n` +
@@ -1531,7 +1531,7 @@ describe("runValidate", () => {
         `owned:\n` +
         `  supabase:\n` +
         `    cmd: supabase start\n` +
-        `    ports:\n      api: { env: SUPA_API }\n` +
+        `    ports:\n      api: { published_env: SUPA_API }\n` +
         `  api:\n    cmd: echo hi\n` +
         `profiles:\n` +
         `  test:\n` +
@@ -1701,6 +1701,272 @@ describe("runValidate", () => {
       );
       expect(ap).toBeDefined();
       expect(ap!.message).not.toContain("did you mean");
+    });
+  });
+
+  // Cmd-context interp: lifecycle/commands/owned.cmd; passUnknownShapes parity (shell vars survive).
+  describe("cmd-context interpolation", () => {
+    it("flags ${owned.X.port} in commands.<name>.cmd when X is undeclared", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `commands:\n  show:\n    cmd: "echo \${owned.serverr.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("serverr"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/commands/show/cmd");
+      expect(ie!.message).toContain("unknown owned service");
+    });
+
+    it("flags ${owned.X.port} in top-level lifecycle string entry", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `lifecycle:\n  after_up:\n    - "echo \${owned.bogus.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("bogus"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/lifecycle/after_up/0");
+    });
+
+    it("flags ${owned.X.port} in top-level lifecycle long-form entry", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `lifecycle:\n  before_down:\n` +
+          `    - cmd: "echo \${owned.bogus.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("bogus"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/lifecycle/before_down/0/cmd");
+    });
+
+    it("flags ${owned.X.port} in per-service lifecycle entries", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `    lifecycle:\n      after_ready:\n` +
+          `        - "echo \${owned.bogusA.port}"\n` +
+          `        - cmd: "echo \${owned.bogusB.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ies = (res.report.errors ?? []).filter((e) => e.kind === "interp");
+      expect(ies.length).toBeGreaterThanOrEqual(2);
+      const aLoc = ies.find((e) => e.message.includes("bogusA"))!.location;
+      const bLoc = ies.find((e) => e.message.includes("bogusB"))!.location;
+      expect(aLoc).toContain("/owned/api/lifecycle/after_ready/0");
+      expect(bLoc).toContain("/owned/api/lifecycle/after_ready/1/cmd");
+    });
+
+    it("flags ${owned.X.port} in owned.<name>.cmd", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: "echo \${owned.serverr.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("serverr"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/owned/api/cmd");
+    });
+
+    it("flags ${owned.X.port} in owned.<name>.stop_cmd", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n    oneshot: true\n` +
+          `    stop_cmd: "echo \${owned.bogus.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("bogus"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/owned/api/stop_cmd");
+    });
+
+    it("flags ${owned.X.port} in profile-scoped lifecycle entry", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `profiles:\n  dev:\n    default: true\n    owned: [api]\n` +
+          `    lifecycle:\n      after_up:\n` +
+          `        - "echo \${owned.bogus.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("bogus"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/profiles/dev/lifecycle/after_up/0");
+    });
+
+    it("flags ${owned.X.ports.bogus} in cmd contexts", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  supabase:\n    cmd: supabase start\n` +
+          `    ports:\n      api: { published_env: SUPA_API }\n` +
+          `commands:\n  show:\n    cmd: "echo \${owned.supabase.ports.bogus}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("bogus"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/commands/show/cmd");
+      expect(ie!.message).toContain("unknown port");
+    });
+
+    it("flags ${owned.X.captured.Y} in cmd contexts when Y is undeclared", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  tun:\n    cmd: ./tun\n` +
+          `    ready_when:\n      log_match: "ready"\n` +
+          `      capture:\n        url: "http://.*"\n` +
+          `commands:\n  show:\n    cmd: "echo \${owned.tun.captured.MISSING}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) => e.kind === "interp" && e.message.includes("MISSING"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/commands/show/cmd");
+      expect(ie!.message).toContain("unknown capture");
+    });
+
+    it("flags ${worktree.bogus} in cmd contexts", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `commands:\n  show:\n    cmd: "echo \${worktree.bogus}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) =>
+          e.kind === "interp" &&
+          e.message.includes("unknown reference") &&
+          e.message.includes("worktree"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/commands/show/cmd");
+    });
+
+    it("passes plain shell vars in cmd contexts (passUnknownShapes parity)", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: "echo \${SHELL_VAR}"\n` +
+          `lifecycle:\n  after_up:\n` +
+          `    - "echo \${HOME}/foo"\n` +
+          `    - cmd: "echo \${USER}"\n` +
+          `commands:\n  show:\n    cmd: "printenv \${VAR_NAME}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(0);
+      expect(res.report.ok).toBe(true);
+    });
+
+    it("accepts valid lich refs in every cmd-context surface", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n` +
+          `  api:\n    cmd: "echo \${worktree.name}"\n` +
+          `    port: { published_env: PORT }\n` +
+          `    lifecycle:\n      after_ready:\n` +
+          `        - "echo \${owned.api.port}"\n` +
+          `lifecycle:\n  after_up:\n` +
+          `    - "echo \${worktree.id}"\n` +
+          `commands:\n  show:\n    cmd: "echo \${owned.api.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(0);
+      const ies = (res.report.errors ?? []).filter((e) => e.kind === "interp");
+      expect(ies).toEqual([]);
+    });
+
+    it("nested ${...${...}...} does not crash validate", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n` +
+          `commands:\n  show:\n    cmd: "echo \${owned.\${nested}.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ies = (res.report.errors ?? []).filter((e) => e.kind === "interp");
+      expect(ies.length).toBeGreaterThan(0);
+    });
+
+    it("per-profile cmd context catches refs to services excluded by the profile", async () => {
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n` +
+          `  supabase:\n    cmd: supabase start\n    port: { published_env: SUPA }\n` +
+          `  api:\n    cmd: echo hi\n` +
+          `profiles:\n` +
+          `  lite:\n    owned: [api]\n` +
+          `commands:\n` +
+          `  show:\n    cmd: "echo \${owned.supabase.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(1);
+      const ie = res.report.errors!.find(
+        (e) =>
+          e.kind === "interp" &&
+          e.message.includes('under profile "lite"') &&
+          e.message.includes("supabase"),
+      );
+      expect(ie).toBeDefined();
+      expect(ie!.location).toContain("/commands/show/cmd");
+    });
+
+    it("does not flag cmd refs to services in EVERY profile's resolved set", async () => {
+      // ${owned.api.port} is in every profile's owned list → no per-profile error
+      const p = writeYaml(
+        "lich.yaml",
+        `version: "1"\n` +
+          `owned:\n  api:\n    cmd: echo hi\n    port: { published_env: PORT }\n` +
+          `profiles:\n` +
+          `  dev:\n    owned: [api]\n` +
+          `  test:\n    owned: [api]\n` +
+          `commands:\n` +
+          `  show:\n    cmd: "echo \${owned.api.port}"\n`,
+      );
+      const res = await run({ path: p });
+      expect(res.exitCode).toBe(0);
+      const ies = (res.report.errors ?? []).filter((e) => e.kind === "interp");
+      expect(ies).toEqual([]);
     });
   });
 });

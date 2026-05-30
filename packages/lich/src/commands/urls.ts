@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { detectWorktree } from "../worktree/detect.js";
 import { readSnapshot } from "../state/snapshot.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import { parseConfig } from "../config/parse.js";
 import {
   DEFAULT_PROXY_PORT,
@@ -16,6 +16,8 @@ export interface RunUrlsInput {
   out?: NodeJS.WritableStream;
   err?: NodeJS.WritableStream;
   raw?: boolean;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
 }
 
 export interface RunUrlsResult {
@@ -29,21 +31,30 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
   const raw = Boolean(input.raw);
 
   let stackId: string;
-  let worktreePath: string;
+  let snapshot;
   try {
-    const wt = detectWorktree(cwd);
-    stackId = wt.stack_id;
-    worktreePath = wt.path;
-  } catch {
-    err.write("no stack found for this worktree (run lich up first)\n");
+    const resolved = await resolveStackId({
+      cwd,
+      ...(input.worktreeArg !== undefined && { worktreeArg: input.worktreeArg }),
+    });
+    stackId = resolved.stackId;
+    snapshot = resolved.snapshot ?? (await readSnapshot(stackId));
+  } catch (e) {
+    // Cwd-detect failure → legacy "no stack found" hint; --worktree failure
+    // → resolver's specific "ID/name X not found" message.
+    if (input.worktreeArg) {
+      err.write(`${(e as Error).message}\n`);
+    } else {
+      err.write("no stack found for this worktree (run lich up first)\n");
+    }
     return { exitCode: 1 };
   }
 
-  const snapshot = await readSnapshot(stackId);
   if (!snapshot) {
     err.write("no stack found for this worktree (run lich up first)\n");
     return { exitCode: 1 };
   }
+  const worktreePath = snapshot.worktree_path;
 
   if (raw) {
     const rawUrls = buildRawUrls(snapshot.services);

@@ -130,3 +130,104 @@ export function openServiceLogStream(
   };
   return () => es.close();
 }
+
+/** Per-service metrics frame from the daemon's sampler. */
+export interface ServiceMetricsOwned {
+  name: string;
+  kind: 'owned';
+  state: string;
+  pid?: number;
+  cpu_pct: number;
+  mem_bytes: number;
+  uptime_seconds: number;
+  process_count: number;
+}
+
+export interface ServiceMetricsCompose {
+  name: string;
+  kind: 'compose';
+  state: string;
+  container_id?: string;
+  cpu_pct: number;
+  mem_bytes: number;
+  mem_limit_bytes?: number;
+  uptime_seconds: number;
+}
+
+export type ServiceMetrics = ServiceMetricsOwned | ServiceMetricsCompose;
+
+/** Full per-stack metrics snapshot. Matches StackMetricsSnapshot in daemon/metrics/types.ts. */
+export interface StackMetricsSnapshot {
+  stack_id: string;
+  sampled_at: string;
+  total: { cpu_pct: number; mem_bytes: number };
+  services: ServiceMetrics[];
+}
+
+/** Single process entry inside an owned service's tree. */
+export interface ProcessTreeNode {
+  pid: number;
+  ppid: number;
+  rss_bytes: number;
+  cpu_pct_cumulative: number;
+  children: ProcessTreeNode[];
+}
+
+/** Tree response for `/api/stacks/:id/services/:name/proc-tree`. */
+export interface ProcessTreeResponse {
+  service: string;
+  pid: number;
+  process_count: number;
+  mem_bytes: number;
+  cpu_pct_cumulative: number;
+  tree: ProcessTreeNode | null;
+}
+
+/** One-shot snapshot. The endpoint always returns 200 with an empty payload during the sampler's warmup window. */
+export async function fetchStackMetrics(
+  stackId: string,
+): Promise<StackMetricsSnapshot> {
+  const res = await fetch(
+    `/api/stacks/${encodeURIComponent(stackId)}/metrics`,
+  );
+  if (!res.ok) {
+    throw new Error(`/api/stacks/${stackId}/metrics responded ${res.status}`);
+  }
+  return (await res.json()) as StackMetricsSnapshot;
+}
+
+/** SSE subscription to live metrics. Returns a closer. */
+export function openMetricsStream(
+  stackId: string,
+  onSnap: (snap: StackMetricsSnapshot) => void,
+  onError?: (err: Event) => void,
+): () => void {
+  const url = `/api/stacks/${encodeURIComponent(stackId)}/metrics/stream`;
+  const es = new EventSource(url);
+  es.onmessage = (msg) => {
+    try {
+      onSnap(JSON.parse(msg.data) as StackMetricsSnapshot);
+    } catch {
+      /* ignore */
+    }
+  };
+  if (onError) es.onerror = onError;
+  return () => es.close();
+}
+
+/** Fetch the process tree for one owned service. 404/409 → null. */
+export async function fetchProcessTree(
+  stackId: string,
+  serviceName: string,
+): Promise<ProcessTreeResponse | null> {
+  const res = await fetch(
+    `/api/stacks/${encodeURIComponent(stackId)}/services/${encodeURIComponent(serviceName)}/proc-tree`,
+  );
+  if (res.status === 404 || res.status === 409) return null;
+  if (!res.ok) {
+    throw new Error(
+      `/api/stacks/${stackId}/services/${serviceName}/proc-tree responded ${res.status}`,
+    );
+  }
+  return (await res.json()) as ProcessTreeResponse;
+}

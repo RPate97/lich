@@ -18,6 +18,39 @@ export interface SnapshotLifecycleEntry {
   env: Record<string, string>;
 }
 
+/** Cap on `failed_cmd` length in {@link LifecyclePhaseStatus} — long inline scripts get an ellipsis. */
+export const LIFECYCLE_FAILED_CMD_MAX = 80;
+
+/** Per-phase lifecycle status persisted on the snapshot. Drives `lich stacks` failed-phase surfacing. */
+export type LifecyclePhaseStatus =
+  | { status: "ok" }
+  | { status: "not_run" }
+  | {
+      status: "failed";
+      /** Zero-based index of the offending entry within the phase. */
+      failed_index: number;
+      /** Total number of entries in the phase (for "i+1/n" rendering). */
+      total: number;
+      /** The command that failed (truncated to {@link LIFECYCLE_FAILED_CMD_MAX} chars + `...`). */
+      failed_cmd: string;
+      /** Path to the phase log file. */
+      log_path: string;
+    };
+
+/** Per-phase status map on the snapshot. Phase keys are stable; missing key == phase never ran. */
+export interface LifecycleSnapshotStatus {
+  before_up?: LifecyclePhaseStatus;
+  after_up?: LifecyclePhaseStatus;
+  before_down?: LifecyclePhaseStatus;
+  after_down?: LifecyclePhaseStatus;
+}
+
+/** Truncates a command to {@link LIFECYCLE_FAILED_CMD_MAX} chars + `...`. */
+export function truncateFailedCmd(cmd: string): string {
+  if (cmd.length <= LIFECYCLE_FAILED_CMD_MAX) return cmd;
+  return cmd.slice(0, LIFECYCLE_FAILED_CMD_MAX) + "...";
+}
+
 export interface ServiceSnapshot {
   name: string;
   kind: "compose" | "owned";
@@ -34,6 +67,8 @@ export interface ServiceSnapshot {
   failure_log_tail?: string[];
   /** Resolved stop_cmd (post-interpolation). Snapshotted at up time. */
   stop_cmd?: string;
+  /** Resolved force-clean filter (post-interpolation). Snapshotted at up time so down/nuke never re-reads yaml. */
+  owned_containers?: { label?: string; name_pattern?: string };
   /** Resolved cmd (post-interpolation). Snapshotted at up time. */
   cmd?: string;
   /** Fully resolved env the service ran with — used by down to run stop_cmd with the correct env. */
@@ -42,10 +77,16 @@ export interface ServiceSnapshot {
   depends_on?: string[];
   /** Per-service before_down hooks with pre-resolved env. */
   before_down?: SnapshotLifecycleEntry[];
+  /** Per-service before_start hooks with pre-resolved env. Used by per-service restart. */
+  before_start?: SnapshotLifecycleEntry[];
+  /** Per-service after_ready hooks with pre-resolved env. Used by per-service restart. */
+  after_ready?: SnapshotLifecycleEntry[];
   /** Resolved service cwd (absolute path). Used by per-service restart. */
   service_cwd?: string;
   /** Serialized ready_when config. Used by per-service restart (avoids yaml re-parse). */
   ready_when?: Record<string, unknown>;
+  /** Serialized fail_when config. Used by per-service restart (avoids yaml re-parse). */
+  fail_when?: Record<string, unknown>;
 }
 
 export type StackStatus =
@@ -86,6 +127,8 @@ export interface StackSnapshot {
   before_down?: SnapshotLifecycleEntry[];
   /** Top-level + profile after_down hooks with pre-resolved env, snapshotted at up time. */
   after_down?: SnapshotLifecycleEntry[];
+  /** Per-phase lifecycle execution status. Drives `lich stacks` failed-phase surfacing (LEV-531). */
+  lifecycle?: LifecycleSnapshotStatus;
 }
 
 function snapshotPath(stackId: string): string {
@@ -207,8 +250,8 @@ export function injectOwnedPortEnv(
   env: NodeJS.ProcessEnv,
   ownedDef:
     | {
-        port?: number | { env?: string };
-        ports?: Record<string, number | { env?: string }>;
+        port?: number | { published_env?: string };
+        ports?: Record<string, number | { published_env?: string }>;
       }
     | undefined,
   allocatedPorts: Record<string, number> | undefined,
@@ -217,16 +260,16 @@ export function injectOwnedPortEnv(
   const out: NodeJS.ProcessEnv = { ...env };
 
   // single-port: snapshot stores it under `default`
-  if (typeof ownedDef.port === "object" && ownedDef.port?.env) {
+  if (typeof ownedDef.port === "object" && ownedDef.port?.published_env) {
     const port = allocatedPorts.default;
-    if (port !== undefined) out[ownedDef.port.env] = String(port);
+    if (port !== undefined) out[ownedDef.port.published_env] = String(port);
   }
 
   if (ownedDef.ports) {
     for (const [logical, desc] of Object.entries(ownedDef.ports)) {
-      if (typeof desc === "object" && desc?.env) {
+      if (typeof desc === "object" && desc?.published_env) {
         const port = allocatedPorts[logical];
-        if (port !== undefined) out[desc.env] = String(port);
+        if (port !== undefined) out[desc.published_env] = String(port);
       }
     }
   }

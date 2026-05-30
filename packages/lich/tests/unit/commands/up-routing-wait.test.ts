@@ -160,7 +160,7 @@ runtime:
 owned:
   svc:
     cmd: "echo READY; sleep 30"
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       log_match: "READY"
 `,

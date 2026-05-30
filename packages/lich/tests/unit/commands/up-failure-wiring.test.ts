@@ -389,7 +389,7 @@ owned:
       http_get: '/health'
       timeout: '30s'
     port:
-      env: PORT
+      published_env: PORT
 `);
 
     const start = Date.now();

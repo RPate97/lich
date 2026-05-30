@@ -9,9 +9,9 @@
  *   - No `version:` (compose v2 doesn't need it; v3 deprecates it).
  *   - No `name:` (project name comes from the runner's `-p <project>`).
  *   - Service blocks with nothing to override are omitted entirely.
- *   - Container ports accepted in both Record (`{ http: { container, env } }`)
- *     and array (`[ { container, env } ]`) form. Bare-number Record entries
- *     (pinned host port, no container side) skip the binding.
+ *   - Container ports accepted in both Record (`{ http: { container_port, published_env } }`)
+ *     and array (`[ { container_port, published_env } ]`) forms. Scalar entries
+ *     (`- 5432` / `http: 5432`) are shorthand for `{ container_port: N }`.
  *   - Uses the `yaml` package for correct quoting on env values with special chars.
  */
 
@@ -54,18 +54,19 @@ interface OverrideServiceBlock {
 }
 
 /**
- * Extract a container port from a ports declaration entry. Returns `undefined`
- * for bare-number form (pinned host port — no container side) or objects
- * without a `container` field.
+ * Extract a container port from a ports declaration entry. Scalar form is
+ * shorthand for `{ container_port: <N> }`. Block form returns the explicit
+ * `container_port` value, or `undefined` if the block has none (publish via
+ * `host_port` only with no container side).
  */
 function containerPortFor(
   descriptor: PortDescriptor | undefined,
 ): number | undefined {
   if (descriptor == null) return undefined;
-  if (typeof descriptor === "number") return undefined;
-  if (typeof descriptor.container === "number" &&
-      Number.isFinite(descriptor.container)) {
-    return descriptor.container;
+  if (typeof descriptor === "number") return descriptor;
+  if (typeof descriptor.container_port === "number" &&
+      Number.isFinite(descriptor.container_port)) {
+    return descriptor.container_port;
   }
   return undefined;
 }
@@ -96,10 +97,7 @@ function buildPortBindings(
       // indices (`"0"`, `"1"`, ...).
       const idx = Number(logicalName);
       if (Number.isInteger(idx) && idx >= 0 && idx < declared.length) {
-        const entry = declared[idx];
-        if (entry && typeof entry.container === "number") {
-          container = entry.container;
-        }
+        container = containerPortFor(declared[idx]);
       }
     } else {
       container = containerPortFor(declared[logicalName]);

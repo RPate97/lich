@@ -56,7 +56,7 @@ const MINIMAL_LICH_YAML = `version: "1"
 owned:
   hang:
     cmd: 'sleep 99999'
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: '/nope'
       timeout: '3s'

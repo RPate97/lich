@@ -17,12 +17,14 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree } from "../worktree/detect.js";
+import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
   type AllocatedPorts,
+  type StackSnapshot,
 } from "../state/snapshot.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import {
   resolveProfile,
@@ -38,6 +40,8 @@ export interface ExecOptions {
   /** env_group name (`--env-group=<X>`). Defaults to `"stack"`. */
   envGroupName?: string;
   cwd?: string;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   /** SIGINT → kill child + exit 130. */
   signal?: AbortSignal;
   /** Defaults to `"inherit"`; tests pass `"pipe"`. */
@@ -45,6 +49,10 @@ export interface ExecOptions {
   stderr?: (line: string) => void;
   /** Test hook: synchronously called with the spawned child handle. */
   onSpawn?: (child: import("node:child_process").ChildProcess) => void;
+  /** When true, skip the stack-not-up warning (for scripts). */
+  noPreflight?: boolean;
+  /** Test hook: override "now" for deterministic relative-time strings. */
+  now?: () => Date;
 }
 
 export interface ExecResult {
@@ -70,7 +78,38 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
     return { exitCode: 2 };
   }
 
-  const yamlPath = join(cwd, "lich.yaml");
+  let worktree: Worktree;
+  let snap: StackSnapshot | null;
+  if (opts.worktreeArg !== undefined && opts.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: opts.worktreeArg });
+      snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        err(`lich exec: no snapshot for stack '${resolved.stackId}'\n`);
+        return { exitCode: 1 };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+  } else {
+    // Legacy order: yaml-missing diagnostic before detectWorktree's walk-up.
+    const yamlPathCwd = join(cwd, "lich.yaml");
+    if (!existsSync(yamlPathCwd)) {
+      err(`lich exec: lich.yaml not found at ${yamlPathCwd}\n`);
+      return { exitCode: 1 };
+    }
+    try {
+      worktree = detectWorktree(cwd);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+    snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  }
+
+  const yamlPath = join(worktree.path, "lich.yaml");
   if (!existsSync(yamlPath)) {
     err(`lich exec: lich.yaml not found at ${yamlPath}\n`);
     return { exitCode: 1 };
@@ -84,20 +123,15 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
   }
   const config = parsed.config;
 
-  let worktree: ReturnType<typeof detectWorktree>;
-  try {
-    worktree = detectWorktree(cwd);
-  } catch (e) {
-    err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
-    return { exitCode: 1 };
-  }
-
   // No snapshot (stack down) → empty allocated ports; resolver only fails
   // if a value actually references a missing port.
-  let allocatedPorts: AllocatedPorts = { compose: {}, owned: {} };
-  const snap = await readSnapshot(worktree.stack_id).catch(() => null);
-  if (snap) {
-    allocatedPorts = rebuildAllocatedPorts(snap);
+  const allocatedPorts: AllocatedPorts = snap
+    ? rebuildAllocatedPorts(snap)
+    : { compose: {}, owned: {} };
+
+  if (!opts.noPreflight) {
+    const warning = preflightWarning(snap, worktree.name, opts.now?.() ?? new Date());
+    if (warning) err(`[lich] ${warning}\n`);
   }
 
   // Re-resolve the active profile from the on-disk yaml so the env group
@@ -189,6 +223,44 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
       }
     }
   });
+}
+
+/** Returns the stderr warning when the stack isn't up, or null when it is. */
+export function preflightWarning(
+  snap: StackSnapshot | null,
+  worktreeName: string,
+  now: Date,
+): string | null {
+  if (!snap) {
+    return `warning: no lich stack in this worktree (run 'lich up' first). Command will run but services may be unreachable.`;
+  }
+  if (snap.status === "up") return null;
+  const lastSeen = formatRelativeAge(snap.started_at, now);
+  const suffix = lastSeen ? ` (last seen: ${lastSeen})` : "";
+  return `warning: stack '${worktreeName}' is not up${suffix}. Command will run but services may be unreachable.`;
+}
+
+function formatRelativeAge(iso: string | undefined, now: Date): string | null {
+  if (!iso) return null;
+  const then = new Date(iso);
+  const ms = now.getTime() - then.getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+/** Rebuild a `Worktree` from a snapshot for cross-worktree command targeting. */
+function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
+  const path = snap.worktree_path;
+  const name = sanitizeName(snap.worktree_name);
+  const id = hashPath(path);
+  return { name, id, path, stack_id: snap.stack_id };
 }
 
 /** Map a POSIX signal name to its number for `128 + N` exit-code derivation. */
