@@ -36,6 +36,11 @@ jobs:
         with:
           fetch-depth: 0  # vitepress lastUpdated reads git history
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -47,9 +52,19 @@ jobs:
         working-directory: docs/site
         run: npm ci --no-audit --no-fund
 
-      - name: Sync skill content
-        working-directory: docs/site
-        run: node scripts/sync-skill-content.mjs
+      - name: Sync content
+        run: |
+          cd packages/lich && bun install --frozen-lockfile
+          cd packages/lich && bun run sync-content
+
+      - name: Verify mirrors are committed
+        run: |
+          if [ -n "$(git status --porcelain docs/site/reference docs/site/recipes skills/lich-instrument/references)" ]; then
+            echo "::error::Mirrors are stale. Run 'cd packages/lich && bun run sync-content' and commit the results."
+            git status docs/site/reference docs/site/recipes skills/lich-instrument/references
+            git diff docs/site/reference docs/site/recipes skills/lich-instrument/references
+            exit 1
+          fi
 
       - name: Build
         working-directory: docs/site
