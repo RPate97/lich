@@ -128,6 +128,33 @@ describe('maybeRouteToSandbox — logs branch', () => {
   });
 });
 
+describe('maybeRouteToSandbox — factory fallback', () => {
+  test('does not crash when sandboxConfig is undefined (yaml-gone case)', async () => {
+    const { _runtimeFactory } = await import('../../../src/sandbox/command-routing.js');
+    const prev = _runtimeFactory.current;
+    let factoryArg: unknown = "uncalled";
+    const fakeRuntime = new FakeRuntime();
+    _runtimeFactory.current = ((config: unknown) => {
+      factoryArg = config;
+      return fakeRuntime as unknown as ReturnType<typeof _runtimeFactory.current>;
+    }) as typeof _runtimeFactory.current;
+    try {
+      const result = await maybeRouteToSandbox(ctx({
+        kind: 'down',
+        snapshot: sandboxSnap,
+        argv: { purge: true },
+        sandboxConfig: undefined,
+      }));
+      expect(result).not.toBeNull();
+      expect(result!.exitCode).toBe(0);
+      expect(fakeRuntime.calls[0]!.method).toBe('down');
+      expect(factoryArg).toEqual({ backend: 'tart' });
+    } finally {
+      _runtimeFactory.current = prev;
+    }
+  });
+});
+
 describe('maybeRouteToSandbox — down branch', () => {
   test('calls runtime.down with purge:false and returns stopped message', async () => {
     const r = new FakeRuntime();

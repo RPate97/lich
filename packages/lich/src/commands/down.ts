@@ -159,7 +159,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     worktree = detectWorktree(cwd);
   } catch {
     // lich.yaml not found — try snapshot fallback (yaml may have been deleted after lich up).
-    const fallback = await findWorktreeBySnapshot(cwd);
+    const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
     if (!fallback) {
       writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
       await output.close();
@@ -1165,7 +1165,10 @@ async function runSnapshotLifecycle(
   }
 }
 
-async function findWorktreeBySnapshot(cwd: string): Promise<Worktree | null> {
+async function findWorktreeBySnapshot(
+  cwd: string,
+  opts: { includeStoppedSandbox?: boolean } = {},
+): Promise<Worktree | null> {
   const { realpathSync, existsSync: fsExists } = await import("node:fs");
   const { hashPath, sanitizeName } = await import("../worktree/detect.js");
   const { basename } = await import("node:path");
@@ -1178,12 +1181,15 @@ async function findWorktreeBySnapshot(cwd: string): Promise<Worktree | null> {
   const stackIds = await listStacks();
   for (const stackId of stackIds) {
     const snap = await readSnapshot(stackId).catch(() => null);
-    if (!snap || snap.status === "stopped") continue;
+    if (!snap) continue;
+    if (snap.status === "stopped") {
+      // A stopped non-sandbox stack has nothing left to reach in the OS;
+      // a stopped sandbox stack may still own a VM that --purge needs to destroy.
+      if (!(opts.includeStoppedSandbox && snap.sandbox === true)) continue;
+    }
 
     const snapPath = safeReal(snap.worktree_path);
     if (!cwdReal.startsWith(snapPath)) continue;
-
-    if (!fsExists(snapPath)) continue;
 
     const name = sanitizeName(basename(snapPath));
     const id = hashPath(snapPath);

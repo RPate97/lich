@@ -45,7 +45,7 @@ export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResul
 
   const snap = ctx.snapshot!;
   const rtCtx = sandboxCtxFromSnapshot(ctx.worktree, snap, ctx.lichYamlPath);
-  const runtime: SandboxRuntimeLike = ctx.runtime ?? _runtimeFactory.current(ctx.sandboxConfig!);
+  const runtime: SandboxRuntimeLike = ctx.runtime ?? _runtimeFactory.current(ctx.sandboxConfig ?? { backend: 'tart' });
 
   if (ctx.kind === 'down') {
     const purge = (ctx.argv as { purge?: boolean } | undefined)?.purge ?? false;
