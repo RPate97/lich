@@ -136,8 +136,24 @@ export class SandboxRuntime {
     await this.bringUp(ctx, runVm);
   }
 
+  // The guest network lags VM "running"; tart ip fails until DHCP completes.
+  private async ipWithRetry(runVm: string, timeoutMs = 60_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      try {
+        const ip = (await this.backend.ip(runVm)).trim();
+        if (ip) return ip;
+      } catch (e) {
+        lastErr = e;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    throw new Error(`sandbox VM '${runVm}' got no IP within ${timeoutMs}ms${lastErr ? `: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ''}`);
+  }
+
   private async bringUp(ctx: RuntimeContext, runVm: string): Promise<void> {
-    const target = await this.backend.ip(runVm);
+    const target = await this.ipWithRetry(runVm);
     await this.sync.start({
       name: runVm,
       hostPath: ctx.worktreePath,
