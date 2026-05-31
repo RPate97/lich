@@ -145,13 +145,11 @@ export interface SandboxRuntime {
    * The actual VM data lives in Tart's own storage; we only manage metadata.
    */
   snapshot_store?: string;
-  /** Source sync into the VM. node_modules + .git are always ignored. */
+  /** Mutagen source sync into the VM. node_modules + .git are always ignored. */
   sync?: SandboxSyncConfig;
 }
 
 export interface SandboxSyncConfig {
-  /** Transport. Defaults to copy (mutagen needs an sshd in the image). */
-  backend?: "mutagen" | "copy";
   /** Extra ignore globs, unioned with the always-ignored node_modules + .git. */
   ignore?: string[];
   /** Extra flags passed through to `mutagen sync create`. */

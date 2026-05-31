@@ -9,7 +9,6 @@ import { goldenName, runName } from './naming.js';
 import { computeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
 import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
-import { CopySync } from './copy-sync.js';
 
 export interface RuntimeContext {
   worktreeId: string;
@@ -54,9 +53,7 @@ export class SandboxRuntime {
     const storeDir = opts.snapshotStore ? '' : (config.snapshot_store ?? join(DEFAULT_LICH_HOME, 'sandboxes'));
     this.store = opts.snapshotStore ?? new SnapshotStore(storeDir);
     this.bootWaitMs = opts.bootWaitMs ?? 5000;
-    this.sync = opts.sync ?? (config.sync?.backend === 'mutagen'
-      ? new MutagenSync(new RealMutagenCli(), new RealSshTransport())
-      : new CopySync());
+    this.sync = opts.sync ?? new MutagenSync(new RealMutagenCli(), new RealSshTransport());
   }
 
   private resolvedIgnore(): string[] {

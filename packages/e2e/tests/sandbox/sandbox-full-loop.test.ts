@@ -25,8 +25,6 @@ runtime:
   sandbox:
     backend: tart
     image: ${IMAGE}
-    sync:
-      backend: copy
 profiles:
   "${PROFILE}":
     default: true
@@ -62,7 +60,6 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
     const config: SandboxConfig = {
       backend: "tart",
       image: IMAGE,
-      sync: { backend: "copy" },
     } as SandboxConfig;
     runtime = new SandboxRuntime(config, {
       snapshotStore: new SnapshotStore(storeDir),

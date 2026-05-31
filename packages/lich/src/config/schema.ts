@@ -343,7 +343,6 @@ const runtimeSchema = {
           type: "object",
           additionalProperties: false,
           properties: {
-            backend: { type: "string", enum: ["mutagen", "copy"] },
             ignore: { type: "array", items: { type: "string" } },
             mutagen_flags: { type: "array", items: { type: "string" } },
           },

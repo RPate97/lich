@@ -92,13 +92,6 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "backend": {
-                  "type": "string",
-                  "enum": [
-                    "mutagen",
-                    "copy"
-                  ]
-                },
                 "ignore": {
                   "type": "array",
                   "items": {
