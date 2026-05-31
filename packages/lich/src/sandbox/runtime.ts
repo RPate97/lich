@@ -7,6 +7,9 @@ import { TartBackend } from './tart.js';
 import { SnapshotStore } from './snapshot-store.js';
 import { goldenName, runName } from './naming.js';
 import { computeInputsHash } from './inputs-hash.js';
+import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
+import { MutagenSync } from './mutagen.js';
+import { CopySync } from './copy-sync.js';
 
 export interface RuntimeContext {
   worktreeId: string;
@@ -34,6 +37,7 @@ export class SandboxRuntime {
   private readonly store: SnapshotStore;
   private readonly config: SandboxConfigBlock;
   private readonly bootWaitMs: number;
+  private readonly sync: SandboxSync;
 
   constructor(
     config: SandboxConfigBlock,
@@ -42,6 +46,7 @@ export class SandboxRuntime {
       snapshotStore?: SnapshotStore;
       /** Wait after VM start before exec, letting the guest agent come up. Injectable for tests. */
       bootWaitMs?: number;
+      sync?: SandboxSync;
     } = {},
   ) {
     this.config = config;
@@ -49,6 +54,11 @@ export class SandboxRuntime {
     const storeDir = opts.snapshotStore ? '' : (config.snapshot_store ?? join(DEFAULT_LICH_HOME, 'sandboxes'));
     this.store = opts.snapshotStore ?? new SnapshotStore(storeDir);
     this.bootWaitMs = opts.bootWaitMs ?? 5000;
+    this.sync = opts.sync ?? (config.sync?.backend === 'mutagen' ? new MutagenSync() : new CopySync());
+  }
+
+  private resolvedIgnore(): string[] {
+    return [...new Set([...DEFAULT_IGNORE, ...(this.config.sync?.ignore ?? [])])];
   }
 
   async up(ctx: RuntimeContext): Promise<UpOutcome> {
@@ -119,7 +129,6 @@ export class SandboxRuntime {
       image: this.config.image ?? 'lich-sandbox-base',
       memoryMb: this.config.memory ?? 4096,
       cpus: this.config.cpus ?? 4,
-      mounts: [{ hostPath: ctx.worktreePath, guestPath: '/workspace', readOnly: false }],
     };
     await this.backend.create(sandboxConfig);
     await this.backend.start(runVm);
@@ -128,6 +137,15 @@ export class SandboxRuntime {
   }
 
   private async bringUp(ctx: RuntimeContext, runVm: string): Promise<void> {
+    const target = await this.backend.ip(runVm);
+    await this.sync.start({
+      name: runVm,
+      hostPath: ctx.worktreePath,
+      target,
+      guestPath: '/workspace',
+      ignore: this.resolvedIgnore(),
+      extraFlags: this.config.sync?.mutagen_flags,
+    });
     const result = await this.backend.exec(runVm,
       ['lich', 'up', ctx.profileName],
       { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true });
@@ -145,6 +163,7 @@ export class SandboxRuntime {
         ['lich', 'down'],
         { cwd: '/workspace', timeoutMs: 120_000, inheritStdio: true });
     }
+    await this.sync.terminate(runVm);
     if (opts.purge) {
       await this.backend.destroy(runVm);
     } else {

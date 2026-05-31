@@ -339,6 +339,15 @@ const runtimeSchema = {
         cpus: { type: "integer", minimum: 1 },
         warm_fork: { type: "boolean" },
         snapshot_store: { type: "string" },
+        sync: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            backend: { type: "string", enum: ["mutagen", "copy"] },
+            ignore: { type: "array", items: { type: "string" } },
+            mutagen_flags: { type: "array", items: { type: "string" } },
+          },
+        },
       },
     },
   },

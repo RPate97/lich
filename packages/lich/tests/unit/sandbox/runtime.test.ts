@@ -83,8 +83,12 @@ describe("SandboxRuntime", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  const noopSync = {
+    async start() {}, async flush() {}, async terminate() {}, async status() { return ""; },
+  };
+
   function runtime(config = makeConfig()) {
-    return new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0 });
+    return new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: noopSync as any });
   }
 
   describe("up", () => {
@@ -227,6 +231,66 @@ describe("SandboxRuntime", () => {
 
     it("throws when the run VM is absent", async () => {
       await expect(runtime().exec(ctx(), ["lich", "logs"])).rejects.toThrow(/Run 'lich up/);
+    });
+  });
+
+  describe("source sync", () => {
+    class FakeSync {
+      startCalls: any[] = [];
+      constructor(private readonly log: string[]) {}
+      async start(opts: any) { this.log.push(`sync.start:${opts.name}`); this.startCalls.push(opts); }
+      async flush(name: string) { this.log.push(`sync.flush:${name}`); }
+      async terminate(name: string) { this.log.push(`sync.terminate:${name}`); }
+      async status() { return ""; }
+    }
+
+    function withSync(config = makeConfig()) {
+      const sync = new FakeSync(backend.ops);
+      const rt = new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any });
+      return { rt, sync };
+    }
+
+    it("cold path: sync.start runs after start, before in-VM lich up", async () => {
+      const { rt } = withSync();
+      await rt.up(ctx());
+      const iStart = backend.ops.indexOf(`start:${RUN}`);
+      const iSync = backend.ops.indexOf(`sync.start:${RUN}`);
+      const iUp = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
+      expect(iStart).toBeGreaterThanOrEqual(0);
+      expect(iSync).toBeGreaterThan(iStart);
+      expect(iUp).toBeGreaterThan(iSync);
+    });
+
+    it("sync ignore list always contains node_modules; guest path is /workspace", async () => {
+      const { rt, sync } = withSync();
+      await rt.up(ctx());
+      expect(sync.startCalls[0].ignore).toContain("node_modules");
+      expect(sync.startCalls[0].guestPath).toBe("/workspace");
+      expect(sync.startCalls[0].hostPath).toBe(tmp);
+    });
+
+    it("fork path also starts sync", async () => {
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+      store.upsert({ inputsHash: hash, vmName: golden, profileName: "dev", lichYamlSnapshot: "", createdAt: "t" });
+      backend.states.set(golden, "stopped");
+      const { sync } = withSync();
+      await (new SandboxRuntime(makeConfig(), { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any })).up(ctx());
+      expect(sync.startCalls.some((c) => c.name === RUN)).toBe(true);
+    });
+
+    it("down terminates the sync session", async () => {
+      backend.states.set(RUN, "running");
+      const { rt } = withSync();
+      await rt.down(ctx());
+      expect(backend.ops).toContain(`sync.terminate:${RUN}`);
+    });
+
+    it("config sync.ignore is unioned into the resolved ignore list", async () => {
+      const { rt, sync } = withSync(makeConfig({ sync: { ignore: ["coverage"] } } as any));
+      await rt.up(ctx());
+      expect(sync.startCalls[0].ignore).toContain("coverage");
+      expect(sync.startCalls[0].ignore).toContain("node_modules");
     });
   });
 });
