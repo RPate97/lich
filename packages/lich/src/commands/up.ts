@@ -308,7 +308,9 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     worktreePhase.end("ok");
 
     // Route through sandbox runtime when runtime.sandbox is configured.
-    const sandboxCfg = config.runtime?.sandbox;
+    // LICH_SANDBOX_GUEST is set by SandboxRuntime when it runs `lich up` inside
+    // the VM; the guest runs the stack natively, never re-entering the sandbox.
+    const sandboxCfg = process.env.LICH_SANDBOX_GUEST ? undefined : config.runtime?.sandbox;
     if (sandboxCfg) {
       const sbRuntime = new SandboxRuntime(sandboxCfg);
       const outcome = await sbRuntime.up({

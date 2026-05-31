@@ -269,6 +269,13 @@ describe("SandboxRuntime", () => {
       expect(sync.startCalls[0].hostPath).toBe(tmp);
     });
 
+    it("in-VM `lich up` runs with LICH_SANDBOX_GUEST=1 (nesting guard)", async () => {
+      const { rt } = withSync();
+      await rt.up(ctx());
+      const i = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
+      expect(backend.execEnvs[i]?.LICH_SANDBOX_GUEST).toBe("1");
+    });
+
     it("fork path also starts sync", async () => {
       const hash = computeInputsHash(lichYaml, "dev");
       const golden = goldenName(hash);
