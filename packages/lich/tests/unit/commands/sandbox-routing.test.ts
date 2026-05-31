@@ -31,7 +31,7 @@ describe('maybeRouteToSandbox skeleton', () => {
   test('throws for marker-present kind that has no branch yet', async () => {
     const r = new FakeRuntime();
     await expect(maybeRouteToSandbox(ctx({
-      kind: 'logs',
+      kind: 'stacks',
       snapshot: sandboxSnap,
       runtime: r as any,
     }))).rejects.toThrow(/not yet implemented/);
@@ -75,6 +75,52 @@ describe('maybeRouteToSandbox — exec branch', () => {
       kind: 'exec',
       snapshot: { sandbox: false } as any,
       argv: ['api', 'ls'],
+      runtime: r as any,
+    }));
+    expect(result).toBeNull();
+    expect(r.calls).toHaveLength(0);
+  });
+});
+
+describe('maybeRouteToSandbox — logs branch', () => {
+  test('proxies `lich logs` with service args + flags, no timeout when following', async () => {
+    const r = new FakeRuntime();
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'logs',
+      snapshot: sandboxSnap,
+      argv: { sources: ['api'], follow: true },
+      runtime: r as any,
+    }));
+    expect(result).not.toBeNull();
+    expect(result!.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0]!.method).toBe('exec');
+    const [, args, opts] = r.calls[0]!.args as [unknown, string[], any];
+    expect(args).toEqual(['lich', 'logs', 'api', '--follow']);
+    expect(opts.inheritStdio).toBe(true);
+    expect(opts.timeoutMs).toBeUndefined();
+  });
+
+  test('non-follow logs gets a finite timeout and --no-follow', async () => {
+    const r = new FakeRuntime();
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'logs',
+      snapshot: sandboxSnap,
+      argv: { sources: [], follow: false, tail: 50 },
+      runtime: r as any,
+    }));
+    const [, args, opts] = r.calls[0]!.args as [unknown, string[], any];
+    expect(args).toEqual(['lich', 'logs', '--no-follow', '--tail', '50']);
+    expect(opts.timeoutMs).toBe(30_000);
+    expect(result!.exitCode).toBe(0);
+  });
+
+  test('returns null when not a sandbox stack', async () => {
+    const r = new FakeRuntime();
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'logs',
+      snapshot: { sandbox: false } as any,
+      argv: { sources: ['api'], follow: false },
       runtime: r as any,
     }));
     expect(result).toBeNull();

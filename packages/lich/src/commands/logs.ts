@@ -1,9 +1,14 @@
 import { open, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
 import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
-import { detectWorktree } from "../worktree/detect.js";
+import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import type { LifecyclePhase } from "../lifecycle/executor.js";
+import { parseConfig } from "../config/parse.js";
+import { isSandboxStack } from "../sandbox/marker.js";
+import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
 
 export interface RunLogsInput {
   /** Source filter: service names or phase names. If omitted, all sources. */
@@ -62,20 +67,39 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
   const holder = { code: 0 };
 
   const done = (async () => {
-    let stackId: string;
+    let worktree: Worktree;
     try {
-      stackId = detectWorktree(cwd).stack_id;
+      worktree = detectWorktree(cwd);
     } catch {
       writeLine(out, "no stack found for this worktree");
       holder.code = 1;
       return;
     }
+    const stackId = worktree.stack_id;
 
     const snapshot = await readSnapshot(stackId);
     if (snapshot === null) {
       writeLine(out, "no stack found for this worktree");
       holder.code = 1;
       return;
+    }
+
+    if (isSandboxStack(snapshot)) {
+      const configPath = join(worktree.path, "lich.yaml");
+      const parsed = existsSync(configPath) ? await parseConfig(configPath) : null;
+      const sandboxConfig = parsed?.ok ? parsed.config.runtime?.sandbox : undefined;
+      const routed = await maybeRouteToSandbox({
+        kind: "logs",
+        snapshot,
+        worktree,
+        lichYamlPath: configPath,
+        argv: { sources: input.sources, follow: input.follow, tail: input.count },
+        sandboxConfig,
+      });
+      if (routed !== null) {
+        holder.code = routed.exitCode;
+        return;
+      }
     }
 
     const resolved = resolveSources(snapshot, input.sources, out);

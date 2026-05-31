@@ -28,6 +28,12 @@ export interface RouteResult {
   message?: string;
 }
 
+interface LogsArgv {
+  sources?: ReadonlyArray<string>;
+  follow?: boolean;
+  tail?: number;
+}
+
 export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResult | null> {
   if (!isSandboxStack(ctx.snapshot)) return null;
 
@@ -44,6 +50,19 @@ export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResul
   if (ctx.kind === 'exec') {
     const userArgv = (ctx.argv as ReadonlyArray<string> | undefined) ?? [];
     const result = await runtime.exec(rtCtx, ['lich', 'exec', '--', ...userArgv], { inheritStdio: true });
+    return { exitCode: result.exitCode };
+  }
+
+  if (ctx.kind === 'logs') {
+    const a = (ctx.argv as LogsArgv | undefined) ?? {};
+    const follow = a.follow === true;
+    const args = ['lich', 'logs', ...(a.sources ?? [])];
+    args.push(follow ? '--follow' : '--no-follow');
+    if (a.tail !== undefined) args.push('--tail', String(a.tail));
+    const result = await runtime.exec(rtCtx, args, {
+      inheritStdio: true,
+      timeoutMs: follow ? undefined : 30_000,
+    });
     return { exitCode: result.exitCode };
   }
 
