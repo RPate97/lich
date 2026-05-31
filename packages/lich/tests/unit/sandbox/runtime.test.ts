@@ -1,168 +1,207 @@
-import { describe, test, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { SandboxBackend, SandboxConfig, SandboxState, ExecResult, ExecOptions } from '../../../src/sandbox/backend.js';
-import { SandboxRuntime } from '../../../src/sandbox/runtime.js';
-import { SnapshotStore } from '../../../src/sandbox/snapshot-store.js';
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SandboxRuntime } from "../../../src/sandbox/runtime.js";
+import { SnapshotStore } from "../../../src/sandbox/snapshot-store.js";
+import { goldenName, runName } from "../../../src/sandbox/naming.js";
+import { computeInputsHash } from "../../../src/sandbox/inputs-hash.js";
+import type {
+  SandboxBackend,
+  SandboxConfig,
+  SandboxState,
+  ExecResult,
+  ExecOptions,
+} from "../../../src/sandbox/backend.js";
+import type { SandboxRuntime as SandboxConfigType } from "../../../src/config/types.js";
 
 class FakeBackend implements SandboxBackend {
-  public states = new Map<string, SandboxState>();
-  public ops: string[] = [];
-  public execLog: Array<{ name: string; cmd: ReadonlyArray<string> }> = [];
+  ops: string[] = [];
+  states = new Map<string, SandboxState["state"]>();
 
-  async create(c: SandboxConfig) { this.ops.push(`create ${c.name}`); this.states.set(c.name, { name: c.name, state: 'stopped' }); }
-  async start(n: string) { this.ops.push(`start ${n}`); this.states.set(n, { name: n, state: 'running' }); }
-  async stop(n: string) { this.ops.push(`stop ${n}`); this.states.set(n, { name: n, state: 'stopped' }); }
-  async destroy(n: string) { this.ops.push(`destroy ${n}`); this.states.delete(n); }
-  async suspend(n: string) { this.ops.push(`suspend ${n}`); this.states.set(n, { name: n, state: 'suspended' }); }
-  async resume(n: string) { this.ops.push(`resume ${n}`); this.states.set(n, { name: n, state: 'running' }); }
-  async clone(s: string, d: string) { this.ops.push(`clone ${s} ${d}`); this.states.set(d, { name: d, state: 'suspended' }); }
-  async exec(n: string, cmd: ReadonlyArray<string>, _opts?: ExecOptions): Promise<ExecResult> {
-    this.execLog.push({ name: n, cmd });
-    return { exitCode: 0, stdout: '', stderr: '' };
+  async create(config: SandboxConfig): Promise<void> {
+    this.ops.push(`create:${config.name}`);
+    this.states.set(config.name, "stopped");
   }
-  async ip(_n: string) { return '10.0.0.1'; }
-  async list() { return Array.from(this.states.values()); }
-  async inspect(n: string) { return this.states.get(n) ?? { name: n, state: 'absent' as const }; }
+  async start(name: string): Promise<void> {
+    this.ops.push(`start:${name}`);
+    this.states.set(name, "running");
+  }
+  async stop(name: string): Promise<void> {
+    this.ops.push(`stop:${name}`);
+    this.states.set(name, "stopped");
+  }
+  async destroy(name: string): Promise<void> {
+    this.ops.push(`destroy:${name}`);
+    this.states.delete(name);
+  }
+  async suspend(name: string): Promise<void> {
+    this.ops.push(`suspend:${name}`);
+    this.states.set(name, "suspended");
+  }
+  async resume(name: string): Promise<void> {
+    this.ops.push(`resume:${name}`);
+    this.states.set(name, "running");
+  }
+  async clone(source: string, dest: string): Promise<void> {
+    this.ops.push(`clone:${source}->${dest}`);
+    this.states.set(dest, "suspended");
+  }
+  async exec(
+    name: string,
+    cmd: readonly string[],
+    _opts?: ExecOptions,
+  ): Promise<ExecResult> {
+    this.ops.push(`exec:${name}:${cmd.join(" ")}`);
+    return { exitCode: 0, stdout: "", stderr: "" };
+  }
+  async ip(): Promise<string> {
+    return "10.0.0.1";
+  }
+  async list(): Promise<readonly SandboxState[]> {
+    return [...this.states.entries()].map(([name, state]) => ({ name, state }));
+  }
+  async inspect(name: string): Promise<SandboxState> {
+    return { name, state: this.states.get(name) ?? "absent" };
+  }
 }
 
-function makeCtx(tmp: string, profile: string) {
-  const lichYaml = join(tmp, 'lich.yaml');
-  writeFileSync(lichYaml, `version: "1"\nprofile: ${profile}\n`);
-  return {
-    worktreeId: 'wt1',
-    worktreePath: tmp,
-    lichYamlPath: lichYaml,
-    profileName: profile,
-  };
+function makeConfig(
+  overrides: Partial<SandboxConfigType> = {},
+): SandboxConfigType {
+  return { backend: "tart", image: "lich-sandbox-base", warm_fork: true, ...overrides };
 }
 
-describe('SandboxRuntime.up', () => {
+describe("SandboxRuntime", () => {
   let tmp: string;
+  let lichYaml: string;
   let backend: FakeBackend;
   let store: SnapshotStore;
-  let runtime: SandboxRuntime;
+  const ctx = () => ({
+    worktreeId: "wt123",
+    worktreePath: tmp,
+    lichYamlPath: lichYaml,
+    profileName: "dev",
+  });
+  const RUN = runName("wt123", "dev");
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'lich-runtime-'));
+    tmp = mkdtempSync(join(tmpdir(), "lich-runtime-"));
+    lichYaml = join(tmp, "lich.yaml");
+    writeFileSync(lichYaml, 'version: "1"\n');
     backend = new FakeBackend();
-    store = new SnapshotStore(mkdtempSync(join(tmpdir(), 'lich-snap-')));
-    runtime = new SandboxRuntime(
-      { backend: 'tart', warm_fork: true },
-      { backend, snapshotStore: store, sshWaitMs: 0 },
-    );
+    store = new SnapshotStore(mkdtempSync(join(tmpdir(), "lich-store-")));
   });
 
-  test('cold-boot path: creates VM, runs lich up, snapshots as golden', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    const outcome = await runtime.up(ctx);
-    expect(outcome.path).toBe('cold');
-    expect(backend.ops).toContain('create lich-run-wt1-dev');
-    expect(backend.ops).toContain('start lich-run-wt1-dev');
-    expect(backend.execLog).toContainEqual({ name: 'lich-run-wt1-dev', cmd: ['lich', 'up', 'dev'] });
-    expect(backend.ops).toContain('suspend lich-run-wt1-dev');
-    expect(backend.ops.some(op => op.startsWith('clone lich-run-wt1-dev lich-golden-'))).toBe(true);
-    expect(backend.ops).toContain('resume lich-run-wt1-dev');
-    expect(store.list()).toHaveLength(1);
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('warm-fork path: finds golden, clones it, resumes', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    // First up to create the golden.
-    await runtime.up(ctx);
-    backend.ops.length = 0;
-    backend.execLog.length = 0;
-    // Destroy the run VM (simulating end of session).
-    await backend.destroy('lich-run-wt1-dev');
-    backend.ops.length = 0;
+  function runtime(config = makeConfig()) {
+    return new SandboxRuntime(config, { backend, snapshotStore: store, sshWaitMs: 0 });
+  }
 
-    // Second up — should fork from golden.
-    const outcome = await runtime.up(ctx);
-    expect(outcome.path).toBe('warm');
-    // Should NOT have re-run lich up inside the VM.
-    expect(backend.execLog.some(e => e.cmd.join(' ').includes('lich up'))).toBe(false);
-    expect(backend.ops.some(op => op.startsWith('clone lich-golden-'))).toBe(true);
-    expect(backend.ops).toContain('resume lich-run-wt1-dev');
+  describe("up", () => {
+    it("cold-boots when no golden exists and warm_fork enabled", async () => {
+      const outcome = await runtime().up(ctx());
+      expect(outcome.path).toBe("cold");
+      expect(outcome.vmName).toBe(RUN);
+      expect(backend.ops).toContain(`create:${RUN}`);
+      expect(backend.ops).toContain(`start:${RUN}`);
+      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+    });
+
+    it("snapshots the run VM into a golden after a cold boot", async () => {
+      await runtime().up(ctx());
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+      expect(backend.ops).toContain(`suspend:${RUN}`);
+      expect(backend.ops).toContain(`clone:${RUN}->${golden}`);
+      expect(backend.ops).toContain(`resume:${RUN}`);
+      expect(store.findByHash(hash)?.vmName).toBe(golden);
+    });
+
+    it("warm-forks from an existing golden without re-running lich up", async () => {
+      // Seed a golden into both the store and the backend (suspended).
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+      store.upsert({
+        inputsHash: hash,
+        vmName: golden,
+        profileName: "dev",
+        lichYamlSnapshot: 'version: "1"\n',
+        createdAt: "2026-05-30T00:00:00Z",
+      });
+      backend.states.set(golden, "suspended");
+
+      const outcome = await runtime().up(ctx());
+      expect(outcome.path).toBe("warm");
+      expect(backend.ops).toContain(`clone:${golden}->${RUN}`);
+      expect(backend.ops).toContain(`resume:${RUN}`);
+      expect(backend.ops.some((o) => o.startsWith(`exec:${RUN}:lich up`))).toBe(false);
+    });
+
+    it("is idempotent when the run VM is already running", async () => {
+      backend.states.set(RUN, "running");
+      const outcome = await runtime().up(ctx());
+      expect(outcome.path).toBe("warm");
+      expect(backend.ops).toEqual([]);
+    });
+
+    it("resumes a suspended run VM", async () => {
+      backend.states.set(RUN, "suspended");
+      const outcome = await runtime().up(ctx());
+      expect(outcome.path).toBe("warm");
+      expect(backend.ops).toContain(`resume:${RUN}`);
+    });
+
+    it("does not snapshot a golden when warm_fork is disabled", async () => {
+      const hash = computeInputsHash(lichYaml, "dev");
+      const outcome = await runtime(makeConfig({ warm_fork: false })).up(ctx());
+      expect(outcome.path).toBe("cold");
+      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops.some((o) => o.startsWith("clone:"))).toBe(false);
+      expect(store.findByHash(hash)).toBeUndefined();
+    });
+
+    it("throws when the in-VM lich up fails", async () => {
+      backend.exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
+      await expect(runtime().up(ctx())).rejects.toThrow(/lich up dev.*exit 1/);
+    });
   });
 
-  test('warm-fork disabled: always cold-boots', async () => {
-    runtime = new SandboxRuntime(
-      { backend: 'tart', warm_fork: false },
-      { backend, snapshotStore: store, sshWaitMs: 0 },
-    );
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.up(ctx);
-    backend.ops.length = 0;
-    backend.execLog.length = 0;
-    await backend.destroy('lich-run-wt1-dev');
-    backend.ops.length = 0;
+  describe("down", () => {
+    it("runs in-VM lich down then stops the run VM by default", async () => {
+      backend.states.set(RUN, "running");
+      await runtime().down(ctx());
+      expect(backend.ops).toContain(`exec:${RUN}:lich down`);
+      expect(backend.ops).toContain(`stop:${RUN}`);
+      expect(backend.ops).not.toContain(`destroy:${RUN}`);
+    });
 
-    await runtime.up(ctx);
-    expect(backend.execLog).toContainEqual({ name: 'lich-run-wt1-dev', cmd: ['lich', 'up', 'dev'] });
+    it("destroys the run VM when purge is set", async () => {
+      backend.states.set(RUN, "running");
+      await runtime().down(ctx(), { purge: true });
+      expect(backend.ops).toContain(`destroy:${RUN}`);
+      expect(backend.ops).not.toContain(`stop:${RUN}`);
+    });
+
+    it("is a no-op when the run VM is absent", async () => {
+      await runtime().down(ctx());
+      expect(backend.ops).toEqual([]);
+    });
   });
 
-  test('existing running VM: idempotent', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.up(ctx);
-    backend.ops.length = 0;
-    const outcome = await runtime.up(ctx);
-    expect(outcome.path).toBe('warm');
-    expect(backend.ops).toEqual([]);
-  });
+  describe("exec", () => {
+    it("proxies into the running run VM", async () => {
+      backend.states.set(RUN, "running");
+      const result = await runtime().exec(ctx(), ["lich", "logs"]);
+      expect(result.exitCode).toBe(0);
+      expect(backend.ops).toContain(`exec:${RUN}:lich logs`);
+    });
 
-  test('suspended run VM: resumes', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.up(ctx);
-    await backend.suspend('lich-run-wt1-dev');
-    backend.ops.length = 0;
-    const outcome = await runtime.up(ctx);
-    expect(outcome.path).toBe('warm');
-    expect(backend.ops).toContain('resume lich-run-wt1-dev');
-  });
-
-  test('changing profile creates a different run VM and golden', async () => {
-    await runtime.up(makeCtx(tmp, 'dev'));
-    const ctx2 = makeCtx(tmp, 'dev:heavy');
-    await runtime.up(ctx2);
-    expect(store.list()).toHaveLength(2);
-  });
-});
-
-describe('SandboxRuntime.down', () => {
-  let tmp: string;
-  let backend: FakeBackend;
-  let runtime: SandboxRuntime;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'lich-runtime-'));
-    backend = new FakeBackend();
-    runtime = new SandboxRuntime(
-      { backend: 'tart', warm_fork: true },
-      { backend, snapshotStore: new SnapshotStore(mkdtempSync(join(tmpdir(), 'lich-snap-'))), sshWaitMs: 0 },
-    );
-  });
-
-  test('down stops the run VM (default, not purge)', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.up(ctx);
-    backend.ops.length = 0;
-    await runtime.down(ctx);
-    expect(backend.ops).toContain('stop lich-run-wt1-dev');
-    expect(backend.ops).not.toContain('destroy lich-run-wt1-dev');
-  });
-
-  test('down --purge destroys the VM', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.up(ctx);
-    backend.ops.length = 0;
-    await runtime.down(ctx, { purge: true });
-    expect(backend.ops).toContain('destroy lich-run-wt1-dev');
-  });
-
-  test('down on absent VM is a no-op', async () => {
-    const ctx = makeCtx(tmp, 'dev');
-    await runtime.down(ctx);
-    expect(backend.ops).toEqual([]);
+    it("throws when the run VM is absent", async () => {
+      await expect(runtime().exec(ctx(), ["lich", "logs"])).rejects.toThrow(/run 'lich up'/);
+    });
   });
 });

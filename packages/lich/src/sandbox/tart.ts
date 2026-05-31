@@ -19,12 +19,10 @@ const stateMap: Record<string, SandboxState['state']> = {
   suspended: 'suspended',
 };
 
-const DEFAULT_SSH_KEY = `${process.env.HOME}/.tart/keys/admin/id_ed25519`;
-
 export class TartBackend implements SandboxBackend {
   constructor(
     private readonly cli: TartCli = new RealTartCli(),
-    private readonly sshKey: string = DEFAULT_SSH_KEY,
+    private readonly tartPath: string = "tart",
   ) {}
 
   async create(config: SandboxConfig): Promise<void> {
