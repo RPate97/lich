@@ -44,7 +44,7 @@ describe("dashboard server — /healthz", () => {
 
     const res = await fetch(url("/healthz"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toEqual({ ok: true });
   });
 });
@@ -71,7 +71,7 @@ describe("dashboard server — GET /api/stacks", () => {
 
     const res = await fetch(url("/api/stacks"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(1);
     expect(body[0]).toMatchObject({
@@ -118,7 +118,7 @@ describe("dashboard server — GET /api/stacks/:id", () => {
 
     const res = await fetch(url("/api/stacks/stack-1"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toMatchObject({
       id: "stack-1",
       worktree_name: "feature-x",
@@ -161,7 +161,7 @@ describe("dashboard server — GET /api/stacks/:id/services/:service", () => {
 
     const res = await fetch(url("/api/stacks/stack-1/services/api"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toMatchObject({
       name: "api",
       kind: "owned",
@@ -440,7 +440,7 @@ describe("dashboard server — refresh()", () => {
     server = await startDashboardServer({ port: 0, stateRoot });
 
     let res = await fetch(url("/api/stacks"));
-    let body = await res.json();
+    let body: any = await res.json();
     expect(body).toHaveLength(1);
 
     // contract: cache only updates when refresh() is called (driven by watcher, not handler)
@@ -464,7 +464,7 @@ describe("dashboard server — refresh()", () => {
     );
 
     res = await fetch(url("/api/stacks"));
-    body = await res.json();
+    body = await res.json() as any;
     expect(body).toHaveLength(2);
     expect(body.map((s: { id: string }) => s.id).sort()).toEqual([
       "stack-1",
@@ -485,7 +485,7 @@ describe("dashboard server — refresh()", () => {
     server = await startDashboardServer({ port: 0, stateRoot });
 
     const res = await fetch(url("/api/stacks"));
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toHaveLength(1);
     expect(body[0].id).toBe("stack-1");
   });
@@ -633,7 +633,7 @@ describe("dashboard server — GET /api/routing", () => {
 
     const res = await fetch(url("/api/routing"));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toEqual([
       { hostname: "api.feature-x", upstream_url: "http://127.0.0.1:9014" },
       { hostname: "web.feature-x", upstream_url: "http://127.0.0.1:9015" },
@@ -644,7 +644,7 @@ describe("dashboard server — GET /api/routing", () => {
     server = await startDashboardServer({ port: 0, stateRoot });
     const res = await fetch(url("/api/routing"));
     expect(res.status).toBe(503);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body).toHaveProperty("error");
   });
 
@@ -736,7 +736,7 @@ describe("dashboard server — POST /api/routing/reload", () => {
 
     const res = await fetch(url("/api/routing/reload"), { method: "POST" });
     expect(res.status).toBe(500);
-    const body = await res.json();
+    const body = await res.json() as any;
     expect(body.error).toMatch(/boom/);
   });
 

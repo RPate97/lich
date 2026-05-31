@@ -563,15 +563,18 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       beforeDownPhase.end("ok", "hooks done");
     }
-    lifecycleStatus.before_down = beforeDownFailure
-      ? {
-          status: "failed",
-          failed_index: beforeDownFailure.index,
-          total: entryCount,
-          failed_cmd: truncateFailedCmd(beforeDownFailure.cmd),
-          log_path: beforeDownLogPath,
-        }
-      : { status: "ok" };
+    if (beforeDownFailure !== null) {
+      const f = beforeDownFailure as { index: number; cmd: string };
+      lifecycleStatus.before_down = {
+        status: "failed",
+        failed_index: f.index,
+        total: entryCount,
+        failed_cmd: truncateFailedCmd(f.cmd),
+        log_path: beforeDownLogPath,
+      };
+    } else {
+      lifecycleStatus.before_down = { status: "ok" };
+    }
   }
 
   if (composeNames.length > 0) {
@@ -747,15 +750,18 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       afterDownPhase.end("ok", "hooks done");
     }
-    lifecycleStatus.after_down = afterDownFailure
-      ? {
-          status: "failed",
-          failed_index: afterDownFailure.index,
-          total: entryCount,
-          failed_cmd: truncateFailedCmd(afterDownFailure.cmd),
-          log_path: afterDownLogPath,
-        }
-      : { status: "ok" };
+    if (afterDownFailure !== null) {
+      const f = afterDownFailure as { index: number; cmd: string };
+      lifecycleStatus.after_down = {
+        status: "failed",
+        failed_index: f.index,
+        total: entryCount,
+        failed_cmd: truncateFailedCmd(f.cmd),
+        log_path: afterDownLogPath,
+      };
+    } else {
+      lifecycleStatus.after_down = { status: "ok" };
+    }
   }
 
   try {

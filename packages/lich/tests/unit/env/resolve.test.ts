@@ -60,7 +60,7 @@ function makeProfile(
     env: {},
     env_files: [],
     env_from: [],
-    lifecycle: { before_up: [], after_up: [], before_down: [] },
+    lifecycle: { before_up: [], after_up: [], before_down: [], after_down: [] },
     ...overrides,
   };
 }
@@ -1092,7 +1092,7 @@ describe("resolveEnvForService — per-service env_from", () => {
           cmd: "echo",
         },
       },
-    } as const;
+    } as LichConfig;
 
     const apiEnv = await resolveEnvForService(
       baseInput({ service: { kind: "owned", name: "api" }, config }),
@@ -1122,7 +1122,7 @@ describe("resolveEnvForService — per-service env_from", () => {
           env_from: ['echo "SERVER_SECRET=server-value"'],
         },
       },
-    } as const;
+    } as LichConfig;
 
     const webEnv = await resolveEnvForService(
       baseInput({ service: { kind: "owned", name: "web" }, config }),

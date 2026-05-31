@@ -424,7 +424,7 @@ async function runReadyProbe(
   } else if (typeof readyWhen.cmd === "string" && readyWhen.cmd.length > 0) {
     probePromise = waitForCmdReady({
       shellCmd: readyWhen.cmd as string,
-      env: svcSnap.resolved_env ?? process.env,
+      env: (svcSnap.resolved_env ?? process.env) as Record<string, string>,
       cwd: svcSnap.service_cwd ?? process.cwd(),
       signal,
     });

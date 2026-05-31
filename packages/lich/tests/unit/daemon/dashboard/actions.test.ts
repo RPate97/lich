@@ -248,7 +248,7 @@ describe("dashboard server — POST /api/stacks/:id/stop", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body).toMatchObject({
       ok: true,
       exitCode: 0,
@@ -293,7 +293,7 @@ describe("dashboard server — POST /api/stacks/:id/stop", () => {
     });
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.error).toBe("not_found");
   });
 
@@ -341,7 +341,7 @@ describe("dashboard server — POST /api/stacks/:id/stop", () => {
 
     // 200 (not 500) so the UI can render structured failure detail
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body).toMatchObject({
       ok: false,
       exitCode: 5,
@@ -373,7 +373,7 @@ describe("dashboard server — POST /api/stacks/:id/stop", () => {
     });
 
     expect(res.status).toBe(500);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.error).toBe("internal_server_error");
     expect(body.message).toContain("lich binary not found");
   });
@@ -415,7 +415,7 @@ describe("dashboard server — POST /api/stacks/:id/restart", () => {
       action: "restart",
     });
 
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.stdout).toBe("restart completed");
   });
 

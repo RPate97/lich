@@ -11,6 +11,8 @@ export interface GoldenManifest {
   profileName: string;
   lichYamlSnapshot: string;
   createdAt: string;
+  /** Disk size in bytes; absent on legacy manifests pre-GC. Treated as 0 by gc.selectGoldensToEvict. */
+  sizeBytes?: number;
 }
 
 export class SnapshotStore {

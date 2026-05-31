@@ -11,14 +11,14 @@ const realDownModule = await import("../../../src/commands/down.js");
 const realUpModule = await import("../../../src/commands/up.js");
 
 const runDownSpy = vi.fn(
-  async () => ({ exitCode: 0, warnings: [] }) as { exitCode: number; warnings: unknown[] },
+  async (..._args: unknown[]) => ({ exitCode: 0, warnings: [] as unknown[] }),
 );
 const runUpSpy = vi.fn(
-  async () => ({ exitCode: 0 }) as {
+  async (..._args: unknown[]) => ({ exitCode: 0 } as {
     exitCode: number;
     stackId?: string;
     services?: Array<{ name: string; state: string }>;
-  },
+  }),
 );
 vi.mock("../../../src/commands/down.js", () => ({
   runDown: (...args: unknown[]) => runDownSpy(...args),

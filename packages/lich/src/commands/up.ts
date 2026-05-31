@@ -1139,7 +1139,7 @@ async function startOwned(
     });
 
     const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
-    resolvedCmd = interpolateString(def.cmd, interpCtx, `owned.${name}.cmd`, true);
+    resolvedCmd = interpolateString(def.cmd ?? "", interpCtx, `owned.${name}.cmd`, true);
     resolvedStopCmd = def.stop_cmd
       ? interpolateString(def.stop_cmd, interpCtx, `owned.${name}.stop_cmd`, true)
       : undefined;
@@ -1157,7 +1157,7 @@ async function startOwned(
 
   // Stash the resolved env + cwd so `ready_when.cmd` (run before the service is
   // ready) shells out against the same context the supervised process saw.
-  state.ownedEnv.set(name, env);
+  state.ownedEnv.set(name, env as Record<string, string>);
   state.ownedCwd.set(name, spec.cwd);
 
   // Snapshot teardown fields so `lich down` never needs to re-parse yaml.

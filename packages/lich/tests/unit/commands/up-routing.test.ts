@@ -254,7 +254,7 @@ owned:
     const wtName = snap!.worktree_name;
     expect(wtName).toMatch(/^stack-/);
 
-    const byService = new Map<string, Array<(typeof snap.routing)[0]>>();
+    const byService = new Map<string, Array<NonNullable<NonNullable<typeof snap>['routing']>[number]>>();
     for (const e of snap!.routing!) {
       const list = byService.get(e.service) ?? [];
       list.push(e);

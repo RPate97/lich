@@ -15,6 +15,7 @@ function fakeHandle(result: ExitResult): OwnedHandle {
     exited: Promise.resolve(result),
     stop: async () => {},
     stopWarning: null,
+    logStartOffset: 0,
   };
 }
 
@@ -57,6 +58,7 @@ describe("ProcessExitWatcher.wait", () => {
       }),
       stop: async () => {},
       stopWarning: null,
+      logStartOffset: 0,
     };
 
     const watcher = new ProcessExitWatcher(handle, {

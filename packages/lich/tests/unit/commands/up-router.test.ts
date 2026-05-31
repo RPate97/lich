@@ -7,7 +7,7 @@ import { mock } from "bun:test";
 const realUpModule = await import("../../../src/commands/up.js");
 const realRunUp = realUpModule.runUp;
 
-const runUpSpy = vi.fn(async () => ({ exitCode: 0 }));
+const runUpSpy = vi.fn(async (..._args: unknown[]) => ({ exitCode: 0 }));
 vi.mock("../../../src/commands/up.js", () => ({
   runUp: (...args: unknown[]) => runUpSpy(...args),
 }));

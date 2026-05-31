@@ -18,6 +18,7 @@ function makeSnap(over: Partial<StackSnapshot>): StackSnapshot {
     worktree_path: "/x",
     status: "up",
     started_at: "2026-05-31T00:00:00Z",
+    services: [],
     ...over,
   };
 }

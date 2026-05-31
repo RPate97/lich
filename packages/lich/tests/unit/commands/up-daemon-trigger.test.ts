@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 // hoisted mock — vitest moves vi.mock above the SUT import
-const ensureDaemonRunningSpy = vi.fn(async () => ({
+const ensureDaemonRunningSpy = vi.fn(async (..._args: unknown[]) => ({
   url: "http://127.0.0.1:54321",
   alreadyRunning: false,
 }));
