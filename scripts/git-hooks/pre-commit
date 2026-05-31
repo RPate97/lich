@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scripts/git-hooks/pre-commit
+# Regenerate auto-generated docs and synced mirrors, then check for staleness.
+
+set -e
+
+if git diff --cached --name-only | grep -qE '^(docs/content/|packages/lich/scripts/(sync-content|build-cli-reference|build-yaml-reference|build-interpolation-reference)\.ts|packages/lich/src/commands/help\.ts|packages/lich/src/config/schema\.ts|packages/lich/src/config/interpolation\.ts)'; then
+  echo "[pre-commit] Regenerating docs..."
+  (cd packages/lich && bun run build:docs) || exit 1
+
+  if ! git diff --quiet -- docs/site/reference docs/site/recipes skills/lich-instrument/references docs/content/reference/_generated; then
+    echo "[pre-commit] ERROR: Auto-generated files were regenerated to new content. Unstaged diffs:"
+    git diff --stat -- docs/site/reference docs/site/recipes skills/lich-instrument/references docs/content/reference/_generated
+    echo ""
+    echo "Run 'cd packages/lich && bun run build:docs' and 'git add' the results, then re-commit."
+    exit 1
+  fi
+fi

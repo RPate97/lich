@@ -45,6 +45,7 @@ export default defineConfig({
         text: "Getting started",
         items: [
           { text: "Install + first stack", link: "/getting-started/" },
+          { text: "Why lich", link: "/getting-started/why-lich" },
           {
             text: "Instrument with an agent",
             link: "/getting-started/instrument",
@@ -97,7 +98,6 @@ export default defineConfig({
         text: "Operations",
         items: [
           { text: "Dashboard", link: "/dashboard" },
-          { text: "Feedback", link: "/feedback" },
           {
             text: "Troubleshooting",
             link: "/troubleshooting",

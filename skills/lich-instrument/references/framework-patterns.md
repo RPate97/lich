@@ -23,7 +23,7 @@ owned:
   web:
     cmd: bun run dev          # or `npm run dev` / `pnpm dev` / `yarn dev` — match repo
     cwd: apps/web             # adjust to the actual path
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /             # Next dev returns 200 on / once compilation finishes
       timeout: 60s            # cold-cache compile is slow; 30s often too tight
@@ -52,7 +52,7 @@ owned:
   api:
     cmd: bun run dev          # match the repo's dev script
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health       # most teams expose /health; if not, ask the user
       timeout: 30s
@@ -82,7 +82,7 @@ owned:
   api:
     cmd: python manage.py runserver $PORT
     cwd: apps/api               # or wherever manage.py lives
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /
       timeout: 30s
@@ -109,7 +109,7 @@ owned:
   api:
     cmd: bin/rails server -p $PORT
     cwd: .                       # or apps/web in a monorepo
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /                # or /health if the app defines it
       timeout: 30s
@@ -138,7 +138,7 @@ owned:
   api:
     cmd: uvicorn main:app --reload --port $PORT
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /docs           # FastAPI's OpenAPI docs page; always available in dev
       timeout: 30s
@@ -166,7 +166,7 @@ owned:
   web:
     cmd: bun run dev -- --port $PORT
     cwd: apps/web
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /
       timeout: 30s
@@ -195,7 +195,7 @@ owned:
   api:
     cmd: bun --hot src/index.ts
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
       timeout: 30s
@@ -219,7 +219,7 @@ owned:
   api:
     cmd: air                    # or `go run .`
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
       timeout: 30s
@@ -257,7 +257,7 @@ These go in `services:`, not `owned:`. Use existing `docker-compose.yml` entries
 services:
   postgres:
     image: postgres:16-alpine
-    ports: [{ container: 5432, env: POSTGRES_HOST_PORT }]
+    ports: [{ container_port: 5432, published_env: POSTGRES_HOST_PORT }]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -277,7 +277,7 @@ services:
 services:
   redis:
     image: redis:7-alpine
-    ports: [{ container: 6379, env: REDIS_HOST_PORT }]
+    ports: [{ container_port: 6379, published_env: REDIS_HOST_PORT }]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 1s
@@ -292,8 +292,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }     # SMTP
-      - { container: 8025, env: MAILHOG_UI_PORT }    # web UI
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }     # SMTP
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }    # web UI
 ```
 
 ### temporal (durable execution)
@@ -302,7 +302,7 @@ services:
 services:
   temporal:
     image: temporalio/auto-setup:1.22
-    ports: [{ container: 7233, env: TEMPORAL_HOST_PORT }]
+    ports: [{ container_port: 7233, published_env: TEMPORAL_HOST_PORT }]
     environment:
       DB: postgresql
       POSTGRES_USER: postgres

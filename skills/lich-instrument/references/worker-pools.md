@@ -6,13 +6,13 @@ The naive workaround — one owned entry wrapping `concurrently` — loses per-w
 
 ```yaml
 owned:
-  cronjob-workers:
+  workers:
     discover:
       # Glob is relative to discover.cwd (or parent.cwd, or the config dir).
       glob: "src/temporal/workers/*TemporalWorker.ts"
       name_template: "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker"
       cmd_template: "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/${basename_no_ext}.js"
-      cwd: apps/cronjob
+      cwd: apps/workers
     # Every field below applies to EVERY discovered instance — write once.
     ready_when:
       log_match: "Temporal worker created successfully|state: 'RUNNING'"
@@ -22,7 +22,7 @@ owned:
       NODE_ENV: development
 ```
 
-For `apps/cronjob/src/temporal/workers/{Email,Payment,Cleanup}TemporalWorker.ts`, this materializes into three synthetic owned services: `email-worker`, `payment-worker`, `cleanup-worker`. Each has its own log file, its own restart state, its own dashboard tile — identical to a hand-written owned service.
+For `apps/workers/src/temporal/workers/{Email,Payment,Cleanup}TemporalWorker.ts`, this materializes into three synthetic owned services: `email-worker`, `payment-worker`, `cleanup-worker`. Each has its own log file, its own restart state, its own dashboard tile — identical to a hand-written owned service.
 
 Adding `BillingTemporalWorker.ts` to the workers dir adds `billing-worker` to the stack on the next `lich up` — no yaml edit.
 

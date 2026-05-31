@@ -16,14 +16,22 @@ interface TargetSpec {
   map: (relSource: string) => string | null;
 }
 
+function isGeneratedSnippet(rel: string): boolean {
+  return rel.split("/").includes("_generated");
+}
+
 const TARGETS: TargetSpec[] = [
   {
     dir: join(ROOT, "docs/site/reference"),
-    map: (rel) => (rel.startsWith("reference/") ? rel.slice("reference/".length) : null),
+    map: (rel) => {
+      if (isGeneratedSnippet(rel)) return null;
+      return rel.startsWith("reference/") ? rel.slice("reference/".length) : null;
+    },
   },
   {
     dir: join(ROOT, "docs/site/recipes"),
     map: (rel) => {
+      if (isGeneratedSnippet(rel)) return null;
       if (!rel.startsWith("recipes/")) return null;
       const sub = rel.slice("recipes/".length);
       if (sub === "index.md") return null;
@@ -33,7 +41,7 @@ const TARGETS: TargetSpec[] = [
   {
     dir: join(ROOT, "skills/lich-instrument/references"),
     map: (rel) => {
-      if (rel.startsWith("_generated/")) return null;
+      if (isGeneratedSnippet(rel)) return null;
       if (rel.startsWith("reference/") || rel.startsWith("recipes/")) {
         return rel.split("/").slice(1).join("/");
       }

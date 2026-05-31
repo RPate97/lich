@@ -26,15 +26,15 @@ version: "1"
 #     compose_file: ./docker-compose.yml
 #     service: db                   # name in the compose file
 #     ports:
-#       postgres:
-#         container: 5432
+#       - 5432                      # scalar = container_port shorthand
+#       # or: - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
 
 # Host processes managed by lich directly.
 # owned:
 #   web:
 #     cmd: pnpm dev
 #     cwd: ./apps/web
-#     port: { env: PORT }
+#     port: { published_env: PORT }
 #     env:
 #       NODE_ENV: development
 #     ready_when:

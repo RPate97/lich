@@ -10,26 +10,29 @@ The schema, semantics, and validate-error remediation for `lich.yaml`. Read this
 4. [`owned` (host processes)](#owned-host-processes)
 5. [`env` + interpolation](#env--interpolation)
 6. [`env_groups`](#env_groups)
-7. [`lifecycle`](#lifecycle)
-8. [`profiles`](#profiles)
-9. [`commands`](#commands)
-10. [Common validate errors](#common-validate-errors)
+7. [Interpolation](#interpolation)
+8. [`lifecycle`](#lifecycle)
+9. [`profiles`](#profiles)
+10. [`commands`](#commands)
+11. [Common validate errors](#common-validate-errors)
 
 ---
 
 ## Top-level structure
 
-| Key | Required | Purpose |
-|-----|----------|---------|
-| `version` | yes | `"1"` (only supported version) |
-| `runtime` | no | compose CLI selection + proxy port pin |
-| `services` | no | docker-compose services lich orchestrates |
-| `owned` | no | host processes lich runs directly |
-| `env` | no | env vars exposed to every owned service |
-| `env_groups` | no | named env-var bundles for `lich exec` / lifecycle hooks |
-| `lifecycle` | no | before_up / after_up / before_down / after_down hooks |
-| `profiles` | no | named subsets of services + custom env |
-| `commands` | no | custom CLI commands (e.g. `lich db:psql`) |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `version` | `string` | yes | Schema version. Only `"1"` is supported. |
+| `runtime` | `object` | no | Compose CLI selection, proxy port pin, default ready-when timeout, and other engine knobs. |
+| `services` | `object` | no | Docker-compose services lich orchestrates. Each entry becomes a compose service. |
+| `owned` | `object` | no | Host processes lich starts directly. Logs captured to `<LICH_HOME>/stacks/<id>/logs/<service>.log`. |
+| `env` | `object` | no | Env vars exposed to every owned service. Use `${...}` interpolation to wire services together. |
+| `env_files` | `string[]` | no | Dotenv files loaded into the stack env (gitignored `.env` is the common pattern). |
+| `env_from` | `array` | no | Shell-out sources for stack env (e.g. secret-manager exports like Infisical/1Password/Doppler). |
+| `lifecycle` | `object` | no | Top-level hooks at stack boundaries: before_up, after_up, before_down, after_down. |
+| `env_groups` | `object` | no | Named env-var bundles for `lich exec --env-group` and `lifecycle.*[].env_group:`. |
+| `commands` | `object` | no | Custom CLI commands invoked via `lich <name>`. Inherit the stack's env by default. |
+| `profiles` | `object` | no | Named subsets of the stack — pick a service set and env for a given run. |
 
 Minimum viable yaml: `version` + either `services` or `owned` (usually both).
 
@@ -53,6 +56,16 @@ runtime:
   ready_when_timeout: 180s   # stack-wide default for every owned service's ready_when.timeout
   kill_others_on_fail: true  # cascade-kill siblings on startup failure (default true)
 ```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `compose_cli` | `"auto" \| "docker" \| "podman" \| "nerdctl"` | no | Which compose CLI to shell out to. `auto` detects what's installed (default and usually correct). |
+| `compose` | `"auto" \| "docker" \| "podman" \| "nerdctl"` | no | Deprecated alias for `compose_cli`. Prefer `compose_cli`. |
+| `proxy_port` | `integer` | no | Pin the dashboard reverse-proxy port. Default 3300; override via env LICH_PROXY_PORT. |
+| `port_range` | `integer[]` | no | Two-element `[min, max]` range lich allocates dynamic host ports from. |
+| `ready_when_timeout` | `string \| integer` | no | Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides. |
+| `kill_others_on_fail` | `boolean` | no | Cascade-kill siblings if one service fails during `lich up` startup. Default true. |
+| `sandbox` | `object` | no | — |
 
 All fields optional. `auto` is the default for `compose_cli` and is almost always correct. Only pin `proxy_port` if you need stable friendly URLs across teammates (e.g. for webhook URLs hardcoded in third-party tools).
 
@@ -86,7 +99,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -103,12 +116,49 @@ services:
     depends_on: [other-service]
 ```
 
+### Port shapes
+
+`ports:` accepts two forms — a list (compose-spec passthrough) or a keyed map (logical-name lookup). Both accept the same two entry shapes:
+
+- **Scalar** — `5432` is shorthand for "publish container port 5432, no env var injection." Use this when lich's proxy / dashboard / interpolation consumes the port, not an env var.
+- **Block** — `{ container_port: 5432, published_env: POSTGRES_HOST_PORT }` publishes the container port AND injects the allocated host port as the named env var. Optionally pin the host side with `host_port: <N>`.
+
+A bare `{ container_port: 5432 }` block (no `published_env`) is rejected — use the scalar shorthand instead. One way to say each thing.
+
+```yaml
+ports:
+  - 5432                                                # scalar in list shape
+  - { container_port: 5432, published_env: PG_PORT }    # block in list shape
+
+# keyed shape (multi-port logical names)
+ports:
+  http: 3000                                            # scalar
+  admin:                                                # block
+    container_port: 3001
+    published_env: ADMIN_PORT
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `compose_file` | `string` | no | Path to a sibling compose file holding this service (defaults to compose.yaml at the worktree root). |
+| `service` | `string` | no | Name of the service inside the compose file. Defaults to the key under `services:` in lich.yaml. |
+| `ports` | `object \| array` | no | Ports to publish from container to host. Lich allocates host ports dynamically per worktree. |
+| `lifecycle` | `object` | no | Per-service hooks (before_start, after_ready, before_down). |
+| `depends_on` | `string[]` | no | Other services this one waits on before starting. Healthchecks gate readiness. |
+| `image` | `string` | no | Container image reference (e.g. `postgres:16-alpine`). Compose-spec passthrough. |
+| `environment` | `any` | no | Env vars set inside the container. Compose-spec passthrough. |
+| `healthcheck` | `object` | no | Compose-spec healthcheck definition. Gates `depends_on` readiness. |
+| `volumes` | `array` | no | Host or named volume mounts. Compose-spec passthrough. |
+| `networks` | `any` | no | Compose networks the service joins. Compose-spec passthrough. |
+| `profiles` | `array` | no | Compose-spec profiles for this service. |
+| `tmpfs` | `string \| string[]` | no | In-RAM mount paths. Use for dev databases that should disappear on `lich down`. |
+
 **Key points:**
 
-- `ports.env` is the env var lich exposes **inside the container** — the actual host port is dynamic, allocated by lich per stack.
+- `ports.published_env` is the env var lich exposes **inside the container** — the actual host port is dynamic, allocated by lich per stack.
 - Use `tmpfs` for dev databases you want gone on tear-down. Use `volumes` for persisted state.
 - `healthcheck` lets `depends_on` block until the service is actually ready, not just running. Skip for stateless services.
-- Multi-port: each entry in `ports:` gets its own `env` name. Reference them via `host_port_<idx>` (0-indexed, for array-form ports) or via `${services.<name>.ports.<key>}` for the Record-form (where `<key>` is the port-key in the `ports:` map, **not** the `env:` field name).
+- Multi-port: each entry in `ports:` gets its own `published_env` name. Reference them via `host_port_<idx>` (0-indexed, for array-form ports) or via `${services.<name>.ports.<key>}` for the Record-form (where `<key>` is the port-key in the `ports:` map, **not** the `published_env:` field name).
 
 **Allowed compose-spec passthroughs in v1:** `image`, `environment`, `volumes`, `tmpfs`, `healthcheck`, `depends_on`, `networks`, `profiles`. Anything else (`command`, `entrypoint`, `working_dir`, `user`, `restart`, `build`, etc.) is rejected by `lich validate` — the schema is closed (`additionalProperties: false`) so unknown keys surface as errors. If you need fields beyond this list, write them into a sibling `compose.yaml` and point at it via `compose_file:` / `service:` instead of inlining.
 
@@ -123,10 +173,10 @@ owned:
   api:
     cmd: bun run dev               # required; runs in a shell
     cwd: apps/api                  # optional; relative to repo root, default = root
-    port: { env: PORT }            # optional; lich allocates, injects as process.env.PORT
+    port: { published_env: PORT }  # optional; lich allocates, injects as process.env.PORT
     ports:                         # multi-port shape — alternative to `port:`
-      api: { env: API_PORT }
-      metrics: { env: METRICS_PORT }
+      api: { published_env: API_PORT }
+      metrics: { published_env: METRICS_PORT }
     # oneshot: true                # for CLI launchers that exit after spawning (see "One-shot launchers" below)
     # stop_cmd: "supabase stop"    # paired with oneshot — teardown command (see "One-shot launchers" below)
     env:
@@ -143,6 +193,24 @@ owned:
       log_match: "EADDRINUSE|Cannot find module"   # regex; matching log = hard fail (short-circuits ready_when)
     depends_on: [other-owned-or-compose]
 ```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cmd` | `string` | no | Shell command to run for this service. Required unless `discover:` is set. |
+| `cwd` | `string` | no | Working directory for the cmd, relative to the repo root. Defaults to the root. |
+| `depends_on` | `string[]` | no | Other owned or compose services that must be ready before this one starts. |
+| `port` | `integer \| object` | no | Single allocated port for this service. Lich injects the host port as the named env var. |
+| `ports` | `object` | no | Multi-port shape — map of port-key to descriptor. Each gets its own injected env var. |
+| `oneshot` | `boolean` | no | If true, lich runs cmd to completion (non-zero = fail) instead of supervising it. Pair with `stop_cmd`. |
+| `stop_cmd` | `string` | no | Teardown command invoked on `lich down` / `lich nuke`. Used with `oneshot` to clean up side-effects. |
+| `owned_containers` | `object` | no | Docker label or name pattern. After `stop_cmd` runs, lich force-removes any container matching the filter (`docker rm -f`). Pick exactly one of `label` or `name_pattern`. |
+| `env` | `object` | no | Service-scoped env vars. Merges with top-level `env:` — per-service wins on collision. |
+| `env_files` | `string[]` | no | Service-scoped dotenv files to load. Merges with top-level `env_files:`. |
+| `env_from` | `array` | no | Service-scoped shell-out env sources. Merges with top-level — per-service wins on collision. |
+| `ready_when` | `object` | no | Readiness probe for this service. Pick http_get, tcp, log_match, or cmd. |
+| `fail_when` | `object` | no | Hard-fail signal for this service. A match short-circuits ready_when and fails the stack. |
+| `lifecycle` | `object` | no | Per-service hooks (before_start, after_ready, before_down). |
+| `discover` | `object` | no | Glob-based expansion: produces N synthetic owned services, one per matched file. |
 
 **Common patterns:**
 
@@ -176,8 +244,8 @@ owned:
     env:
       SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # per-worktree namespace — see `${worktree.id}` below
     ports:
-      api: { env: SUPABASE_API_PORT }
-      db:  { env: SUPABASE_DB_PORT }
+      api: { published_env: SUPABASE_API_PORT }
+      db:  { published_env: SUPABASE_DB_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"   # succeed when the launcher's containers are listening
       timeout: 120s
@@ -217,12 +285,12 @@ For monorepos with N near-identical owned services — typically 3+ workers, pro
 
 ```yaml
 owned:
-  cronjob-workers:
+  workers:
     discover:
       glob: "src/temporal/workers/*TemporalWorker.ts"
       name_template: "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker"
       cmd_template: "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/${basename_no_ext}.js"
-      cwd: apps/cronjob
+      cwd: apps/workers
     ready_when:
       log_match: "Temporal worker created successfully|state: 'RUNNING'"
     fail_when:
@@ -235,17 +303,17 @@ Expands at parse time to:
 owned:
   cleanup-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/CleanupTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   email-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/EmailTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   payment-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/PaymentTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   # ...one synthetic entry per matched file, sorted alphabetically by materialized name
@@ -301,9 +369,9 @@ env:
 
 - `${services.<name>.host_port}` — first host port for a compose service
 - `${services.<name>.host_port_<idx>}` — Nth port (0-indexed) for multi-port compose services
-- `${services.<name>.ports.<key>}` — named-port lookup by the **port-key** declared in the service's `ports:` map (e.g. `ports: { api: { env: API_PORT } }` → `${services.X.ports.api}`, NOT `${services.X.ports.API_PORT}`)
+- `${services.<name>.ports.<key>}` — named-port lookup by the **port-key** declared in the service's `ports:` map (e.g. `ports: { api: { published_env: API_PORT } }` → `${services.X.ports.api}`, NOT `${services.X.ports.API_PORT}`)
 - `${owned.<name>.port}` — port for an owned service
-- `${owned.<name>.ports.<key>}` — named-port lookup for multi-port owned services. Same rule as above: the `<key>` is the port-key in the `ports:` map, **not** the `env:` field name. So for `ports: { api: { env: SUPABASE_API_PORT } }`, the reference is `${owned.supabase.ports.api}`.
+- `${owned.<name>.ports.<key>}` — named-port lookup for multi-port owned services. Same rule as above: the `<key>` is the port-key in the `ports:` map, **not** the `published_env:` field name. So for `ports: { api: { published_env: SUPABASE_API_PORT } }`, the reference is `${owned.supabase.ports.api}`.
 - `${owned.<name>.captured.<key>}` — value from a service's `ready_when.capture` block
 - `${worktree.name}` — sanitized worktree dir name (e.g. `my-app`)
 - `${worktree.id}` — stable 12-hex-char hash of the worktree's absolute path (e.g. `a4e87c8572d0`). Same path → same id across runs. Perfect for per-worktree namespacing of external resources (compose project names, supabase project_id, KV namespaces, etc.) so parallel stacks don't collide. Common shape: `MY_PROJECT_ID: "myapp-${worktree.id}"`.
@@ -351,7 +419,77 @@ env_groups:
   # `stack` is implicit — contains top-level `env:` + per-service `port:` / `host_port` exposures
 ```
 
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `env_from` | `array` | no | Shell-out env sources for this group (inherited env vars or dynamic exports). |
+| `env` | `object` | no | Literal env vars for this group. Use `null` to unset an inherited key. |
+| `extends` | `string` | no | Name of another env_group whose resolved env this group inherits from. |
+| `process_env` | `boolean` | no | Whether to inherit the parent shell's env (default true). Set false for a sealed group. |
+
 Use these for `lich exec --env-group <name> <cmd>` or `lifecycle.after_up[].env_group:`.
+
+---
+
+## Interpolation
+
+Lich evaluates `${...}` expressions in yaml values at well-defined points in the up sequence. Use interpolation to wire dynamic values (allocated ports, worktree identity, captured values) into env vars, commands, and lifecycle hook entries.
+
+**Where interpolation works:**
+- `env:` values (top-level and per-service)
+- `cmd:` strings (services, lifecycle hooks, custom commands)
+- `stop_cmd:` strings
+- Any string value in the yaml (lich resolves recursively)
+
+**Evaluation timing:**
+- Most keys are resolved AT UP TIME, after port allocation has completed for all services.
+- `worktree.*` keys are resolved immediately, before any service starts.
+- `owned.<name>.captured.<key>` keys are resolved as log captures complete (may evaluate to undefined if read before the capture fires).
+
+**Valid keys:**
+
+<!--
+  AUTO-GENERATED by packages/lich/scripts/build-interpolation-reference.ts.
+  Do not edit by hand. Run `bun run build:interpolation-reference` to regenerate.
+  Source of truth: packages/lich/src/config/interpolation.ts
+  This snippet is @include'd into docs/content/reference/lich-yaml-spec.md.
+-->
+| Key | Resolves to | Evaluated |
+| --- | --- | --- |
+| `${worktree.name}` | Friendly name of the current worktree (folder basename). | Immediately, before any service starts. |
+| `${worktree.id}` | Stable per-worktree ID used for namespacing (name + hash). | Immediately, before any service starts. |
+| `${worktree.path}` | Absolute path to the current worktree root. | Immediately, before any service starts. |
+| `${services.<name>.host_port}` | Allocated host port for the compose service's first declared port (insertion order). | At up time, after port allocation. |
+| `${services.<name>.host_port_<idx>}` | Allocated host port at numeric index `<idx>` of an array-form `ports:` block (0-based). | At up time, after port allocation. |
+| `${services.<name>.ports.<key>}` | Allocated host port for the named entry in a Record-form `ports:` block of a compose service. | At up time, after port allocation. |
+| `${owned.<name>.port}` | Allocated host port for a single-port owned service. | At up time, after port allocation. |
+| `${owned.<name>.ports.<key>}` | Allocated host port for the named entry in a multi-port owned service. | At up time, after port allocation. |
+| `${owned.<name>.captured.<key>}` | Value captured from the owned service's stdout/stderr by a `ready_when.capture` pattern. | After the capture regex matches a log line. |
+
+
+**Common patterns:**
+
+Inject the allocated postgres host port into an API service's DATABASE_URL:
+
+```yaml
+services:
+  postgres:
+    ports:
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
+owned:
+  api:
+    env:
+      DATABASE_URL: "postgres://postgres@localhost:${services.postgres.host_port}/app"
+```
+
+Use the worktree name in service identifiers (so two parallel worktrees don't collide):
+
+```yaml
+services:
+  redis:
+    image: redis:7
+    environment:
+      REDIS_PREFIX: "lich-${worktree.name}"
+```
 
 ---
 
@@ -370,6 +508,23 @@ lifecycle:
   before_down:                      # runs before any service stops
     - ./scripts/dump-state.sh
 ```
+
+**Top-level phases** (under `lifecycle:` at the root):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `before_up` | `array` | no | Commands to run before any service starts. |
+| `after_up` | `array` | no | Commands to run once all services are ready. Common spot for migrations and seeds. |
+| `before_down` | `array` | no | Commands to run before any service stops. Services are still alive here. |
+| `after_down` | `array` | no | Commands to run after all services have stopped. Use for external resource cleanup. |
+
+**Per-service phases** (under `services.<name>.lifecycle:` or `owned.<name>.lifecycle:`):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `before_start` | `array` | no | Commands to run before this service starts. |
+| `after_ready` | `array` | no | Commands to run once this service is ready. |
+| `before_down` | `array` | no | Commands to run before this service stops. |
 
 Entries are either a string (the cmd) or an object: `{ cmd: ..., env_group?: ..., cwd?: ... }`.
 
@@ -408,6 +563,17 @@ profiles:
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/myapp_test"
 ```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `services` | `string[]` | no | Subset of top-level `services:` to start under this profile. |
+| `owned` | `string[]` | no | Subset of top-level `owned:` to start under this profile. |
+| `extends` | `string \| string[]` | no | Name or list of names of profiles this one inherits services, owned, env, and lifecycle from. |
+| `default` | `boolean` | no | If true, `lich up` (no arg) picks this profile. Exactly one profile may set this. |
+| `env` | `object` | no | Profile-scoped env vars. Override top-level on collision. |
+| `env_files` | `string[]` | no | Profile-scoped dotenv files. Merge with top-level. |
+| `env_from` | `array` | no | Profile-scoped shell-out env sources. Merge with top-level. |
+| `lifecycle` | `object` | no | Profile-scoped lifecycle hooks. Merge with top-level (LIFO on the down phases). |
 
 `lich up <profile-name>` switches between them. Top-level `services:` / `owned:` / `env:` / `lifecycle:` define the **superset**; profiles pick subsets and override.
 
@@ -499,6 +665,14 @@ commands:
       Diagnostic: print the env vars under the `isolated-tools` group.
 ```
 
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `cmd` | `string` | yes | Shell command run when the user invokes `lich <command-name>`. |
+| `cwd` | `string` | no | Working directory for the cmd, relative to the repo root. |
+| `env_group` | `string` | no | Name of an env_group whose env this command runs with (instead of the default stack env). |
+| `env` | `object` | no | Extra env vars set when running this command. Merges with the stack or named group env. |
+| `help` | `string` | no | Help text printed by `lich <command-name> --help`. |
+
 User runs `lich db:psql` and gets the stack's resolved env loaded into the process. `lich <name> --help` prints the `help:` text.
 
 ---
@@ -512,7 +686,7 @@ The named service doesn't exist in `services:`. Check spelling. Or the service u
 `cmd:` is required for every owned service.
 
 ### "duplicate port allocation: X conflicts with Y"
-Two services declare the same `port: { env: SAME_VAR }` value. Each `env:` name must be unique across the stack.
+Two services declare the same `port: { published_env: SAME_VAR }` value. Each `published_env:` name must be unique across the stack.
 
 ### "profile X extends Y but Y is not defined"
 `extends:` references a missing profile. Check spelling, or define the parent first.
@@ -548,13 +722,13 @@ ready_when:
 ```
 
 ### "unknown reference path: ${owned.X.ports.SOMETHING}" when SOMETHING looks like an env var
-The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `env:` field name. Example:
+The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `published_env:` field name. Example:
 
 ```yaml
 owned:
   supabase:
     ports:
-      api: { env: SUPABASE_API_PORT }   # port-key is `api`; env field is `SUPABASE_API_PORT`
+      api: { published_env: SUPABASE_API_PORT }   # port-key is `api`; published_env field is `SUPABASE_API_PORT`
 ```
 
 Reference it as `${owned.supabase.ports.api}` — NOT `${owned.supabase.ports.SUPABASE_API_PORT}`.

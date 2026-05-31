@@ -29,10 +29,10 @@ function touch(...segs: string[]): void {
 
 describe("buildContext", () => {
   it("splits basename, basename_no_ext, and dirname for a nested file", () => {
-    const ctx = buildContext("apps/cronjob/src/temporal/workers/EmailTemporalWorker.ts");
-    expect(ctx.basename).toBe("EmailTemporalWorker.ts");
-    expect(ctx.basename_no_ext).toBe("EmailTemporalWorker");
-    expect(ctx.dirname).toBe("apps/cronjob/src/temporal/workers");
+    const ctx = buildContext("apps/workers/src/temporal/workers/AlphaTemporalWorker.ts");
+    expect(ctx.basename).toBe("AlphaTemporalWorker.ts");
+    expect(ctx.basename_no_ext).toBe("AlphaTemporalWorker");
+    expect(ctx.dirname).toBe("apps/workers/src/temporal/workers");
   });
 
   it("returns empty dirname for a file at the glob root", () => {
@@ -76,8 +76,8 @@ describe("compileTemplate — variables", () => {
 
   it("supports multiple expressions in one template", () => {
     const tpl = compileTemplate("${dirname}/${basename_no_ext}.js", "/loc");
-    const out = tpl(buildContext("dist/temporal/EmailWorker.ts"));
-    expect(out).toBe("dist/temporal/EmailWorker.js");
+    const out = tpl(buildContext("dist/temporal/AlphaWorker.ts"));
+    expect(out).toBe("dist/temporal/AlphaWorker.js");
   });
 
   it("passes literal text through unchanged", () => {
@@ -90,27 +90,27 @@ describe("compileTemplate — variables", () => {
 describe("compileTemplate — filters", () => {
   it("kebab lowercases and dash-collapses non-alphanumerics", () => {
     const tpl = compileTemplate("${basename_no_ext | kebab}", "/loc");
-    expect(tpl(buildContext("EmailWorker.ts"))).toBe("email-worker");
-    expect(tpl(buildContext("Email_Worker.ts"))).toBe("email-worker");
-    expect(tpl(buildContext("email.worker.ts"))).toBe("email-worker");
+    expect(tpl(buildContext("AlphaWorker.ts"))).toBe("alpha-worker");
+    expect(tpl(buildContext("Alpha_Worker.ts"))).toBe("alpha-worker");
+    expect(tpl(buildContext("alpha.worker.ts"))).toBe("alpha-worker");
   });
 
   it("snake lowercases and underscore-collapses non-alphanumerics", () => {
     const tpl = compileTemplate("${basename_no_ext | snake}", "/loc");
-    expect(tpl(buildContext("EmailWorker.ts"))).toBe("email_worker");
-    expect(tpl(buildContext("Email-Worker.ts"))).toBe("email_worker");
+    expect(tpl(buildContext("AlphaWorker.ts"))).toBe("alpha_worker");
+    expect(tpl(buildContext("Alpha-Worker.ts"))).toBe("alpha_worker");
   });
 
   it("strip_suffix removes the trailing arg when present", () => {
     const tpl = compileTemplate("${basename_no_ext | strip_suffix:Worker}", "/loc");
-    expect(tpl(buildContext("EmailWorker.ts"))).toBe("Email");
-    expect(tpl(buildContext("EmailService.ts"))).toBe("EmailService");
+    expect(tpl(buildContext("AlphaWorker.ts"))).toBe("Alpha");
+    expect(tpl(buildContext("AlphaService.ts"))).toBe("AlphaService");
   });
 
   it("strip_prefix removes the leading arg when present", () => {
     const tpl = compileTemplate("${basename_no_ext | strip_prefix:Worker}", "/loc");
-    expect(tpl(buildContext("WorkerEmail.ts"))).toBe("Email");
-    expect(tpl(buildContext("ServiceEmail.ts"))).toBe("ServiceEmail");
+    expect(tpl(buildContext("WorkerAlpha.ts"))).toBe("Alpha");
+    expect(tpl(buildContext("ServiceAlpha.ts"))).toBe("ServiceAlpha");
   });
 
   it("chains filters left to right (canonical example)", () => {
@@ -118,9 +118,9 @@ describe("compileTemplate — filters", () => {
       "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker",
       "/loc",
     );
-    expect(tpl(buildContext("EmailTemporalWorker.ts"))).toBe("email-worker");
-    expect(tpl(buildContext("CleanupTemporalWorker.ts"))).toBe("cleanup-worker");
-    expect(tpl(buildContext("PaymentTemporalWorker.ts"))).toBe("payment-worker");
+    expect(tpl(buildContext("AlphaTemporalWorker.ts"))).toBe("alpha-worker");
+    expect(tpl(buildContext("GammaTemporalWorker.ts"))).toBe("gamma-worker");
+    expect(tpl(buildContext("BetaTemporalWorker.ts"))).toBe("beta-worker");
   });
 });
 
@@ -196,23 +196,23 @@ describe("compileTemplate — error paths", () => {
 
 describe("expandDiscover", () => {
   it("expands a discover block into one synthetic service per matched file", async () => {
-    touch("apps/cronjob/src/temporal/workers/EmailTemporalWorker.ts");
-    touch("apps/cronjob/src/temporal/workers/PaymentTemporalWorker.ts");
-    touch("apps/cronjob/src/temporal/workers/CleanupTemporalWorker.ts");
-    touch("apps/cronjob/src/temporal/workers/index.ts");
+    touch("apps/workers/src/temporal/workers/AlphaTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/BetaTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/GammaTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/index.ts");
 
-    // glob is relative to discover.cwd (apps/cronjob), not the config dir
+    // glob is relative to discover.cwd (apps/workers), not the config dir
     const config: LichConfig = {
       version: "1",
       owned: {
-        "cronjob-workers": {
+        "workers": {
           discover: {
             glob: "src/temporal/workers/*TemporalWorker.ts",
             name_template:
               "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker",
             cmd_template:
               "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/${basename_no_ext}.js",
-            cwd: "apps/cronjob",
+            cwd: "apps/workers",
           },
           ready_when: {
             log_match: "Temporal worker created successfully",
@@ -227,20 +227,20 @@ describe("expandDiscover", () => {
     await expandDiscover(config, tmp);
 
     expect(config.owned).toBeDefined();
-    expect("cronjob-workers" in config.owned!).toBe(false);
+    expect("workers" in config.owned!).toBe(false);
 
     const names = Object.keys(config.owned!).sort();
     expect(names).toEqual([
-      "cleanup-worker",
-      "email-worker",
-      "payment-worker",
+      "alpha-worker",
+      "beta-worker",
+      "gamma-worker",
     ]);
 
-    const email = config.owned!["email-worker"];
+    const email = config.owned!["alpha-worker"];
     expect(email.cmd).toBe(
-      "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/EmailTemporalWorker.js",
+      "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/AlphaTemporalWorker.js",
     );
-    expect(email.cwd).toBe("apps/cronjob");
+    expect(email.cwd).toBe("apps/workers");
     expect(email.ready_when?.log_match).toBe("Temporal worker created successfully");
     expect(email.env?.NODE_ENV).toBe("development");
     expect(email.discover).toBeUndefined();
@@ -412,7 +412,7 @@ describe("expandDiscover", () => {
   });
 
   it("uses discover.cwd as the glob root AND per-instance cwd", async () => {
-    touch("apps/cronjob/src/workers/Foo.ts");
+    touch("apps/workers/src/workers/Foo.ts");
 
     const config: LichConfig = {
       version: "1",
@@ -423,7 +423,7 @@ describe("expandDiscover", () => {
             glob: "src/workers/*.ts",
             name_template: "${basename_no_ext | kebab}",
             cmd_template: "node ${basename}",
-            cwd: "apps/cronjob",
+            cwd: "apps/workers",
           },
         },
       },
@@ -431,18 +431,18 @@ describe("expandDiscover", () => {
 
     await expandDiscover(config, tmp);
     expect(config.owned!.foo).toBeDefined();
-    expect(config.owned!.foo.cwd).toBe("apps/cronjob");
+    expect(config.owned!.foo.cwd).toBe("apps/workers");
     expect(config.owned!.foo.cmd).toBe("node Foo.ts");
   });
 
   it("falls back to parent.cwd when discover.cwd is unset", async () => {
-    touch("apps/cronjob/workers/Foo.ts");
+    touch("apps/workers/workers/Foo.ts");
 
     const config: LichConfig = {
       version: "1",
       owned: {
         ws: {
-          cwd: "apps/cronjob",
+          cwd: "apps/workers",
           discover: {
             glob: "workers/*.ts",
             name_template: "${basename_no_ext | kebab}",
@@ -454,7 +454,7 @@ describe("expandDiscover", () => {
 
     await expandDiscover(config, tmp);
     expect(config.owned!.foo).toBeDefined();
-    expect(config.owned!.foo.cwd).toBe("apps/cronjob");
+    expect(config.owned!.foo.cwd).toBe("apps/workers");
   });
 
   it("falls back to configDir when neither cwd is set", async () => {

@@ -23,14 +23,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import { release } from "../ports/allocator.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
   injectOwnedPortEnv,
+  truncateFailedCmd,
   writeSnapshot,
   type AllocatedPorts,
+  type LifecyclePhaseStatus,
+  type LifecycleSnapshotStatus,
   type SnapshotLifecycleEntry,
   type StackSnapshot,
 } from "../state/snapshot.js";
@@ -40,6 +44,7 @@ import {
 } from "../config/interpolation.js";
 import { listStacks, phaseLogPath, stackDir } from "../state/directory.js";
 import { resolveComposeCli } from "../compose/detect.js";
+import { sweepOwnedContainers } from "../owned/containers.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
   down as composeDown,
@@ -67,6 +72,8 @@ import { isSandboxStack } from "../sandbox/marker.js";
 
 export interface RunDownInput {
   cwd?: string;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   out?: NodeJS.WritableStream;
   err?: NodeJS.WritableStream;
   outputMode?: OutputMode;
@@ -155,17 +162,34 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   const warnings: DownWarning[] = [];
 
   let worktree: Worktree;
-  try {
-    worktree = detectWorktree(cwd);
-  } catch {
-    // lich.yaml not found — try snapshot fallback (yaml may have been deleted after lich up).
-    const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
-    if (!fallback) {
-      writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
+  if (input.worktreeArg !== undefined && input.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: input.worktreeArg });
+      const snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        writeLine(out, `no stack found with ID/name '${input.worktreeArg}'; try \`lich stacks\``);
+        await output.close();
+        return { exitCode: 1, warnings };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (err) {
+      writeLine(out, `lich down: ${(err as Error).message}`);
       await output.close();
-      return { exitCode: 0, warnings };
+      return { exitCode: 1, warnings };
     }
-    worktree = fallback;
+  } else {
+    try {
+      worktree = detectWorktree(cwd);
+    } catch {
+      // lich.yaml not found — try snapshot fallback (yaml may have been deleted after lich up).
+      const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
+      if (!fallback) {
+        writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
+        await output.close();
+        return { exitCode: 0, warnings };
+      }
+      worktree = fallback;
+    }
   }
 
   const snap = await readSnapshot(worktree.stack_id).catch(() => null);
@@ -476,6 +500,8 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     ? (snap.before_down?.length ?? 0) > 0
     : legacyBeforeDownEntries.length > 0;
 
+  const lifecycleStatus: LifecycleSnapshotStatus = { ...(snap.lifecycle ?? {}) };
+
   if (hasBeforeDown) {
     const entryCount = snapshotHasStackHooks
       ? snap.before_down!.length
@@ -488,16 +514,23 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
         total: entryCount,
       }),
     );
+    const beforeDownLogPath = phaseLogPath(worktree.stack_id, "before_down");
+    let beforeDownFailure: { index: number; cmd: string } | null = null;
     try {
       if (snapshotHasStackHooks) {
         await runSnapshotLifecycle(
           "before_down",
           snap.before_down!,
           worktree.path,
-          phaseLogPath(worktree.stack_id, "before_down"),
+          beforeDownLogPath,
           (w) => warnings.push({ phase: "before_down", message: w }),
           (start) => output.lifecycleEntryStart(start),
-          (completion) => output.lifecycleEntryComplete(completion),
+          (completion) => {
+            output.lifecycleEntryComplete(completion);
+            if (completion.exitCode !== 0 && beforeDownFailure === null) {
+              beforeDownFailure = { index: completion.index, cmd: completion.cmd };
+            }
+          },
         );
       } else {
         const beforeDownCtx = buildDownInterpCtx(worktree, legacyAllocatedPortsForLifecycle);
@@ -508,7 +541,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
             cwd: worktree.path,
             env: legacyLifecycleEnv,
             resolveEnvGroup: legacyLifecycleResolveEnvGroup,
-            logPath: phaseLogPath(worktree.stack_id, "before_down"),
+            logPath: beforeDownLogPath,
           },
           {
             onWarning: (w) => {
@@ -516,6 +549,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
                 phase: "before_down",
                 message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
               });
+              if (beforeDownFailure === null) {
+                beforeDownFailure = { index: w.index, cmd: w.cmd };
+              }
             },
             onEntryStart: (start) => output.lifecycleEntryStart(start),
             onEntryComplete: (completion) => output.lifecycleEntryComplete(completion),
@@ -527,6 +563,15 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       beforeDownPhase.end("ok", "hooks done");
     }
+    lifecycleStatus.before_down = beforeDownFailure
+      ? {
+          status: "failed",
+          failed_index: beforeDownFailure.index,
+          total: entryCount,
+          failed_cmd: truncateFailedCmd(beforeDownFailure.cmd),
+          log_path: beforeDownLogPath,
+        }
+      : { status: "ok" };
   }
 
   if (composeNames.length > 0) {
@@ -653,16 +698,23 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
         total: entryCount,
       }),
     );
+    const afterDownLogPath = phaseLogPath(worktree.stack_id, "after_down");
+    let afterDownFailure: { index: number; cmd: string } | null = null;
     try {
       if (snapshotHasStackHooks) {
         await runSnapshotLifecycle(
           "after_down",
           snap.after_down!,
           worktree.path,
-          phaseLogPath(worktree.stack_id, "after_down"),
+          afterDownLogPath,
           (w) => warnings.push({ phase: "after_down", message: w }),
           (start) => output.lifecycleEntryStart(start),
-          (completion) => output.lifecycleEntryComplete(completion),
+          (completion) => {
+            output.lifecycleEntryComplete(completion);
+            if (completion.exitCode !== 0 && afterDownFailure === null) {
+              afterDownFailure = { index: completion.index, cmd: completion.cmd };
+            }
+          },
         );
       } else {
         const afterDownCtx = buildDownInterpCtx(worktree, legacyAllocatedPortsForLifecycle);
@@ -673,7 +725,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
             cwd: worktree.path,
             env: legacyLifecycleEnv,
             resolveEnvGroup: legacyLifecycleResolveEnvGroup,
-            logPath: phaseLogPath(worktree.stack_id, "after_down"),
+            logPath: afterDownLogPath,
           },
           {
             onWarning: (w) => {
@@ -681,6 +733,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
                 phase: "after_down",
                 message: `entry #${w.index} exited ${w.exitCode}: ${w.cmd}`,
               });
+              if (afterDownFailure === null) {
+                afterDownFailure = { index: w.index, cmd: w.cmd };
+              }
             },
             onEntryStart: (start) => output.lifecycleEntryStart(start),
             onEntryComplete: (completion) => output.lifecycleEntryComplete(completion),
@@ -692,6 +747,15 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       afterDownPhase.end("ok", "hooks done");
     }
+    lifecycleStatus.after_down = afterDownFailure
+      ? {
+          status: "failed",
+          failed_index: afterDownFailure.index,
+          total: entryCount,
+          failed_cmd: truncateFailedCmd(afterDownFailure.cmd),
+          log_path: afterDownLogPath,
+        }
+      : { status: "ok" };
   }
 
   try {
@@ -707,6 +771,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   // `routing: []` (NOT undefined) is the unambiguous "actively cleared" signal — undefined would mean "never declared routes".
   // The proxy filters by status anyway, but the explicit clear keeps state.json honest within one watcher tick.
   snap.routing = [];
+  if (Object.keys(lifecycleStatus).length > 0) {
+    snap.lifecycle = lifecycleStatus;
+  }
   await writeSnapshot(snap).catch((err) => {
     warnings.push({
       phase: "persist_state",
@@ -764,6 +831,15 @@ async function stopOwnedService(
   // Prefer snapshotted stop_cmd; fall back to yaml for legacy snapshots.
   const stopCmd = svcSnap.stop_cmd ?? ownedDef?.stop_cmd;
 
+  // Snapshotted owned_containers wins; legacy fallback interpolates from yaml.
+  const ownedContainers = await resolveOwnedContainersForDown(
+    name,
+    svcSnap,
+    ownedDef,
+    worktree,
+    snapshot,
+  );
+
   // stop_cmd takes priority — used by self-managing tools (e.g. supabase).
   if (stopCmd) {
     let stopEnv: NodeJS.ProcessEnv;
@@ -815,6 +891,7 @@ async function stopOwnedService(
         const seconds = (result.durationMs / 1000).toFixed(1);
         info = `stop_cmd took ${seconds}s — verify resources are actually gone`;
       }
+      await runOwnedContainersSweep(ownedContainers, warnings);
       return { warnings, info };
     } else {
       stopEnv = process.env;
@@ -842,8 +919,13 @@ async function stopOwnedService(
       const seconds = (result.durationMs / 1000).toFixed(1);
       info = `stop_cmd took ${seconds}s — verify resources are actually gone`;
     }
+    await runOwnedContainersSweep(ownedContainers, warnings);
     return { warnings, info };
   }
+
+  // No stop_cmd, but a sweep filter is still useful — long-lived owned services
+  // can declare `owned_containers` to clean up sidecar containers.
+  await runOwnedContainersSweep(ownedContainers, warnings);
 
   if (typeof pid !== "number") return { warnings };
   if (!isAlive(pid)) return { warnings };
@@ -890,6 +972,80 @@ async function stopOwnedService(
     );
   }
   return { warnings };
+}
+
+/**
+ * Resolve the post-stop_cmd container sweep filter for one owned service.
+ * Snapshot wins (post-LEV-534); legacy fallback interpolates from yaml.
+ * Best-effort — interpolation failures swallow to the un-interpolated string.
+ */
+async function resolveOwnedContainersForDown(
+  name: string,
+  svcSnap: import("../state/snapshot.js").ServiceSnapshot,
+  ownedDef: OwnedService | undefined,
+  worktree: Worktree,
+  snapshot: StackSnapshot,
+): Promise<{ label?: string; name_pattern?: string } | undefined> {
+  if (svcSnap.owned_containers !== undefined) return svcSnap.owned_containers;
+  if (!ownedDef?.owned_containers) return undefined;
+  const allocatedPortsForInterp = rebuildAllocatedPorts(snapshot);
+  const ctx = buildDownInterpCtx(worktree, allocatedPortsForInterp);
+  const oc: { label?: string; name_pattern?: string } = {};
+  if (ownedDef.owned_containers.label !== undefined) {
+    try {
+      oc.label = interpolateString(
+        ownedDef.owned_containers.label,
+        ctx,
+        `owned.${name}.owned_containers.label`,
+        true,
+      );
+    } catch {
+      oc.label = ownedDef.owned_containers.label;
+    }
+  }
+  if (ownedDef.owned_containers.name_pattern !== undefined) {
+    try {
+      oc.name_pattern = interpolateString(
+        ownedDef.owned_containers.name_pattern,
+        ctx,
+        `owned.${name}.owned_containers.name_pattern`,
+        true,
+      );
+    } catch {
+      oc.name_pattern = ownedDef.owned_containers.name_pattern;
+    }
+  }
+  return oc;
+}
+
+/** Run the sweep + pipe its outcome through the warnings collector. No-op on undefined spec. */
+async function runOwnedContainersSweep(
+  spec: { label?: string; name_pattern?: string } | undefined,
+  warnings: string[],
+): Promise<void> {
+  if (!spec) return;
+  let cli;
+  try {
+    cli = await resolveComposeCli(undefined);
+  } catch (err) {
+    warnings.push(
+      `owned_containers sweep: no compose CLI available (${errorMessage(err)})`,
+    );
+    return;
+  }
+  const result = await sweepOwnedContainers(cli.cmd, spec);
+  if (result.removed.length > 0) {
+    const filterDesc = spec.label !== undefined ? `label=${spec.label}` : `name=${spec.name_pattern}`;
+    warnings.push(
+      `owned_containers sweep removed ${result.removed.length} straggler container(s) matching ${filterDesc} (stop_cmd missed them): ${result.removed.join(", ")}`,
+    );
+  }
+  if (result.stragglers.length > 0) {
+    const filterDesc = spec.label !== undefined ? `label=${spec.label}` : `name=${spec.name_pattern}`;
+    warnings.push(
+      `owned_containers sweep: ${result.stragglers.length} container(s) matching ${filterDesc} still present after \`${cli.cmd} rm -f\`: ${result.stragglers.join(", ")}`,
+    );
+  }
 }
 
 interface StopCmdResult {
@@ -1163,6 +1319,13 @@ async function runSnapshotLifecycle(
       onWarning(errorMessage(err));
     });
   }
+}
+
+function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
+  const path = snap.worktree_path;
+  const name = sanitizeName(snap.worktree_name);
+  const id = hashPath(path);
+  return { name, id, path, stack_id: snap.stack_id };
 }
 
 async function findWorktreeBySnapshot(

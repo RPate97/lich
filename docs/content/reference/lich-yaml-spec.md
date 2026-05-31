@@ -10,26 +10,17 @@ The schema, semantics, and validate-error remediation for `lich.yaml`. Read this
 4. [`owned` (host processes)](#owned-host-processes)
 5. [`env` + interpolation](#env--interpolation)
 6. [`env_groups`](#env_groups)
-7. [`lifecycle`](#lifecycle)
-8. [`profiles`](#profiles)
-9. [`commands`](#commands)
-10. [Common validate errors](#common-validate-errors)
+7. [Interpolation](#interpolation)
+8. [`lifecycle`](#lifecycle)
+9. [`profiles`](#profiles)
+10. [`commands`](#commands)
+11. [Common validate errors](#common-validate-errors)
 
 ---
 
 ## Top-level structure
 
-| Key | Required | Purpose |
-|-----|----------|---------|
-| `version` | yes | `"1"` (only supported version) |
-| `runtime` | no | compose CLI selection + proxy port pin |
-| `services` | no | docker-compose services lich orchestrates |
-| `owned` | no | host processes lich runs directly |
-| `env` | no | env vars exposed to every owned service |
-| `env_groups` | no | named env-var bundles for `lich exec` / lifecycle hooks |
-| `lifecycle` | no | before_up / after_up / before_down / after_down hooks |
-| `profiles` | no | named subsets of services + custom env |
-| `commands` | no | custom CLI commands (e.g. `lich db:psql`) |
+<!-- @include: ./_generated/yaml-fields.md#top-level -->
 
 Minimum viable yaml: `version` + either `services` or `owned` (usually both).
 
@@ -53,6 +44,8 @@ runtime:
   ready_when_timeout: 180s   # stack-wide default for every owned service's ready_when.timeout
   kill_others_on_fail: true  # cascade-kill siblings on startup failure (default true)
 ```
+
+<!-- @include: ./_generated/yaml-fields.md#runtime -->
 
 All fields optional. `auto` is the default for `compose_cli` and is almost always correct. Only pin `proxy_port` if you need stable friendly URLs across teammates (e.g. for webhook URLs hardcoded in third-party tools).
 
@@ -86,7 +79,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -103,12 +96,36 @@ services:
     depends_on: [other-service]
 ```
 
+### Port shapes
+
+`ports:` accepts two forms — a list (compose-spec passthrough) or a keyed map (logical-name lookup). Both accept the same two entry shapes:
+
+- **Scalar** — `5432` is shorthand for "publish container port 5432, no env var injection." Use this when lich's proxy / dashboard / interpolation consumes the port, not an env var.
+- **Block** — `{ container_port: 5432, published_env: POSTGRES_HOST_PORT }` publishes the container port AND injects the allocated host port as the named env var. Optionally pin the host side with `host_port: <N>`.
+
+A bare `{ container_port: 5432 }` block (no `published_env`) is rejected — use the scalar shorthand instead. One way to say each thing.
+
+```yaml
+ports:
+  - 5432                                                # scalar in list shape
+  - { container_port: 5432, published_env: PG_PORT }    # block in list shape
+
+# keyed shape (multi-port logical names)
+ports:
+  http: 3000                                            # scalar
+  admin:                                                # block
+    container_port: 3001
+    published_env: ADMIN_PORT
+```
+
+<!-- @include: ./_generated/yaml-fields.md#services -->
+
 **Key points:**
 
-- `ports.env` is the env var lich exposes **inside the container** — the actual host port is dynamic, allocated by lich per stack.
+- `ports.published_env` is the env var lich exposes **inside the container** — the actual host port is dynamic, allocated by lich per stack.
 - Use `tmpfs` for dev databases you want gone on tear-down. Use `volumes` for persisted state.
 - `healthcheck` lets `depends_on` block until the service is actually ready, not just running. Skip for stateless services.
-- Multi-port: each entry in `ports:` gets its own `env` name. Reference them via `host_port_<idx>` (0-indexed, for array-form ports) or via `${services.<name>.ports.<key>}` for the Record-form (where `<key>` is the port-key in the `ports:` map, **not** the `env:` field name).
+- Multi-port: each entry in `ports:` gets its own `published_env` name. Reference them via `host_port_<idx>` (0-indexed, for array-form ports) or via `${services.<name>.ports.<key>}` for the Record-form (where `<key>` is the port-key in the `ports:` map, **not** the `published_env:` field name).
 
 **Allowed compose-spec passthroughs in v1:** `image`, `environment`, `volumes`, `tmpfs`, `healthcheck`, `depends_on`, `networks`, `profiles`. Anything else (`command`, `entrypoint`, `working_dir`, `user`, `restart`, `build`, etc.) is rejected by `lich validate` — the schema is closed (`additionalProperties: false`) so unknown keys surface as errors. If you need fields beyond this list, write them into a sibling `compose.yaml` and point at it via `compose_file:` / `service:` instead of inlining.
 
@@ -123,10 +140,10 @@ owned:
   api:
     cmd: bun run dev               # required; runs in a shell
     cwd: apps/api                  # optional; relative to repo root, default = root
-    port: { env: PORT }            # optional; lich allocates, injects as process.env.PORT
+    port: { published_env: PORT }  # optional; lich allocates, injects as process.env.PORT
     ports:                         # multi-port shape — alternative to `port:`
-      api: { env: API_PORT }
-      metrics: { env: METRICS_PORT }
+      api: { published_env: API_PORT }
+      metrics: { published_env: METRICS_PORT }
     # oneshot: true                # for CLI launchers that exit after spawning (see "One-shot launchers" below)
     # stop_cmd: "supabase stop"    # paired with oneshot — teardown command (see "One-shot launchers" below)
     env:
@@ -143,6 +160,8 @@ owned:
       log_match: "EADDRINUSE|Cannot find module"   # regex; matching log = hard fail (short-circuits ready_when)
     depends_on: [other-owned-or-compose]
 ```
+
+<!-- @include: ./_generated/yaml-fields.md#owned -->
 
 **Common patterns:**
 
@@ -176,8 +195,8 @@ owned:
     env:
       SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # per-worktree namespace — see `${worktree.id}` below
     ports:
-      api: { env: SUPABASE_API_PORT }
-      db:  { env: SUPABASE_DB_PORT }
+      api: { published_env: SUPABASE_API_PORT }
+      db:  { published_env: SUPABASE_DB_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"   # succeed when the launcher's containers are listening
       timeout: 120s
@@ -217,12 +236,12 @@ For monorepos with N near-identical owned services — typically 3+ workers, pro
 
 ```yaml
 owned:
-  cronjob-workers:
+  workers:
     discover:
       glob: "src/temporal/workers/*TemporalWorker.ts"
       name_template: "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker"
       cmd_template: "pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/${basename_no_ext}.js"
-      cwd: apps/cronjob
+      cwd: apps/workers
     ready_when:
       log_match: "Temporal worker created successfully|state: 'RUNNING'"
     fail_when:
@@ -235,17 +254,17 @@ Expands at parse time to:
 owned:
   cleanup-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/CleanupTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   email-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/EmailTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   payment-worker:
     cmd: pnpm exec nodemon -r ./tsconfigPathsDist.js dist/temporal/workers/PaymentTemporalWorker.js
-    cwd: apps/cronjob
+    cwd: apps/workers
     ready_when: { log_match: "Temporal worker created successfully|state: 'RUNNING'" }
     fail_when: { log_match: "FATAL|UnhandledPromiseRejection" }
   # ...one synthetic entry per matched file, sorted alphabetically by materialized name
@@ -301,9 +320,9 @@ env:
 
 - `${services.<name>.host_port}` — first host port for a compose service
 - `${services.<name>.host_port_<idx>}` — Nth port (0-indexed) for multi-port compose services
-- `${services.<name>.ports.<key>}` — named-port lookup by the **port-key** declared in the service's `ports:` map (e.g. `ports: { api: { env: API_PORT } }` → `${services.X.ports.api}`, NOT `${services.X.ports.API_PORT}`)
+- `${services.<name>.ports.<key>}` — named-port lookup by the **port-key** declared in the service's `ports:` map (e.g. `ports: { api: { published_env: API_PORT } }` → `${services.X.ports.api}`, NOT `${services.X.ports.API_PORT}`)
 - `${owned.<name>.port}` — port for an owned service
-- `${owned.<name>.ports.<key>}` — named-port lookup for multi-port owned services. Same rule as above: the `<key>` is the port-key in the `ports:` map, **not** the `env:` field name. So for `ports: { api: { env: SUPABASE_API_PORT } }`, the reference is `${owned.supabase.ports.api}`.
+- `${owned.<name>.ports.<key>}` — named-port lookup for multi-port owned services. Same rule as above: the `<key>` is the port-key in the `ports:` map, **not** the `published_env:` field name. So for `ports: { api: { published_env: SUPABASE_API_PORT } }`, the reference is `${owned.supabase.ports.api}`.
 - `${owned.<name>.captured.<key>}` — value from a service's `ready_when.capture` block
 - `${worktree.name}` — sanitized worktree dir name (e.g. `my-app`)
 - `${worktree.id}` — stable 12-hex-char hash of the worktree's absolute path (e.g. `a4e87c8572d0`). Same path → same id across runs. Perfect for per-worktree namespacing of external resources (compose project names, supabase project_id, KV namespaces, etc.) so parallel stacks don't collide. Common shape: `MY_PROJECT_ID: "myapp-${worktree.id}"`.
@@ -351,7 +370,55 @@ env_groups:
   # `stack` is implicit — contains top-level `env:` + per-service `port:` / `host_port` exposures
 ```
 
+<!-- @include: ./_generated/yaml-fields.md#env-groups -->
+
 Use these for `lich exec --env-group <name> <cmd>` or `lifecycle.after_up[].env_group:`.
+
+---
+
+## Interpolation
+
+Lich evaluates `${...}` expressions in yaml values at well-defined points in the up sequence. Use interpolation to wire dynamic values (allocated ports, worktree identity, captured values) into env vars, commands, and lifecycle hook entries.
+
+**Where interpolation works:**
+- `env:` values (top-level and per-service)
+- `cmd:` strings (services, lifecycle hooks, custom commands)
+- `stop_cmd:` strings
+- Any string value in the yaml (lich resolves recursively)
+
+**Evaluation timing:**
+- Most keys are resolved AT UP TIME, after port allocation has completed for all services.
+- `worktree.*` keys are resolved immediately, before any service starts.
+- `owned.<name>.captured.<key>` keys are resolved as log captures complete (may evaluate to undefined if read before the capture fires).
+
+**Valid keys:**
+
+<!-- @include: ./_generated/interpolation-keys.md -->
+
+**Common patterns:**
+
+Inject the allocated postgres host port into an API service's DATABASE_URL:
+
+```yaml
+services:
+  postgres:
+    ports:
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
+owned:
+  api:
+    env:
+      DATABASE_URL: "postgres://postgres@localhost:${services.postgres.host_port}/app"
+```
+
+Use the worktree name in service identifiers (so two parallel worktrees don't collide):
+
+```yaml
+services:
+  redis:
+    image: redis:7
+    environment:
+      REDIS_PREFIX: "lich-${worktree.name}"
+```
 
 ---
 
@@ -370,6 +437,14 @@ lifecycle:
   before_down:                      # runs before any service stops
     - ./scripts/dump-state.sh
 ```
+
+**Top-level phases** (under `lifecycle:` at the root):
+
+<!-- @include: ./_generated/yaml-fields.md#lifecycle-top-level -->
+
+**Per-service phases** (under `services.<name>.lifecycle:` or `owned.<name>.lifecycle:`):
+
+<!-- @include: ./_generated/yaml-fields.md#lifecycle-per-service -->
 
 Entries are either a string (the cmd) or an object: `{ cmd: ..., env_group?: ..., cwd?: ... }`.
 
@@ -408,6 +483,8 @@ profiles:
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/myapp_test"
 ```
+
+<!-- @include: ./_generated/yaml-fields.md#profiles -->
 
 `lich up <profile-name>` switches between them. Top-level `services:` / `owned:` / `env:` / `lifecycle:` define the **superset**; profiles pick subsets and override.
 
@@ -499,6 +576,8 @@ commands:
       Diagnostic: print the env vars under the `isolated-tools` group.
 ```
 
+<!-- @include: ./_generated/yaml-fields.md#commands -->
+
 User runs `lich db:psql` and gets the stack's resolved env loaded into the process. `lich <name> --help` prints the `help:` text.
 
 ---
@@ -512,7 +591,7 @@ The named service doesn't exist in `services:`. Check spelling. Or the service u
 `cmd:` is required for every owned service.
 
 ### "duplicate port allocation: X conflicts with Y"
-Two services declare the same `port: { env: SAME_VAR }` value. Each `env:` name must be unique across the stack.
+Two services declare the same `port: { published_env: SAME_VAR }` value. Each `published_env:` name must be unique across the stack.
 
 ### "profile X extends Y but Y is not defined"
 `extends:` references a missing profile. Check spelling, or define the parent first.
@@ -548,13 +627,13 @@ ready_when:
 ```
 
 ### "unknown reference path: ${owned.X.ports.SOMETHING}" when SOMETHING looks like an env var
-The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `env:` field name. Example:
+The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `published_env:` field name. Example:
 
 ```yaml
 owned:
   supabase:
     ports:
-      api: { env: SUPABASE_API_PORT }   # port-key is `api`; env field is `SUPABASE_API_PORT`
+      api: { published_env: SUPABASE_API_PORT }   # port-key is `api`; published_env field is `SUPABASE_API_PORT`
 ```
 
 Reference it as `${owned.supabase.ports.api}` — NOT `${owned.supabase.ports.SUPABASE_API_PORT}`.

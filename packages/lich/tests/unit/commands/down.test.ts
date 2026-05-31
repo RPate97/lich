@@ -1396,7 +1396,7 @@ owned:
   svc:
     cmd: "sleep 60"
     port:
-      env: SVC_HOST_PORT
+      published_env: SVC_HOST_PORT
 lifecycle:
   after_down:
     - "printf '%s' \\"\${SVC_HOST_PORT}\\" > ${shellQuote(sentinel)}"
@@ -1882,5 +1882,110 @@ owned:
     expect(out).not.toContain("hooks done");
 
     expect(out).toContain(`stack down: ${stackId}`);
+  });
+});
+
+describe("runDown — lifecycle status persistence (LEV-531)", () => {
+  it("records `ok` for before_down/after_down when they ran cleanly", async () => {
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+lifecycle:
+  before_down:
+    - "true"
+  after_down:
+    - "true"
+`);
+
+    const stackId = await seedSnapshot({
+      services: [
+        { name: "svc", kind: "owned", state: "stopped", pid: 2_147_483_640 },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap?.lifecycle).toBeDefined();
+    expect(snap!.lifecycle!.before_down).toEqual({ status: "ok" });
+    expect(snap!.lifecycle!.after_down).toEqual({ status: "ok" });
+  });
+
+  it("records `failed` with index/cmd/log_path when before_down exits non-zero", async () => {
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+lifecycle:
+  before_down:
+    - "true"
+    - "echo broken && exit 7"
+    - "true"
+`);
+
+    const stackId = await seedSnapshot({
+      services: [
+        { name: "svc", kind: "owned", state: "stopped", pid: 2_147_483_640 },
+      ],
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    const snap = await readSnapshot(stackId);
+    const bd = snap!.lifecycle!.before_down!;
+    expect(bd.status).toBe("failed");
+    if (bd.status === "failed") {
+      expect(bd.failed_index).toBe(1);
+      expect(bd.total).toBe(3);
+      expect(bd.failed_cmd).toBe("echo broken && exit 7");
+      expect(bd.log_path).toContain(stackId);
+      expect(bd.log_path).toContain("before_down.log");
+    }
+  });
+
+  it("preserves snapshot.lifecycle.after_up across down (so stacks output still shows the up-time failure)", async () => {
+    writeYaml(`
+version: "1"
+owned:
+  svc:
+    cmd: "sleep 60"
+`);
+
+    const stackId = await seedSnapshot({
+      status: "failed",
+      services: [
+        { name: "svc", kind: "owned", state: "ready", pid: 2_147_483_640 },
+      ],
+      lifecycle: {
+        before_up: { status: "ok" },
+        after_up: {
+          status: "failed",
+          failed_index: 0,
+          total: 1,
+          failed_cmd: "pnpm db:reset",
+          log_path: "/tmp/fake/logs/after_up.log",
+        },
+      },
+    });
+
+    const { stream } = captureStdout();
+    const result = await runDown({ cwd: projectDir, out: stream });
+    expect(result.exitCode).toBe(0);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap!.lifecycle!.before_up).toEqual({ status: "ok" });
+    expect(snap!.lifecycle!.after_up).toMatchObject({
+      status: "failed",
+      failed_index: 0,
+      total: 1,
+      failed_cmd: "pnpm db:reset",
+    });
   });
 });

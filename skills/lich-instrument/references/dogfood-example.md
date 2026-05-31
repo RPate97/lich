@@ -16,7 +16,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -33,7 +33,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }             # lich allocates a free host port, sets PORT env
+    port: { published_env: PORT }             # lich allocates a free host port, sets PORT env
     # No depends_on: [postgres] — the api code tolerates missing DATABASE_URL
     # (returns 503 on routes that need DB). Lets `dev:fast` profile work.
     ready_when:
@@ -47,7 +47,7 @@ owned:
   web:
     cmd: bun run dev
     cwd: apps/web
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [api]               # web doesn't try to render before the api is up
     ready_when:
       http_get: /                   # Next.js dev server returns 200 on / once compiled
@@ -140,7 +140,7 @@ version: "1"
 services:
   postgres:
     image: postgres:16-alpine
-    ports: [{ container: 5432, env: POSTGRES_HOST_PORT }]
+    ports: [{ container_port: 5432, published_env: POSTGRES_HOST_PORT }]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -150,14 +150,14 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
 
   web:
     cmd: bun run dev
     cwd: apps/web
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [api]
     ready_when:
       http_get: /

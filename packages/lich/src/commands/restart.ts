@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
-import { detectWorktree } from "../worktree/detect.js";
+import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import {
   readSnapshot,
   writeSnapshot,
   type ServiceSnapshot,
+  type StackSnapshot,
 } from "../state/snapshot.js";
 import { serviceLogPath } from "../state/directory.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
@@ -15,12 +18,16 @@ import { waitForCmdReady } from "../ready/cmd.js";
 import { waitForLogMatch } from "../ready/log-match.js";
 import { withTimeout, parseDuration } from "../ready/timeout.js";
 import { LogTail } from "../logs/tail.js";
+import { watchFailWhen } from "../failure/fail-when.js";
+import { ProcessExitWatcher } from "../failure/process-exit.js";
 import { createOutput, type OutputMode } from "../output/index.js";
 import { runDown } from "./down.js";
-import { runUp } from "./up.js";
+import { runUp, type OwnedSnapshotOverride } from "./up.js";
 
 export interface RunRestartInput {
   cwd?: string;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   outputMode?: OutputMode;
   out?: NodeJS.WritableStream;
   signal?: AbortSignal;
@@ -57,19 +64,57 @@ async function runWholeStackRestart(
 ): Promise<RunRestartResult> {
   const cwd = input.cwd ?? process.cwd();
 
-  let snapshotProfile: string | undefined;
-  if (input.profile === undefined) {
+  // For --worktree, resolve up front so down + up both target the same stack
+  // even from outside the worktree. cwd-fallback path keeps today's behavior.
+  let restartCwd = cwd;
+  if (input.worktreeArg !== undefined && input.worktreeArg.length > 0) {
     try {
-      const worktree = detectWorktree(cwd);
-      const snap = await readSnapshot(worktree.stack_id);
-      snapshotProfile = snap?.active_profile;
-    } catch {
-      // best-effort — let up pick its own default if read fails
+      const resolved = await resolveStackId({ cwd, worktreeArg: input.worktreeArg });
+      const snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        const out = input.out ?? process.stdout;
+        out.write(`no stack found with ID/name '${input.worktreeArg}'; try \`lich stacks\`\n`);
+        return { exitCode: 1 };
+      }
+      restartCwd = snap.worktree_path;
+    } catch (err) {
+      const out = input.out ?? process.stdout;
+      out.write(`lich restart: ${(err as Error).message}\n`);
+      return { exitCode: 1 };
     }
   }
 
+  // Read snapshot BEFORE down so re-up can reuse up-time env, mirroring LEV-513 for down.
+  let snapshotProfile: string | undefined;
+  let ownedSnapshotOverrides: Map<string, OwnedSnapshotOverride> | undefined;
+  try {
+    const worktree = detectWorktree(restartCwd);
+    const snap = await readSnapshot(worktree.stack_id);
+    if (snap !== null) {
+      if (input.profile === undefined) {
+        snapshotProfile = snap.active_profile;
+      }
+      const overrides = new Map<string, OwnedSnapshotOverride>();
+      for (const svc of snap.services) {
+        if (svc.kind !== "owned") continue;
+        if (svc.resolved_env === undefined || svc.cmd === undefined || svc.service_cwd === undefined) continue;
+        const entry: OwnedSnapshotOverride = {
+          env: svc.resolved_env,
+          cmd: svc.cmd,
+          cwd: svc.service_cwd,
+        };
+        if (svc.stop_cmd !== undefined) entry.stop_cmd = svc.stop_cmd;
+        if (svc.owned_containers !== undefined) entry.owned_containers = svc.owned_containers;
+        overrides.set(svc.name, entry);
+      }
+      if (overrides.size > 0) ownedSnapshotOverrides = overrides;
+    }
+  } catch {
+    // best-effort — let up re-resolve from yaml if snapshot read fails
+  }
+
   const downResult = await runDown({
-    cwd,
+    cwd: restartCwd,
     outputMode: input.outputMode,
     out: input.out,
     signal: input.signal,
@@ -79,11 +124,12 @@ async function runWholeStackRestart(
   }
 
   const upResult = await runUp({
-    cwd,
+    cwd: restartCwd,
     outputMode: input.outputMode,
     out: input.out,
     signal: input.signal,
     profile: input.profile ?? snapshotProfile,
+    ...(ownedSnapshotOverrides !== undefined && { ownedSnapshotOverrides }),
   });
 
   return {
@@ -102,16 +148,29 @@ async function runPerServiceRestart(
   const outputMode: OutputMode = input.outputMode ?? "pretty";
   const output = createOutput({ mode: outputMode, stream: out, showTiming: true });
 
-  let worktree;
+  let worktree: Worktree;
+  let snap: StackSnapshot | null;
   try {
-    worktree = detectWorktree(cwd);
+    const resolved = await resolveStackId({
+      cwd,
+      ...(input.worktreeArg !== undefined && { worktreeArg: input.worktreeArg }),
+    });
+    snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+    if (resolved.worktree !== undefined) {
+      worktree = resolved.worktree;
+    } else if (snap) {
+      worktree = worktreeFromSnapshot(snap);
+    } else {
+      writeLine(out, `no stack found with ID/name '${input.worktreeArg ?? "(current worktree)"}'`);
+      await output.close();
+      return { exitCode: 1 };
+    }
   } catch (err) {
     writeLine(out, `lich restart: ${(err as Error).message}`);
     await output.close();
     return { exitCode: 1 };
   }
 
-  const snap = await readSnapshot(worktree.stack_id).catch(() => null);
   if (snap === null || snap.status === "stopped") {
     writeLine(out, "no running stack found; run 'lich up' first");
     await output.close();
@@ -145,6 +204,9 @@ async function runPerServiceRestart(
     const svcSnap = snapsByName.get(name)!;
     const phase = output.phase(`restart: ${name}`);
 
+    let tail: LogTail | null = null;
+    const failWhenAc = new AbortController();
+
     try {
       if (svcSnap.before_down && svcSnap.before_down.length > 0) {
         await runPerServiceLifecycle(
@@ -161,6 +223,16 @@ async function runPerServiceRestart(
 
       await stopOwned(svcSnap, worktree.path, input.signal);
 
+      if (svcSnap.before_start && svcSnap.before_start.length > 0) {
+        await runPerServiceLifecycle({
+          serviceName: name,
+          phase: "before_start",
+          entries: svcSnap.before_start.map((e) => e.cmd),
+          cwd: worktree.path,
+          env: svcSnap.before_start[0]?.env ?? svcSnap.resolved_env ?? process.env,
+        });
+      }
+
       const logPath = serviceLogPath(worktree.stack_id, name);
       const handle = await startOwnedService({
         name,
@@ -168,13 +240,61 @@ async function runPerServiceRestart(
         cwd: svcSnap.service_cwd ?? worktree.path,
         env: svcSnap.resolved_env!,
         logPath,
+        runId: randomUUID(),
       });
 
+      const spawnedAt = new Date().toISOString();
       svcSnap.pid = handle.pid;
+      svcSnap.started_at = spawnedAt;
       svcSnap.state = "ready";
       await writeSnapshot(snap).catch(() => {});
 
-      await runReadyProbe(svcSnap, handle, logPath, worktree.path, input.signal);
+      tail = new LogTail({
+        logPath,
+        signal: input.signal,
+        startOffset: handle.logStartOffset,
+      });
+      await tail.start();
+
+      const exitWatcher = new ProcessExitWatcher(handle, {
+        readSignal: () => "before_ready",
+      });
+
+      const failPattern = readFailWhenPattern(svcSnap);
+      const failWhenPromise =
+        failPattern !== null
+          ? watchFailWhen({ tail, pattern: failPattern, signal: failWhenAc.signal })
+          : null;
+
+      const readyPromise = runReadyProbe(svcSnap, handle, logPath, worktree.path, tail, input.signal);
+
+      const racers: Promise<unknown>[] = [readyPromise];
+      if (failWhenPromise !== null) racers.push(failWhenPromise);
+      racers.push(
+        exitWatcher.wait().then((failure) => {
+          if (failure === null) return new Promise<void>(() => {});
+          throw new Error(
+            `owned service "${name}" exited before becoming ready`,
+            { cause: failure },
+          );
+        }),
+      );
+
+      try {
+        await Promise.race(racers);
+      } finally {
+        failWhenAc.abort();
+      }
+
+      if (svcSnap.after_ready && svcSnap.after_ready.length > 0) {
+        await runPerServiceLifecycle({
+          serviceName: name,
+          phase: "after_ready",
+          entries: svcSnap.after_ready.map((e) => e.cmd),
+          cwd: worktree.path,
+          env: svcSnap.after_ready[0]?.env ?? svcSnap.resolved_env ?? process.env,
+        });
+      }
 
       svcSnap.state = "ready";
       await writeSnapshot(snap).catch(() => {});
@@ -187,6 +307,11 @@ async function runPerServiceRestart(
       phase.end("fail", (err as Error).message);
       await output.close();
       return { exitCode: 1, stackId: worktree.stack_id };
+    } finally {
+      failWhenAc.abort();
+      if (tail !== null) {
+        await tail.stop().catch(() => {});
+      }
     }
   }
 
@@ -202,6 +327,13 @@ async function runPerServiceRestart(
     stackId: worktree.stack_id,
     services: snap.services.map((s) => ({ name: s.name, state: s.state })),
   };
+}
+
+function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
+  const path = snap.worktree_path;
+  const name = sanitizeName(snap.worktree_name);
+  const id = hashPath(path);
+  return { name, id, path, stack_id: snap.stack_id };
 }
 
 async function stopOwned(
@@ -256,6 +388,7 @@ async function runReadyProbe(
   handle: OwnedHandle,
   logPath: string,
   _worktreePath: string,
+  sharedTail: LogTail | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const readyWhen = svcSnap.ready_when;
@@ -271,18 +404,26 @@ async function runReadyProbe(
   let probePromise: Promise<void>;
 
   if (typeof readyWhen.log_match === "string" && readyWhen.log_match.length > 0) {
-    const tail = new LogTail({ logPath, signal, startOffset: handle.logStartOffset });
-    await tail.start();
-    const pattern = new RegExp(readyWhen.log_match, "u");
-    probePromise = waitForLogMatch({ tail, pattern, signal }).finally(() => tail.stop().catch(() => {}));
+    const pattern = new RegExp(readyWhen.log_match as string, "u");
+    let tail = sharedTail;
+    let stopAfter = false;
+    if (tail === null) {
+      tail = new LogTail({ logPath, signal, startOffset: handle.logStartOffset });
+      await tail.start();
+      stopAfter = true;
+    }
+    const tailNonNull = tail;
+    probePromise = waitForLogMatch({ tail: tailNonNull, pattern, signal }).finally(() => {
+      if (stopAfter) void tailNonNull.stop().catch(() => {});
+    });
   } else if (typeof readyWhen.http_get === "string" && readyWhen.http_get.length > 0) {
-    const url = resolveHttpUrl(readyWhen.http_get, svcSnap);
+    const url = resolveHttpUrl(readyWhen.http_get as string, svcSnap);
     probePromise = waitForHttpReady({ url, signal });
   } else if (typeof readyWhen.tcp === "string" && readyWhen.tcp.length > 0) {
-    probePromise = waitForTcpReady({ target: readyWhen.tcp, signal });
+    probePromise = waitForTcpReady({ target: readyWhen.tcp as string, signal });
   } else if (typeof readyWhen.cmd === "string" && readyWhen.cmd.length > 0) {
     probePromise = waitForCmdReady({
-      shellCmd: readyWhen.cmd,
+      shellCmd: readyWhen.cmd as string,
       env: svcSnap.resolved_env ?? process.env,
       cwd: svcSnap.service_cwd ?? process.cwd(),
       signal,
@@ -292,6 +433,14 @@ async function runReadyProbe(
   }
 
   await withTimeout(probePromise, { ms: timeoutMs });
+}
+
+function readFailWhenPattern(svcSnap: ServiceSnapshot): RegExp | null {
+  const fw = svcSnap.fail_when;
+  if (!fw) return null;
+  const logMatch = fw.log_match;
+  if (typeof logMatch !== "string" || logMatch.length === 0) return null;
+  return new RegExp(logMatch, "u");
 }
 
 function resolveHttpUrl(pathOrUrl: string, svcSnap: ServiceSnapshot): string {

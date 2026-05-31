@@ -90,6 +90,75 @@ describe("ServiceSnapshot teardown fields", () => {
     expect(got).toEqual(snap);
   });
 
+  it("round-trips owned_containers.label on a service snapshot", async () => {
+    const snap: StackSnapshot = {
+      ...baseSnap("svc-owned-containers-label"),
+      services: [
+        {
+          name: "supabase",
+          kind: "owned",
+          state: "ready",
+          stop_cmd: "supabase stop",
+          owned_containers: { label: "com.supabase.cli.project=demo-abc123" },
+        },
+      ],
+    };
+
+    await writeSnapshot(snap);
+
+    const raw = JSON.parse(
+      readFileSync(join(stackDir("svc-owned-containers-label"), "state.json"), "utf8"),
+    );
+    expect(raw.services[0].owned_containers).toEqual({
+      label: "com.supabase.cli.project=demo-abc123",
+    });
+
+    const got = await readSnapshot("svc-owned-containers-label");
+    expect(got).not.toBeNull();
+    expect(got!.services[0].owned_containers).toEqual({
+      label: "com.supabase.cli.project=demo-abc123",
+    });
+  });
+
+  it("round-trips owned_containers.name_pattern on a service snapshot", async () => {
+    const snap: StackSnapshot = {
+      ...baseSnap("svc-owned-containers-name"),
+      services: [
+        {
+          name: "supabase",
+          kind: "owned",
+          state: "ready",
+          stop_cmd: "supabase stop",
+          owned_containers: { name_pattern: "supabase_*_demo-abc123" },
+        },
+      ],
+    };
+
+    await writeSnapshot(snap);
+
+    const got = await readSnapshot("svc-owned-containers-name");
+    expect(got).not.toBeNull();
+    expect(got!.services[0].owned_containers).toEqual({
+      name_pattern: "supabase_*_demo-abc123",
+    });
+  });
+
+  it("omits owned_containers when not set", async () => {
+    const snap: StackSnapshot = {
+      ...baseSnap("svc-owned-containers-absent"),
+      services: [
+        { name: "api", kind: "owned", state: "ready", stop_cmd: "echo stop" },
+      ],
+    };
+
+    await writeSnapshot(snap);
+
+    const raw = JSON.parse(
+      readFileSync(join(stackDir("svc-owned-containers-absent"), "state.json"), "utf8"),
+    );
+    expect(raw.services[0]).not.toHaveProperty("owned_containers");
+  });
+
   it("omits optional teardown fields when not set", async () => {
     const snap: StackSnapshot = {
       ...baseSnap("svc-teardown-absent"),
@@ -109,6 +178,9 @@ describe("ServiceSnapshot teardown fields", () => {
     expect(svc).not.toHaveProperty("resolved_env");
     expect(svc).not.toHaveProperty("depends_on");
     expect(svc).not.toHaveProperty("before_down");
+    expect(svc).not.toHaveProperty("before_start");
+    expect(svc).not.toHaveProperty("after_ready");
+    expect(svc).not.toHaveProperty("fail_when");
 
     const got = await readSnapshot("svc-teardown-absent");
     expect(got).not.toBeNull();
@@ -118,6 +190,73 @@ describe("ServiceSnapshot teardown fields", () => {
     expect(svcGot.resolved_env).toBeUndefined();
     expect(svcGot.depends_on).toBeUndefined();
     expect(svcGot.before_down).toBeUndefined();
+    expect(svcGot.before_start).toBeUndefined();
+    expect(svcGot.after_ready).toBeUndefined();
+    expect(svcGot.fail_when).toBeUndefined();
+  });
+
+  it("round-trips before_start and after_ready per-service hooks with resolved envs (LEV-540 / LEV-541)", async () => {
+    const beforeStart: SnapshotLifecycleEntry[] = [
+      { cmd: "mkdir -p /tmp/lich-work", env: { HOME: "/root" } },
+    ];
+    const afterReady: SnapshotLifecycleEntry[] = [
+      { cmd: 'curl -fsS "http://localhost:9001/health"', env: { API_URL: "http://localhost:9001" } },
+    ];
+    const snap: StackSnapshot = {
+      ...baseSnap("svc-per-service-hooks"),
+      services: [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          resolved_env: { PORT: "9001" },
+          before_start: beforeStart,
+          after_ready: afterReady,
+        },
+      ],
+    };
+
+    await writeSnapshot(snap);
+
+    const raw = JSON.parse(
+      readFileSync(join(stackDir("svc-per-service-hooks"), "state.json"), "utf8"),
+    );
+    const api = raw.services[0];
+    expect(api.before_start).toEqual(beforeStart);
+    expect(api.after_ready).toEqual(afterReady);
+
+    const got = await readSnapshot("svc-per-service-hooks");
+    expect(got).not.toBeNull();
+    expect(got!.services[0].before_start).toEqual(beforeStart);
+    expect(got!.services[0].after_ready).toEqual(afterReady);
+  });
+
+  it("round-trips fail_when config on a service snapshot (LEV-542)", async () => {
+    const snap: StackSnapshot = {
+      ...baseSnap("svc-fail-when"),
+      services: [
+        {
+          name: "api",
+          kind: "owned",
+          state: "ready",
+          cmd: "bun run dev",
+          resolved_env: { PORT: "9001" },
+          fail_when: { log_match: "EADDRINUSE" },
+        },
+      ],
+    };
+
+    await writeSnapshot(snap);
+
+    const raw = JSON.parse(
+      readFileSync(join(stackDir("svc-fail-when"), "state.json"), "utf8"),
+    );
+    expect(raw.services[0].fail_when).toEqual({ log_match: "EADDRINUSE" });
+
+    const got = await readSnapshot("svc-fail-when");
+    expect(got).not.toBeNull();
+    expect(got!.services[0].fail_when).toEqual({ log_match: "EADDRINUSE" });
   });
 });
 

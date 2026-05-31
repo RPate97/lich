@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, openSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, realpathSync } from "node:fs";
 
+import { writeRunMarker } from "../logs/run-marker.js";
 import { buildNodeBinAugmentedPath } from "../util/node-bin-path.js";
 
 export interface OwnedServiceSpec {
@@ -15,6 +16,8 @@ export interface OwnedServiceSpec {
   stopCmd?: string;
   logPath: string;
   signal?: AbortSignal;
+  /** Run id stamped into the per-service log marker; aids correlation across services in one `lich up`. */
+  runId?: string;
 }
 
 export interface ExitResult {
@@ -151,13 +154,11 @@ export async function startOwnedService(
     spec.cmd,
   );
 
-  // Record byte offset before appending so callers can tail only new content.
-  let logStartOffset = 0;
-  try {
-    logStartOffset = statSync(spec.logPath).size;
-  } catch {
-    /* ENOENT on first run — offset stays 0 */
-  }
+  // Write a visible run-boundary marker so matchers anchor here and `lich logs` shows where each run begins.
+  // The returned offset is past the marker, so the LogTail sees only THIS run's output.
+  const markerOpts: { runId?: string } = {};
+  if (spec.runId !== undefined) markerOpts.runId = spec.runId;
+  const { offset: logStartOffset } = await writeRunMarker(spec.logPath, markerOpts);
 
   // Pass log fd directly as stdio: Node-piped stdout causes Next.js dev to wedge
   // in an infinite ERR_INVALID_URL loop after the first HTTP request.

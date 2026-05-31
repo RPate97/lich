@@ -15,7 +15,7 @@ owned:
     # then runs the `dev` script in apps/server with everything pre-built.
     cmd: pnpm exec turbo run dev --filter=server --env-mode=loose
     cwd: .
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
 ```

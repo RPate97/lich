@@ -311,8 +311,8 @@ owned:
   multi:
     cmd: "echo \\"A=$PORT_A B=$PORT_B\\" > ${sentinel}; echo READY; sleep 30"
     ports:
-      a: { env: PORT_A }
-      b: { env: PORT_B }
+      a: { published_env: PORT_A }
+      b: { published_env: PORT_B }
     ready_when:
       log_match: "READY"
 `);
@@ -1055,7 +1055,7 @@ owned:
 });
 
 describe("runUp — lifecycle hooks see per-owned-service port env vars", () => {
-  it("before_up env carries singular-port env var (port: { env: NAME })", async () => {
+  it("before_up env carries singular-port env var (port: { published_env: NAME })", async () => {
     const sentinel = join(projectDir, "before-port.dump");
     writeYaml(`
 version: "1"
@@ -1064,7 +1064,7 @@ runtime:
 owned:
   svc:
     cmd: "echo READY; sleep 30"
-    port: { env: MY_SVC_PORT }
+    port: { published_env: MY_SVC_PORT }
     ready_when:
       log_match: "READY"
 lifecycle:
@@ -1089,7 +1089,7 @@ lifecycle:
     expect(port).toBeLessThanOrEqual(19600);
   }, 15_000);
 
-  it("after_up env carries singular-port env var (port: { env: NAME })", async () => {
+  it("after_up env carries singular-port env var (port: { published_env: NAME })", async () => {
     const sentinel = join(projectDir, "after-port.dump");
     writeYaml(`
 version: "1"
@@ -1098,7 +1098,7 @@ runtime:
 owned:
   svc:
     cmd: "echo READY; sleep 30"
-    port: { env: MY_SVC_PORT }
+    port: { published_env: MY_SVC_PORT }
     ready_when:
       log_match: "READY"
 lifecycle:
@@ -1123,7 +1123,7 @@ lifecycle:
     expect(port).toBeLessThanOrEqual(19600);
   }, 15_000);
 
-  it("before_up + after_up envs carry multi-port env vars (ports: { key: { env: NAME } })", async () => {
+  it("before_up + after_up envs carry multi-port env vars (ports: { key: { published_env: NAME } })", async () => {
     const beforeDump = join(projectDir, "before-multi.dump");
     const afterDump = join(projectDir, "after-multi.dump");
     writeYaml(`
@@ -1134,8 +1134,8 @@ owned:
   multi:
     cmd: "echo READY; sleep 30"
     ports:
-      api: { env: API_PORT }
-      db: { env: DB_PORT }
+      api: { published_env: API_PORT }
+      db: { published_env: DB_PORT }
     ready_when:
       log_match: "READY"
 lifecycle:
@@ -1179,12 +1179,12 @@ runtime:
 owned:
   alpha:
     cmd: "echo READY; sleep 30"
-    port: { env: ALPHA_PORT }
+    port: { published_env: ALPHA_PORT }
     ready_when:
       log_match: "READY"
   beta:
     cmd: "echo READY; sleep 30"
-    port: { env: BETA_PORT }
+    port: { published_env: BETA_PORT }
     ready_when:
       log_match: "READY"
 lifecycle:
@@ -1288,6 +1288,140 @@ lifecycle:
     expect(result.exitCode).toBe(0);
     expect(existsSync(marker)).toBe(true);
     expect(readFileSync(marker, "utf8")).toBe("dev");
+  }, 15_000);
+});
+
+describe("runUp — ownedSnapshotOverrides (LEV-527)", () => {
+  it("uses override env / cmd / cwd / stop_cmd for matching owned service and ignores yaml-defined env", async () => {
+    const sentinel = join(projectDir, "svc.ready");
+    const envMarker = join(projectDir, "env.marker");
+    // yaml says SECRET=from-yaml. Override says SECRET=from-snapshot.
+    // The override must win; the marker file contains "from-snapshot".
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+env:
+  SECRET: "from-yaml"
+owned:
+  svc:
+    cmd: ${JSON.stringify(`echo from-yaml-cmd > ${envMarker}; sleep 30`)}
+`);
+
+    // Override cmd writes the env value to disk so the test can prove the override path ran.
+    const overrideCmd = `printf %s "$SECRET" > ${envMarker}; echo READY; touch ${shellQuote(sentinel)}; sleep 30`;
+    const overrides = new Map([
+      [
+        "svc",
+        {
+          env: { PATH: process.env.PATH ?? "/usr/bin", SECRET: "from-snapshot" },
+          cmd: overrideCmd,
+          cwd: projectDir,
+        },
+      ],
+    ]);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      ownedSnapshotOverrides: overrides,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    // marker proves the override cmd (not the yaml cmd) ran AND override SECRET (not yaml SECRET) was in env
+    expect(existsSync(envMarker)).toBe(true);
+    expect(readFileSync(envMarker, "utf8")).toBe("from-snapshot");
+  }, 15_000);
+
+  it("falls back to yaml resolution for services NOT present in the overrides map", async () => {
+    const sentinelA = join(projectDir, "a.ready");
+    const sentinelB = join(projectDir, "b.ready");
+    const aMarker = join(projectDir, "a.env.marker");
+    const bMarker = join(projectDir, "b.env.marker");
+
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+env:
+  SHARED: "from-yaml"
+owned:
+  a:
+    cmd: ${JSON.stringify(`printf %s "$SHARED" > ${aMarker}; echo READY; touch ${shellQuote(sentinelA)}; sleep 30`)}
+    ready_when:
+      log_match: "READY"
+  b:
+    cmd: ${JSON.stringify(`printf %s "$SHARED" > ${bMarker}; echo READY; touch ${shellQuote(sentinelB)}; sleep 30`)}
+    ready_when:
+      log_match: "READY"
+`);
+
+    // Override only "a"; "b" should re-resolve from yaml.
+    const overrides = new Map([
+      [
+        "a",
+        {
+          env: { PATH: process.env.PATH ?? "/usr/bin", SHARED: "override-for-a" },
+          cmd: `printf %s "$SHARED" > ${aMarker}; echo READY; touch ${shellQuote(sentinelA)}; sleep 30`,
+          cwd: projectDir,
+        },
+      ],
+    ]);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      ownedSnapshotOverrides: overrides,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(aMarker, "utf8")).toBe("override-for-a");
+    expect(readFileSync(bMarker, "utf8")).toBe("from-yaml");
+  }, 15_000);
+
+  it("writes the snapshot resolved_env back as it was passed in (override env preserved)", async () => {
+    const sentinel = join(projectDir, "svc.ready");
+    writeYaml(`
+version: "1"
+runtime:
+  port_range: [19000, 19100]
+owned:
+  svc:
+    cmd: ${JSON.stringify(`echo READY; touch ${shellQuote(sentinel)}; sleep 30`)}
+    ready_when:
+      log_match: "READY"
+`);
+
+    const overrides = new Map([
+      [
+        "svc",
+        {
+          env: { PATH: process.env.PATH ?? "/usr/bin", PINNED: "from-override" },
+          cmd: `echo READY; touch ${shellQuote(sentinel)}; sleep 30`,
+          cwd: projectDir,
+        },
+      ],
+    ]);
+
+    const { stream } = captureStdout();
+    const result = await runUp({
+      cwd: projectDir,
+      outputMode: "json",
+      out: stream,
+      ownedSnapshotOverrides: overrides,
+    });
+    if (result.stackId) createdStackIds.push(result.stackId);
+
+    expect(result.exitCode).toBe(0);
+    const snap = await loadSnapshot(result.stackId!);
+    const svcSnap = snap.services.find((s) => s.name === "svc");
+    expect(svcSnap?.resolved_env?.PINNED).toBe("from-override");
   }, 15_000);
 });
 

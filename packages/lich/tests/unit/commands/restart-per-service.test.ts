@@ -209,3 +209,101 @@ describe("runRestart — --all flag is whole-stack (no per-service path)", () =>
     expect(text()).not.toContain("no running stack found");
   });
 });
+
+describe("runRestart — per-service: updates started_at on snapshot (LEV-543)", () => {
+  it("rewrites started_at to a newer timestamp than the previous up", async () => {
+    const { stackId } = await seedSnapshot([]);
+
+    makeLogDir(stackId, "api");
+
+    const oldApiPid = spawnSleepProcess();
+    const oldStartedAt = "2026-05-28T00:00:00.000Z";
+
+    await seedSnapshot([
+      {
+        name: "api",
+        kind: "owned",
+        state: "ready",
+        pid: oldApiPid,
+        cmd: "sleep 9999",
+        resolved_env: { PATH: process.env.PATH ?? "/usr/bin" },
+        service_cwd: projectDir,
+        started_at: oldStartedAt,
+        allocated_ports: {},
+      },
+    ]);
+
+    const { stream } = captureOutput();
+    const result = await runRestart({
+      cwd: projectDir,
+      out: stream,
+      outputMode: "quiet",
+      services: ["api"],
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    const snap = await readSnapshot(stackId);
+    expect(snap).not.toBeNull();
+    const apiSnap = snap!.services.find((s) => s.name === "api");
+    expect(apiSnap?.started_at).toBeDefined();
+    expect(apiSnap!.started_at).not.toBe(oldStartedAt);
+    const newMs = new Date(apiSnap!.started_at!).getTime();
+    const oldMs = new Date(oldStartedAt).getTime();
+    expect(newMs).toBeGreaterThan(oldMs);
+
+    if (typeof apiSnap?.pid === "number") {
+      spawnedPids.push(apiSnap.pid);
+    }
+  }, 30_000);
+});
+
+describe("runRestart — per-service: fires before_start and after_ready hooks (LEV-540 / LEV-541)", () => {
+  it("invokes both hooks with snapshot env", async () => {
+    const { stackId } = await seedSnapshot([]);
+    makeLogDir(stackId, "api");
+
+    const oldApiPid = spawnSleepProcess();
+
+    const markerDir = mkdtempSync(join(tmpdir(), "lich-restart-hook-marker-"));
+    const bsMarker = join(markerDir, "before_start");
+    const arMarker = join(markerDir, "after_ready");
+
+    await seedSnapshot([
+      {
+        name: "api",
+        kind: "owned",
+        state: "ready",
+        pid: oldApiPid,
+        cmd: "sleep 9999",
+        resolved_env: { PATH: process.env.PATH ?? "/usr/bin", FROM_SNAP: "snapshot-value" },
+        service_cwd: projectDir,
+        allocated_ports: {},
+        before_start: [{ cmd: `printf "%s\\n" "$FROM_SNAP" > ${bsMarker}`, env: { PATH: process.env.PATH ?? "/usr/bin", FROM_SNAP: "snapshot-value" } }],
+        after_ready: [{ cmd: `printf "%s\\n" "$FROM_SNAP" > ${arMarker}`, env: { PATH: process.env.PATH ?? "/usr/bin", FROM_SNAP: "snapshot-value" } }],
+      },
+    ]);
+
+    const { stream } = captureOutput();
+    const result = await runRestart({
+      cwd: projectDir,
+      out: stream,
+      outputMode: "quiet",
+      services: ["api"],
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    // Both hooks ran with snapshot env (FROM_SNAP=snapshot-value visible).
+    const { readFileSync } = require("node:fs");
+    expect(readFileSync(bsMarker, "utf8").trim()).toBe("snapshot-value");
+    expect(readFileSync(arMarker, "utf8").trim()).toBe("snapshot-value");
+
+    const snap = await readSnapshot(stackId);
+    if (typeof snap?.services.find((s) => s.name === "api")?.pid === "number") {
+      spawnedPids.push(snap!.services.find((s) => s.name === "api")!.pid!);
+    }
+
+    rmSync(markerDir, { recursive: true, force: true });
+  }, 30_000);
+});

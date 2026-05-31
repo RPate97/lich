@@ -11,17 +11,17 @@ function phaseName(idx: number, total: number, services: string[]): string {
 // 11 plausibly-named workers — exercises the overflow case where many
 // services-in-flight exceed terminal width.
 const WORKER_FIXTURE = [
-  "alerts-worker",
-  "audit-log-worker",
-  "billing-worker",
-  "events-worker",
-  "imports-worker",
-  "metrics-worker",
-  "notifications-worker",
-  "reports-worker",
-  "scheduled-jobs-worker",
-  "search-index-worker",
-  "webhooks-worker",
+  "worker-a",
+  "worker-b",
+  "worker-c",
+  "worker-d",
+  "worker-e",
+  "worker-f",
+  "worker-g",
+  "worker-h",
+  "worker-i",
+  "worker-j",
+  "worker-k",
 ];
 
 describe("truncateSpinnerName", () => {

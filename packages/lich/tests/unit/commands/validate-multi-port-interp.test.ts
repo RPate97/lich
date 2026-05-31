@@ -41,8 +41,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }
 env:
   SMTP_URL: "smtp://localhost:\${services.mailhog.host_port_0}"
   UI_URL: "http://localhost:\${services.mailhog.host_port_1}"
@@ -59,8 +59,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }
 env:
   BAD: "http://localhost:\${services.mailhog.host_port_5}"
 `);
@@ -86,11 +86,11 @@ services:
     image: nginx
     ports:
       http:
-        container: 80
-        env: HTTP_PORT
+        container_port: 80
+        published_env: HTTP_PORT
       admin:
-        container: 81
-        env: ADMIN_PORT
+        container_port: 81
+        published_env: ADMIN_PORT
 env:
   BAD: "http://localhost:\${services.web.host_port_0}"
 `);
@@ -113,8 +113,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }
 env:
   BAD: "http://localhost:\${services.mailhog.host_port_admin}"
 `);
@@ -138,11 +138,11 @@ services:
     image: nginx
     ports:
       http:
-        container: 80
-        env: HTTP_PORT
+        container_port: 80
+        published_env: HTTP_PORT
       admin:
-        container: 81
-        env: ADMIN_PORT
+        container_port: 81
+        published_env: ADMIN_PORT
 env:
   HTTP_URL: "http://localhost:\${services.web.ports.http}"
   ADMIN_URL: "http://localhost:\${services.web.ports.admin}"
@@ -160,11 +160,11 @@ services:
     image: nginx
     ports:
       http:
-        container: 80
-        env: HTTP_PORT
+        container_port: 80
+        published_env: HTTP_PORT
       admin:
-        container: 81
-        env: ADMIN_PORT
+        container_port: 81
+        published_env: ADMIN_PORT
 env:
   BAD: "http://localhost:\${services.web.ports.bogus}"
 `);
@@ -187,8 +187,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }
 env:
   BAD: "http://localhost:\${services.mailhog.ports.smtp}"
 `);
@@ -212,8 +212,8 @@ services:
   mailhog:
     image: mailhog/mailhog
     ports:
-      - { container: 1025, env: SMTP_HOST_PORT }
-      - { container: 8025, env: MAILHOG_UI_PORT }
+      - { container_port: 1025, published_env: SMTP_HOST_PORT }
+      - { container_port: 8025, published_env: MAILHOG_UI_PORT }
 env:
   PRIMARY: "smtp://localhost:\${services.mailhog.host_port}"
 `);
@@ -229,11 +229,11 @@ services:
     image: nginx
     ports:
       http:
-        container: 80
-        env: HTTP_PORT
+        container_port: 80
+        published_env: HTTP_PORT
       admin:
-        container: 81
-        env: ADMIN_PORT
+        container_port: 81
+        published_env: ADMIN_PORT
 env:
   PRIMARY: "http://localhost:\${services.web.host_port}"
 `);

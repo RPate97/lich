@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
 import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
+import { resolveStackId } from "../state/resolve-stack.js";
 import type { LifecyclePhase } from "../lifecycle/executor.js";
 import { parseConfig } from "../config/parse.js";
 import { isSandboxStack } from "../sandbox/marker.js";
@@ -27,6 +28,8 @@ export interface RunLogsInput {
   all: boolean;
   /** Machine-readable JSON output. */
   json: boolean;
+  /** Stack ID or worktree name (`--worktree`); defaults to cwd-derived. */
+  worktreeArg?: string;
   cwd?: string;
   out?: NodeJS.WritableStream;
   signal?: AbortSignal;
@@ -67,17 +70,30 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
   const holder = { code: 0 };
 
   const done = (async () => {
-    let worktree: Worktree;
+    let stackId: string;
+    let snapshot: StackSnapshot | null;
+    let worktree: Worktree | null = null;
     try {
-      worktree = detectWorktree(cwd);
-    } catch {
-      writeLine(out, "no stack found for this worktree");
+      const resolved = await resolveStackId({
+        cwd,
+        ...(input.worktreeArg !== undefined && { worktreeArg: input.worktreeArg }),
+      });
+      stackId = resolved.stackId;
+      snapshot = resolved.snapshot;
+      try { worktree = detectWorktree(cwd); } catch { worktree = null; }
+    } catch (err) {
+      if (input.worktreeArg) {
+        writeLine(out, (err as Error).message);
+      } else {
+        writeLine(out, "no stack found for this worktree");
+      }
       holder.code = 1;
       return;
     }
-    const stackId = worktree.stack_id;
 
-    const snapshot = await readSnapshot(stackId);
+    if (snapshot === null) {
+      snapshot = await readSnapshot(stackId);
+    }
     if (snapshot === null) {
       writeLine(out, "no stack found for this worktree");
       holder.code = 1;
@@ -85,13 +101,19 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
     }
 
     if (isSandboxStack(snapshot)) {
-      const configPath = join(worktree.path, "lich.yaml");
+      const wt = worktree ?? {
+        name: snapshot.worktree_name,
+        id: stackId,
+        path: snapshot.worktree_path,
+        stack_id: snapshot.stack_id,
+      };
+      const configPath = join(wt.path, "lich.yaml");
       const parsed = existsSync(configPath) ? await parseConfig(configPath) : null;
       const sandboxConfig = parsed?.ok ? parsed.config.runtime?.sandbox : undefined;
       const routed = await maybeRouteToSandbox({
         kind: "logs",
         snapshot,
-        worktree,
+        worktree: wt,
         lichYamlPath: configPath,
         argv: { sources: input.sources, follow: input.follow, tail: input.count },
         sandboxConfig,

@@ -7,6 +7,8 @@
 import { listStacks } from "../state/directory.js";
 import {
   readSnapshot,
+  type LifecyclePhaseStatus,
+  type LifecycleSnapshotStatus,
   type ServiceSnapshot,
   type StackSnapshot,
 } from "../state/snapshot.js";
@@ -24,7 +26,7 @@ export interface RunStacksResult {
   exitCode: number;
 }
 
-interface StackRow {
+export interface StackRow {
   stack_id: string;
   worktree_name: string;
   status: StackSnapshot["status"];
@@ -38,11 +40,20 @@ interface StackRow {
   sandbox?: boolean;
   sandbox_vm?: string;
   sandbox_state?: string;
+  /** Per-phase lifecycle status from the snapshot, or undefined on pre-LEV-531 snapshots. */
+  lifecycle?: LifecycleSnapshotStatus;
   // Derived counts — kept off the JSON wire; tools compute from `services`.
   ready_count: number;
   total_count: number;
   failed_count: number;
 }
+
+const LIFECYCLE_PHASE_ORDER = [
+  "before_up",
+  "after_up",
+  "before_down",
+  "after_down",
+] as const;
 
 export async function runStacks(
   input: RunStacksInput,
@@ -84,7 +95,7 @@ export async function runStacks(
   return { exitCode: 0 };
 }
 
-function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
+export function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
   const services = snap.services ?? [];
   const ready_count = services.filter((s) => isReadyState(s.state)).length;
   const failed_count = services.filter((s) => s.state === "failed").length;
@@ -105,10 +116,25 @@ function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
     active_profile: snap.active_profile,
     sandbox: snap.sandbox === true ? true : undefined,
     sandbox_vm: snap.sandbox === true ? snap.sandbox_vm : undefined,
+    lifecycle: snap.lifecycle,
     ready_count,
     total_count,
     failed_count,
   };
+}
+
+/** First phase (in standard order) whose status is "failed", or null. */
+function findFailedPhase(
+  lifecycle: LifecycleSnapshotStatus | undefined,
+): { phase: (typeof LIFECYCLE_PHASE_ORDER)[number]; entry: Extract<LifecyclePhaseStatus, { status: "failed" }> } | null {
+  if (!lifecycle) return null;
+  for (const phase of LIFECYCLE_PHASE_ORDER) {
+    const entry = lifecycle[phase];
+    if (entry?.status === "failed") {
+      return { phase, entry };
+    }
+  }
+  return null;
 }
 
 /** True for `healthy` or `ready` — what counts toward the X/Y display. */
@@ -151,16 +177,18 @@ function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-function renderJson(rows: StackRow[]): string {
+export function renderJson(rows: StackRow[]): string {
   const payload = rows.map((r) => {
     const obj: Record<string, unknown> = {
       stack_id: r.stack_id,
       worktree_name: r.worktree_name,
       status: r.status,
-      started_at: r.started_at,
-      uptime_seconds: r.uptime_seconds,
-      services: r.services,
     };
+    // Surface lifecycle BEFORE services so a quick scan lands on the failure cause.
+    if (r.lifecycle !== undefined) obj.lifecycle = r.lifecycle;
+    obj.started_at = r.started_at;
+    obj.uptime_seconds = r.uptime_seconds;
+    obj.services = r.services;
     if (r.primary_url) obj.primary_url = r.primary_url;
     // Omit (don't serialize null) so pre-profile snapshots stay clean.
     if (r.active_profile !== undefined) obj.active_profile = r.active_profile;
@@ -176,14 +204,14 @@ function renderJson(rows: StackRow[]): string {
 
 const HEADERS = ["WORKTREE", "STATUS", "UPTIME", "SERVICES", "URL"] as const;
 
-function renderPretty(rows: StackRow[]): string {
+export function renderPretty(rows: StackRow[]): string {
   if (rows.length === 0) return "no stacks running";
 
   const cells: string[][] = [HEADERS.map((h) => h)];
   for (const r of rows) {
     cells.push([
       r.worktree_name,
-      r.status,
+      formatStatus(r),
       formatUptime(r.uptime_seconds),
       formatServiceCount(r),
       r.sandbox && r.sandbox_vm
@@ -212,6 +240,14 @@ function renderPretty(rows: StackRow[]): string {
 function formatServiceCount(r: StackRow): string {
   const base = `${r.ready_count}/${r.total_count}`;
   return r.failed_count > 0 ? `${base} (${r.failed_count} failed)` : base;
+}
+
+/** Stack status with a failed-phase suffix when a lifecycle hook caused the failure, e.g. `failed (after_up 2/3: db-reset)`. */
+function formatStatus(r: StackRow): string {
+  if (r.status !== "failed") return r.status;
+  const failed = findFailedPhase(r.lifecycle);
+  if (!failed) return r.status;
+  return `${r.status} (${failed.phase} ${failed.entry.failed_index + 1}/${failed.entry.total}: ${failed.entry.failed_cmd})`;
 }
 
 function writeLine(out: NodeJS.WritableStream, text: string): void {

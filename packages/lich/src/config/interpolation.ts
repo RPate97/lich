@@ -69,17 +69,66 @@ export class InterpolationError extends Error {
  */
 const TOKEN_RE = /\$\$|\$\{([^}]*)\}/g;
 
-const SUPPORTED_SHAPES = [
-  "worktree.name",
-  "worktree.id",
-  "worktree.path",
-  "services.<name>.host_port",
-  "services.<name>.host_port_<idx>",
-  "services.<name>.ports.<key>",
-  "owned.<name>.port",
-  "owned.<name>.ports.<key>",
-  "owned.<name>.captured.<key>",
+export interface InterpolationKey {
+  pattern: string;
+  resolves_to: string;
+  evaluated: string;
+}
+
+export const INTERPOLATION_KEYS: InterpolationKey[] = [
+  {
+    pattern: "worktree.name",
+    resolves_to: "Friendly name of the current worktree (folder basename).",
+    evaluated: "Immediately, before any service starts.",
+  },
+  {
+    pattern: "worktree.id",
+    resolves_to: "Stable per-worktree ID used for namespacing (name + hash).",
+    evaluated: "Immediately, before any service starts.",
+  },
+  {
+    pattern: "worktree.path",
+    resolves_to: "Absolute path to the current worktree root.",
+    evaluated: "Immediately, before any service starts.",
+  },
+  {
+    pattern: "services.<name>.host_port",
+    resolves_to:
+      "Allocated host port for the compose service's first declared port (insertion order).",
+    evaluated: "At up time, after port allocation.",
+  },
+  {
+    pattern: "services.<name>.host_port_<idx>",
+    resolves_to:
+      "Allocated host port at numeric index `<idx>` of an array-form `ports:` block (0-based).",
+    evaluated: "At up time, after port allocation.",
+  },
+  {
+    pattern: "services.<name>.ports.<key>",
+    resolves_to:
+      "Allocated host port for the named entry in a Record-form `ports:` block of a compose service.",
+    evaluated: "At up time, after port allocation.",
+  },
+  {
+    pattern: "owned.<name>.port",
+    resolves_to: "Allocated host port for a single-port owned service.",
+    evaluated: "At up time, after port allocation.",
+  },
+  {
+    pattern: "owned.<name>.ports.<key>",
+    resolves_to:
+      "Allocated host port for the named entry in a multi-port owned service.",
+    evaluated: "At up time, after port allocation.",
+  },
+  {
+    pattern: "owned.<name>.captured.<key>",
+    resolves_to:
+      "Value captured from the owned service's stdout/stderr by a `ready_when.capture` pattern.",
+    evaluated: "After the capture regex matches a log line.",
+  },
 ];
+
+const SUPPORTED_SHAPES = INTERPOLATION_KEYS.map((k) => k.pattern);
 
 function unknownShape(ref: string, source: string | undefined): never {
   throw new InterpolationError(

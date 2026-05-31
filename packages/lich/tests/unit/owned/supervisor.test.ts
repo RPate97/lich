@@ -49,6 +49,14 @@ async function readLog(name: string): Promise<string> {
   return await readFile(path, "utf8");
 }
 
+/** Strip the run-boundary marker line so tests can assert on supervised output alone. */
+function stripMarker(log: string): string {
+  return log
+    .split("\n")
+    .filter((line) => !/^=== lich up at .+ \[run: .+\] ===$/u.test(line))
+    .join("\n");
+}
+
 describe("startOwnedService — happy path", () => {
   it("spawns a process, runs it to completion, and captures stdout to the log file", async () => {
     const name = "echo-svc";
@@ -426,7 +434,7 @@ describe("startOwnedService — PWD canonicalization (LEV-300)", () => {
 
       await handle.exited;
       const log = await readLog(name);
-      const printed = log.trim();
+      const printed = stripMarker(log).trim();
 
       // The spawned child must see the canonical realpath, not the
       // symlinked input. `printenv PWD` reads the env value as-is (no
@@ -455,7 +463,7 @@ describe("startOwnedService — PWD canonicalization (LEV-300)", () => {
 
     await handle.exited;
     const log = await readLog(name);
-    const printed = log.trim();
+    const printed = stripMarker(log).trim();
     const expected = realpathSync.native(homeDir);
 
     expect(printed).toBe(expected);

@@ -22,6 +22,7 @@ import { deriveProxyPort, startProxy } from "./proxy/proxy.js";
 import { RoutingTable } from "./proxy/routing.js";
 import { createStaticRoutes } from "./proxy/static-routes.js";
 import { readSnapshot, type StackStatus } from "../state/snapshot.js";
+import { MetricsSampler } from "./metrics/sampler.js";
 
 export interface RunDaemonOpts {
   lichHome?: string;
@@ -149,6 +150,7 @@ export async function runDaemon(
   });
 
   let dashboardServer: DashboardServer | null = null;
+  const metricsSampler = new MetricsSampler({ stateRoot });
   // Forward-declared so the watcher's onChange can kick an auto-shutdown
   // check on every state change. Null-check guards the tiny window
   // between watcher.start() and tick assignment.
@@ -185,9 +187,14 @@ export async function runDaemon(
         list: () => routingTable.list(),
         reload: () => routingTable.reload(stateRoot),
       },
+      metricsSampler: {
+        latest: (id) => metricsSampler.latest(id),
+        subscribe: (id, cb) => metricsSampler.subscribe(id, cb),
+      },
     });
   } catch (err) {
     log(out, `dashboard failed to start: ${(err as Error).message}`);
+    metricsSampler.stop();
     await watcher.stop().catch(() => {});
     await clearDaemonPid(pidOpts).catch(() => {});
     if (opts.lichHome !== undefined) {
@@ -234,12 +241,19 @@ export async function runDaemon(
   // Written only after Bun.serve has bound — auto-start polls this file.
   await writeDaemonUrl(dashboardServer.url, pidOpts);
 
+  // Sampler bootstraps in the background — first tick scans all on-disk
+  // stacks; subsequent ticks fire every 2s on the sampler's own timer.
+  void metricsSampler.start().catch((err: unknown) => {
+    log(out, `metrics sampler failed to start: ${(err as Error).message}`);
+  });
+
   // cleanupPromise dedupes concurrent abort paths (signal, SIGTERM,
   // auto-shutdown) onto a single teardown.
   let cleanupPromise: Promise<void> | null = null;
   const runCleanup = (): Promise<void> => {
     if (cleanupPromise !== null) return cleanupPromise;
     cleanupPromise = (async () => {
+      metricsSampler.stop();
       await watcher.stop().catch(() => {});
       if (dashboardServer) {
         await dashboardServer.stop().catch(() => {});

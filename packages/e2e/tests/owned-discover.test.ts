@@ -59,22 +59,22 @@ function writeYaml(body: string): string {
 
 describe("lich validate — owned.discover expansion", () => {
   it("accepts a yaml with a discover block and reports the expanded owned count", () => {
-    touch("apps/cronjob/src/temporal/workers/EmailTemporalWorker.ts");
-    touch("apps/cronjob/src/temporal/workers/PaymentTemporalWorker.ts");
-    touch("apps/cronjob/src/temporal/workers/CleanupTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/AlphaTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/BetaTemporalWorker.ts");
+    touch("apps/workers/src/temporal/workers/GammaTemporalWorker.ts");
     // non-matching file proves the glob filters
-    touch("apps/cronjob/src/temporal/workers/index.ts");
+    touch("apps/workers/src/temporal/workers/index.ts");
 
     writeYaml(
       [
         'version: "1"',
         "owned:",
-        "  cronjob-workers:",
+        "  workers:",
         "    discover:",
         '      glob: "src/temporal/workers/*TemporalWorker.ts"',
         '      name_template: "${basename_no_ext | strip_suffix:TemporalWorker | kebab}-worker"',
         '      cmd_template: "node dist/temporal/workers/${basename_no_ext}.js"',
-        "      cwd: apps/cronjob",
+        "      cwd: apps/workers",
         "    ready_when:",
         '      log_match: "Worker created"',
         "",

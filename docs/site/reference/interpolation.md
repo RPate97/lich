@@ -20,14 +20,14 @@ They are NOT resolved inside `cmd:` strings — those are already shell lines, s
 
 - `${services.<name>.host_port}` — first host port for a compose service.
 - `${services.<name>.host_port_<idx>}` — Nth port (0-indexed) for multi-port compose services using the array form.
-- `${services.<name>.ports.<key>}` — named-port lookup, where `<key>` is the port-key in the service's `ports:` map (NOT the `env:` field name).
+- `${services.<name>.ports.<key>}` — named-port lookup, where `<key>` is the port-key in the service's `ports:` map (NOT the `published_env:` field name).
 
 ```yaml
 services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
 
 env:
   DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/myapp"
@@ -44,7 +44,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
   supabase:
@@ -52,8 +52,8 @@ owned:
     oneshot: true
     stop_cmd: supabase stop
     ports:
-      api: { env: SUPABASE_API_PORT }
-      db:  { env: SUPABASE_DB_PORT }
+      api: { published_env: SUPABASE_API_PORT }
+      db:  { published_env: SUPABASE_DB_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"   # use the port-key, NOT the env field name
 
@@ -120,13 +120,13 @@ Two services depend on each other's port via env. Break the cycle (use `depends_
 
 ### "unknown reference path: `${owned.X.ports.SOMETHING}`" when `SOMETHING` looks like an env var
 
-The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `env:` field name. Example:
+The `<key>` in `${owned.X.ports.<key>}` is the **port-key** from the service's `ports:` map, not the `published_env:` field name. Example:
 
 ```yaml
 owned:
   supabase:
     ports:
-      api: { env: SUPABASE_API_PORT }   # port-key is `api`; env field is `SUPABASE_API_PORT`
+      api: { published_env: SUPABASE_API_PORT }   # port-key is `api`; published_env field is `SUPABASE_API_PORT`
 ```
 
 Reference it as `${owned.supabase.ports.api}` — NOT `${owned.supabase.ports.SUPABASE_API_PORT}`.

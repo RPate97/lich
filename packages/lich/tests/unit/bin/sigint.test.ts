@@ -116,7 +116,7 @@ runtime:
 owned:
   stuck:
     cmd: "sleep 60"
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       tcp: "localhost:1"
 `);

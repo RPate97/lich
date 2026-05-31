@@ -31,7 +31,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       http_get: /health
 ```
@@ -47,7 +47,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - { container: 5432, env: POSTGRES_HOST_PORT }
+      - { container_port: 5432, published_env: POSTGRES_HOST_PORT }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -59,7 +59,7 @@ owned:
   api:
     cmd: bun run dev
     cwd: apps/api
-    port: { env: PORT }
+    port: { published_env: PORT }
     depends_on: [postgres]
     ready_when:
       http_get: /health

@@ -1,9 +1,12 @@
+import { useMemo } from 'react';
 import {
   fmtRelative,
   formatHealthCount,
   stackHealthBucket,
 } from '../lib/format';
-import type { StackView } from '../api';
+import { formatBytes, formatCpuPct } from '../lib/metrics';
+import { useAllStackMetrics } from '../hooks/useAllStackMetrics';
+import type { StackMetricsSnapshot, StackView } from '../api';
 
 interface SidebarProps {
   stacks: StackView[];
@@ -19,6 +22,7 @@ interface StackCardProps {
   isNew: boolean;
   justArrived: boolean;
   onSelect: (id: string) => void;
+  metrics: StackMetricsSnapshot | undefined;
 }
 
 function HealthPill({ stack }: { stack: StackView }) {
@@ -37,6 +41,7 @@ function StackCard({
   isNew,
   justArrived,
   onSelect,
+  metrics,
 }: StackCardProps) {
   const ageMs = stack.started_at
     ? Date.now() - new Date(stack.started_at).getTime()
@@ -75,6 +80,26 @@ function StackCard({
       </div>
       <div className="stack-row3">
         <HealthPill stack={stack} />
+        <span className="stack-metrics">
+          {metrics ? (
+            <>
+              <span
+                className="stack-mem"
+                title={`memory: ${formatBytes(metrics.total.mem_bytes)}`}
+              >
+                {formatBytes(metrics.total.mem_bytes)}
+              </span>
+              <span
+                className="stack-cpu"
+                title={`cpu: ${formatCpuPct(metrics.total.cpu_pct)}`}
+              >
+                {formatCpuPct(metrics.total.cpu_pct)}
+              </span>
+            </>
+          ) : (
+            <span className="stack-mem stack-mem-pending">—</span>
+          )}
+        </span>
         <span title="uptime">{ageMs > 0 ? fmtRelative(ageMs) : '—'}</span>
       </div>
     </button>
@@ -88,6 +113,9 @@ export function Sidebar({
   newestId,
   arrivedIds,
 }: SidebarProps) {
+  const stackIds = useMemo(() => stacks.map((s) => s.id), [stacks]);
+  const allMetrics = useAllStackMetrics(stackIds);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-hd">
@@ -118,6 +146,7 @@ export function Sidebar({
             isNew={s.id === newestId}
             justArrived={arrivedIds.has(s.id)}
             onSelect={onSelect}
+            metrics={allMetrics.byStack[s.id]}
           />
         ))}
         {stacks.length === 0 && (

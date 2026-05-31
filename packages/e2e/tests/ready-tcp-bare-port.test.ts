@@ -62,7 +62,7 @@ owned:
   server:
     cmd: node server.mjs
     cwd: ${stackPath}
-    port: { env: PORT }
+    port: { published_env: PORT }
     ready_when:
       tcp: "\${owned.server.port}"
       timeout: 10s

@@ -652,10 +652,10 @@ describe("resolveProfile — discover parent expansion in owned:", () => {
     const config: LichConfig = {
       version: "1",
       profiles: {
-        default: { owned: ["api", "web", "events-workers"] },
+        default: { owned: ["api", "web", "workers-group"] },
       },
       _discoverParents: new Map([
-        ["events-workers", ["billing-worker", "events-worker", "notifications-worker"]],
+        ["workers-group", ["worker-a", "worker-b", "worker-c"]],
       ]),
     };
 
@@ -664,9 +664,9 @@ describe("resolveProfile — discover parent expansion in owned:", () => {
     expect(resolved.owned).toEqual([
       "api",
       "web",
-      "billing-worker",
-      "events-worker",
-      "notifications-worker",
+      "worker-a",
+      "worker-b",
+      "worker-c",
     ]);
   });
 
@@ -674,27 +674,27 @@ describe("resolveProfile — discover parent expansion in owned:", () => {
     const config: LichConfig = {
       version: "1",
       profiles: {
-        default: { owned: ["api", "billing-worker", "events-worker"] },
+        default: { owned: ["api", "worker-a", "worker-b"] },
       },
     };
 
     const resolved = resolveProfile("default", config);
-    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+    expect(resolved.owned).toEqual(["api", "worker-a", "worker-b"]);
   });
 
   it("deduplicates when a child name appears both explicitly and via parent expansion", () => {
     const config: LichConfig = {
       version: "1",
       profiles: {
-        default: { owned: ["api", "billing-worker", "events-workers"] },
+        default: { owned: ["api", "worker-a", "workers-group"] },
       },
       _discoverParents: new Map([
-        ["events-workers", ["billing-worker", "events-worker"]],
+        ["workers-group", ["worker-a", "worker-b"]],
       ]),
     };
 
     const resolved = resolveProfile("default", config);
-    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+    expect(resolved.owned).toEqual(["api", "worker-a", "worker-b"]);
   });
 
   it("expands discover parent names inherited via extends chain", () => {
@@ -702,24 +702,24 @@ describe("resolveProfile — discover parent expansion in owned:", () => {
       version: "1",
       profiles: {
         base: { owned: ["api"] },
-        full: { extends: "base", owned: ["events-workers"] },
+        full: { extends: "base", owned: ["workers-group"] },
       },
       _discoverParents: new Map([
-        ["events-workers", ["billing-worker", "events-worker"]],
+        ["workers-group", ["worker-a", "worker-b"]],
       ]),
     };
 
     const resolved = resolveProfile("full", config);
-    expect(resolved.owned).toEqual(["api", "billing-worker", "events-worker"]);
+    expect(resolved.owned).toEqual(["api", "worker-a", "worker-b"]);
   });
 
   it("handles a discover parent with zero matches (empty children list)", () => {
     const config: LichConfig = {
       version: "1",
       profiles: {
-        default: { owned: ["api", "events-workers"] },
+        default: { owned: ["api", "workers-group"] },
       },
-      _discoverParents: new Map([["events-workers", []]]),
+      _discoverParents: new Map([["workers-group", []]]),
     };
 
     const resolved = resolveProfile("default", config);
@@ -730,18 +730,18 @@ describe("resolveProfile — discover parent expansion in owned:", () => {
     const config: LichConfig = {
       version: "1",
       profiles: {
-        default: { owned: ["api", "events-workers", "web"] },
+        default: { owned: ["api", "workers-group", "web"] },
       },
       _discoverParents: new Map([
-        ["events-workers", ["billing-worker", "events-worker"]],
+        ["workers-group", ["worker-a", "worker-b"]],
       ]),
     };
 
     const resolved = resolveProfile("default", config);
     expect(resolved.owned).toEqual([
       "api",
-      "billing-worker",
-      "events-worker",
+      "worker-a",
+      "worker-b",
       "web",
     ]);
   });

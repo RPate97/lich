@@ -24,6 +24,7 @@ import {
   type RunnerCtx,
 } from "../compose/runner.js";
 import { resolveComposeCli } from "../compose/detect.js";
+import { sweepOwnedContainers } from "../owned/containers.js";
 import { parseConfig } from "../config/parse.js";
 import type { LichConfig } from "../config/types.js";
 import {
@@ -260,6 +261,34 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
           `service ${svc.name} stop_cmd: ${errorMessage(err)}`,
         );
       }
+    }
+  }
+
+  // owned_containers sweep — runs regardless of whether config is available. Snapshot wins (post-LEV-534);
+  // yaml fallback covers legacy snapshots. No-op when no service declares the field.
+  for (const svc of snap.services) {
+    if (svc.kind !== "owned") continue;
+    const spec = svc.owned_containers ?? config?.owned?.[svc.name]?.owned_containers;
+    if (!spec) continue;
+    try {
+      const cli = await resolveComposeCli(undefined);
+      const result = await sweepOwnedContainers(cli.cmd, spec);
+      if (result.removed.length > 0) {
+        const filterDesc = spec.label !== undefined ? `label=${spec.label}` : `name=${spec.name_pattern}`;
+        warnings.push(
+          `service ${svc.name} owned_containers sweep removed ${result.removed.length} straggler container(s) matching ${filterDesc}: ${result.removed.join(", ")}`,
+        );
+      }
+      if (result.stragglers.length > 0) {
+        const filterDesc = spec.label !== undefined ? `label=${spec.label}` : `name=${spec.name_pattern}`;
+        warnings.push(
+          `service ${svc.name} owned_containers sweep: ${result.stragglers.length} container(s) matching ${filterDesc} still present after rm -f: ${result.stragglers.join(", ")}`,
+        );
+      }
+    } catch (err) {
+      warnings.push(
+        `service ${svc.name} owned_containers sweep: ${errorMessage(err)}`,
+      );
     }
   }
 

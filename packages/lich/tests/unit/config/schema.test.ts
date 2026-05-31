@@ -635,12 +635,12 @@ describe("config/schema", () => {
     const ok = validate({
       version: "1",
       owned: {
-        "cronjob-workers": {
+        "workers": {
           discover: {
-            glob: "apps/cronjob/src/workers/*Worker.ts",
+            glob: "apps/workers/src/workers/*Worker.ts",
             name_template: "${basename_no_ext | strip_suffix:Worker | kebab}-worker",
             cmd_template: "node dist/workers/${basename_no_ext}.js",
-            cwd: "apps/cronjob",
+            cwd: "apps/workers",
           },
           ready_when: {
             log_match: "Worker created",
@@ -743,7 +743,7 @@ describe("config/schema", () => {
             glob: "workers/*.ts",
             name_template: "${basename_no_ext}",
             cmd_template: "node ${basename}",
-            cwdd: "apps/cronjob",
+            cwdd: "apps/workers",
           },
         },
       },
@@ -762,7 +762,7 @@ describe("config/schema", () => {
             name_template: "${basename_no_ext}",
             cmd_template: "node ${basename}",
           },
-          cwd: "apps/cronjob",
+          cwd: "apps/workers",
           depends_on: ["postgres"],
           oneshot: false,
           env: { NODE_ENV: "development" },
@@ -783,6 +783,114 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
+  it("accepts an owned service with owned_containers.label", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      owned: {
+        supabase: {
+          cmd: "supabase start",
+          oneshot: true,
+          stop_cmd: "supabase stop",
+          owned_containers: {
+            label: "com.supabase.cli.project=${worktree.id}",
+          },
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("accepts an owned service with owned_containers.name_pattern", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      owned: {
+        supabase: {
+          cmd: "supabase start",
+          oneshot: true,
+          stop_cmd: "supabase stop",
+          owned_containers: {
+            name_pattern: "supabase_*_${worktree.id}",
+          },
+        },
+      },
+    });
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify(validate.errors, null, 2));
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("rejects owned_containers with BOTH label AND name_pattern (mutually exclusive)", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      owned: {
+        supabase: {
+          cmd: "supabase start",
+          owned_containers: {
+            label: "foo=bar",
+            name_pattern: "supabase_*",
+          },
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("rejects owned_containers with NEITHER label NOR name_pattern", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      owned: {
+        supabase: {
+          cmd: "supabase start",
+          owned_containers: {},
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("rejects an empty-string label / name_pattern (minLength:1)", () => {
+    const validate = compile();
+    const okLabel = validate({
+      version: "1",
+      owned: {
+        x: { cmd: "true", owned_containers: { label: "" } },
+      },
+    });
+    expect(okLabel).toBe(false);
+
+    const okName = validate({
+      version: "1",
+      owned: {
+        x: { cmd: "true", owned_containers: { name_pattern: "" } },
+      },
+    });
+    expect(okName).toBe(false);
+  });
+
+  it("rejects unknown fields inside owned_containers (additionalProperties: false)", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      owned: {
+        x: {
+          cmd: "true",
+          owned_containers: { label: "k=v", extra: "nope" },
+        },
+      },
+    });
+    expect(ok).toBe(false);
+  });
+
   it("accepts owned services with multi-port + oneshot + stop_cmd (supabase shape)", () => {
     const validate = compile();
     const ok = validate({
@@ -794,8 +902,8 @@ describe("config/schema", () => {
           oneshot: true,
           stop_cmd: "supabase stop",
           ports: {
-            api: { env: "SUPABASE_API_PORT" },
-            db: { env: "SUPABASE_DB_PORT" },
+            api: { published_env: "SUPABASE_API_PORT" },
+            db: { published_env: "SUPABASE_DB_PORT" },
           },
           ready_when: {
             tcp: "localhost:${owned.supabase.ports.api}",
@@ -807,8 +915,7 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
-  it("accepts a compose service whose Record-form port carries `container`", () => {
-    // `container` field drives override generator's `<hostPort>:<containerPort>`
+  it("accepts a compose service whose Record-form port carries `container_port`", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
@@ -816,7 +923,7 @@ describe("config/schema", () => {
         api: {
           image: "node:20",
           ports: {
-            http: { container: 3000, env: "PORT" },
+            http: { container_port: 3000, published_env: "PORT" },
           },
         },
       },
@@ -824,7 +931,7 @@ describe("config/schema", () => {
     expect(ok).toBe(true);
   });
 
-  it("accepts a compose service whose Record-form port carries container + host_port + env", () => {
+  it("accepts a compose service whose Record-form port carries container_port + host_port + published_env", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
@@ -832,7 +939,52 @@ describe("config/schema", () => {
         postgres: {
           image: "postgres:16",
           ports: {
-            db: { container: 5432, env: "POSTGRES_HOST_PORT", host_port: 5544 },
+            db: { container_port: 5432, published_env: "POSTGRES_HOST_PORT", host_port: 5544 },
+          },
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("accepts the scalar form `- 5432` in a list-form ports declaration", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        postgres: {
+          image: "postgres:16",
+          ports: [5432],
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("accepts the scalar form `<key>: 5432` in a keyed ports declaration", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        api: {
+          image: "node:20",
+          ports: { admin: 3001 },
+        },
+      },
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("accepts a mix of scalar and block entries in a keyed ports declaration", () => {
+    const validate = compile();
+    const ok = validate({
+      version: "1",
+      services: {
+        api: {
+          image: "node:20",
+          ports: {
+            http: { container_port: 3000, published_env: "PORT" },
+            admin: 3001,
           },
         },
       },
@@ -847,7 +999,7 @@ describe("config/schema", () => {
       services: {
         api: {
           ports: {
-            http: { container: 3000, not_a_real_field: "oops" },
+            http: { container_port: 3000, not_a_real_field: "oops" },
           },
         },
       },
@@ -855,14 +1007,14 @@ describe("config/schema", () => {
     expect(ok).toBe(false);
   });
 
-  it("rejects an out-of-range `container` value", () => {
+  it("rejects an out-of-range `container_port` value", () => {
     const validate = compile();
     const ok = validate({
       version: "1",
       services: {
         api: {
           ports: {
-            http: { container: 99999, env: "PORT" },
+            http: { container_port: 99999, published_env: "PORT" },
           },
         },
       },

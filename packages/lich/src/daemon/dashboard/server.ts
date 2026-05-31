@@ -1,10 +1,24 @@
+import { execFile as execFileCb } from "node:child_process";
 import { open, readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { LogTail } from "../../logs/tail.js";
 import { runLichAction, type ActionResult } from "./actions.js";
 import { loadStacksView, type StackView } from "./stacks-view.js";
 import type { StackSnapshot } from "../../state/snapshot.js";
 import type { RoutingTable } from "../proxy/routing.js";
+import type { MetricsSampler } from "../metrics/sampler.js";
+import type { StackMetricsSnapshot } from "../metrics/types.js";
+import { parsePsOutput } from "../metrics/ps.js";
+import {
+  aggregateSubtree,
+  buildTree,
+  indexByPid,
+  indexByPpid,
+  type ProcessNode,
+} from "../metrics/proc-tree.js";
+
+const execFile = promisify(execFileCb);
 
 /** Minimal contract for the SSE handler — start/onLine/stop. Real LogTail satisfies this structurally; tests inject fakes. */
 export interface LogTailLike {
@@ -52,6 +66,26 @@ export interface DashboardServerOpts {
    * the watcher debounce). When unset the endpoints return 503.
    */
   routingTable?: RoutingTableHandle;
+  /**
+   * Metrics sampler shared from the daemon. Enables `/api/stacks/:id/metrics`
+   * (snapshot) and `/api/stacks/:id/metrics/stream` (SSE). When unset both
+   * endpoints return 503.
+   */
+  metricsSampler?: MetricsSamplerHandle;
+  /**
+   * Indirection for `ps -A ...` so tests can stub the process snapshot.
+   * Defaults to the system `ps`. Powers `/api/stacks/:id/services/:svc/proc-tree`.
+   */
+  psProbe?: () => Promise<string>;
+}
+
+/** Slice of {@link MetricsSampler} the dashboard needs. Structurally compatible; tests inject minimal fakes. */
+export interface MetricsSamplerHandle {
+  latest(stackId: string): StackMetricsSnapshot | null;
+  subscribe(
+    stackId: string,
+    cb: (snap: StackMetricsSnapshot) => void,
+  ): () => void;
 }
 
 /** Slice of {@link RoutingTable} the dashboard needs. Structurally compatible with the real table; tests inject minimal fakes. */
@@ -116,6 +150,17 @@ export async function startDashboardServer(
     opts.tailFactory ?? ((o) => new LogTail({ logPath: o.logPath, startOffset: o.startOffset ?? 0 }));
 
   const runAction = opts.runAction ?? runLichAction;
+
+  const psProbe: () => Promise<string> =
+    opts.psProbe ??
+    (async () => {
+      const { stdout } = await execFile(
+        "ps",
+        ["-A", "-o", "pid,ppid,rss,pcpu,time"],
+        { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 },
+      );
+      return stdout;
+    });
 
   const handler = async (req: Request): Promise<Response> => {
     const u = new URL(req.url);
@@ -205,6 +250,58 @@ export async function startDashboardServer(
         );
       }
 
+      // /metrics + /metrics/stream — handled before GET-by-id so the
+      // /:id route doesn't 404 on the trailing segment.
+      if (
+        (segments.length === 2 && segments[1] === "metrics") ||
+        (segments.length === 3 &&
+          segments[1] === "metrics" &&
+          segments[2] === "stream")
+      ) {
+        if (req.method !== "GET") {
+          return methodNotAllowed("GET");
+        }
+        if (!opts.metricsSampler) {
+          return new Response(
+            JSON.stringify({
+              error: "metrics sampler not configured on this daemon",
+            }),
+            {
+              status: 503,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          );
+        }
+        const stackId = segments[0];
+        const stack = cache.find((s) => s.id === stackId);
+        if (!stack) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        if (segments.length === 3) {
+          return sseResponse(
+            buildMetricsStream({
+              sampler: opts.metricsSampler,
+              stackId,
+              clientSignal: req.signal,
+            }),
+          );
+        }
+        const snap = opts.metricsSampler.latest(stackId);
+        if (snap === null) {
+          // Sample hasn't fired yet — return an empty-but-shaped payload so
+          // clients don't have to special-case the warmup window.
+          return jsonResponse({
+            stack_id: stackId,
+            sampled_at: new Date().toISOString(),
+            total: { cpu_pct: 0, mem_bytes: 0 },
+            services: [],
+          });
+        }
+        return jsonResponse(snap);
+      }
+
       if (segments.length === 1) {
         const stack = cache.find((s) => s.id === segments[0]);
         if (!stack) {
@@ -256,6 +353,45 @@ export async function startDashboardServer(
           return notFound(`service not found: ${segments[2]}`);
         }
         return jsonResponse(service);
+      }
+
+      // /services/:name/proc-tree — owned-only; walks the local ps subtree
+      // rooted at the recorded parent PID. 409 on compose services because
+      // there's no host PID to root the walk at.
+      if (
+        segments.length === 4 &&
+        segments[1] === "services" &&
+        segments[3] === "proc-tree"
+      ) {
+        if (req.method !== "GET") {
+          return methodNotAllowed("GET");
+        }
+        const stack = cache.find((s) => s.id === segments[0]);
+        if (!stack) {
+          return notFound(`stack not found: ${segments[0]}`);
+        }
+        const service = stack.services.find((sv) => sv.name === segments[2]);
+        if (!service) {
+          return notFound(`service not found: ${segments[2]}`);
+        }
+        if (service.kind !== "owned") {
+          return new Response(
+            JSON.stringify({
+              error: "compose_service_has_no_process_tree",
+              message: `service ${service.name} is a compose service; use 'docker stats' for its container metrics`,
+            }),
+            {
+              status: 409,
+              headers: { "content-type": "application/json; charset=utf-8" },
+            },
+          );
+        }
+        return handleProcTreeRequest({
+          stateRoot: opts.stateRoot,
+          stackId: segments[0],
+          service: service.name,
+          psProbe,
+        });
       }
 
       // Don't fall through to the SPA — 200 on an unknown /api/* is misleading.
@@ -579,6 +715,80 @@ function buildMergedStream(
   });
 }
 
+interface MetricsStreamOpts {
+  sampler: MetricsSamplerHandle;
+  stackId: string;
+  clientSignal?: AbortSignal;
+}
+
+/** SSE stream of per-sample metrics snapshots. Sends the current latest immediately so consumers paint without waiting one tick. */
+function buildMetricsStream(
+  opts: MetricsStreamOpts,
+): ReadableStream<Uint8Array> {
+  let unsubscribe: (() => void) | null = null;
+  let closed = false;
+
+  const close = (controller: ReadableStreamDefaultController<Uint8Array> | null): void => {
+    if (closed) return;
+    closed = true;
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch {
+        /* ignore */
+      }
+      unsubscribe = null;
+    }
+    if (controller) {
+      try {
+        controller.close();
+      } catch {
+        // already closed via cancel — harmless
+      }
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(SSE_HEARTBEAT);
+
+      const latest = opts.sampler.latest(opts.stackId);
+      if (latest !== null) {
+        try {
+          controller.enqueue(encodeSseFrame(latest));
+        } catch {
+          close(controller);
+          return;
+        }
+      }
+
+      unsubscribe = opts.sampler.subscribe(opts.stackId, (snap) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encodeSseFrame(snap));
+        } catch {
+          close(controller);
+        }
+      });
+
+      if (opts.clientSignal) {
+        if (opts.clientSignal.aborted) {
+          close(controller);
+        } else {
+          opts.clientSignal.addEventListener(
+            "abort",
+            () => close(controller),
+            { once: true },
+          );
+        }
+      }
+    },
+    cancel() {
+      close(null);
+    },
+  });
+}
+
 function methodNotAllowed(allowed: string): Response {
   return new Response(
     JSON.stringify({ error: "method_not_allowed", allowed }),
@@ -620,6 +830,102 @@ async function readWorktreePath(
     return null;
   }
   return snap.worktree_path;
+}
+
+interface ProcTreeNode {
+  pid: number;
+  ppid: number;
+  rss_bytes: number;
+  cpu_pct_cumulative: number;
+  children: ProcTreeNode[];
+}
+
+interface ProcTreeResponse {
+  service: string;
+  pid: number;
+  process_count: number;
+  mem_bytes: number;
+  cpu_pct_cumulative: number;
+  tree: ProcTreeNode | null;
+}
+
+/** Run ps, walk subtree rooted at the owned service's PID, JSON-serialize. */
+async function handleProcTreeRequest(args: {
+  stateRoot: string;
+  stackId: string;
+  service: string;
+  psProbe: () => Promise<string>;
+}): Promise<Response> {
+  // Read state.json from the dashboard's configured stateRoot rather than
+  // the global stackDir() — keeps unit tests that point a custom stateRoot
+  // working without forcing LICH_HOME.
+  const stateFile = join(args.stateRoot, args.stackId, "state.json");
+  let raw: string;
+  try {
+    raw = await readFile(stateFile, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return notFound(`stack snapshot not found: ${args.stackId}`);
+    }
+    return internalServerError(`failed to read ${stateFile}: ${(err as Error).message}`);
+  }
+  let snap: StackSnapshot;
+  try {
+    snap = JSON.parse(raw) as StackSnapshot;
+  } catch (err) {
+    return internalServerError(`failed to parse ${stateFile}: ${(err as Error).message}`);
+  }
+  const svc = snap.services.find((s) => s.name === args.service);
+  if (!svc || svc.kind !== "owned") {
+    return notFound(
+      `owned service not found in snapshot: ${args.service}`,
+    );
+  }
+  if (svc.pid === undefined || svc.pid <= 0) {
+    return jsonResponse({
+      service: svc.name,
+      pid: 0,
+      process_count: 0,
+      mem_bytes: 0,
+      cpu_pct_cumulative: 0,
+      tree: null,
+    } satisfies ProcTreeResponse);
+  }
+  let psOut: string;
+  try {
+    psOut = await args.psProbe();
+  } catch (err) {
+    return internalServerError(`ps probe failed: ${(err as Error).message}`);
+  }
+  const rows = parsePsOutput(psOut);
+  const byPid = indexByPid(rows);
+  const byPpid = indexByPpid(rows);
+  const rootTree = buildTree(svc.pid, byPid, byPpid);
+  const agg = aggregateSubtree(svc.pid, byPid, byPpid);
+  const body: ProcTreeResponse = {
+    service: svc.name,
+    pid: svc.pid,
+    process_count: agg.process_count,
+    mem_bytes: agg.mem_bytes,
+    cpu_pct_cumulative: round1(agg.cpu_pct_cumulative),
+    tree: rootTree ? toWireTree(rootTree) : null,
+  };
+  return jsonResponse(body);
+}
+
+function toWireTree(node: ProcessNode): ProcTreeNode {
+  return {
+    pid: node.pid,
+    ppid: node.ppid,
+    rss_bytes: node.rss_kb * 1024,
+    cpu_pct_cumulative: round1(node.pcpu),
+    children: node.children.map(toWireTree),
+  };
+}
+
+function round1(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10;
 }
 
 /** 404 unknown stack; 500 on runAction throw (missing binary); 200 with `ok: false` for subprocess failures so the dashboard renders detail. */

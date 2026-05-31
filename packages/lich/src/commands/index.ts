@@ -12,8 +12,8 @@ import { runEnvCmd } from "./env.js";
 import { runExec } from "./exec.js";
 import { runRouting } from "./routing.js";
 import { runDashboard } from "./dashboard.js";
-import { runFeedback } from "./feedback.js";
 import { sandboxCommand } from "./sandbox.js";
+import { runTop, type SortKey } from "./top.js";
 
 /** `exitCode` overrides the default 0/1 mapping; keep `ok` consistent with it. */
 export interface CommandResult {
@@ -41,6 +41,13 @@ function stub(name: string): CommandHandler {
     ok: false,
     message: `'lich ${name}' is not yet implemented`,
   });
+}
+
+function readWorktreeArg(argv: ParsedArgv): string | undefined {
+  const value = argv.worktree;
+  if (typeof value !== "string") return undefined;
+  if (value.length === 0) return undefined;
+  return value;
 }
 
 const initHandler: CommandHandler = (ctx) => {
@@ -90,11 +97,15 @@ export function buildDownInput(
     : argv.quiet
       ? "quiet"
       : "pretty";
+  const worktreeArg = typeof argv.worktree === "string" && argv.worktree.length > 0
+    ? argv.worktree
+    : undefined;
   const input: import("./down.js").RunDownInput = {
     outputMode: mode,
     purge: argv.purge === true,
   };
   if (signal !== undefined) input.signal = signal;
+  if (worktreeArg !== undefined) input.worktreeArg = worktreeArg;
   return input;
 }
 
@@ -112,11 +123,13 @@ const restartHandler: CommandHandler = async (ctx) => {
   const positionals = ctx.argv._.filter((a): a is string => typeof a === "string");
   const services = ctx.argv.all ? ["--all"] : positionals;
   const profile = typeof ctx.argv.profile === "string" ? ctx.argv.profile : undefined;
+  const worktreeArg = readWorktreeArg(ctx.argv);
   const result = await runRestart({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
     services,
     profile,
+    ...(worktreeArg !== undefined && { worktreeArg }),
   });
   return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
 };
@@ -154,6 +167,7 @@ const logsHandler: CommandHandler = async (ctx) => {
   const grep =
     typeof ctx.argv.grep === "string" ? ctx.argv.grep : undefined;
 
+  const worktreeArg = readWorktreeArg(ctx.argv);
   const result = runLogs({
     sources: sources.length > 0 ? sources : undefined,
     follow,
@@ -163,13 +177,18 @@ const logsHandler: CommandHandler = async (ctx) => {
     grep,
     all,
     json,
+    ...(worktreeArg !== undefined && { worktreeArg }),
   });
   await result.done;
   return { ok: result.exitCode === 0, message: "" };
 };
 
 const urlsHandler: CommandHandler = async (ctx) => {
-  const result = await runUrls({ raw: Boolean(ctx.argv.raw) });
+  const worktreeArg = readWorktreeArg(ctx.argv);
+  const result = await runUrls({
+    raw: Boolean(ctx.argv.raw),
+    ...(worktreeArg !== undefined && { worktreeArg }),
+  });
   return { ok: result.exitCode === 0, message: "" };
 };
 
@@ -189,12 +208,21 @@ const nukeHandler: CommandHandler = async (ctx) => {
 const envHandler: CommandHandler = async (ctx) => {
   const groupName =
     typeof ctx.argv._[0] === "string" ? ctx.argv._[0] : undefined;
-  const result = await runEnvCmd({ groupName, cwd: process.cwd() });
+  const worktreeArg = readWorktreeArg(ctx.argv);
+  const result = await runEnvCmd({
+    groupName,
+    cwd: process.cwd(),
+    ...(worktreeArg !== undefined && { worktreeArg }),
+  });
   return { ok: result.exitCode === 0, message: "" };
 };
 
 const routingHandler: CommandHandler = async (ctx) => {
-  const result = await runRouting({ json: Boolean(ctx.argv.json) });
+  const worktreeArg = readWorktreeArg(ctx.argv);
+  const result = await runRouting({
+    json: Boolean(ctx.argv.json),
+    ...(worktreeArg !== undefined && { worktreeArg }),
+  });
   return { ok: result.exitCode === 0, message: "" };
 };
 
@@ -205,21 +233,30 @@ const dashboardHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
-const feedbackHandler: CommandHandler = async (ctx) => {
-  const argv = ctx.argv._.filter((a): a is string => typeof a === "string");
-  const file = typeof ctx.argv.file === "string" ? ctx.argv.file : undefined;
-  // mri normalizes `--no-context` to `context=false`; honor both spellings
-  // so tests passing the flag verbatim still work.
-  const noContext =
-    ctx.argv["no-context"] === true || ctx.argv.context === false;
-  const noBrowser =
-    ctx.argv.browser === false || process.env.LICH_NO_BROWSER === "1";
-  const result = await runFeedback({
-    argv,
-    file,
-    noContext,
-    noBrowser,
-    yes: Boolean(ctx.argv.yes || ctx.argv.y),
+const topHandler: CommandHandler = async (ctx) => {
+  const worktreeArg = readWorktreeArg(ctx.argv);
+  const sortRaw = ctx.argv.sort;
+  const sort: SortKey | undefined =
+    sortRaw === "cpu" || sortRaw === "mem" || sortRaw === "name"
+      ? sortRaw
+      : undefined;
+  const intervalRaw = ctx.argv.interval;
+  const interval =
+    typeof intervalRaw === "number"
+      ? intervalRaw
+      : typeof intervalRaw === "string"
+        ? Number(intervalRaw)
+        : undefined;
+  const tree = typeof ctx.argv.tree === "string" ? ctx.argv.tree : undefined;
+  const result = await runTop({
+    noFollow: ctx.argv.follow === false,
+    json: Boolean(ctx.argv.json),
+    all: Boolean(ctx.argv.all),
+    ...(tree !== undefined && { tree }),
+    ...(sort !== undefined && { sort }),
+    ...(interval !== undefined && Number.isFinite(interval) && { interval }),
+    ...(worktreeArg !== undefined && { worktreeArg }),
+    signal: ctx.signal,
   });
   return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
 };
@@ -229,11 +266,14 @@ const execHandler: CommandHandler = async (ctx) => {
     typeof ctx.argv["env-group"] === "string"
       ? ctx.argv["env-group"]
       : undefined;
+  const worktreeArg = readWorktreeArg(ctx.argv);
   const result = await runExec({
     argv: ctx.argv._,
     envGroupName,
     cwd: process.cwd(),
     signal: ctx.signal,
+    noPreflight: ctx.argv.preflight === false,
+    ...(worktreeArg !== undefined && { worktreeArg }),
   });
   // Forward specific exit codes (2/127/130/child) verbatim.
   return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
@@ -253,8 +293,8 @@ export const COMMANDS: Record<string, CommandHandler> = {
   env: envHandler,
   routing: routingHandler,
   dashboard: dashboardHandler,
-  feedback: feedbackHandler,
   sandbox: sandboxCommand,
+  top: topHandler,
 };
 
 export type CommandName = keyof typeof COMMANDS;

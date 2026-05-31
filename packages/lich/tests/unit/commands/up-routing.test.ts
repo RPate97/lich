@@ -218,14 +218,14 @@ runtime:
 owned:
   single:
     cmd: "echo READY; touch ${shellQuote(sentinelSingle)}; sleep 30"
-    port: { env: SINGLE_PORT }
+    port: { published_env: SINGLE_PORT }
     ready_when:
       log_match: "READY"
   multi:
     cmd: "echo READY; touch ${shellQuote(sentinelMulti)}; sleep 30"
     ports:
-      api: { env: MULTI_API_PORT }
-      db:  { env: MULTI_DB_PORT }
+      api: { published_env: MULTI_API_PORT }
+      db:  { published_env: MULTI_DB_PORT }
     ready_when:
       log_match: "READY"
   noport:

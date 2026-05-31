@@ -46,9 +46,9 @@ export interface PerServiceLifecycle {
 export type PortDescriptor =
   | number
   | {
-      env?: string;
+      container_port?: number;
+      published_env?: string;
       host_port?: number;
-      container?: number;
     };
 
 export interface ReadyWhen {
@@ -60,6 +60,8 @@ export interface ReadyWhen {
   timeout?: string | number;
   /** Capture name → regex pattern; matches surface as `${owned.<name>.captured.<key>}`. */
   capture?: Record<string, string>;
+  /** If true, `timeout` is "max silence between log lines" (resets on each new line) instead of a wall-clock deadline. Total wait is unbounded. */
+  extend_on_progress?: boolean;
 }
 
 export interface FailWhen {
@@ -70,9 +72,7 @@ export interface FailWhen {
 export interface ComposeService {
   compose_file?: string;
   service?: string;
-  ports?:
-    | Record<string, PortDescriptor>
-    | Array<{ container: number; env?: string; host_port?: number }>;
+  ports?: Record<string, PortDescriptor> | PortDescriptor[];
   lifecycle?: PerServiceLifecycle;
   depends_on?: string[];
 
@@ -107,6 +107,16 @@ export interface OwnedDiscover {
   cwd?: string;
 }
 
+/**
+ * Force-clean filter applied after `stop_cmd`. Exactly one of `label` or
+ * `name_pattern` is required (mutual exclusion enforced by the schema's
+ * `oneOf`). Both values flow through `${...}` interpolation.
+ */
+export interface OwnedContainers {
+  label?: string;
+  name_pattern?: string;
+}
+
 export interface OwnedService {
   /** Required for hand-written entries; omitted when `discover:` is set. */
   cmd?: string;
@@ -116,6 +126,8 @@ export interface OwnedService {
   ports?: Record<string, PortDescriptor>;
   oneshot?: boolean;
   stop_cmd?: string;
+  /** Force-clean filter run after `stop_cmd`. See {@link OwnedContainers}. */
+  owned_containers?: OwnedContainers;
   env?: EnvMap;
   env_files?: EnvFiles;
   env_from?: EnvFrom;

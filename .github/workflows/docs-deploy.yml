@@ -52,10 +52,10 @@ jobs:
         working-directory: docs/site
         run: npm ci --no-audit --no-fund
 
-      - name: Sync content
+      - name: Build docs (generate + sync)
         run: |
           cd packages/lich && bun install --frozen-lockfile
-          cd packages/lich && bun run sync-content
+          cd packages/lich && bun run build:docs
 
       - name: Verify mirrors are committed
         run: |

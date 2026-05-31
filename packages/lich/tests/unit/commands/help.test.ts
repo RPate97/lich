@@ -57,6 +57,7 @@ describe("runGlobalHelp", () => {
       "logs",
       "urls",
       "stacks",
+      "top",
       "restart",
       "nuke",
       "init",

@@ -15,8 +15,8 @@ owned:
     env:
       SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # per-worktree namespace
     ports:
-      api: { env: SUPABASE_API_PORT }
-      db:  { env: SUPABASE_DB_PORT }
+      api: { published_env: SUPABASE_API_PORT }
+      db:  { published_env: SUPABASE_DB_PORT }
     ready_when:
       tcp: "localhost:${owned.supabase.ports.api}"
       timeout: 120s
