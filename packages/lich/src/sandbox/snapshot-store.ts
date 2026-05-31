@@ -63,4 +63,10 @@ export class SnapshotStore {
   clear(): void {
     this.writeAll([]);
   }
+
+  listByProfile(profileName: string): GoldenManifest[] {
+    return this.readAll()
+      .filter(e => e.profileName === profileName)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
 }
