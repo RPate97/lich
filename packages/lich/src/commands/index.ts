@@ -81,16 +81,25 @@ const upHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
-const downHandler: CommandHandler = async (ctx) => {
-  const mode = ctx.argv.json
+export function buildDownInput(
+  argv: Record<string, unknown> & { _: unknown[] },
+  signal?: AbortSignal,
+): import("./down.js").RunDownInput {
+  const mode: "pretty" | "json" | "quiet" = argv.json
     ? "json"
-    : ctx.argv.quiet
+    : argv.quiet
       ? "quiet"
       : "pretty";
-  const result = await runDown({
-    outputMode: mode as "pretty" | "json" | "quiet",
-    signal: ctx.signal,
-  });
+  const input: import("./down.js").RunDownInput = {
+    outputMode: mode,
+    purge: argv.purge === true,
+  };
+  if (signal !== undefined) input.signal = signal;
+  return input;
+}
+
+const downHandler: CommandHandler = async (ctx) => {
+  const result = await runDown(buildDownInput(ctx.argv as Record<string, unknown> & { _: unknown[] }, ctx.signal));
   return { ok: result.exitCode === 0, message: "" };
 };
 
