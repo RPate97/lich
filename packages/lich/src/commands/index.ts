@@ -13,6 +13,7 @@ import { runExec } from "./exec.js";
 import { runRouting } from "./routing.js";
 import { runDashboard } from "./dashboard.js";
 import { runFeedback } from "./feedback.js";
+import { sandboxCommand } from "./sandbox.js";
 
 /** `exitCode` overrides the default 0/1 mapping; keep `ok` consistent with it. */
 export interface CommandResult {
@@ -244,6 +245,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   routing: routingHandler,
   dashboard: dashboardHandler,
   feedback: feedbackHandler,
+  sandbox: sandboxCommand,
 };
 
 export type CommandName = keyof typeof COMMANDS;
