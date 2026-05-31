@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+import { SandboxRuntime } from "../sandbox/runtime.js";
 import { runLifecycle } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
@@ -305,6 +306,25 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
+
+    // Route through sandbox runtime when runtime.sandbox is configured.
+    const sandboxCfg = config.runtime?.sandbox;
+    if (sandboxCfg) {
+      const sbRuntime = new SandboxRuntime(sandboxCfg);
+      const outcome = await sbRuntime.up({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        lichYamlPath: configPath!,
+        profileName: resolvedProfile?.name ?? 'default',
+      });
+      output.info(
+        outcome.path === 'warm'
+          ? `sandbox VM '${outcome.vmName}' warm-forked in ${outcome.durationMs}ms`
+          : `sandbox VM '${outcome.vmName}' cold-booted in ${outcome.durationMs}ms`,
+      );
+      await output.close();
+      return { exitCode: 0, stackId: worktree.stack_id };
+    }
 
     // Refuse mid-flight profile switch: if a prior `up` is in-flight or up under a different profile, require explicit `lich down` first.
     {
