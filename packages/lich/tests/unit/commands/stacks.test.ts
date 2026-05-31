@@ -414,3 +414,39 @@ describe("runStacks — uptime calculation end-to-end", () => {
     expect(sink.text()).toMatch(/\b01:00:0\d\b/);
   });
 });
+
+describe("runStacks — sandbox stacks", () => {
+  const fakeBackend = {
+    inspect: async (name: string) => ({ name, state: "running" as const }),
+  };
+
+  it("json includes sandbox flag, vm name, and vm state", async () => {
+    await writeSnapshot(
+      snap({ stack_id: "sb-1", sandbox: true, sandbox_vm: "lich-run-abc-dev" }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out, json: true, backend: fakeBackend });
+    const row = JSON.parse(sink.text()).find((r: any) => r.stack_id === "sb-1");
+    expect(row.sandbox).toBe(true);
+    expect(row.sandbox_vm).toBe("lich-run-abc-dev");
+    expect(row.sandbox_state).toBe("running");
+  });
+
+  it("pretty output shows the sandbox VM name", async () => {
+    await writeSnapshot(
+      snap({ stack_id: "sb-2", sandbox: true, sandbox_vm: "lich-run-xyz-dev" }),
+    );
+    const { sink, out } = makeSink();
+    await runStacks({ out, json: false, backend: fakeBackend });
+    expect(sink.text()).toContain("lich-run-xyz-dev");
+  });
+
+  it("non-sandbox stack has no sandbox keys in json", async () => {
+    await writeSnapshot(snap({ stack_id: "host-1" }));
+    const { sink, out } = makeSink();
+    await runStacks({ out, json: true, backend: fakeBackend });
+    const row = JSON.parse(sink.text()).find((r: any) => r.stack_id === "host-1");
+    expect(row.sandbox).toBeUndefined();
+    expect(row.sandbox_vm).toBeUndefined();
+  });
+});
