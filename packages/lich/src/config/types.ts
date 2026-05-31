@@ -126,6 +126,27 @@ export interface OwnedService {
   discover?: OwnedDiscover;
 }
 
+export interface SandboxRuntime {
+  /** Backend identifier. Only "tart" supported in V0. */
+  backend: "tart";
+  /** Tart image name. Default: 'lich-sandbox-base'. */
+  image?: string;
+  /** Guest memory in MB. Default: 4096. */
+  memory?: number;
+  /** Guest vCPU count. Default: 4. */
+  cpus?: number;
+  /**
+   * When true (default), `lich up` automatically warm-forks from a
+   * snapshot golden if one exists for the current inputs-hash.
+   */
+  warm_fork?: boolean;
+  /**
+   * Where to store the snapshot manifest. Default: $LICH_HOME/sandboxes.
+   * The actual VM data lives in Tart's own storage; we only manage metadata.
+   */
+  snapshot_store?: string;
+}
+
 export interface Runtime {
   /** `auto` probes docker → podman → nerdctl. */
   compose_cli?: "auto" | "docker" | "podman" | "nerdctl";
@@ -137,6 +158,7 @@ export interface Runtime {
   ready_when_timeout?: string | number;
   /** Cascade-kill siblings on startup failure. Defaults to `true`. */
   kill_others_on_fail?: boolean;
+  sandbox?: SandboxRuntime;
 }
 
 export interface EnvGroupDef {

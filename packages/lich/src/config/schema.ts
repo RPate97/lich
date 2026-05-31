@@ -328,6 +328,19 @@ const runtimeSchema = {
       ],
     },
     kill_others_on_fail: { type: "boolean" },
+    sandbox: {
+      type: "object",
+      additionalProperties: false,
+      required: ["backend"],
+      properties: {
+        backend: { type: "string", enum: ["tart"] },
+        image: { type: "string" },
+        memory: { type: "integer", minimum: 512 },
+        cpus: { type: "integer", minimum: 1 },
+        warm_fork: { type: "boolean" },
+        snapshot_store: { type: "string" },
+      },
+    },
   },
   additionalProperties: false,
 } as const;
