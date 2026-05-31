@@ -201,7 +201,7 @@ describe("SandboxRuntime", () => {
     });
 
     it("throws when the run VM is absent", async () => {
-      await expect(runtime().exec(ctx(), ["lich", "logs"])).rejects.toThrow(/run 'lich up'/);
+      await expect(runtime().exec(ctx(), ["lich", "logs"])).rejects.toThrow(/Run 'lich up/);
     });
   });
 });
