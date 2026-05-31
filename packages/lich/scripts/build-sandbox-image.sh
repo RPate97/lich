@@ -30,7 +30,9 @@ echo "Cloning $BASE_IMAGE -> $TARGET_NAME..."
 tart clone "$BASE_IMAGE" "$TARGET_NAME"
 
 echo "Setting VM resources..."
-tart set "$TARGET_NAME" --memory 4096 --cpu 4 --disk-size 30
+# --disk-size resize triggers UnsupportedArchitectureError on M1+macOS Tahoe;
+# the cirruslabs base image's default disk is enough for our installs.
+tart set "$TARGET_NAME" --memory 4096 --cpu 4
 
 echo "Starting VM..."
 tart run --no-graphics "$TARGET_NAME" &
