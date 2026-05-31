@@ -122,9 +122,9 @@ export interface StackSnapshot {
   sandbox?: boolean;
   /** The run-VM name backing this sandboxed stack. */
   sandbox_vm?: string;
-  /** Which backend handles lich up/down/exec/logs for this stack. Absent → 'local'. */
+  /** Absent → defaults to {kind:'local'}. */
   executor?: ExecutorRef;
-  /** Where the daemon fetches live stack state and log streams. Absent → 'local'. */
+  /** Absent → defaults to {kind:'local'}. */
   data_source?: DataSourceRef;
   /**
    * Friendly-URL routing entries for the daemon's reverse proxy.
