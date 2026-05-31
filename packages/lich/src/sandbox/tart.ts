@@ -16,13 +16,12 @@ interface TartListEntry {
 const stateMap: Record<string, SandboxState['state']> = {
   running: 'running',
   stopped: 'stopped',
-  suspended: 'suspended',
 };
 
 export class TartBackend implements SandboxBackend {
   constructor(
     private readonly cli: TartCli = new RealTartCli(),
-    private readonly tartPath: string = "tart",
+    private readonly tartPath: string = 'tart',
   ) {}
 
   async create(config: SandboxConfig): Promise<void> {
@@ -59,13 +58,11 @@ export class TartBackend implements SandboxBackend {
     if (state.state === 'absent') throw new SandboxNotFoundError(name);
     if (state.state === 'running') return;
     // tart run is foreground; spawn detached so the parent process returns.
-    // We don't await child completion — Tart manages the VM independently.
-    const child = spawn('tart', ['run', '--no-graphics', name], {
+    const child = spawn(this.tartPath, ['run', '--no-graphics', name], {
       stdio: 'ignore',
       detached: true,
     });
     child.unref();
-    // Poll until tart reports the VM running.
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const s = await this.inspect(name);
@@ -75,65 +72,46 @@ export class TartBackend implements SandboxBackend {
     throw new TartCommandError(['run', name], -1, '', 'VM did not reach running state in 30s');
   }
 
+  // Graceful in-guest shutdown. `tart stop` hard-terminates and drops unsynced
+  // writes, so a baked golden would lose its disk state in the clone. Sync then
+  // poweroff from inside the guest; fall back to `tart stop` only if the guest
+  // is unreachable.
   async stop(name: string): Promise<void> {
     const state = await this.inspect(name);
     if (state.state === 'absent') throw new SandboxNotFoundError(name);
     if (state.state === 'stopped') return;
+    try {
+      await this.exec(name, ['sh', '-c', 'sync; sudo poweroff'], { timeoutMs: 15_000 });
+    } catch {
+      // Guest agent unreachable or poweroff raced the connection close; the
+      // poll below still confirms the VM actually stopped.
+    }
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const s = await this.inspect(name);
+      if (s.state === 'stopped') return;
+      await new Promise(r => setTimeout(r, 500));
+    }
     await this.cli.run(['stop', name]);
   }
 
   async destroy(name: string): Promise<void> {
     const state = await this.inspect(name);
     if (state.state === 'absent') return;
-    if (state.state === 'running' || state.state === 'suspended') {
+    if (state.state === 'running') {
       await this.cli.run(['stop', name]);
     }
     await this.cli.run(['delete', name]);
   }
 
-  async suspend(name: string): Promise<void> {
-    const state = await this.inspect(name);
-    if (state.state === 'absent') throw new SandboxNotFoundError(name);
-    if (state.state === 'suspended') return;
-    if (state.state !== 'running') {
-      throw new Error(`cannot suspend sandbox '${name}': state is ${state.state}`);
-    }
-    // tart suspend exits 0 before the VM finishes transitioning; poll to settle.
-    await this.cli.run(['suspend', name]);
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      const s = await this.inspect(name);
-      if (s.state === 'suspended') return;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    throw new TartCommandError(['suspend', name], -1, '', 'VM did not reach suspended state in 30s');
-  }
-
-  async resume(name: string): Promise<void> {
-    const state = await this.inspect(name);
-    if (state.state === 'absent') throw new SandboxNotFoundError(name);
-    if (state.state === 'running') return;
-    if (state.state !== 'suspended') {
-      throw new Error(`cannot resume sandbox '${name}': state is ${state.state}`);
-    }
-    // Tart resumes via `run` against a suspended VM.
-    const child = spawn('tart', ['run', '--no-graphics', name], {
-      stdio: 'ignore',
-      detached: true,
-    });
-    child.unref();
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      const s = await this.inspect(name);
-      if (s.state === 'running') return;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    throw new TartCommandError(['run', name], -1, '', 'VM did not reach running state in 30s');
-  }
-
+  // CoW disk clone of a stopped VM. Source must be stopped (via stop()) so all
+  // writes are flushed; cloning a running VM would capture an inconsistent disk.
   async clone(source: string, dest: string): Promise<void> {
     const sourceState = await this.inspect(source);
     if (sourceState.state === 'absent') throw new SandboxNotFoundError(source);
+    if (sourceState.state !== 'stopped') {
+      throw new Error(`cannot clone sandbox '${source}': must be stopped first (state is ${sourceState.state})`);
+    }
     const destState = await this.inspect(dest);
     if (destState.state !== 'absent') throw new SandboxAlreadyExistsError(dest);
     await this.cli.run(['clone', source, dest]);

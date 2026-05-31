@@ -1,6 +1,11 @@
 // SandboxBackend: low-level VMM abstraction. Wraps a hypervisor capable
-// of running Linux microVMs and supporting suspend/clone/resume for
-// warm-fork. V0 ships TartBackend (Mac); FirecrackerBackend (Linux) is V1.
+// of running Linux microVMs and CoW-cloning their disk for warm-fork.
+// V0 ships TartBackend (Mac); FirecrackerBackend (Linux) is V1.
+//
+// Warm-fork here is disk-level, not memory-level: a golden VM is baked,
+// shut down cleanly, and CoW-cloned; each fork boots fresh against the
+// baked disk. Apple Virtualization.framework cannot suspend Linux guests,
+// so memory-snapshot fork is not available on this substrate.
 //
 // This is NOT a user-facing API. The user-facing surface is `runtime.sandbox`
 // in lich.yaml, which `SandboxRuntime` (src/sandbox/runtime.ts) orchestrates
@@ -23,13 +28,12 @@ export type SandboxLifecycleState =
   | 'absent'
   | 'stopped'
   | 'running'
-  | 'suspended'
   | 'unknown';
 
 export interface SandboxState {
   name: string;
   state: SandboxLifecycleState;
-  /** Present only when state === 'running' or 'suspended' (post-resume). */
+  /** Present only when state === 'running'. */
   ip?: string;
 }
 
@@ -55,15 +59,19 @@ export interface SandboxBackend {
   create(config: SandboxConfig): Promise<void>;
   /** Boot a created VM. Idempotent if already running. */
   start(name: string): Promise<void>;
-  /** Graceful stop. Idempotent if already stopped. */
+  /**
+   * Graceful in-guest shutdown that flushes the disk, then awaits stopped.
+   * Required before clone: a hard stop drops unsynced writes, so the baked
+   * data would not survive into the fork. Idempotent if already stopped.
+   */
   stop(name: string): Promise<void>;
   /** Hard destroy: stops if running, then removes the VM and its disk. Idempotent. */
   destroy(name: string): Promise<void>;
-  /** Pause + persist memory + device state. Resumable. */
-  suspend(name: string): Promise<void>;
-  /** Resume from a suspended state. */
-  resume(name: string): Promise<void>;
-  /** CoW-clone an existing VM (typically suspended). The clone inherits state. */
+  /**
+   * CoW-clone a stopped VM's disk. The clone inherits the baked disk state
+   * (migrations, installed deps, build output); it boots fresh, not warm.
+   * Source must be stopped via stop() first so all writes are flushed.
+   */
   clone(source: string, dest: string): Promise<void>;
   /** Run a command inside the guest. Requires the VM to be running. */
   exec(name: string, cmd: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;

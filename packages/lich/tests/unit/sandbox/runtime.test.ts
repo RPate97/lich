@@ -35,23 +35,11 @@ class FakeBackend implements SandboxBackend {
     this.ops.push(`destroy:${name}`);
     this.states.delete(name);
   }
-  async suspend(name: string): Promise<void> {
-    this.ops.push(`suspend:${name}`);
-    this.states.set(name, "suspended");
-  }
-  async resume(name: string): Promise<void> {
-    this.ops.push(`resume:${name}`);
-    this.states.set(name, "running");
-  }
   async clone(source: string, dest: string): Promise<void> {
     this.ops.push(`clone:${source}->${dest}`);
-    this.states.set(dest, "suspended");
+    this.states.set(dest, "stopped");
   }
-  async exec(
-    name: string,
-    cmd: readonly string[],
-    _opts?: ExecOptions,
-  ): Promise<ExecResult> {
+  async exec(name: string, cmd: readonly string[], _opts?: ExecOptions): Promise<ExecResult> {
     this.ops.push(`exec:${name}:${cmd.join(" ")}`);
     return { exitCode: 0, stdout: "", stderr: "" };
   }
@@ -66,9 +54,7 @@ class FakeBackend implements SandboxBackend {
   }
 }
 
-function makeConfig(
-  overrides: Partial<SandboxConfigType> = {},
-): SandboxConfigType {
+function makeConfig(overrides: Partial<SandboxConfigType> = {}): SandboxConfigType {
   return { backend: "tart", image: "lich-sandbox-base", warm_fork: true, ...overrides };
 }
 
@@ -98,11 +84,11 @@ describe("SandboxRuntime", () => {
   });
 
   function runtime(config = makeConfig()) {
-    return new SandboxRuntime(config, { backend, snapshotStore: store, sshWaitMs: 0 });
+    return new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0 });
   }
 
   describe("up", () => {
-    it("cold-boots when no golden exists and warm_fork enabled", async () => {
+    it("cold-boots when no golden exists", async () => {
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("cold");
       expect(outcome.vmName).toBe(RUN);
@@ -111,18 +97,14 @@ describe("SandboxRuntime", () => {
       expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
     });
 
-    it("snapshots the run VM into a golden after a cold boot", async () => {
-      await runtime().up(ctx());
+    it("cold boot does not auto-create a golden (snapshot is explicit)", async () => {
       const hash = computeInputsHash(lichYaml, "dev");
-      const golden = goldenName(hash);
-      expect(backend.ops).toContain(`suspend:${RUN}`);
-      expect(backend.ops).toContain(`clone:${RUN}->${golden}`);
-      expect(backend.ops).toContain(`resume:${RUN}`);
-      expect(store.findByHash(hash)?.vmName).toBe(golden);
+      await runtime().up(ctx());
+      expect(backend.ops.some((o) => o.startsWith("clone:"))).toBe(false);
+      expect(store.findByHash(hash)).toBeUndefined();
     });
 
-    it("warm-forks from an existing golden without re-running lich up", async () => {
-      // Seed a golden into both the store and the backend (suspended).
+    it("warm-forks from an existing stopped golden", async () => {
       const hash = computeInputsHash(lichYaml, "dev");
       const golden = goldenName(hash);
       store.upsert({
@@ -132,13 +114,46 @@ describe("SandboxRuntime", () => {
         lichYamlSnapshot: 'version: "1"\n',
         createdAt: "2026-05-30T00:00:00Z",
       });
-      backend.states.set(golden, "suspended");
+      backend.states.set(golden, "stopped");
 
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("warm");
       expect(backend.ops).toContain(`clone:${golden}->${RUN}`);
-      expect(backend.ops).toContain(`resume:${RUN}`);
-      expect(backend.ops.some((o) => o.startsWith(`exec:${RUN}:lich up`))).toBe(false);
+      expect(backend.ops).toContain(`start:${RUN}`);
+      expect(backend.ops).not.toContain(`create:${RUN}`);
+    });
+
+    it("ignores the golden when warm_fork is disabled", async () => {
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+      store.upsert({
+        inputsHash: hash,
+        vmName: golden,
+        profileName: "dev",
+        lichYamlSnapshot: "",
+        createdAt: "t",
+      });
+      backend.states.set(golden, "stopped");
+
+      const outcome = await runtime(makeConfig({ warm_fork: false })).up(ctx());
+      expect(outcome.path).toBe("cold");
+      expect(backend.ops).toContain(`create:${RUN}`);
+    });
+
+    it("drops a stale golden entry whose VM is gone, then cold-boots", async () => {
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+      store.upsert({
+        inputsHash: hash,
+        vmName: golden,
+        profileName: "dev",
+        lichYamlSnapshot: "",
+        createdAt: "t",
+      });
+      // Golden VM absent from backend.
+      const outcome = await runtime().up(ctx());
+      expect(outcome.path).toBe("cold");
+      expect(store.findByHash(hash)).toBeUndefined();
     });
 
     it("is idempotent when the run VM is already running", async () => {
@@ -148,25 +163,35 @@ describe("SandboxRuntime", () => {
       expect(backend.ops).toEqual([]);
     });
 
-    it("resumes a suspended run VM", async () => {
-      backend.states.set(RUN, "suspended");
+    it("restarts a stopped run VM", async () => {
+      backend.states.set(RUN, "stopped");
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("warm");
-      expect(backend.ops).toContain(`resume:${RUN}`);
-    });
-
-    it("does not snapshot a golden when warm_fork is disabled", async () => {
-      const hash = computeInputsHash(lichYaml, "dev");
-      const outcome = await runtime(makeConfig({ warm_fork: false })).up(ctx());
-      expect(outcome.path).toBe("cold");
-      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
-      expect(backend.ops.some((o) => o.startsWith("clone:"))).toBe(false);
-      expect(store.findByHash(hash)).toBeUndefined();
+      expect(backend.ops).toContain(`start:${RUN}`);
     });
 
     it("throws when the in-VM lich up fails", async () => {
       backend.exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
       await expect(runtime().up(ctx())).rejects.toThrow(/lich up dev.*exit 1/);
+    });
+  });
+
+  describe("snapshot", () => {
+    it("stops the run VM, clones it to a golden, restarts, and records", async () => {
+      backend.states.set(RUN, "running");
+      const hash = computeInputsHash(lichYaml, "dev");
+      const golden = goldenName(hash);
+
+      const result = await runtime().snapshot(ctx());
+      expect(result).toBe(golden);
+      expect(backend.ops).toContain(`stop:${RUN}`);
+      expect(backend.ops).toContain(`clone:${RUN}->${golden}`);
+      expect(backend.ops).toContain(`start:${RUN}`);
+      expect(store.findByHash(hash)?.vmName).toBe(golden);
+    });
+
+    it("throws when there is no run VM to snapshot", async () => {
+      await expect(runtime().snapshot(ctx())).rejects.toThrow(/Run 'lich up/);
     });
   });
 
