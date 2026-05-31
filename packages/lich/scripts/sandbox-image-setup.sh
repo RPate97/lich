@@ -9,7 +9,12 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg lsb-release \
   postgresql-client \
-  build-essential python3 git unzip
+  build-essential python3 git unzip \
+  openssh-server
+
+# sshd is the transport for MutagenSync (live source sync host->guest). The
+# cirruslabs base image ships no sshd; enable it so a booted VM accepts SSH.
+systemctl enable ssh
 
 # Docker (official repo).
 install -m 0755 -d /etc/apt/keyrings
