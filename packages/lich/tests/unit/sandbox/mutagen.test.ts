@@ -19,7 +19,7 @@ class FakeMutagenCli implements MutagenCli {
 const opts = (over: Record<string, unknown> = {}) => ({
   name: "lich-run-abc",
   hostPath: "/work/tree",
-  target: "admin@10.0.0.5",
+  target: "10.0.0.5",
   guestPath: "/workspace",
   ignore: ["dist", ".next"],
   ...over,
