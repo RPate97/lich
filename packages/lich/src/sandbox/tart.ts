@@ -144,25 +144,16 @@ export class TartBackend implements SandboxBackend {
     if (state.state !== 'running') {
       throw new Error(`cannot exec in sandbox '${name}': state is ${state.state}`);
     }
-    const ip = await this.ip(name);
-
-    const sshArgs = [
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      '-i', this.sshKey,
-      `admin@${ip}`,
-    ];
     const cwdPrefix = opts.cwd ? `cd ${shellQuote(opts.cwd)} && ` : '';
-    const envPrefix = Object.entries(opts.env ?? {})
+    const envAssign = Object.entries(opts.env ?? {})
       .map(([k, v]) => `${k}=${shellQuote(v)}`)
       .join(' ');
-    const shellLine = cwdPrefix
-      + (envPrefix ? envPrefix + ' ' : '')
-      + cmd.map(shellQuote).join(' ');
-    sshArgs.push(shellLine);
+    const envPrefix = envAssign ? `env ${envAssign} ` : '';
+    const shellLine = cwdPrefix + envPrefix + cmd.map(shellQuote).join(' ');
+    const args = ['exec', name, 'sh', '-c', shellLine];
 
     return new Promise<ExecResult>((resolve, reject) => {
-      const child = spawn('ssh', sshArgs, {
+      const child = spawn(this.tartPath, args, {
         stdio: opts.inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';
