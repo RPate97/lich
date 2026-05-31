@@ -69,12 +69,15 @@ export class SandboxRuntime {
     const runVm = runName(ctx.worktreeId, ctx.profileName);
 
     const runState = await this.backend.inspect(runVm);
-    if (runState.state === 'running') {
-      return { path: 'warm', vmName: runVm, durationMs: Date.now() - start };
-    }
-    if (runState.state === 'stopped') {
-      await this.backend.start(runVm);
-      await new Promise(r => setTimeout(r, this.bootWaitMs));
+    if (runState.state !== 'absent') {
+      // Existing run VM (running or stopped). Re-bringUp regardless of state
+      // to heal any drift since the last up — services may have crashed,
+      // source may have changed, prior bringUp may have aborted partway.
+      // In-VM `lich up` is itself idempotent on an already-up stack.
+      if (runState.state === 'stopped') {
+        await this.backend.start(runVm);
+        await new Promise(r => setTimeout(r, this.bootWaitMs));
+      }
       await this.bringUp(ctx, runVm);
       return { path: 'warm', vmName: runVm, durationMs: Date.now() - start };
     }

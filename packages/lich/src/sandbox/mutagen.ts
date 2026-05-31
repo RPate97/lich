@@ -122,6 +122,13 @@ export class MutagenSync implements SandboxSync {
   ) {}
 
   async start(opts: SyncStartOpts): Promise<void> {
+    // Idempotent: clean up any leftover session of the same name first. Re-up
+    // on a still-running run VM (warm path) would otherwise hit `session name
+    // already exists`. terminate is best-effort — `no such session` is fine.
+    await this.cli.run(["sync", "terminate", opts.name]).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/no such session|unable to locate/i.test(msg)) throw err;
+    });
     const { user } = await this.transport.prepare({ name: opts.name, host: opts.target });
     const ignores = [...new Set([...ALWAYS_IGNORE, ...opts.ignore])];
     const args: string[] = ["sync", "create", "--name", opts.name];

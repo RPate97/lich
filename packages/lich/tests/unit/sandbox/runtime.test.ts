@@ -163,11 +163,12 @@ describe("SandboxRuntime", () => {
       expect(store.findByHash(hash)).toBeUndefined();
     });
 
-    it("is idempotent when the run VM is already running", async () => {
+    it("re-brings-up an already-running run VM (heals drift; safe on idempotent stack)", async () => {
       backend.states.set(RUN, "running");
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("warm");
-      expect(backend.ops).toEqual([]);
+      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops).not.toContain(`start:${RUN}`);
     });
 
     it("restarts a stopped run VM", async () => {
@@ -300,6 +301,15 @@ describe("SandboxRuntime", () => {
       const iUp = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
       expect(iSync).toBeGreaterThan(iStart);
       expect(iUp).toBeGreaterThan(iSync);
+    });
+
+    it("running run-VM path runs sync.start + in-VM lich up (heals stale state)", async () => {
+      backend.states.set(RUN, "running");
+      const { rt } = withSync();
+      await rt.up(ctx());
+      expect(backend.ops).not.toContain(`start:${RUN}`);
+      expect(backend.ops).toContain(`sync.start:${RUN}`);
+      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
     });
 
     it("down terminates the sync session", async () => {

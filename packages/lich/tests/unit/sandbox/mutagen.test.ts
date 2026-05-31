@@ -37,8 +37,9 @@ describe("MutagenSync", () => {
   test("start creates a session: name, ignores, host -> target:guest", async () => {
     const cli = new FakeMutagenCli();
     await new MutagenSync(cli).start(opts());
-    expect(cli.calls).toHaveLength(1);
-    const args = cli.calls[0]!;
+    // calls[0] is the pre-terminate (idempotency); calls[1] is the create.
+    expect(cli.calls).toHaveLength(2);
+    const args = cli.calls[1]!;
     expect(args.slice(0, 2)).toEqual(["sync", "create"]);
     expect(args[args.indexOf("--name") + 1]).toBe("lich-run-abc");
     expect(args[args.length - 2]).toBe("/work/tree");
@@ -48,7 +49,7 @@ describe("MutagenSync", () => {
   test("node_modules + .git always ignored even when caller passes ignore: []", async () => {
     const cli = new FakeMutagenCli();
     await new MutagenSync(cli).start(opts({ ignore: [] }));
-    const ig = ignoresOf(cli.calls[0]!);
+    const ig = ignoresOf(cli.calls[1]!);
     expect(ig).toContain("node_modules");
     expect(ig).toContain(".git");
   });
@@ -56,7 +57,7 @@ describe("MutagenSync", () => {
   test("caller ignores union with ALWAYS_IGNORE, no duplicates", async () => {
     const cli = new FakeMutagenCli();
     await new MutagenSync(cli).start(opts({ ignore: ["node_modules", "dist"] }));
-    const ig = ignoresOf(cli.calls[0]!);
+    const ig = ignoresOf(cli.calls[1]!);
     expect(ig.filter((x) => x === "node_modules")).toHaveLength(1);
     expect(ig).toContain("dist");
   });
@@ -64,9 +65,24 @@ describe("MutagenSync", () => {
   test("extraFlags are forwarded", async () => {
     const cli = new FakeMutagenCli();
     await new MutagenSync(cli).start(opts({ extraFlags: ["--sync-mode", "two-way-resolved"] }));
-    const args = cli.calls[0]!;
+    const args = cli.calls[1]!;
     expect(args).toContain("--sync-mode");
     expect(args).toContain("two-way-resolved");
+  });
+
+  test("start is idempotent: terminate (best-effort) precedes create so leftover sessions don't collide", async () => {
+    const cli = new FakeMutagenCli();
+    await new MutagenSync(cli).start(opts());
+    expect(cli.calls).toHaveLength(2);
+    expect(cli.calls[0]!.slice(0, 3)).toEqual(["sync", "terminate", "lich-run-abc"]);
+    expect(cli.calls[1]!.slice(0, 2)).toEqual(["sync", "create"]);
+  });
+
+  test("start tolerates terminate failing with 'no such session' (clean slate)", async () => {
+    const cli = new FakeMutagenCli();
+    cli.failNext = "unable to locate requested sessions: no such session";
+    await new MutagenSync(cli).start(opts());
+    expect(cli.calls[1]!.slice(0, 2)).toEqual(["sync", "create"]);
   });
 
   test("flush flushes the named session", async () => {
