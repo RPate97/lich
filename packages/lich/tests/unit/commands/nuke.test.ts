@@ -19,12 +19,15 @@ import {
 import { runNuke } from "../../../src/commands/nuke.js";
 import { _exec, type ExecFn } from "../../../src/compose/runner.js";
 import { _probe } from "../../../src/compose/detect.js";
+import { _purgeAllSandboxesFn } from "../../../src/sandbox/purge-all.js";
 
 let home: string;
 let prevLichHome: string | undefined;
 let originalExec: ExecFn;
 let originalProbe: typeof _probe.current;
 let composeCalls: Array<{ cmd: string; args: string[] }>;
+let originalPurgeAll: typeof _purgeAllSandboxesFn.current;
+let purgeAllCalls: number;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "lich-nuke-"));
@@ -40,6 +43,13 @@ beforeEach(() => {
     composeCalls.push({ cmd, args });
     return { exitCode: 0, stdout: "", stderr: "" };
   };
+
+  originalPurgeAll = _purgeAllSandboxesFn.current;
+  purgeAllCalls = 0;
+  _purgeAllSandboxesFn.current = async () => {
+    purgeAllCalls++;
+    return { removedVms: 2, removedManifest: 1 };
+  };
 });
 
 afterEach(() => {
@@ -51,6 +61,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   _exec.current = originalExec;
   _probe.current = originalProbe;
+  _purgeAllSandboxesFn.current = originalPurgeAll;
 });
 
 class Sink {
@@ -1169,5 +1180,37 @@ describe("runNuke --rescue", () => {
     expect(result.rescue).toBeUndefined();
     expect(existsSync(sentinel)).toBe(false);
     expect(existsSync(stackDir("regression"))).toBe(false);
+  });
+});
+
+describe("runNuke — sandbox cleanup", () => {
+  it("invokes purgeAllSandboxes when stacks were nuked", async () => {
+    await writeSnapshot(snap({ stack_id: "withvm", worktree_name: "withvm" }));
+    const { sink, out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+    expect(purgeAllCalls).toBe(1);
+    expect(sink.text()).toMatch(/sandbox.*removed.*2.*VMs?/i);
+  });
+
+  it("invokes purgeAllSandboxes even when there are no stacks to nuke", async () => {
+    const { out } = makeSink();
+    await runNuke({ out });
+    expect(purgeAllCalls).toBe(1);
+  });
+
+  it("invokes purgeAllSandboxes on --rescue runs even with no stacks", async () => {
+    const { out } = makeSink();
+    await runNuke({ out, rescue: true, yes: true });
+    expect(purgeAllCalls).toBe(1);
+  });
+
+  it("swallows purgeAllSandboxes errors so nuke still exits 0", async () => {
+    await writeSnapshot(snap({ stack_id: "boom", worktree_name: "boom" }));
+    _purgeAllSandboxesFn.current = async () => { throw new Error("tart not installed"); };
+    const { sink, out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+    expect(sink.text()).toMatch(/warning.*sandbox.*tart not installed/i);
   });
 });
