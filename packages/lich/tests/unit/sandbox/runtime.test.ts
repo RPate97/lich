@@ -288,6 +288,20 @@ describe("SandboxRuntime", () => {
       expect(sync.startCalls.some((c) => c.name === RUN)).toBe(true);
     });
 
+    it("stopped run-VM path also runs sync.start + in-VM lich up (re-bringUp after restart)", async () => {
+      backend.states.set(RUN, "stopped");
+      const { rt } = withSync();
+      await rt.up(ctx());
+      expect(backend.ops).toContain(`start:${RUN}`);
+      expect(backend.ops).toContain(`sync.start:${RUN}`);
+      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      const iStart = backend.ops.indexOf(`start:${RUN}`);
+      const iSync = backend.ops.indexOf(`sync.start:${RUN}`);
+      const iUp = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
+      expect(iSync).toBeGreaterThan(iStart);
+      expect(iUp).toBeGreaterThan(iSync);
+    });
+
     it("down terminates the sync session", async () => {
       backend.states.set(RUN, "running");
       const { rt } = withSync();

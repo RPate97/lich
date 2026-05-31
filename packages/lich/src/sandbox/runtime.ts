@@ -74,6 +74,8 @@ export class SandboxRuntime {
     }
     if (runState.state === 'stopped') {
       await this.backend.start(runVm);
+      await new Promise(r => setTimeout(r, this.bootWaitMs));
+      await this.bringUp(ctx, runVm);
       return { path: 'warm', vmName: runVm, durationMs: Date.now() - start };
     }
 
