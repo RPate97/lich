@@ -1,3 +1,4 @@
+import { SandboxError } from './errors.js';
 import { isSandboxStack } from './marker.js';
 import type { StackSnapshot } from '../state/snapshot.js';
 import type { Worktree } from '../worktree/detect.js';
@@ -24,11 +25,8 @@ export interface RouteResult {
   message?: string;
 }
 
-// TODO(T3): when runtime is absent and marker is present, parse the config to get
-// runtime.sandbox block and construct a real SandboxRuntime. Deferred until first
-// branch (T3) actually needs it; skeleton always throws before reaching construction.
 export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResult | null> {
   if (!isSandboxStack(ctx.snapshot)) return null;
 
-  throw new Error(`sandbox routing for kind '${ctx.kind}' not yet implemented (Task T3-T6)`);
+  throw new SandboxError(`sandbox routing for kind '${ctx.kind}' not yet implemented (Task T3-T6)`);
 }
