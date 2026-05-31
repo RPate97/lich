@@ -62,6 +62,7 @@ import {
   type OutputMode,
 } from "../output/index.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
+import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
 
 export interface RunDownInput {
   cwd?: string;
@@ -70,6 +71,8 @@ export interface RunDownInput {
   outputMode?: OutputMode;
   /** When fired, short-circuits SIGTERM grace polling — escalate to SIGKILL immediately. */
   signal?: AbortSignal;
+  /** When true, destroy the sandbox VM instead of stopping it (sandbox stacks only). */
+  purge?: boolean;
 }
 
 export interface DownWarning {
@@ -168,6 +171,25 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     return { exitCode: 0, warnings };
   }
 
+  const configPath = join(worktree.path, "lich.yaml");
+  const parsedForRouter = existsSync(configPath) ? await parseConfig(configPath) : null;
+  const sandboxConfig = parsedForRouter?.ok ? parsedForRouter.config.runtime?.sandbox : undefined;
+  const routed = await maybeRouteToSandbox({
+    kind: 'down',
+    snapshot: snap,
+    worktree,
+    lichYamlPath: configPath,
+    argv: { purge: input.purge },
+    sandboxConfig,
+  });
+  if (routed !== null) {
+    snap.status = "stopped";
+    snap.routing = [];
+    await writeSnapshot(snap).catch(() => {});
+    await output.close();
+    return { exitCode: routed.exitCode, warnings };
+  }
+
   // Detect whether this snapshot carries full teardown data (post-LEV-513).
   // New snapshots written by lich up have resolved_env on owned services and
   // stack-level before_down/after_down. Legacy snapshots fall back to yaml re-parsing.
@@ -179,11 +201,9 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   // New snapshots (post-LEV-513) never need this path; yaml edits between up and down are ignored.
   let config: LichConfig | null = null;
   if (!hasFullTeardownData) {
-    const configPath = join(worktree.path, "lich.yaml");
-    if (existsSync(configPath)) {
-      const parsed = await parseConfig(configPath);
-      if (parsed.ok) {
-        config = parsed.config;
+    if (parsedForRouter !== null) {
+      if (parsedForRouter.ok) {
+        config = parsedForRouter.config;
       } else {
         warnings.push({
           phase: "parse_config",
