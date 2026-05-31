@@ -98,7 +98,15 @@ export class TartBackend implements SandboxBackend {
     if (state.state !== 'running') {
       throw new Error(`cannot suspend sandbox '${name}': state is ${state.state}`);
     }
+    // tart suspend exits 0 before the VM finishes transitioning; poll to settle.
     await this.cli.run(['suspend', name]);
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const s = await this.inspect(name);
+      if (s.state === 'suspended') return;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    throw new TartCommandError(['suspend', name], -1, '', 'VM did not reach suspended state in 30s');
   }
 
   async resume(name: string): Promise<void> {
