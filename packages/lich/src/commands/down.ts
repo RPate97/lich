@@ -63,6 +63,7 @@ import {
 } from "../output/index.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
 import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
+import { isSandboxStack } from "../sandbox/marker.js";
 
 export interface RunDownInput {
   cwd?: string;
@@ -172,8 +173,20 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   }
 
   const configPath = join(worktree.path, "lich.yaml");
-  const parsedForRouter = existsSync(configPath) ? await parseConfig(configPath) : null;
-  const sandboxConfig = parsedForRouter?.ok ? parsedForRouter.config.runtime?.sandbox : undefined;
+
+  // Detect whether this snapshot carries full teardown data (post-LEV-513).
+  // New snapshots written by lich up have resolved_env on owned services and
+  // stack-level before_down/after_down. Legacy snapshots fall back to yaml re-parsing.
+  const hasFullTeardownData = snap.services.some(
+    (s) => s.kind === "owned" && s.resolved_env !== undefined,
+  ) || snap.before_down !== undefined || snap.after_down !== undefined;
+
+  // Only parse lich.yaml when actually needed: sandbox routing or legacy snapshot fallback.
+  // Modern non-sandbox host stacks (hasFullTeardownData === true) skip the file read entirely.
+  const needsParse = isSandboxStack(snap) || !hasFullTeardownData;
+  const parsed = needsParse && existsSync(configPath) ? await parseConfig(configPath) : null;
+
+  const sandboxConfig = parsed?.ok ? parsed.config.runtime?.sandbox : undefined;
   const routed = await maybeRouteToSandbox({
     kind: 'down',
     snapshot: snap,
@@ -190,20 +203,13 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     return { exitCode: routed.exitCode, warnings };
   }
 
-  // Detect whether this snapshot carries full teardown data (post-LEV-513).
-  // New snapshots written by lich up have resolved_env on owned services and
-  // stack-level before_down/after_down. Legacy snapshots fall back to yaml re-parsing.
-  const hasFullTeardownData = snap.services.some(
-    (s) => s.kind === "owned" && s.resolved_env !== undefined,
-  ) || snap.before_down !== undefined || snap.after_down !== undefined;
-
   // Legacy fallback: re-parse yaml only when the snapshot lacks full teardown data.
   // New snapshots (post-LEV-513) never need this path; yaml edits between up and down are ignored.
   let config: LichConfig | null = null;
   if (!hasFullTeardownData) {
-    if (parsedForRouter !== null) {
-      if (parsedForRouter.ok) {
-        config = parsedForRouter.config;
+    if (parsed !== null) {
+      if (parsed.ok) {
+        config = parsed.config;
       } else {
         warnings.push({
           phase: "parse_config",
