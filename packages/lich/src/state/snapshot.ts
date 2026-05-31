@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { ensureStackDir, stackDir } from "./directory.js";
 import { join } from "node:path";
+import type { ExecutorRef, DataSourceRef } from "../stack/types.js";
 
 export type ServiceState =
   | "starting"
@@ -121,6 +122,10 @@ export interface StackSnapshot {
   sandbox?: boolean;
   /** The run-VM name backing this sandboxed stack. */
   sandbox_vm?: string;
+  /** Which backend handles lich up/down/exec/logs for this stack. Absent → 'local'. */
+  executor?: ExecutorRef;
+  /** Where the daemon fetches live stack state and log streams. Absent → 'local'. */
+  data_source?: DataSourceRef;
   /**
    * Friendly-URL routing entries for the daemon's reverse proxy.
    * `undefined` = predates routing; `[]` = actively empty (e.g. just torn down).
