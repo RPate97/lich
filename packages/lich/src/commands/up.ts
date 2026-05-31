@@ -322,6 +322,17 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           ? `sandbox VM '${outcome.vmName}' warm-forked in ${outcome.durationMs}ms`
           : `sandbox VM '${outcome.vmName}' cold-booted in ${outcome.durationMs}ms`,
       );
+      await writeSnapshot({
+        stack_id: worktree.stack_id,
+        worktree_name: worktree.name,
+        worktree_path: worktree.path,
+        status: 'up',
+        started_at: state.startedAt,
+        services: [],
+        active_profile: resolvedProfile?.name,
+        sandbox: true,
+        sandbox_vm: outcome.vmName,
+      });
       await output.close();
       return { exitCode: 0, stackId: worktree.stack_id };
     }

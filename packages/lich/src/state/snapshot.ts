@@ -76,6 +76,10 @@ export interface StackSnapshot {
   services: ServiceSnapshot[];
   /** Name of the active profile, or omitted if none was active. */
   active_profile?: string;
+  /** True when this stack runs inside a sandbox VM (runtime.sandbox). */
+  sandbox?: boolean;
+  /** The run-VM name backing this sandboxed stack. */
+  sandbox_vm?: string;
   /**
    * Friendly-URL routing entries for the daemon's reverse proxy.
    * `undefined` = predates routing; `[]` = actively empty (e.g. just torn down).
