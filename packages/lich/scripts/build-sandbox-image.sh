@@ -35,7 +35,9 @@ echo "Setting VM resources..."
 tart set "$TARGET_NAME" --memory 4096 --cpu 4
 
 echo "Starting VM..."
-tart run --no-graphics "$TARGET_NAME" &
+# Redirect required: backgrounded `tart run` without redirect dies with
+# UnsupportedArchitectureError on M1+macOS Tahoe.
+tart run --no-graphics "$TARGET_NAME" > "/tmp/tart-run-$TARGET_NAME.log" 2>&1 &
 TART_PID=$!
 trap 'tart stop "$TARGET_NAME" 2>/dev/null || true; kill "$TART_PID" 2>/dev/null || true' EXIT
 
