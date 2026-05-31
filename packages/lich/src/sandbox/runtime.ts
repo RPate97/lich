@@ -148,7 +148,7 @@ export class SandboxRuntime {
     });
     const result = await this.backend.exec(runVm,
       ['lich', 'up', ctx.profileName],
-      { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true });
+      { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true, env: { LICH_SANDBOX_GUEST: '1' } });
     if (result.exitCode !== 0) {
       throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${result.exitCode}`);
     }
