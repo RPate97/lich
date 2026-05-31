@@ -21,7 +21,7 @@ inherit the base layer from Tart's local cache.
 
     tart clone lich-sandbox-base my-workspace
     tart run --no-graphics --detach my-workspace
-    ssh admin@$(tart ip my-workspace)
+    tart exec my-workspace -- bash
 
 ## Use via lich (normal flow)
 

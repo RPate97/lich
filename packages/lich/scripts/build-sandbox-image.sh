@@ -33,38 +33,40 @@ echo "Setting VM resources..."
 tart set "$TARGET_NAME" --memory 4096 --cpu 4 --disk-size 30
 
 echo "Starting VM..."
-tart run --no-graphics --detach "$TARGET_NAME" &
+tart run --no-graphics "$TARGET_NAME" &
 TART_PID=$!
+trap 'tart stop "$TARGET_NAME" 2>/dev/null || true; kill "$TART_PID" 2>/dev/null || true' EXIT
 
-echo "Waiting for SSH..."
-IP=""
-for i in {1..60}; do
-  IP=$(tart ip "$TARGET_NAME" 2>/dev/null || echo "")
-  if [ -n "$IP" ] && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-       -o ConnectTimeout=2 admin@"$IP" true 2>/dev/null; then
-    echo "VM reachable at $IP"
+echo "Waiting for VM to accept exec..."
+ready=""
+for _ in {1..60}; do
+  if tart exec "$TARGET_NAME" true 2>/dev/null; then
+    ready=1
     break
   fi
   sleep 2
 done
-
-if [ -z "$IP" ]; then
+if [ -z "$ready" ]; then
   echo "error: VM did not become reachable in 120s" >&2
   exit 1
 fi
 
-echo "Copying lich binary and setup script into VM..."
-scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    "$LICH_BIN" admin@"$IP":/tmp/lich
-scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    "$SCRIPT_DIR/sandbox-image-setup.sh" admin@"$IP":/tmp/setup.sh
+# tart exec authenticates with the image's default credentials, so no key
+# injection is needed. Stream files in over stdin via tee.
+echo "Copying lich binary into VM..."
+tart exec --interactive "$TARGET_NAME" sudo tee /tmp/lich >/dev/null < "$LICH_BIN"
+tart exec "$TARGET_NAME" sudo chmod +x /tmp/lich
+
+echo "Copying setup script into VM..."
+tart exec --interactive "$TARGET_NAME" sudo tee /tmp/setup.sh >/dev/null < "$SCRIPT_DIR/sandbox-image-setup.sh"
 
 echo "Running setup (this takes ~3-5 min)..."
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    admin@"$IP" "sudo bash /tmp/setup.sh"
+tart exec "$TARGET_NAME" sudo bash /tmp/setup.sh
 
 echo "Stopping VM..."
+trap - EXIT
 tart stop "$TARGET_NAME"
+wait "$TART_PID" 2>/dev/null || true
 
 echo ""
 echo "Image $TARGET_NAME built successfully."
