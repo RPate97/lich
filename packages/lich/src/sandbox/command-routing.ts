@@ -41,5 +41,11 @@ export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResul
     return { exitCode: 0, message: purge ? 'sandbox VM destroyed' : 'sandbox VM stopped' };
   }
 
+  if (ctx.kind === 'exec') {
+    const userArgv = (ctx.argv as ReadonlyArray<string> | undefined) ?? [];
+    const result = await runtime.exec(rtCtx, ['lich', 'exec', '--', ...userArgv], { inheritStdio: true });
+    return { exitCode: result.exitCode };
+  }
+
   throw new SandboxError(`sandbox routing for kind '${ctx.kind}' not yet implemented (Task T4-T6)`);
 }

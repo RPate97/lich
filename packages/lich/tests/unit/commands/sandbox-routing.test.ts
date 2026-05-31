@@ -31,10 +31,54 @@ describe('maybeRouteToSandbox skeleton', () => {
   test('throws for marker-present kind that has no branch yet', async () => {
     const r = new FakeRuntime();
     await expect(maybeRouteToSandbox(ctx({
-      kind: 'exec',
+      kind: 'logs',
       snapshot: sandboxSnap,
       runtime: r as any,
     }))).rejects.toThrow(/not yet implemented/);
+  });
+});
+
+describe('maybeRouteToSandbox — exec branch', () => {
+  test('proxies the user argv as `lich exec -- ...` with inheritStdio', async () => {
+    const r = new FakeRuntime();
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'exec',
+      snapshot: sandboxSnap,
+      argv: ['api', 'ls', '-la'],
+      runtime: r as any,
+    }));
+    expect(result).not.toBeNull();
+    expect(result!.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0]!.method).toBe('exec');
+    const [rtCtx, args, opts] = r.calls[0]!.args as [unknown, string[], unknown];
+    expect((rtCtx as any).worktreeId).toBe('wt1');
+    expect(args).toEqual(['lich', 'exec', '--', 'api', 'ls', '-la']);
+    expect(opts).toEqual({ inheritStdio: true });
+  });
+
+  test('propagates the exec exit code', async () => {
+    const r = new FakeRuntime();
+    r.exec = async () => ({ exitCode: 42, stdout: '', stderr: '' });
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'exec',
+      snapshot: sandboxSnap,
+      argv: ['api', 'false'],
+      runtime: r as any,
+    }));
+    expect(result!.exitCode).toBe(42);
+  });
+
+  test('returns null when not a sandbox stack (host path)', async () => {
+    const r = new FakeRuntime();
+    const result = await maybeRouteToSandbox(ctx({
+      kind: 'exec',
+      snapshot: { sandbox: false } as any,
+      argv: ['api', 'ls'],
+      runtime: r as any,
+    }));
+    expect(result).toBeNull();
+    expect(r.calls).toHaveLength(0);
   });
 });
 

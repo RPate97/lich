@@ -28,6 +28,8 @@ import {
   resolveProfile,
   type ResolvedProfile,
 } from "../profiles/resolve.js";
+import { isSandboxStack } from "../sandbox/marker.js";
+import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
 
 export interface ExecOptions {
   /**
@@ -98,6 +100,18 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
   const snap = await readSnapshot(worktree.stack_id).catch(() => null);
   if (snap) {
     allocatedPorts = rebuildAllocatedPorts(snap);
+  }
+
+  if (isSandboxStack(snap)) {
+    const routed = await maybeRouteToSandbox({
+      kind: "exec",
+      snapshot: snap,
+      worktree,
+      lichYamlPath: yamlPath,
+      argv: opts.argv,
+      sandboxConfig: config.runtime?.sandbox,
+    });
+    if (routed !== null) return { exitCode: routed.exitCode };
   }
 
   // Re-resolve the active profile from the on-disk yaml so the env group
