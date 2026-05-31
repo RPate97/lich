@@ -39,8 +39,11 @@ class FakeBackend implements SandboxBackend {
     this.ops.push(`clone:${source}->${dest}`);
     this.states.set(dest, "stopped");
   }
-  async exec(name: string, cmd: readonly string[], _opts?: ExecOptions): Promise<ExecResult> {
-    this.ops.push(`exec:${name}:${cmd.join(" ")}`);
+  execEnvByOp: Record<string, Record<string, string> | undefined> = {};
+  async exec(name: string, cmd: readonly string[], opts?: ExecOptions): Promise<ExecResult> {
+    const op = `exec:${name}:${cmd.join(" ")}`;
+    this.ops.push(op);
+    this.execEnvByOp[op] = opts?.env;
     return { exitCode: 0, stdout: "", stderr: "" };
   }
   async ip(): Promise<string> {
@@ -272,8 +275,7 @@ describe("SandboxRuntime", () => {
     it("in-VM `lich up` runs with LICH_SANDBOX_GUEST=1 (nesting guard)", async () => {
       const { rt } = withSync();
       await rt.up(ctx());
-      const i = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
-      expect(backend.execEnvs[i]?.LICH_SANDBOX_GUEST).toBe("1");
+      expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_SANDBOX_GUEST).toBe("1");
     });
 
     it("fork path also starts sync", async () => {

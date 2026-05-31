@@ -20,6 +20,18 @@ export function isTartAvailable(): boolean {
   }
 }
 
+export function imageExists(
+  name = process.env.LICH_SANDBOX_TEST_IMAGE ?? 'lich-sandbox-base',
+): boolean {
+  if (!isTartAvailable()) return false;
+  try {
+    const out = execSync('tart list --format json', { encoding: 'utf8' });
+    return (JSON.parse(out) as Array<{ Name: string }>).some((e) => e.Name === name);
+  } catch {
+    return false;
+  }
+}
+
 export async function destroyIfExists(backend: TartBackend, name: string): Promise<void> {
   await backend.destroy(name);
 }
