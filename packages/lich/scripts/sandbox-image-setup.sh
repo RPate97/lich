@@ -32,10 +32,11 @@ curl -fsSL https://get.pnpm.io/install.sh | sh -
 mv /root/.local/share/pnpm /usr/local/pnpm
 ln -s /usr/local/pnpm/pnpm /usr/local/bin/pnpm
 
-# Place pre-built lich binary on PATH.
+# Place pre-built lich binaries on PATH.
 install -m 0755 /tmp/lich /usr/local/bin/lich
+install -m 0755 /tmp/lich-daemon /usr/local/bin/lich-daemon
 
-# Default mount point for the user's repo (Tart's --dir target).
+# Sync target for the user's repo (populated by SandboxSync at runtime).
 mkdir -p /workspace
 chown -R admin:admin /workspace
 
