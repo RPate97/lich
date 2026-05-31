@@ -89,6 +89,15 @@ export interface RunDownResult {
   warnings: DownWarning[];
 }
 
+// Sandbox stacks need to reach the routing block to destroy their VM, even
+// when the snapshot says "stopped" — the VM persists across `lich down`.
+export function shouldEarlyExitOnStopped(
+  snapshot: StackSnapshot,
+  purge: boolean | undefined,
+): boolean {
+  return snapshot.status === "stopped" && !(isSandboxStack(snapshot) && purge === true);
+}
+
 const SIGTERM_GRACE_MS = 5_000;
 const STOP_CMD_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 50;
@@ -166,7 +175,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     return { exitCode: 0, warnings };
   }
 
-  if (snap.status === "stopped") {
+  if (shouldEarlyExitOnStopped(snap, input.purge)) {
     writeLine(out, `stack already stopped: ${worktree.stack_id}`);
     await output.close();
     return { exitCode: 0, warnings };

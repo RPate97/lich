@@ -28,6 +28,12 @@ export interface RouteResult {
   message?: string;
 }
 
+export const _runtimeFactory: {
+  current: (config: SandboxRuntimeConfig) => SandboxRuntimeLike;
+} = {
+  current: (config: SandboxRuntimeConfig) => new SandboxRuntime(config),
+};
+
 interface LogsArgv {
   sources?: ReadonlyArray<string>;
   follow?: boolean;
@@ -39,7 +45,7 @@ export async function maybeRouteToSandbox(ctx: RouteContext): Promise<RouteResul
 
   const snap = ctx.snapshot!;
   const rtCtx = sandboxCtxFromSnapshot(ctx.worktree, snap, ctx.lichYamlPath);
-  const runtime: SandboxRuntimeLike = ctx.runtime ?? new SandboxRuntime(ctx.sandboxConfig!);
+  const runtime: SandboxRuntimeLike = ctx.runtime ?? _runtimeFactory.current(ctx.sandboxConfig!);
 
   if (ctx.kind === 'down') {
     const purge = (ctx.argv as { purge?: boolean } | undefined)?.purge ?? false;
