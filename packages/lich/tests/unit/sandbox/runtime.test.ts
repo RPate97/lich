@@ -337,5 +337,22 @@ describe("SandboxRuntime", () => {
       const outcome = await rt.up(ctx());
       expect(outcome.vmIp).toBe("10.0.0.1");
     });
+
+    it("scrapeInVmStack returns the parsed StackView for the active profile", async () => {
+      const { rt } = withSync();
+      backend.exec = async (_name, cmd) => {
+        if (cmd.join(" ") === "lich stacks --json") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: "workspace-c52ddf65", worktree_name: "workspace", status: "up", services: [{ name: "web", state: "ready", allocated_ports: { PORT: 8088 } }] }]),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      };
+      const scraped = await rt.scrapeInVmStack(ctx(), runName("wt123", "dev"));
+      expect(scraped?.id).toBe("workspace-c52ddf65");
+      expect(scraped?.services[0]!.name).toBe("web");
+    });
   });
 });

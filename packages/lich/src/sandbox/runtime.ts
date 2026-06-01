@@ -9,6 +9,7 @@ import { goldenName, runName } from './naming.js';
 import { computeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
 import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
+import type { StackView } from '../daemon/dashboard/stacks-view.js';
 
 export interface RuntimeContext {
   worktreeId: string;
@@ -203,5 +204,16 @@ export class SandboxRuntime {
       throw new Error(`sandbox VM '${runVm}' is ${state.state}, not running`);
     }
     return this.backend.exec(runVm, args, { cwd: '/workspace', ...opts });
+  }
+
+  async scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null> {
+    const result = await this.backend.exec(runVm, ['lich', 'stacks', '--json'], { cwd: '/workspace', timeoutMs: 10_000 });
+    if (result.exitCode !== 0) return null;
+    try {
+      const all = JSON.parse(result.stdout) as StackView[];
+      return all.find((s) => s.active_profile === ctx.profileName) ?? all[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 }
