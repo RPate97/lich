@@ -29,8 +29,10 @@ export const HEAVY_POOL_TESTS: readonly string[] = [
   "profiles-named.test.ts",
   // sandbox / Tart tests (dev-heavy-profile uses dev:heavy → postgres compose,
   // both heavy and compose-dependent)
+  "bake-fork-share.test.ts",
   "dashboard-metrics-proxy.test.ts",
   "dev-heavy-profile.test.ts",
+  "gc.test.ts",
   "mutagen-roundtrip.test.ts",
   "sandbox-cold-up.test.ts",
   "sandbox-full-loop.test.ts",
