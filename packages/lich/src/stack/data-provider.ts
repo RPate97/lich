@@ -1,6 +1,10 @@
 import type { StackView } from "../daemon/dashboard/stacks-view.js";
 import type { StackMetricsSnapshot } from "../daemon/metrics/types.js";
 import type { TreeAggregate } from "../daemon/metrics/proc-tree.js";
+import type { StackSnapshot } from "../state/snapshot.js";
+import type { DataSourceRef } from "./types.js";
+import { LocalStackDataProvider, type LocalStackDataProviderDeps } from "./providers/local.js";
+import { HttpStackDataProvider } from "./providers/http.js";
 
 export interface StackDataProvider {
   listStacks(): Promise<StackView[]>;
@@ -17,4 +21,17 @@ export interface StackDataProvider {
 
   /** Owned-service process tree (ps subtree on the executing host). null when not applicable (compose service, missing pid). */
   procTree(stackId: string, serviceName: string): Promise<TreeAggregate | null>;
+}
+
+export interface DataProviderDeps extends LocalStackDataProviderDeps {}
+
+function deriveRef(snap: StackSnapshot): DataSourceRef {
+  return snap.data_source ?? { kind: "local" };
+}
+
+export function pickDataProvider(snap: StackSnapshot, deps: DataProviderDeps): StackDataProvider {
+  const ref = deriveRef(snap);
+  if (ref.kind === "local") return new LocalStackDataProvider(deps);
+  if (ref.kind === "http") return new HttpStackDataProvider(ref.base_url, ref.stack_id);
+  throw new Error(`unknown data_source kind: ${(ref as { kind: string }).kind}`);
 }
