@@ -572,7 +572,7 @@ export async function computeTailOffset(logPath: string, tailLines: number): Pro
   return readFrom + pos + 1;
 }
 
-interface BuildStreamOpts {
+export interface BuildStreamOpts {
   stateRoot: string;
   stackId: string;
   tailFactory: TailFactory;
@@ -580,7 +580,7 @@ interface BuildStreamOpts {
   clientSignal?: AbortSignal;
 }
 
-function buildSingleServiceStream(
+export function buildSingleServiceStream(
   opts: BuildStreamOpts & { service: string },
 ): ReadableStream<Uint8Array> {
   // Function-scope so `cancel` can reach the tail to stop it.
@@ -715,14 +715,14 @@ function buildMergedStream(
   });
 }
 
-interface MetricsStreamOpts {
+export interface MetricsStreamOpts {
   sampler: MetricsSamplerHandle;
   stackId: string;
   clientSignal?: AbortSignal;
 }
 
 /** SSE stream of per-sample metrics snapshots. Sends the current latest immediately so consumers paint without waiting one tick. */
-function buildMetricsStream(
+export function buildMetricsStream(
   opts: MetricsStreamOpts,
 ): ReadableStream<Uint8Array> {
   let unsubscribe: (() => void) | null = null;
