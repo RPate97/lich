@@ -1,6 +1,6 @@
 import type { StackView } from "../daemon/dashboard/stacks-view.js";
 import type { StackMetricsSnapshot } from "../daemon/metrics/types.js";
-import type { TreeAggregate } from "../daemon/metrics/proc-tree.js";
+import type { ProcTreeResponse } from "../daemon/metrics/proc-tree.js";
 import type { StackSnapshot } from "../state/snapshot.js";
 import type { DataSourceRef } from "./types.js";
 import { LocalStackDataProvider, type LocalStackDataProviderDeps } from "./providers/local.js";
@@ -13,6 +13,9 @@ export interface StackDataProvider {
   /** SSE bytes — interleaved service log lines. */
   tailLogs(stackId: string, serviceName: string, signal: AbortSignal): ReadableStream<Uint8Array>;
 
+  /** SSE bytes — all services interleaved. Same SSE framing as tailLogs. */
+  tailAllLogs(stackId: string, signal: AbortSignal): ReadableStream<Uint8Array>;
+
   /** Last metrics sample. null when sampler hasn't fired yet (warmup window). */
   metricsLatest(stackId: string): Promise<StackMetricsSnapshot | null>;
 
@@ -20,7 +23,7 @@ export interface StackDataProvider {
   metricsStream(stackId: string, signal: AbortSignal): ReadableStream<Uint8Array>;
 
   /** Owned-service process tree (ps subtree on the executing host). null when not applicable (compose service, missing pid). */
-  procTree(stackId: string, serviceName: string): Promise<TreeAggregate | null>;
+  procTree(stackId: string, serviceName: string): Promise<ProcTreeResponse | null>;
 }
 
 export interface DataProviderDeps extends LocalStackDataProviderDeps {}

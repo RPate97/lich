@@ -947,3 +947,98 @@ describe("dashboard server — GET /api/stacks/:id/logs?service (sandbox/http pr
     expect(res.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix 1 — /api/stacks/:id/logs (no ?service=) dispatches via tailAllLogs
+// ---------------------------------------------------------------------------
+
+describe("dashboard server — GET /api/stacks/:id/logs (merged stream, no ?service=)", () => {
+  let upstream: { stop: () => void; url: string } | null = null;
+
+  afterEach(() => {
+    upstream?.stop();
+    upstream = null;
+  });
+
+  it("returns 404 for a nonexistent stack (no snapshot)", async () => {
+    server = await startDashboardServer({ port: 0, stateRoot });
+    const controller = new AbortController();
+    const res = await fetch(url("/api/stacks/no-such-stack/logs"), { signal: controller.signal });
+    expect(res.status).toBe(404);
+    controller.abort();
+  });
+
+  it("dispatches through provider for local stacks (SSE response)", async () => {
+    writeStateJson("local-merged-1", {
+      stack_id: "local-merged-1",
+      worktree_name: "merged-test",
+      worktree_path: "/tmp/merged-test",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [
+        { name: "api", kind: "owned", state: "ready" },
+        { name: "web", kind: "owned", state: "ready" },
+      ],
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const controller = new AbortController();
+    const res = await fetch(url("/api/stacks/local-merged-1/logs"), { signal: controller.signal });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    controller.abort();
+    try { await res.body?.cancel(); } catch { /* ignore */ }
+  });
+
+  it("proxies merged SSE bytes from the in-VM daemon for sandbox stacks", async () => {
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req: Request): Response {
+        const u = new URL(req.url);
+        if (u.pathname === "/api/stacks/vm-merged-1/logs" && !u.searchParams.has("service")) {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("data: {\"service\":\"api\",\"line\":\"merged from vm\"}\n\n"));
+              controller.close();
+            },
+          });
+          return new Response(body, { headers: { "content-type": "text/event-stream" } });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeStateJson("sandbox-merged-1", {
+      stack_id: "sandbox-merged-1",
+      worktree_name: "vm-merged",
+      worktree_path: "/tmp/vm-merged",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [{ name: "api", kind: "owned", state: "ready" }],
+      data_source: { kind: "http", base_url: upstream.url, stack_id: "vm-merged-1" },
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const controller = new AbortController();
+    const res = await fetch(url("/api/stacks/sandbox-merged-1/logs"), { signal: controller.signal });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value);
+      if (received.includes("merged from vm")) break;
+    }
+    expect(received).toContain("merged from vm");
+    controller.abort();
+    try { await reader.cancel(); } catch { /* ignore */ }
+  });
+});

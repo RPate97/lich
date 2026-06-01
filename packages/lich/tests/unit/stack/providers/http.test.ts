@@ -112,6 +112,20 @@ describe("HttpStackDataProvider", () => {
     expect(new TextDecoder().decode(first.value)).toContain("cpu");
   });
 
+  it("tailAllLogs hits /api/stacks/<id>/logs without ?service= and passes through bytes", async () => {
+    const provider = new HttpStackDataProvider(serverUrl, "remote-1");
+    const stream = provider.tailAllLogs("x", new AbortController().signal);
+    const reader = stream.getReader();
+    let bytes = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += new TextDecoder().decode(value);
+    }
+    expect(bytes).toContain("line-1");
+    expect(bytes).toContain("line-2");
+  });
+
   it("tailLogs closes the passthrough when signal aborts", async () => {
     const controller = new AbortController();
     const provider = new HttpStackDataProvider(serverUrl, "remote-1");

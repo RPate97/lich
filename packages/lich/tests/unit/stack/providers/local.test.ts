@@ -82,7 +82,56 @@ describe("LocalStackDataProvider", () => {
     expect(await provider.metricsLatest("stack-1")).toBeNull();
   });
 
-  it("procTree returns null when no psFn and service has no pid", async () => {
+  it("tailAllLogs returns a stream (no exception) for a seeded multi-service snapshot", async () => {
+    seedSnapshot("stack-multi", {
+      stack_id: "stack-multi",
+      worktree_name: "multi-svc",
+      worktree_path: "/work/multi-svc",
+      status: "up",
+      started_at: "2026-05-31T00:00:00Z",
+      services: [
+        { name: "api", kind: "owned", state: "ready" },
+        { name: "web", kind: "owned", state: "ready" },
+      ],
+    });
+    const provider = new LocalStackDataProvider({
+      stateRoot,
+      proxyPort: 3300,
+      tailFactory: () => ({
+        start: async () => {},
+        onLine: () => () => {},
+        stop: async () => {},
+      } as any),
+    });
+    const stream = provider.tailAllLogs("stack-multi", new AbortController().signal);
+    expect(stream).toBeInstanceOf(ReadableStream);
+  });
+
+  it("tailAllLogs closes cleanly when stack snapshot is missing", async () => {
+    const provider = new LocalStackDataProvider({
+      stateRoot,
+      proxyPort: 3300,
+      tailFactory: () => ({
+        start: async () => {},
+        onLine: () => () => {},
+        stop: async () => {},
+      } as any),
+    });
+    const stream = provider.tailAllLogs("nonexistent", new AbortController().signal);
+    const reader = stream.getReader();
+    let closed = false;
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) { closed = true; break; }
+      }
+    } catch {
+      closed = false;
+    }
+    expect(closed).toBe(true);
+  });
+
+  it("procTree returns zero-filled response when service has no pid", async () => {
     seedSnapshot("stack-1", {
       stack_id: "stack-1",
       worktree_name: "feature-x",
@@ -96,7 +145,11 @@ describe("LocalStackDataProvider", () => {
       proxyPort: 3300,
       tailFactory: () => ({ start: () => {}, onLine: () => {}, stop: () => {} } as any),
     });
-    expect(await provider.procTree("stack-1", "api")).toBeNull();
+    const result = await provider.procTree("stack-1", "api");
+    expect(result).not.toBeNull();
+    expect(result!.pid).toBe(0);
+    expect(result!.process_count).toBe(0);
+    expect(result!.tree).toBeNull();
   });
 
   it("procTree returns null for compose services", async () => {
@@ -125,7 +178,7 @@ describe("LocalStackDataProvider", () => {
     expect(await provider.procTree("nonexistent", "api")).toBeNull();
   });
 
-  it("procTree aggregates subtree from psFn when pid is set", async () => {
+  it("procTree returns full response from psFn when pid is set", async () => {
     seedSnapshot("stack-1", {
       stack_id: "stack-1",
       worktree_name: "feature-x",
@@ -144,9 +197,13 @@ describe("LocalStackDataProvider", () => {
       tailFactory: () => ({ start: () => {}, onLine: () => {}, stop: () => {} } as any),
       psFn: async () => fakeRows,
     });
-    const agg = await provider.procTree("stack-1", "api");
-    expect(agg).not.toBeNull();
-    expect(agg!.process_count).toBe(2);
-    expect(agg!.mem_bytes).toBe((1024 + 512) * 1024);
+    const result = await provider.procTree("stack-1", "api");
+    expect(result).not.toBeNull();
+    expect(result!.service).toBe("api");
+    expect(result!.pid).toBe(100);
+    expect(result!.process_count).toBe(2);
+    expect(result!.mem_bytes).toBe((1024 + 512) * 1024);
+    expect(result!.tree).not.toBeNull();
+    expect(result!.tree!.pid).toBe(100);
   });
 });

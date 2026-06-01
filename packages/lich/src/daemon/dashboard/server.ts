@@ -10,13 +10,6 @@ import type { RoutingTable } from "../proxy/routing.js";
 import type { MetricsSampler } from "../metrics/sampler.js";
 import type { StackMetricsSnapshot } from "../metrics/types.js";
 import { parsePsOutput } from "../metrics/ps.js";
-import {
-  aggregateSubtree,
-  buildTree,
-  indexByPid,
-  indexByPpid,
-  type ProcessNode,
-} from "../metrics/proc-tree.js";
 import { pickDataProvider, type DataProviderDeps } from "../../stack/data-provider.js";
 
 const execFile = promisify(execFileCb);
@@ -354,24 +347,10 @@ export async function startDashboardServer(
           const provider = pickDataProvider(snap, buildDeps());
           return sseResponse(provider.tailLogs(stackId, serviceName, req.signal));
         }
-        // Merged stream: keep local path (StackDataProvider has no multi-service tail method).
-        // BROKEN for sandbox stacks — reads local log files which are empty for in-VM services.
-        // Per-service tail (above) goes through the provider and works. Multi-service requires
-        // either extending StackDataProvider with tailAllLogs() or merging multiple per-service
-        // streams here; tracked separately.
-        const stack = cache.find((s) => s.id === stackId);
-        if (!stack) {
-          return notFound(`stack not found: ${stackId}`);
-        }
-        return sseResponse(
-          buildMergedStream({
-            stateRoot: opts.stateRoot,
-            stackId,
-            services: stack.services.map((s) => s.name),
-            tailFactory,
-            clientSignal: req.signal,
-          }),
-        );
+        const mergedSnap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!mergedSnap) return notFound(`stack not found: ${stackId}`);
+        const mergedProvider = pickDataProvider(mergedSnap, buildDeps());
+        return sseResponse(mergedProvider.tailAllLogs(stackId, req.signal));
       }
 
       if (segments.length === 3 && segments[1] === "services") {
@@ -419,20 +398,17 @@ export async function startDashboardServer(
             },
           );
         }
-        if (procSnap.data_source?.kind === "http") {
-          const provider = pickDataProvider(procSnap, buildDeps());
-          const result = await provider.procTree(procStackId, procSvcName);
-          if (result === null) {
-            return notFound(`service not running: ${procSvcName}`);
-          }
-          return jsonResponse(result);
+        const procProvider = pickDataProvider(procSnap, buildDeps());
+        let procResult: Awaited<ReturnType<typeof procProvider.procTree>>;
+        try {
+          procResult = await procProvider.procTree(procStackId, procSvcName);
+        } catch (err) {
+          return internalServerError(`ps probe failed: ${(err as Error).message}`);
         }
-        return handleProcTreeRequest({
-          stateRoot: opts.stateRoot,
-          stackId: procStackId,
-          service: procSvcName,
-          psProbe,
-        });
+        if (procResult === null) {
+          return notFound(`service not running: ${procSvcName}`);
+        }
+        return jsonResponse(procResult);
       }
 
       // Don't fall through to the SPA — 200 on an unknown /api/* is misleading.
@@ -692,7 +668,7 @@ export function buildSingleServiceStream(
 }
 
 /** Merged SSE stream — one LogTail per service, each event labeled with the source service name. */
-function buildMergedStream(
+export function buildMergedStream(
   opts: BuildStreamOpts & { services: string[] },
 ): ReadableStream<Uint8Array> {
   const tails: LogTailLike[] = [];
@@ -877,101 +853,6 @@ async function readWorktreePath(
   return snap.worktree_path;
 }
 
-interface ProcTreeNode {
-  pid: number;
-  ppid: number;
-  rss_bytes: number;
-  cpu_pct_cumulative: number;
-  children: ProcTreeNode[];
-}
-
-interface ProcTreeResponse {
-  service: string;
-  pid: number;
-  process_count: number;
-  mem_bytes: number;
-  cpu_pct_cumulative: number;
-  tree: ProcTreeNode | null;
-}
-
-/** Run ps, walk subtree rooted at the owned service's PID, JSON-serialize. */
-async function handleProcTreeRequest(args: {
-  stateRoot: string;
-  stackId: string;
-  service: string;
-  psProbe: () => Promise<string>;
-}): Promise<Response> {
-  // Read state.json from the dashboard's configured stateRoot rather than
-  // the global stackDir() — keeps unit tests that point a custom stateRoot
-  // working without forcing LICH_HOME.
-  const stateFile = join(args.stateRoot, args.stackId, "state.json");
-  let raw: string;
-  try {
-    raw = await readFile(stateFile, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return notFound(`stack snapshot not found: ${args.stackId}`);
-    }
-    return internalServerError(`failed to read ${stateFile}: ${(err as Error).message}`);
-  }
-  let snap: StackSnapshot;
-  try {
-    snap = JSON.parse(raw) as StackSnapshot;
-  } catch (err) {
-    return internalServerError(`failed to parse ${stateFile}: ${(err as Error).message}`);
-  }
-  const svc = snap.services.find((s) => s.name === args.service);
-  if (!svc || svc.kind !== "owned") {
-    return notFound(
-      `owned service not found in snapshot: ${args.service}`,
-    );
-  }
-  if (svc.pid === undefined || svc.pid <= 0) {
-    return jsonResponse({
-      service: svc.name,
-      pid: 0,
-      process_count: 0,
-      mem_bytes: 0,
-      cpu_pct_cumulative: 0,
-      tree: null,
-    } satisfies ProcTreeResponse);
-  }
-  let psOut: string;
-  try {
-    psOut = await args.psProbe();
-  } catch (err) {
-    return internalServerError(`ps probe failed: ${(err as Error).message}`);
-  }
-  const rows = parsePsOutput(psOut);
-  const byPid = indexByPid(rows);
-  const byPpid = indexByPpid(rows);
-  const rootTree = buildTree(svc.pid, byPid, byPpid);
-  const agg = aggregateSubtree(svc.pid, byPid, byPpid);
-  const body: ProcTreeResponse = {
-    service: svc.name,
-    pid: svc.pid,
-    process_count: agg.process_count,
-    mem_bytes: agg.mem_bytes,
-    cpu_pct_cumulative: round1(agg.cpu_pct_cumulative),
-    tree: rootTree ? toWireTree(rootTree) : null,
-  };
-  return jsonResponse(body);
-}
-
-function toWireTree(node: ProcessNode): ProcTreeNode {
-  return {
-    pid: node.pid,
-    ppid: node.ppid,
-    rss_bytes: node.rss_kb * 1024,
-    cpu_pct_cumulative: round1(node.pcpu),
-    children: node.children.map(toWireTree),
-  };
-}
-
-function round1(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 10) / 10;
-}
 
 /** 404 unknown stack; 500 on runAction throw (missing binary); 200 with `ok: false` for subprocess failures so the dashboard renders detail. */
 async function handleActionRequest(
