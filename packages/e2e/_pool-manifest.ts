@@ -31,6 +31,7 @@ export const HEAVY_POOL_TESTS: readonly string[] = [
   // both heavy and compose-dependent)
   "bake-fork-share.test.ts",
   "dashboard-metrics-proxy.test.ts",
+  "dep-bake.test.ts",
   "dev-heavy-profile.test.ts",
   "gc.test.ts",
   "mutagen-roundtrip.test.ts",

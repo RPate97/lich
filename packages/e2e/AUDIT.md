@@ -54,6 +54,7 @@ and `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md`.
 |---|---|---|
 | `bake-fork-share.test.ts` | Two worktrees with identical `bake_inputs` share one golden (second `up` is warm-forked); a third worktree that mutates a declared bake input cold-boots a divergent golden | `isTartAvailable() && imageExists()` |
 | `dashboard-metrics-proxy.test.ts` | Sandbox stack dashboard metrics + proc-tree proxy through HttpStackDataProvider | `isTartAvailable() && imageExists()` |
+| `dep-bake.test.ts` | Fork inherits baked `node_modules` (no reinstall on warm-fork); lockfile-change forces cold rebake; host `node_modules` never leaks into the guest (ALWAYS_IGNORE invariant) | `isTartAvailable() && imageExists() && mutagenOk` |
 | `dev-heavy-profile.test.ts` | `dev:heavy` (500 migrations + 50k seed rows) completes on host | (none — needs postgres compose only) |
 | `gc.test.ts` | Baking a 3rd golden for the same profile evicts the oldest via post-bake `runGc` (T7); `sandbox status --json` confirms `goldens.length == policy.keepPerProfile` | `isTartAvailable() && imageExists()` |
 | `mutagen-roundtrip.test.ts` | MutagenSync over SSH round-trip on a real Tart VM | `isTartAvailable() && imageExists() && mutagenOk` |
