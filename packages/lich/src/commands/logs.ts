@@ -1,5 +1,4 @@
 import { open, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
@@ -7,9 +6,7 @@ import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import { resolveStackId } from "../state/resolve-stack.js";
 import type { LifecyclePhase } from "../lifecycle/executor.js";
-import { parseConfig } from "../config/parse.js";
-import { isSandboxStack } from "../sandbox/marker.js";
-import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
+import { pickExecutor } from "../stack/executor.js";
 
 export interface RunLogsInput {
   /** Source filter: service names or phase names. If omitted, all sources. */
@@ -100,28 +97,61 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
       return;
     }
 
-    if (isSandboxStack(snapshot)) {
-      const wt = worktree ?? {
-        name: snapshot.worktree_name,
-        id: stackId,
-        path: snapshot.worktree_path,
-        stack_id: snapshot.stack_id,
-      };
-      const configPath = join(wt.path, "lich.yaml");
-      const parsed = existsSync(configPath) ? await parseConfig(configPath) : null;
-      const sandboxConfig = parsed?.ok ? parsed.config.runtime?.sandbox : undefined;
-      const routed = await maybeRouteToSandbox({
-        kind: "logs",
-        snapshot,
-        worktree: wt,
-        lichYamlPath: configPath,
-        argv: { sources: input.sources, follow: input.follow, tail: input.count },
-        sandboxConfig,
+    const wt: Worktree = worktree ?? {
+      name: snapshot.worktree_name,
+      id: stackId,
+      path: snapshot.worktree_path,
+      stack_id: snapshot.stack_id,
+    };
+    const configPath = join(wt.path, "lich.yaml");
+    const inner = pickExecutor(snapshot, { worktree: wt, lichYamlPath: configPath }).logs(input);
+    await inner.done;
+    holder.code = inner.exitCode;
+  })().catch((err) => {
+    writeLine(out, `lich logs: ${(err as Error).message}`);
+    holder.code = 1;
+  });
+
+  return {
+    get exitCode() {
+      return holder.code;
+    },
+    done,
+  };
+}
+
+export function runLogsLocal(input: RunLogsInput): RunLogsResult {
+  const cwd = input.cwd ?? process.cwd();
+  const out = input.out ?? process.stdout;
+  const holder = { code: 0 };
+
+  const done = (async () => {
+    let stackId: string;
+    let snapshot: StackSnapshot | null;
+    try {
+      const resolved = await resolveStackId({
+        cwd,
+        ...(input.worktreeArg !== undefined && { worktreeArg: input.worktreeArg }),
       });
-      if (routed !== null) {
-        holder.code = routed.exitCode;
-        return;
+      stackId = resolved.stackId;
+      snapshot = resolved.snapshot;
+    } catch (err) {
+      if (input.worktreeArg) {
+        writeLine(out, (err as Error).message);
+      } else {
+        writeLine(out, "no stack found for this worktree");
       }
+      holder.code = 1;
+      return;
+    }
+
+    if (snapshot === null) {
+      snapshot = await readSnapshot(stackId);
+    }
+    if (snapshot === null) {
+      writeLine(out, "no stack found for this worktree");
+      holder.code = 1;
+      return;
     }
 
     const resolved = resolveSources(snapshot, input.sources, out);

@@ -31,8 +31,8 @@ describe("LocalStackExecutor", () => {
     spy.mockRestore();
   });
 
-  it("delegates logs() to runLogs unchanged", () => {
-    const spy = vi.spyOn(logsMod, "runLogs").mockReturnValue({ exitCode: 0, done: Promise.resolve() });
+  it("delegates logs() to runLogsLocal unchanged", () => {
+    const spy = vi.spyOn(logsMod, "runLogsLocal").mockReturnValue({ exitCode: 0, done: Promise.resolve() });
     const exe = new LocalStackExecutor();
     exe.logs({ follow: false, count: 100, all: false, json: false } as any);
     expect(spy).toHaveBeenCalled();
