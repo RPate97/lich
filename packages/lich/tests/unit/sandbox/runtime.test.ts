@@ -73,6 +73,14 @@ describe("SandboxRuntime", () => {
     profileName: "dev",
   });
   const RUN = runName("wt123", "dev");
+  const upOp = `exec:${RUN}:lich up dev`;
+  const computeHash = () =>
+    computeBakeInputsHash({
+      worktreePath: tmp,
+      lichYamlPath: lichYaml,
+      profileName: "dev",
+      bakeInputs: ["db/migrations/**"],
+    });
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "lich-runtime-"));
@@ -101,18 +109,18 @@ describe("SandboxRuntime", () => {
       expect(outcome.vmName).toBe(RUN);
       expect(backend.ops).toContain(`create:${RUN}`);
       expect(backend.ops).toContain(`start:${RUN}`);
-      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops).toContain(upOp);
     });
 
     it("cold boot does not auto-create a golden (snapshot is explicit)", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       await runtime().up(ctx());
       expect(backend.ops.some((o) => o.startsWith("clone:"))).toBe(false);
       expect(store.findByHash(hash)).toBeUndefined();
     });
 
     it("warm-forks from an existing stopped golden", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
       store.upsert({
         inputsHash: hash,
@@ -131,7 +139,7 @@ describe("SandboxRuntime", () => {
     });
 
     it("ignores the golden when warm_fork is disabled", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
       store.upsert({
         inputsHash: hash,
@@ -148,7 +156,7 @@ describe("SandboxRuntime", () => {
     });
 
     it("drops a stale golden entry whose VM is gone, then cold-boots", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
       store.upsert({
         inputsHash: hash,
@@ -167,7 +175,7 @@ describe("SandboxRuntime", () => {
       backend.states.set(RUN, "running");
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("warm");
-      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops).toContain(upOp);
       expect(backend.ops).not.toContain(`start:${RUN}`);
     });
 
@@ -187,7 +195,7 @@ describe("SandboxRuntime", () => {
   describe("snapshot", () => {
     it("stops the run VM, clones it to a golden, restarts, and records", async () => {
       backend.states.set(RUN, "running");
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
 
       const result = await runtime().snapshot(ctx());
@@ -259,7 +267,7 @@ describe("SandboxRuntime", () => {
       await rt.up(ctx());
       const iStart = backend.ops.indexOf(`start:${RUN}`);
       const iSync = backend.ops.indexOf(`sync.start:${RUN}`);
-      const iUp = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
+      const iUp = backend.ops.indexOf(upOp);
       expect(iStart).toBeGreaterThanOrEqual(0);
       expect(iSync).toBeGreaterThan(iStart);
       expect(iUp).toBeGreaterThan(iSync);
@@ -276,38 +284,36 @@ describe("SandboxRuntime", () => {
     it("in-VM `lich up` runs with LICH_SANDBOX_GUEST=1 (nesting guard)", async () => {
       const { rt } = withSync();
       await rt.up(ctx());
-      expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_SANDBOX_GUEST).toBe("1");
+      expect(backend.execEnvByOp[upOp]?.LICH_SANDBOX_GUEST).toBe("1");
     });
 
     it("in-VM `lich up` runs with LICH_NO_BROWSER=1 (headless guest has no xdg-open)", async () => {
       const { rt } = withSync();
       await rt.up(ctx());
-      expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_NO_BROWSER).toBe("1");
+      expect(backend.execEnvByOp[upOp]?.LICH_NO_BROWSER).toBe("1");
     });
 
     it("in-VM `lich up` runs with LICH_DAEMON_HOST=0.0.0.0 (so host can reach in-VM daemon)", async () => {
       const { rt } = withSync();
       await rt.up(ctx());
-      expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_DAEMON_HOST).toBe("0.0.0.0");
+      expect(backend.execEnvByOp[upOp]?.LICH_DAEMON_HOST).toBe("0.0.0.0");
     });
 
     it("cold-boot bringUp does NOT set LICH_SKIP_BAKED", async () => {
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("cold");
-      const upOp = `exec:${RUN}:lich up dev`;
       expect(backend.ops).toContain(upOp);
       expect(backend.execEnvByOp[upOp]?.LICH_SKIP_BAKED).toBeUndefined();
     });
 
     it("warm-fork bringUp sets LICH_SKIP_BAKED=1", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
       store.upsert({ inputsHash: hash, vmName: golden, profileName: "dev", lichYamlSnapshot: 'version: "1"\n', createdAt: "t" });
       backend.states.set(golden, "stopped");
 
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("warm");
-      const upOp = `exec:${RUN}:lich up dev`;
       expect(backend.ops).toContain(upOp);
       expect(backend.execEnvByOp[upOp]?.LICH_SKIP_BAKED).toBe("1");
     });
@@ -315,19 +321,17 @@ describe("SandboxRuntime", () => {
     it("re-up on a running run VM sets LICH_SKIP_BAKED=1", async () => {
       backend.states.set(RUN, "running");
       await runtime().up(ctx());
-      const upOp = `exec:${RUN}:lich up dev`;
       expect(backend.execEnvByOp[upOp]?.LICH_SKIP_BAKED).toBe("1");
     });
 
     it("re-up on a stopped run VM sets LICH_SKIP_BAKED=1", async () => {
       backend.states.set(RUN, "stopped");
       await runtime().up(ctx());
-      const upOp = `exec:${RUN}:lich up dev`;
       expect(backend.execEnvByOp[upOp]?.LICH_SKIP_BAKED).toBe("1");
     });
 
     it("fork path also starts sync", async () => {
-      const hash = await computeBakeInputsHash({ worktreePath: tmp, lichYamlPath: lichYaml, profileName: "dev", bakeInputs: ["db/migrations/**"] });
+      const hash = await computeHash();
       const golden = goldenName(hash);
       store.upsert({ inputsHash: hash, vmName: golden, profileName: "dev", lichYamlSnapshot: "", createdAt: "t" });
       backend.states.set(golden, "stopped");
@@ -342,10 +346,10 @@ describe("SandboxRuntime", () => {
       await rt.up(ctx());
       expect(backend.ops).toContain(`start:${RUN}`);
       expect(backend.ops).toContain(`sync.start:${RUN}`);
-      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops).toContain(upOp);
       const iStart = backend.ops.indexOf(`start:${RUN}`);
       const iSync = backend.ops.indexOf(`sync.start:${RUN}`);
-      const iUp = backend.ops.indexOf(`exec:${RUN}:lich up dev`);
+      const iUp = backend.ops.indexOf(upOp);
       expect(iSync).toBeGreaterThan(iStart);
       expect(iUp).toBeGreaterThan(iSync);
     });
@@ -356,7 +360,7 @@ describe("SandboxRuntime", () => {
       await rt.up(ctx());
       expect(backend.ops).not.toContain(`start:${RUN}`);
       expect(backend.ops).toContain(`sync.start:${RUN}`);
-      expect(backend.ops).toContain(`exec:${RUN}:lich up dev`);
+      expect(backend.ops).toContain(upOp);
     });
 
     it("down terminates the sync session", async () => {

@@ -82,8 +82,7 @@ export class SandboxRuntime {
         await this.backend.start(runVm);
         await new Promise(r => setTimeout(r, this.bootWaitMs));
       }
-      // Whatever the run VM originally was (cold-baked or forked), its disk
-      // already holds the baked setup; never re-run baked hooks on re-up.
+      // Re-up: disk already baked, regardless of cold vs fork origin.
       const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true });
       return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
     }
