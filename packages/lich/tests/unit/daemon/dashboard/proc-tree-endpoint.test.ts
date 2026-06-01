@@ -196,3 +196,106 @@ describe("dashboard /api/stacks/:id/services/:svc/proc-tree", () => {
     expect(res.status).toBe(500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 19c — /proc-tree endpoint dispatches via pickDataProvider (http path)
+// ---------------------------------------------------------------------------
+
+describe("dashboard /api/stacks/:id/services/:svc/proc-tree (sandbox/http provider)", () => {
+  let upstream: { stop: () => void; url: string } | null = null;
+
+  afterEach(() => {
+    upstream?.stop();
+    upstream = null;
+  });
+
+  function writeSandboxState(stackId: string, baseUrl: string, remoteStackId: string, pid?: number): void {
+    const dir = join(stateRoot, stackId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "state.json"),
+      JSON.stringify({
+        stack_id: stackId,
+        worktree_name: "wt",
+        worktree_path: "/tmp/wt",
+        status: "up",
+        started_at: "2026-05-31T00:00:00.000Z",
+        services: [
+          {
+            name: "api",
+            kind: "owned",
+            state: "ready",
+            ...(pid !== undefined ? { pid } : {}),
+          },
+        ],
+        data_source: { kind: "http", base_url: baseUrl, stack_id: remoteStackId },
+      }),
+      "utf8",
+    );
+  }
+
+  it("fetches proc-tree from the in-VM daemon for sandbox stacks", async () => {
+    const remoteTree = {
+      service: "api",
+      pid: 200,
+      process_count: 2,
+      mem_bytes: 4096,
+      cpu_pct_cumulative: 1.5,
+      tree: { pid: 200, ppid: 1, rss_bytes: 4096, cpu_pct_cumulative: 1.5, children: [] },
+    };
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req: Request): Response {
+        const u = new URL(req.url);
+        if (u.pathname === "/api/stacks/vm-stack-pt/services/api/proc-tree") {
+          return new Response(JSON.stringify(remoteTree), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeSandboxState("sandbox-pt-1", upstream.url, "vm-stack-pt", 200);
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const res = await fetch(
+      server.url + "/api/stacks/sandbox-pt-1/services/api/proc-tree",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.pid).toBe(200);
+    expect(body.process_count).toBe(2);
+    expect(body.mem_bytes).toBe(4096);
+    expect(body.tree).not.toBeNull();
+    expect(body.tree.pid).toBe(200);
+  });
+
+  it("returns 409 for compose services even on sandbox stacks", async () => {
+    const dir = join(stateRoot, "sandbox-pt-compose");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "state.json"),
+      JSON.stringify({
+        stack_id: "sandbox-pt-compose",
+        worktree_name: "wt",
+        worktree_path: "/tmp/wt",
+        status: "up",
+        started_at: "2026-05-31T00:00:00.000Z",
+        services: [{ name: "postgres", kind: "compose", state: "healthy" }],
+        data_source: { kind: "http", base_url: "http://127.0.0.1:1", stack_id: "vm-compose" },
+      }),
+      "utf8",
+    );
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const res = await fetch(
+      server.url + "/api/stacks/sandbox-pt-compose/services/postgres/proc-tree",
+    );
+    expect(res.status).toBe(409);
+  });
+});
