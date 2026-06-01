@@ -32,6 +32,9 @@ profiles:
 `);
     const result = await parseConfig(p);
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => /bake_inputs/.test(e.message))).toBe(true);
+    }
   });
 
   test("sandbox with empty bake_inputs is rejected", async () => {
@@ -52,6 +55,13 @@ profiles:
 `);
     const result = await parseConfig(p);
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some(
+          (e) => /bake_inputs/.test(e.message) && /non-empty|empty|fewer than 1/.test(e.message),
+        ),
+      ).toBe(true);
+    }
   });
 
   test("sandbox with bake_inputs is accepted", async () => {

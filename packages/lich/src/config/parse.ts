@@ -139,7 +139,9 @@ export async function parseConfig(filePath: string): Promise<ParseResult> {
   const sandbox = config.runtime?.sandbox;
   if (sandbox) {
     const bakeInputs = (sandbox as { bake_inputs?: unknown }).bake_inputs;
-    if (!Array.isArray(bakeInputs) || bakeInputs.length === 0) {
+    if (!Array.isArray(bakeInputs)) {
+      const location =
+        locateInstancePath("/runtime/sandbox", doc, lineCounter, filePath) ?? filePath;
       return {
         ok: false,
         sourcePath: filePath,
@@ -149,7 +151,24 @@ export async function parseConfig(filePath: string): Promise<ParseResult> {
             message:
               "/runtime/sandbox requires `bake_inputs` — a non-empty list of globs " +
               "(e.g. `db/migrations/**`, `bun.lockb`) whose content keys the golden snapshot.",
-            location: filePath,
+            location,
+          },
+        ],
+      };
+    }
+    if (bakeInputs.length === 0) {
+      const location =
+        locateInstancePath("/runtime/sandbox/bake_inputs", doc, lineCounter, filePath) ?? filePath;
+      return {
+        ok: false,
+        sourcePath: filePath,
+        errors: [
+          {
+            kind: "schema",
+            message:
+              "/runtime/sandbox/bake_inputs must be non-empty — list at least one glob " +
+              "(e.g. `db/migrations/**`, `bun.lockb`) whose content keys the golden snapshot.",
+            location,
           },
         ],
       };
