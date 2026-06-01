@@ -9,6 +9,7 @@ import { goldenName, runName } from './naming.js';
 import { computeBakeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
 import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
+import { runGc, type GcPolicy } from './gc.js';
 import type { StackView } from '../daemon/dashboard/stacks-view.js';
 
 export interface RuntimeContext {
@@ -152,7 +153,21 @@ export class SandboxRuntime {
       lichYamlSnapshot: readFileSync(ctx.lichYamlPath, 'utf8'),
       createdAt: new Date().toISOString(),
     });
+
+    try {
+      await runGc(this.store, this.backend, this.gcPolicy());
+    } catch (e) {
+      console.warn(`post-bake GC failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
     return goldenVm;
+  }
+
+  private gcPolicy(): GcPolicy {
+    const gc = this.config.gc;
+    return {
+      keepPerProfile: gc?.keep_per_profile ?? 2,
+      maxTotalBytes: (gc?.max_total_gb ?? 20) * 1e9,
+    };
   }
 
   private async coldBoot(ctx: RuntimeContext, runVm: string): Promise<string> {

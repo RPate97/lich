@@ -272,6 +272,36 @@ describe("SandboxRuntime", () => {
       const newOps = backend.ops.slice(opsBefore.length);
       expect(newOps.filter(o => o.startsWith("stop:") || o.startsWith("destroy:") || o.startsWith("clone:") || o.startsWith("start:"))).toEqual([]);
     });
+
+    it("snapshot prunes oldest golden after baking a third for the profile", async () => {
+      const olderGolden = "old-golden-1";
+      const newerGolden = "old-golden-2";
+      store.upsert({
+        inputsHash: "old1",
+        vmName: olderGolden,
+        profileName: "dev",
+        lichYamlSnapshot: "",
+        createdAt: "2026-05-01T00:00:00Z",
+      });
+      store.upsert({
+        inputsHash: "old2",
+        vmName: newerGolden,
+        profileName: "dev",
+        lichYamlSnapshot: "",
+        createdAt: "2026-05-15T00:00:00Z",
+      });
+      backend.states.set(olderGolden, "stopped");
+      backend.states.set(newerGolden, "stopped");
+      backend.states.set(RUN, "running");
+
+      const config = makeConfig({ gc: { keep_per_profile: 2, max_total_gb: 100 } } as any);
+      await runtime(config).snapshot(ctx());
+
+      expect(backend.ops).toContain(`destroy:${olderGolden}`);
+      const dev = store.list().filter(g => g.profileName === "dev");
+      expect(dev.length).toBe(2);
+      expect(dev.find(g => g.vmName === olderGolden)).toBeUndefined();
+    });
   });
 
   describe("down", () => {

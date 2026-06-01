@@ -3,12 +3,14 @@ import { sandboxStatus } from './sandbox/status.js';
 import { sandboxPurge } from './sandbox/purge.js';
 import { sandboxRefresh } from './sandbox/refresh.js';
 import { sandboxSnapshot } from './sandbox/snapshot.js';
+import { sandboxGc } from './sandbox/gc.js';
 
 const SUBCOMMANDS: Record<string, CommandHandler> = {
   status: sandboxStatus,
   purge: sandboxPurge,
   refresh: sandboxRefresh,
   snapshot: sandboxSnapshot,
+  gc: sandboxGc,
 };
 
 export const sandboxCommand: CommandHandler = async (ctx) => {

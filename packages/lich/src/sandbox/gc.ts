@@ -1,4 +1,5 @@
-import type { GoldenManifest } from './snapshot-store.js';
+import type { SandboxBackend } from './backend.js';
+import type { GoldenManifest, SnapshotStore } from './snapshot-store.js';
 
 export interface GcPolicy {
   keepPerProfile: number;
@@ -41,4 +42,31 @@ export function selectGoldensToEvict(
   }
 
   return goldens.filter((g) => evict.has(g.inputsHash));
+}
+
+export async function runGc(
+  store: SnapshotStore,
+  backend: SandboxBackend,
+  policy: GcPolicy,
+): Promise<GoldenManifest[]> {
+  const liveGoldenHashes = new Set<string>();
+  for (const f of store.forks()) {
+    const vm = await backend.inspect(f.runVm);
+    if (vm.state !== 'absent') {
+      liveGoldenHashes.add(f.goldenHash);
+    } else {
+      store.removeFork(f.runVm);
+    }
+  }
+
+  const toEvict = selectGoldensToEvict(store.list(), liveGoldenHashes, policy);
+  for (const g of toEvict) {
+    try {
+      await backend.destroy(g.vmName);
+    } catch {
+      // Best-effort: still drop the manifest entry so the orphan can't pin GC forever.
+    }
+    store.remove(g.inputsHash);
+  }
+  return toEvict;
 }

@@ -15,4 +15,15 @@ describe('lich sandbox dispatcher', () => {
     expect(result.exitCode).toBe(2);
     expect(result.message).toContain('snapshot');
   });
+
+  it('lists gc in the no-subcommand usage error', async () => {
+    const result = await sandboxCommand({ argv: { _: [] } });
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('gc');
+  });
+
+  it('reports gc as a known subcommand on unknown input', async () => {
+    const result = await sandboxCommand({ argv: { _: ['ghost'] } });
+    expect(result.message).toContain('gc');
+  });
 });

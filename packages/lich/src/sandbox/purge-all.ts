@@ -55,6 +55,7 @@ async function purgeAllSandboxesImpl(
       removedManifest = store.list().length;
       store.clear();
     }
+    store.clearForks();
   }
 
   return { removedVms, removedManifest };
