@@ -26,7 +26,8 @@ describe.skipIf(!isTartAvailable())('lich sandbox status/purge/refresh (e2e)', (
 
   test('status prints empty when no goldens', () => {
     const out = lichRun('sandbox status', { LICH_HOME: lichHome }).stdout;
-    expect(out).toContain('Goldens (snapshot cache):');
+    expect(out).toContain('GOLDENS');
+    expect(out).toContain('FORKS');
     expect(out).toContain('(none)');
   });
 
