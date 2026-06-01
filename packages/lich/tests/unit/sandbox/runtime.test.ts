@@ -61,10 +61,29 @@ function makeConfig(overrides: Partial<SandboxConfigType> = {}): SandboxConfigTy
   return { backend: "tart", image: "lich-sandbox-base", warm_fork: true, bake_inputs: ["db/migrations/**"], ...overrides };
 }
 
+// Mirrors recorded SSH execs into the FakeBackend's ops/env logs so existing
+// ordering + env-presence assertions keep working when the lich-up call moves
+// from `tart exec` to ssh.
+class FakeSshExec {
+  exitCode = 0;
+  constructor(
+    private readonly onExec: (argv: ReadonlyArray<string>, env: Record<string, string>) => void,
+  ) {}
+  async exec(
+    _target: string,
+    argv: ReadonlyArray<string>,
+    opts: { cwd: string; env: Record<string, string> },
+  ): Promise<number> {
+    this.onExec(argv, opts.env);
+    return this.exitCode;
+  }
+}
+
 describe("SandboxRuntime", () => {
   let tmp: string;
   let lichYaml: string;
   let backend: FakeBackend;
+  let sshExec: FakeSshExec;
   let store: SnapshotStore;
   const ctx = () => ({
     worktreeId: "wt123",
@@ -87,6 +106,11 @@ describe("SandboxRuntime", () => {
     lichYaml = join(tmp, "lich.yaml");
     writeFileSync(lichYaml, 'version: "1"\n');
     backend = new FakeBackend();
+    sshExec = new FakeSshExec((argv, env) => {
+      const op = `exec:${RUN}:${argv.join(" ")}`;
+      backend.ops.push(op);
+      backend.execEnvByOp[op] = env;
+    });
     store = new SnapshotStore(mkdtempSync(join(tmpdir(), "lich-store-")));
   });
 
@@ -99,7 +123,7 @@ describe("SandboxRuntime", () => {
   };
 
   function runtime(config = makeConfig()) {
-    return new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: noopSync as any });
+    return new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: noopSync as any, sshExec: sshExec as any });
   }
 
   describe("up", () => {
@@ -187,7 +211,7 @@ describe("SandboxRuntime", () => {
     });
 
     it("throws when the in-VM lich up fails", async () => {
-      backend.exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
+      sshExec.exitCode = 1;
       await expect(runtime().up(ctx())).rejects.toThrow(/lich up dev.*exit 1/);
     });
 
@@ -416,7 +440,7 @@ describe("SandboxRuntime", () => {
 
     function withSync(config = makeConfig()) {
       const sync = new FakeSync(backend.ops);
-      const rt = new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any });
+      const rt = new SandboxRuntime(config, { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any, sshExec: sshExec as any });
       return { rt, sync };
     }
 
@@ -500,7 +524,7 @@ describe("SandboxRuntime", () => {
       store.upsert({ inputsHash: hash, vmName: golden, profileName: "dev", lichYamlSnapshot: "", createdAt: "t" });
       backend.states.set(golden, "stopped");
       const { sync } = withSync();
-      await (new SandboxRuntime(makeConfig(), { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any })).up(ctx());
+      await (new SandboxRuntime(makeConfig(), { backend, snapshotStore: store, bootWaitMs: 0, sync: sync as any, sshExec: sshExec as any })).up(ctx());
       expect(sync.startCalls.some((c) => c.name === RUN)).toBe(true);
     });
 

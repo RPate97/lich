@@ -10,6 +10,7 @@ import { computeBakeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
 import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
 import { runGc, type GcPolicy } from './gc.js';
+import { RealInVmSshExecutor, type InVmSshExecutor } from './ssh-exec.js';
 import type { StackView } from '../daemon/dashboard/stacks-view.js';
 
 export interface RuntimeContext {
@@ -40,6 +41,7 @@ export class SandboxRuntime {
   private readonly config: SandboxConfigBlock;
   private readonly bootWaitMs: number;
   private readonly sync: SandboxSync;
+  private readonly sshExec: InVmSshExecutor;
 
   constructor(
     config: SandboxConfigBlock,
@@ -49,6 +51,7 @@ export class SandboxRuntime {
       /** Wait after VM start before exec, letting the guest agent come up. Injectable for tests. */
       bootWaitMs?: number;
       sync?: SandboxSync;
+      sshExec?: InVmSshExecutor;
     } = {},
   ) {
     this.config = config;
@@ -57,6 +60,7 @@ export class SandboxRuntime {
     this.store = opts.snapshotStore ?? new SnapshotStore(storeDir);
     this.bootWaitMs = opts.bootWaitMs ?? 5000;
     this.sync = opts.sync ?? new MutagenSync(new RealMutagenCli(), new RealSshTransport());
+    this.sshExec = opts.sshExec ?? new RealInVmSshExecutor();
   }
 
   private resolvedIgnore(): string[] {
@@ -222,11 +226,17 @@ export class SandboxRuntime {
       LICH_HOME: '/home/admin/.lich',
     };
     if (opts.skipBaked) env.LICH_SKIP_BAKED = '1';
-    const result = await this.backend.exec(runVm,
-      ['lich', 'up', ctx.profileName],
-      { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true, env });
-    if (result.exitCode !== 0) {
-      throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${result.exitCode}`);
+    // SSH instead of `tart exec` for the lich up call: the latter's gRPC
+    // stream has been observed to die mid-up under bun install + next dev
+    // load with "Transport became inactive" while in-VM lich is still
+    // working, wedging the test runner. The SSH transport (same key+config
+    // mutagen uses) survives long quiet periods via ServerAliveInterval.
+    const exitCode = await this.sshExec.exec(target, ['lich', 'up', ctx.profileName], {
+      cwd: '/workspace',
+      env,
+    });
+    if (exitCode !== 0) {
+      throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${exitCode}`);
     }
     return target;
   }

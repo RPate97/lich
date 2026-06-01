@@ -163,7 +163,7 @@ export class TartBackend implements SandboxBackend {
   }
 }
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   if (/^[A-Za-z0-9_\-./]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
