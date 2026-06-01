@@ -234,6 +234,14 @@ profiles:
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
     lifecycle:
+      before_up:
+        # node_modules is in the sync ignore list (so it gets baked, not
+        # round-tripped). In-VM cold-boots therefore have to install
+        # dependencies themselves before owned services try to invoke
+        # node_modules/.bin binaries (web -> next dev). On host the test
+        # harness pre-runs `bun install` so this is a no-op; both paths now
+        # reach `bun run dev` with a populated node_modules.
+        - bun install --frozen-lockfile
       after_up:
         # -v ON_ERROR_STOP=1: any psql error aborts the script with a non-zero
         # exit, so future schema/seed drift surfaces at `lich up` time instead
