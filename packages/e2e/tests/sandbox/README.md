@@ -331,3 +331,65 @@ lifecycle:
 | `LICH_SKIP_BAKED=1`     | Fork path only; filters lifecycle to `per_fork: true` |
 | `LICH_NO_BROWSER=1`     | Always, inside the sandbox VM                  |
 | `LICH_DAEMON_HOST=0.0.0.0` | Always, inside the sandbox VM               |
+
+## 7. Baking `node_modules` (and other build artifacts)
+
+The bake/fork model carries one concrete payoff for typescript/javascript stacks:
+dependencies install once per bake, and forks inherit them on disk without
+reinstalling.
+
+### How it works
+
+1. **Sync ignores `node_modules`.** `src/sandbox/sync.ts:ALWAYS_IGNORE` lists
+   `node_modules` and `.git` — these never round-trip between host and guest.
+   `DEFAULT_IGNORE` extends with `dist`, `.next`, `build`, `.turbo`. So
+   anything that should be baked (rather than synced) lives in those paths.
+2. **Cold-boot installs in the guest.** Put `bun install --frozen-lockfile`
+   (or your equivalent) in the sandbox profile's `lifecycle.before_up`. On a
+   cold boot this runs *inside the VM* against the just-synced source —
+   writing `/workspace/node_modules` to the VM disk. Sync doesn't see it.
+3. **Bake captures it.** `lich sandbox snapshot` (or `lich down`'s
+   bake-on-down) clones the run VM's disk to a golden. The golden carries
+   `node_modules` with it.
+4. **Fork inherits it.** A subsequent `lich up` that matches the same
+   `bake_inputs` hash forks the golden — disk has `node_modules` already.
+   The fork's in-VM `lich up` runs with `LICH_SKIP_BAKED=1`, filtering
+   `before_up` to only hooks marked `per_fork: true`. The install hook
+   (no `per_fork`) is skipped.
+
+### Pinning the lockfile in `bake_inputs`
+
+```yaml
+runtime:
+  sandbox:
+    backend: tart
+    bake_inputs:
+      - bun.lock              # or pnpm-lock.yaml / package-lock.json
+      - package.json
+      - apps/*/package.json   # workspace manifests
+      - db/migrations/**
+```
+
+A lockfile change changes the bake-inputs hash, which forces a fresh cold
+boot + reinstall. No incremental-install guessing — staleness is handled by
+rebake, full stop.
+
+### What this does NOT do
+
+- **Sub-second forks** — the fork still has to boot the VM and start the
+  services. The dep install + DB migration costs are skipped; the process
+  boot is not. Expect tens of seconds, not sub-second.
+- **Bake `node_modules` under a live `--dir` mount** — the dep-bake pattern
+  only works because sync ignores `node_modules`. If you mount the host's
+  worktree directly into `/workspace` (no sync, no ignore), the host's
+  `node_modules` shadows the guest's. The lich substrate doesn't do this
+  by default; Mutagen sync does the right thing.
+- **Skip migrations** — migrations are baked into the DB volume by the same
+  `after_up` hook pattern. Lockfile-style "rebake on change" applies via
+  `db/migrations/**` in `bake_inputs`.
+
+### Numbers
+
+(To be filled in after the user runs `dep-bake.test.ts` with real Tart +
+Mutagen + the image — the timings live in this README rather than the test
+because they're host-dependent.)
