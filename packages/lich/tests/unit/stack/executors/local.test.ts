@@ -15,8 +15,8 @@ describe("LocalStackExecutor", () => {
     spy.mockRestore();
   });
 
-  it("delegates up() to runUp unchanged", async () => {
-    const spy = vi.spyOn(upMod, "runUp").mockResolvedValue({ exitCode: 0 });
+  it("delegates up() to runUpLocal unchanged", async () => {
+    const spy = vi.spyOn(upMod, "runUpLocal").mockResolvedValue({ exitCode: 0 });
     const exe = new LocalStackExecutor();
     await exe.up({ outputMode: "pretty" } as any);
     expect(spy).toHaveBeenCalled();

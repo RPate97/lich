@@ -176,6 +176,10 @@ interface UpState {
 }
 
 export async function runUp(input: RunUpInput): Promise<RunUpResult> {
+  return runUpLocal(input);
+}
+
+export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
   const cwd = input.cwd ?? process.cwd();
   const outputMode = input.outputMode ?? "pretty";
   const sink = input.out ?? process.stdout;
