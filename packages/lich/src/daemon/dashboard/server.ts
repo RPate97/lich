@@ -354,7 +354,11 @@ export async function startDashboardServer(
           const provider = pickDataProvider(snap, buildDeps());
           return sseResponse(provider.tailLogs(stackId, serviceName, req.signal));
         }
-        // Merged stream: keep local path (no provider interface for multi-service tail).
+        // Merged stream: keep local path (StackDataProvider has no multi-service tail method).
+        // BROKEN for sandbox stacks — reads local log files which are empty for in-VM services.
+        // Per-service tail (above) goes through the provider and works. Multi-service requires
+        // either extending StackDataProvider with tailAllLogs() or merging multiple per-service
+        // streams here; tracked separately.
         const stack = cache.find((s) => s.id === stackId);
         if (!stack) {
           return notFound(`stack not found: ${stackId}`);
