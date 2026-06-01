@@ -4,5 +4,6 @@
 create table public.things (
   id bigserial primary key,
   name text not null,
+  description text,
   created_at timestamp with time zone default now()
 );

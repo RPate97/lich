@@ -235,9 +235,12 @@ profiles:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
     lifecycle:
       after_up:
-        - psql "$DATABASE_URL" -f db/migrations/01_init.sql
-        - bash -c 'for f in db/migrations-heavy/*.sql; do psql "$DATABASE_URL" -f "$f"; done'
-        - psql "$DATABASE_URL" -f db/seed-heavy.sql
+        # -v ON_ERROR_STOP=1: any psql error aborts the script with a non-zero
+        # exit, so future schema/seed drift surfaces at `lich up` time instead
+        # of silently inserting zero rows.
+        - psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f db/migrations/01_init.sql
+        - bash -c 'set -e; for f in db/migrations-heavy/*.sql; do psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$f"; done'
+        - psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f db/seed-heavy.sql
 
   # Minimal fast-iteration profile: keeps postgres + api + web, drops
   # tunnel_demo + health_probe. Demonstrates the exclude-services pattern —
