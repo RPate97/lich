@@ -9,6 +9,7 @@ import type { Worktree } from "../../worktree/detect.js";
 import type { StackView } from "../../daemon/dashboard/stacks-view.js";
 import { writeSnapshot } from "../../state/snapshot.js";
 import { parseConfig } from "../../config/parse.js";
+import { ensureDaemonRunning } from "../../daemon/auto-start.js";
 
 interface RuntimeLike {
   up(ctx: RuntimeContext): Promise<UpOutcome>;
@@ -71,7 +72,33 @@ export class SandboxStackExecutor implements StackExecutor {
         ? { kind: "http", base_url: `http://${outcome.vmIp}:3300`, stack_id: scraped.id }
         : { kind: "local" },
     });
+    await this.ensureHostDaemon(input, out);
     return { exitCode: 0, stackId: this.deps.worktree.stack_id };
+  }
+
+  // The host daemon proxies the dashboard for both local AND sandbox stacks;
+  // failures here never fail the up — the stack is ready either way.
+  private async ensureHostDaemon(input: RunUpInput, out: NodeJS.WritableStream): Promise<void> {
+    const envNoBrowser =
+      process.env.LICH_NO_BROWSER === "1" ||
+      process.env.LICH_NO_BROWSER === "true";
+    const noBrowser = (input.noBrowser ?? false) || envNoBrowser;
+    const lichHomeEnv = process.env.LICH_HOME;
+    const ensureOpts: Parameters<typeof ensureDaemonRunning>[0] = {
+      openBrowser: !noBrowser,
+    };
+    if (lichHomeEnv !== undefined) ensureOpts.lichHome = lichHomeEnv;
+    try {
+      const parsed = await parseConfig(this.ctx.lichYamlPath);
+      const proxyPort = parsed.ok ? parsed.config.runtime?.proxy_port : undefined;
+      if (typeof proxyPort === "number") ensureOpts.proxyPort = proxyPort;
+    } catch { /* fall back to defaults */ }
+    try {
+      await ensureDaemonRunning(ensureOpts);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      out.write(`warning: dashboard daemon failed to start: ${msg}\n`);
+    }
   }
 
   async down(input: RunDownInput): Promise<RunDownResult> {
