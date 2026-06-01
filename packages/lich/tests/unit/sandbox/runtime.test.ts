@@ -58,7 +58,7 @@ class FakeBackend implements SandboxBackend {
 }
 
 function makeConfig(overrides: Partial<SandboxConfigType> = {}): SandboxConfigType {
-  return { backend: "tart", image: "lich-sandbox-base", warm_fork: true, ...overrides };
+  return { backend: "tart", image: "lich-sandbox-base", warm_fork: true, bake_inputs: ["db/migrations/**"], ...overrides };
 }
 
 describe("SandboxRuntime", () => {

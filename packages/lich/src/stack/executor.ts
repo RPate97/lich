@@ -33,7 +33,7 @@ export function pickExecutor(snap: StackSnapshot, deps: ExecutorDeps): StackExec
   const ref = deriveRef(snap);
   if (ref.kind === "local") return new LocalStackExecutor();
   if (ref.kind === "sandbox-tart") {
-    const runtime = new SandboxRuntime({ backend: "tart" });
+    const runtime = new SandboxRuntime({ backend: "tart", bake_inputs: [] });
     return new SandboxStackExecutor(runtime, {
       worktreeId: deps.worktree.id,
       worktreePath: deps.worktree.path,

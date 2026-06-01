@@ -68,6 +68,10 @@ const lifecycleEntrySchema = {
           type: "string",
           description: "Working directory for the cmd, relative to the repo root.",
         },
+        per_fork: {
+          type: "boolean",
+          description: "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false.",
+        },
       },
       required: ["cmd"],
       additionalProperties: false,
@@ -574,7 +578,7 @@ export const runtimeSchema = {
     sandbox: {
       type: "object",
       additionalProperties: false,
-      required: ["backend"],
+      required: ["backend", "bake_inputs"],
       properties: {
         backend: { type: "string", enum: ["tart"] },
         image: { type: "string" },
@@ -588,6 +592,20 @@ export const runtimeSchema = {
           properties: {
             ignore: { type: "array", items: { type: "string" } },
             mutagen_flags: { type: "array", items: { type: "string" } },
+          },
+        },
+        bake_inputs: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          description: "Globs (relative to worktree) whose content is baked into the golden. Required.",
+        },
+        gc: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            keep_per_profile: { type: "integer", minimum: 1 },
+            max_total_gb: { type: "number", exclusiveMinimum: 0 },
           },
         },
       },

@@ -32,6 +32,7 @@ runtime:
   sandbox:
     backend: tart
     image: lich-sandbox-base
+    bake_inputs: ["db/migrations/**"]
 profiles:
   "dev:box":
     default: true

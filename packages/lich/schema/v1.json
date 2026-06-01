@@ -69,7 +69,8 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "backend"
+            "backend",
+            "bake_inputs"
           ],
           "properties": {
             "backend": {
@@ -110,6 +111,28 @@
                   "items": {
                     "type": "string"
                   }
+                }
+              }
+            },
+            "bake_inputs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "Globs (relative to worktree) whose content is baked into the golden. Required."
+            },
+            "gc": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "keep_per_profile": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_total_gb": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 }
               }
             }
@@ -229,6 +252,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -261,6 +288,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -293,6 +324,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -628,6 +663,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -660,6 +699,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -692,6 +735,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -844,6 +891,10 @@
                   "cwd": {
                     "type": "string",
                     "description": "Working directory for the cmd, relative to the repo root."
+                  },
+                  "per_fork": {
+                    "type": "boolean",
+                    "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                   }
                 },
                 "required": [
@@ -876,6 +927,10 @@
                   "cwd": {
                     "type": "string",
                     "description": "Working directory for the cmd, relative to the repo root."
+                  },
+                  "per_fork": {
+                    "type": "boolean",
+                    "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                   }
                 },
                 "required": [
@@ -908,6 +963,10 @@
                   "cwd": {
                     "type": "string",
                     "description": "Working directory for the cmd, relative to the repo root."
+                  },
+                  "per_fork": {
+                    "type": "boolean",
+                    "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                   }
                 },
                 "required": [
@@ -940,6 +999,10 @@
                   "cwd": {
                     "type": "string",
                     "description": "Working directory for the cmd, relative to the repo root."
+                  },
+                  "per_fork": {
+                    "type": "boolean",
+                    "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                   }
                 },
                 "required": [
@@ -1183,6 +1246,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -1215,6 +1282,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -1247,6 +1318,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [
@@ -1279,6 +1354,10 @@
                         "cwd": {
                           "type": "string",
                           "description": "Working directory for the cmd, relative to the repo root."
+                        },
+                        "per_fork": {
+                          "type": "boolean",
+                          "description": "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false."
                         }
                       },
                       "required": [

@@ -30,6 +30,7 @@ version: "1"
 runtime:
   sandbox:
     backend: tart
+    bake_inputs: ["db/migrations/**"]
 `);
     const result = await parseConfig(p);
     expect(result.ok).toBe(true);
@@ -49,6 +50,7 @@ runtime:
     cpus: 8
     warm_fork: false
     snapshot_store: /tmp/lich-snapshots
+    bake_inputs: ["db/migrations/**"]
 `);
     const result = await parseConfig(p);
     expect(result.ok).toBe(true);

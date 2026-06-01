@@ -25,6 +25,12 @@ export type LifecycleEntry =
       cmd: string;
       env_group?: string;
       cwd?: string;
+      /**
+       * When true, this hook runs on every sandbox fork, not just the cold
+       * bake. Default false: setup hooks are baked into the golden's disk
+       * and skipped on a fork (LICH_SKIP_BAKED=1 in the in-VM env).
+       */
+      per_fork?: boolean;
     };
 
 export type LifecycleList = LifecycleEntry[];
@@ -138,6 +144,13 @@ export interface OwnedService {
   discover?: OwnedDiscover;
 }
 
+export interface SandboxGc {
+  /** Goldens to keep per profile (most-recent N). Default: 2. */
+  keep_per_profile?: number;
+  /** Global LRU cap in GB across all goldens. Default: 20. */
+  max_total_gb?: number;
+}
+
 export interface SandboxRuntime {
   /** Backend identifier. Only "tart" supported in V0. */
   backend: "tart";
@@ -149,7 +162,7 @@ export interface SandboxRuntime {
   cpus?: number;
   /**
    * When true (default), `lich up` automatically warm-forks from a
-   * snapshot golden if one exists for the current inputs-hash.
+   * snapshot golden if one exists for the current bake-inputs-hash.
    */
   warm_fork?: boolean;
   /**
@@ -159,6 +172,15 @@ export interface SandboxRuntime {
   snapshot_store?: string;
   /** Mutagen source sync into the VM. node_modules + .git are always ignored. */
   sync?: SandboxSyncConfig;
+  /**
+   * REQUIRED when this block is present. Globs (relative to the worktree)
+   * whose content is baked into the golden — migrations, seed, lockfile, etc.
+   * The golden is keyed by the content of these files; changing any forces
+   * a rebake.
+   */
+  bake_inputs: ReadonlyArray<string>;
+  /** Golden garbage-collection policy. */
+  gc?: SandboxGc;
 }
 
 export interface SandboxSyncConfig {
