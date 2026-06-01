@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxStackExecutor } from "../../../../src/stack/executors/sandbox-tart.js";
@@ -16,7 +17,7 @@ class FakeRuntime {
     this.calls.push({ method: "up", args });
     return { path: "cold", vmName: "lich-run-x", vmIp: "10.0.0.1", durationMs: 100 };
   }
-  async scrapeInVmStack(...args: unknown[]) {
+  async scrapeInVmStack(...args: unknown[]): Promise<unknown> {
     this.calls.push({ method: "scrapeInVmStack", args });
     return null;
   }
@@ -148,6 +149,54 @@ describe("SandboxStackExecutor.up", () => {
       const snap = await readSnapshot("x-wt1");
       expect(snap?.data_source).toEqual({ kind: "local" });
       expect(snap?.services).toHaveLength(0);
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("writes cold-booted status line to input.out", async () => {
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-up-out-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new FakeRuntime();
+      const wt = { name: "x", id: "wt1", path: "/work/x", stack_id: "x-wt1" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      const sink = new PassThrough();
+      const chunks: Buffer[] = [];
+      sink.on("data", (c) => chunks.push(c));
+      await exe.up({ outputMode: "pretty", out: sink } as any);
+      const output = Buffer.concat(chunks).toString();
+      expect(output).toMatch(/sandbox VM 'lich-run-x' cold-booted in \d+ms/);
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("writes warm-forked status line when outcome.path is warm", async () => {
+    class FakeRuntimeWarm extends FakeRuntime {
+      override async up(...args: unknown[]) {
+        this.calls.push({ method: "up", args });
+        return { path: "warm" as const, vmName: "lich-run-w", vmIp: "10.0.0.2", durationMs: 42 };
+      }
+    }
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-up-warm-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new FakeRuntimeWarm();
+      const wt = { name: "x", id: "wt1", path: "/work/x", stack_id: "x-wt1" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      const sink = new PassThrough();
+      const chunks: Buffer[] = [];
+      sink.on("data", (c) => chunks.push(c));
+      await exe.up({ outputMode: "pretty", out: sink } as any);
+      const output = Buffer.concat(chunks).toString();
+      expect(output).toMatch(/sandbox VM 'lich-run-w' warm-forked in 42ms/);
     } finally {
       if (prev === undefined) delete process.env.LICH_HOME;
       else process.env.LICH_HOME = prev;

@@ -23,8 +23,11 @@ export class SandboxStackExecutor implements StackExecutor {
     private readonly deps: { worktree: Worktree },
   ) {}
 
-  async up(_input: RunUpInput): Promise<RunUpResult> {
+  async up(input: RunUpInput): Promise<RunUpResult> {
     const outcome = await this.runtime.up(this.ctx);
+    const verb = outcome.path === "warm" ? "warm-forked" : "cold-booted";
+    const out = input.out ?? process.stdout;
+    out.write(`sandbox VM '${outcome.vmName}' ${verb} in ${outcome.durationMs}ms\n`);
     const scraped = await this.runtime.scrapeInVmStack(this.ctx, outcome.vmName);
     const services = (scraped?.services ?? []).map((s) => ({
       name: s.name,
