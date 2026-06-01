@@ -25,6 +25,8 @@ runtime:
   sandbox:
     backend: tart
     image: ${IMAGE}
+    bake_inputs:
+      - "lich.yaml"
 profiles:
   "${PROFILE}":
     default: true
@@ -33,8 +35,9 @@ owned:
   web:
     cmd: "python3 -m http.server ${PORT}"
     cwd: "."
+    port: ${PORT}
     ready_when:
-      http: "http://localhost:${PORT}/"
+      http_get: /
       timeout: 40s
 `;
 
@@ -60,6 +63,7 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
     const config: SandboxConfig = {
       backend: "tart",
       image: IMAGE,
+      bake_inputs: ["lich.yaml"],
     } as SandboxConfig;
     runtime = new SandboxRuntime(config, {
       snapshotStore: new SnapshotStore(storeDir),
