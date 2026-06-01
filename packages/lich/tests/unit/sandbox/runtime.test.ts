@@ -285,6 +285,12 @@ describe("SandboxRuntime", () => {
       expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_NO_BROWSER).toBe("1");
     });
 
+    it("in-VM `lich up` runs with LICH_DAEMON_HOST=0.0.0.0 (so host can reach in-VM daemon)", async () => {
+      const { rt } = withSync();
+      await rt.up(ctx());
+      expect(backend.execEnvByOp[`exec:${RUN}:lich up dev`]?.LICH_DAEMON_HOST).toBe("0.0.0.0");
+    });
+
     it("fork path also starts sync", async () => {
       const hash = computeInputsHash(lichYaml, "dev");
       const golden = goldenName(hash);
