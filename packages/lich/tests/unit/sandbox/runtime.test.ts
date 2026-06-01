@@ -267,6 +267,53 @@ describe("SandboxRuntime", () => {
       await runtime().down(ctx());
       expect(backend.ops).toEqual([]);
     });
+
+    it("bake-on-down: clones run VM to golden and records manifest when bakeBeforeStop=true", async () => {
+      backend.states.set(RUN, "running");
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+
+      await runtime().down(ctx(), { bakeBeforeStop: true });
+
+      expect(backend.ops).toContain(`clone:${RUN}->${golden}`);
+      expect(backend.ops.lastIndexOf(`stop:${RUN}`)).toBeGreaterThan(backend.ops.indexOf(`clone:${RUN}->${golden}`));
+      expect(store.findByHash(hash)?.vmName).toBe(golden);
+    });
+
+    it("bake-on-down: no clone happens when bakeBeforeStop=false (default)", async () => {
+      backend.states.set(RUN, "running");
+      await runtime().down(ctx());
+      expect(backend.ops.some(o => o.startsWith("clone:"))).toBe(false);
+    });
+
+    it("bake-on-down: bake failure does NOT block teardown", async () => {
+      backend.states.set(RUN, "running");
+      const origClone = backend.clone.bind(backend);
+      backend.clone = async (src: string, dst: string) => {
+        backend.ops.push(`clone-FAIL:${src}->${dst}`);
+        throw new Error("clone exploded");
+      };
+
+      await runtime().down(ctx(), { bakeBeforeStop: true });
+
+      expect(backend.ops.some(o => o.startsWith("clone-FAIL:"))).toBe(true);
+      expect(backend.ops).toContain(`stop:${RUN}`);
+      backend.clone = origClone;
+    });
+
+    it("bake-on-down: bake failure with purge still destroys", async () => {
+      backend.states.set(RUN, "running");
+      backend.clone = async () => { throw new Error("nope"); };
+
+      await runtime().down(ctx(), { bakeBeforeStop: true, purge: true });
+
+      expect(backend.ops).toContain(`destroy:${RUN}`);
+    });
+
+    it("bake-on-down: skipped when run VM is absent (early return)", async () => {
+      await runtime().down(ctx(), { bakeBeforeStop: true });
+      expect(backend.ops).toEqual([]);
+    });
   });
 
   describe("exec", () => {

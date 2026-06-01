@@ -2,11 +2,13 @@ import type { CommandHandler } from './index.js';
 import { sandboxStatus } from './sandbox/status.js';
 import { sandboxPurge } from './sandbox/purge.js';
 import { sandboxRefresh } from './sandbox/refresh.js';
+import { sandboxSnapshot } from './sandbox/snapshot.js';
 
 const SUBCOMMANDS: Record<string, CommandHandler> = {
   status: sandboxStatus,
   purge: sandboxPurge,
   refresh: sandboxRefresh,
+  snapshot: sandboxSnapshot,
 };
 
 export const sandboxCommand: CommandHandler = async (ctx) => {
@@ -14,7 +16,7 @@ export const sandboxCommand: CommandHandler = async (ctx) => {
   if (!sub) {
     return {
       ok: false,
-      message: 'usage: lich sandbox <status|purge|refresh>',
+      message: `usage: lich sandbox <${Object.keys(SUBCOMMANDS).join('|')}>`,
       exitCode: 2,
     };
   }

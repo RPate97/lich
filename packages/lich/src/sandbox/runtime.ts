@@ -202,7 +202,7 @@ export class SandboxRuntime {
     return target;
   }
 
-  async down(ctx: RuntimeContext, opts: { purge?: boolean } = {}): Promise<void> {
+  async down(ctx: RuntimeContext, opts: { purge?: boolean; bakeBeforeStop?: boolean } = {}): Promise<void> {
     const runVm = runName(ctx.worktreeId, ctx.profileName);
     const state = await this.backend.inspect(runVm);
     if (state.state === 'absent') return;
@@ -212,6 +212,13 @@ export class SandboxRuntime {
         { cwd: '/workspace', timeoutMs: 120_000, inheritStdio: true });
     }
     await this.sync.terminate(runVm);
+    if (opts.bakeBeforeStop) {
+      try {
+        await this.snapshot(ctx);
+      } catch (e) {
+        console.warn(`bake-on-down failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (opts.purge) {
       await this.backend.destroy(runVm);
     } else {

@@ -37,17 +37,24 @@ const fakeDeps = () => ({
 describe("SandboxStackExecutor.down", () => {
   it("calls runtime.down with purge:true when input.purge is set", async () => {
     const rt = new FakeRuntime();
-    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), fakeDeps());
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: true });
     await exe.down({ purge: true, outputMode: "pretty" });
     expect(rt.calls).toHaveLength(1);
-    expect(rt.calls[0]!.args[1]).toEqual({ purge: true });
+    expect(rt.calls[0]!.args[1]).toEqual({ purge: true, bakeBeforeStop: true });
   });
 
   it("calls runtime.down with purge:false otherwise", async () => {
     const rt = new FakeRuntime();
-    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), fakeDeps());
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: true });
     await exe.down({ outputMode: "pretty" } as any);
-    expect(rt.calls[0]!.args[1]).toEqual({ purge: false });
+    expect(rt.calls[0]!.args[1]).toEqual({ purge: false, bakeBeforeStop: true });
+  });
+
+  it("passes bakeBeforeStop:false when warmForkEnabled is false", async () => {
+    const rt = new FakeRuntime();
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: false });
+    await exe.down({ outputMode: "pretty" } as any);
+    expect(rt.calls[0]!.args[1]).toEqual({ purge: false, bakeBeforeStop: false });
   });
 });
 

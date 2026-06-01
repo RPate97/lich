@@ -8,10 +8,11 @@ import type { RunLogsInput, RunLogsResult } from "../../commands/logs.js";
 import type { Worktree } from "../../worktree/detect.js";
 import type { StackView } from "../../daemon/dashboard/stacks-view.js";
 import { writeSnapshot } from "../../state/snapshot.js";
+import { parseConfig } from "../../config/parse.js";
 
 interface RuntimeLike {
   up(ctx: RuntimeContext): Promise<UpOutcome>;
-  down(ctx: RuntimeContext, opts?: { purge?: boolean }): Promise<void>;
+  down(ctx: RuntimeContext, opts?: { purge?: boolean; bakeBeforeStop?: boolean }): Promise<void>;
   exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;
   scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null>;
 }
@@ -20,8 +21,19 @@ export class SandboxStackExecutor implements StackExecutor {
   constructor(
     private readonly runtime: RuntimeLike,
     private readonly ctx: RuntimeContext,
-    private readonly deps: { worktree: Worktree },
+    private readonly deps: { worktree: Worktree; warmForkEnabled?: boolean },
   ) {}
+
+  private async resolveWarmForkEnabled(): Promise<boolean> {
+    if (this.deps.warmForkEnabled !== undefined) return this.deps.warmForkEnabled;
+    try {
+      const parsed = await parseConfig(this.ctx.lichYamlPath);
+      if (!parsed.ok) return true;
+      return parsed.config.runtime?.sandbox?.warm_fork ?? true;
+    } catch {
+      return true;
+    }
+  }
 
   async up(input: RunUpInput): Promise<RunUpResult> {
     const outcome = await this.runtime.up(this.ctx);
@@ -64,7 +76,8 @@ export class SandboxStackExecutor implements StackExecutor {
 
   async down(input: RunDownInput): Promise<RunDownResult> {
     const purge = input.purge === true;
-    await this.runtime.down(this.ctx, { purge });
+    const warmForkEnabled = await this.resolveWarmForkEnabled();
+    await this.runtime.down(this.ctx, { purge, bakeBeforeStop: warmForkEnabled });
     return { exitCode: 0, warnings: [] };
   }
 
