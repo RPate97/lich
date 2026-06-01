@@ -12,7 +12,7 @@ import { parseConfig } from "../../config/parse.js";
 
 interface RuntimeLike {
   up(ctx: RuntimeContext): Promise<UpOutcome>;
-  down(ctx: RuntimeContext, opts?: { purge?: boolean; bakeBeforeStop?: boolean }): Promise<void>;
+  down(ctx: RuntimeContext, opts?: { purge?: boolean; bakeBeforeStop?: boolean }): Promise<{ warnings: string[] }>;
   exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;
   scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null>;
 }
@@ -77,8 +77,13 @@ export class SandboxStackExecutor implements StackExecutor {
   async down(input: RunDownInput): Promise<RunDownResult> {
     const purge = input.purge === true;
     const warmForkEnabled = await this.resolveWarmForkEnabled();
-    await this.runtime.down(this.ctx, { purge, bakeBeforeStop: warmForkEnabled });
-    return { exitCode: 0, warnings: [] };
+    const result = await this.runtime.down(this.ctx, { purge, bakeBeforeStop: warmForkEnabled });
+    const out = input.out ?? process.stdout;
+    const warnings = result.warnings.map((message) => ({ phase: "bake_on_down", message }));
+    for (const w of warnings) {
+      out.write(`warning: ${w.message}\n`);
+    }
+    return { exitCode: 0, warnings };
   }
 
   async exec(input: RunExecInput): Promise<RunExecResult> {

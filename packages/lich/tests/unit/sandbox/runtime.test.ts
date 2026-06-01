@@ -231,6 +231,33 @@ describe("SandboxRuntime", () => {
       expect(store.findByHash(hash)?.vmName).toBe(golden);
     });
 
+    it("default (no opts) restarts the run VM after cloning the golden", async () => {
+      backend.states.set(RUN, "running");
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+
+      await runtime().snapshot(ctx());
+
+      const cloneIdx = backend.ops.indexOf(`clone:${RUN}->${golden}`);
+      const startIdx = backend.ops.indexOf(`start:${RUN}`, cloneIdx);
+      expect(cloneIdx).toBeGreaterThanOrEqual(0);
+      expect(startIdx).toBeGreaterThan(cloneIdx);
+    });
+
+    it("keepStopped: true skips the trailing run-VM restart", async () => {
+      backend.states.set(RUN, "running");
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+
+      await runtime().snapshot(ctx(), { keepStopped: true });
+
+      const cloneIdx = backend.ops.indexOf(`clone:${RUN}->${golden}`);
+      const startsAfterClone = backend.ops
+        .slice(cloneIdx + 1)
+        .filter((o) => o === `start:${RUN}`);
+      expect(startsAfterClone).toEqual([]);
+    });
+
     it("throws when there is no run VM to snapshot", async () => {
       await expect(runtime().snapshot(ctx())).rejects.toThrow(/Run 'lich up/);
     });
@@ -273,11 +300,26 @@ describe("SandboxRuntime", () => {
       const hash = await computeHash();
       const golden = goldenName(hash);
 
-      await runtime().down(ctx(), { bakeBeforeStop: true });
+      const result = await runtime().down(ctx(), { bakeBeforeStop: true });
 
       expect(backend.ops).toContain(`clone:${RUN}->${golden}`);
       expect(backend.ops.lastIndexOf(`stop:${RUN}`)).toBeGreaterThan(backend.ops.indexOf(`clone:${RUN}->${golden}`));
       expect(store.findByHash(hash)?.vmName).toBe(golden);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it("bake-on-down: does NOT restart run VM between clone and final stop (keepStopped)", async () => {
+      backend.states.set(RUN, "running");
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+
+      await runtime().down(ctx(), { bakeBeforeStop: true });
+
+      const cloneIdx = backend.ops.indexOf(`clone:${RUN}->${golden}`);
+      const startsAfterClone = backend.ops
+        .slice(cloneIdx + 1)
+        .filter((o) => o === `start:${RUN}`);
+      expect(startsAfterClone).toEqual([]);
     });
 
     it("bake-on-down: no clone happens when bakeBeforeStop=false (default)", async () => {
@@ -286,7 +328,7 @@ describe("SandboxRuntime", () => {
       expect(backend.ops.some(o => o.startsWith("clone:"))).toBe(false);
     });
 
-    it("bake-on-down: bake failure does NOT block teardown", async () => {
+    it("bake-on-down: bake failure does NOT block teardown and surfaces a warning", async () => {
       backend.states.set(RUN, "running");
       const origClone = backend.clone.bind(backend);
       backend.clone = async (src: string, dst: string) => {
@@ -294,10 +336,13 @@ describe("SandboxRuntime", () => {
         throw new Error("clone exploded");
       };
 
-      await runtime().down(ctx(), { bakeBeforeStop: true });
+      const result = await runtime().down(ctx(), { bakeBeforeStop: true });
 
       expect(backend.ops.some(o => o.startsWith("clone-FAIL:"))).toBe(true);
       expect(backend.ops).toContain(`stop:${RUN}`);
+      expect(result.warnings.length).toBe(1);
+      expect(result.warnings[0]).toMatch(/bake-on-down failed: clone exploded/);
+      expect(result.warnings[0]).toMatch(/lich sandbox snapshot/);
       backend.clone = origClone;
     });
 

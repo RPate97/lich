@@ -8,7 +8,11 @@ import { readSnapshot } from "../../../../src/state/snapshot.js";
 
 class FakeRuntime {
   calls: Array<{ method: string; args: unknown[] }> = [];
-  async down(...args: unknown[]) { this.calls.push({ method: "down", args }); }
+  downWarnings: string[] = [];
+  async down(...args: unknown[]) {
+    this.calls.push({ method: "down", args });
+    return { warnings: this.downWarnings };
+  }
   async exec(...args: unknown[]) {
     this.calls.push({ method: "exec", args });
     return { exitCode: 0, stdout: "", stderr: "" };
@@ -55,6 +59,26 @@ describe("SandboxStackExecutor.down", () => {
     const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: false });
     await exe.down({ outputMode: "pretty" } as any);
     expect(rt.calls[0]!.args[1]).toEqual({ purge: false, bakeBeforeStop: false });
+  });
+
+  it("surfaces runtime down warnings via RunDownResult.warnings and writes them to out", async () => {
+    const rt = new FakeRuntime();
+    rt.downWarnings = ["bake-on-down failed: boom (run `lich sandbox snapshot` to retry)"];
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: true });
+    const sink = new PassThrough();
+    const chunks: Buffer[] = [];
+    sink.on("data", (c) => chunks.push(c));
+    const result = await exe.down({ outputMode: "pretty", out: sink } as any);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toEqual({ phase: "bake_on_down", message: rt.downWarnings[0] });
+    expect(Buffer.concat(chunks).toString()).toMatch(/warning: bake-on-down failed: boom/);
+  });
+
+  it("returns empty warnings when runtime reports no warnings", async () => {
+    const rt = new FakeRuntime();
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { ...fakeDeps(), warmForkEnabled: true });
+    const result = await exe.down({ outputMode: "pretty" } as any);
+    expect(result.warnings).toEqual([]);
   });
 });
 

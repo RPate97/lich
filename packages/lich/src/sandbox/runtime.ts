@@ -114,8 +114,9 @@ export class SandboxRuntime {
 
   // Create a golden snapshot from the current run VM. Stops the stack to flush
   // its disk, CoW-clones it to the golden, and restarts the run VM. Explicit
-  // because it disrupts the running stack.
-  async snapshot(ctx: RuntimeContext): Promise<string> {
+  // because it disrupts the running stack. `keepStopped` skips the trailing
+  // restart — bake-on-down passes true to avoid a wasted stop+start cycle.
+  async snapshot(ctx: RuntimeContext, opts: { keepStopped?: boolean } = {}): Promise<string> {
     const inputsHash = await computeBakeInputsHash({
       worktreePath: ctx.worktreePath,
       lichYamlPath: ctx.lichYamlPath,
@@ -140,7 +141,9 @@ export class SandboxRuntime {
     await this.backend.stop(runVm);
     await this.backend.destroy(goldenVm);
     await this.backend.clone(runVm, goldenVm);
-    await this.backend.start(runVm);
+    if (!opts.keepStopped) {
+      await this.backend.start(runVm);
+    }
 
     this.store.upsert({
       inputsHash,
@@ -202,10 +205,11 @@ export class SandboxRuntime {
     return target;
   }
 
-  async down(ctx: RuntimeContext, opts: { purge?: boolean; bakeBeforeStop?: boolean } = {}): Promise<void> {
+  async down(ctx: RuntimeContext, opts: { purge?: boolean; bakeBeforeStop?: boolean } = {}): Promise<{ warnings: string[] }> {
+    const warnings: string[] = [];
     const runVm = runName(ctx.worktreeId, ctx.profileName);
     const state = await this.backend.inspect(runVm);
-    if (state.state === 'absent') return;
+    if (state.state === 'absent') return { warnings };
     if (state.state === 'running') {
       await this.backend.exec(runVm,
         ['lich', 'down'],
@@ -214,9 +218,9 @@ export class SandboxRuntime {
     await this.sync.terminate(runVm);
     if (opts.bakeBeforeStop) {
       try {
-        await this.snapshot(ctx);
+        await this.snapshot(ctx, { keepStopped: true });
       } catch (e) {
-        console.warn(`bake-on-down failed: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`bake-on-down failed: ${e instanceof Error ? e.message : String(e)} (run \`lich sandbox snapshot\` to retry)`);
       }
     }
     if (opts.purge) {
@@ -224,6 +228,7 @@ export class SandboxRuntime {
     } else {
       await this.backend.stop(runVm);
     }
+    return { warnings };
   }
 
   async exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult> {
