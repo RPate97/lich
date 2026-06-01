@@ -6,7 +6,7 @@ import type { SandboxRuntime as SandboxConfigBlock } from '../config/types.js';
 import { TartBackend } from './tart.js';
 import { SnapshotStore } from './snapshot-store.js';
 import { goldenName, runName } from './naming.js';
-import { computeInputsHash } from './inputs-hash.js';
+import { computeBakeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
 import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
 import type { StackView } from '../daemon/dashboard/stacks-view.js';
@@ -64,7 +64,12 @@ export class SandboxRuntime {
 
   async up(ctx: RuntimeContext): Promise<UpOutcome> {
     const start = Date.now();
-    const inputsHash = computeInputsHash(ctx.lichYamlPath, ctx.profileName);
+    const inputsHash = await computeBakeInputsHash({
+      worktreePath: ctx.worktreePath,
+      lichYamlPath: ctx.lichYamlPath,
+      profileName: ctx.profileName,
+      bakeInputs: this.config.bake_inputs,
+    });
     const runVm = runName(ctx.worktreeId, ctx.profileName);
 
     const runState = await this.backend.inspect(runVm);
@@ -77,7 +82,9 @@ export class SandboxRuntime {
         await this.backend.start(runVm);
         await new Promise(r => setTimeout(r, this.bootWaitMs));
       }
-      const vmIp = await this.bringUp(ctx, runVm);
+      // Whatever the run VM originally was (cold-baked or forked), its disk
+      // already holds the baked setup; never re-run baked hooks on re-up.
+      const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true });
       return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
     }
 
@@ -90,7 +97,7 @@ export class SandboxRuntime {
         // Fork: CoW-clone the golden's baked disk and boot it.
         await this.backend.clone(golden.vmName, runVm);
         await this.backend.start(runVm);
-        const vmIp = await this.bringUp(ctx, runVm);
+        const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true });
         return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
       }
       // Golden VM gone (deleted out of band). Drop the stale manifest entry.
@@ -105,7 +112,12 @@ export class SandboxRuntime {
   // its disk, CoW-clones it to the golden, and restarts the run VM. Explicit
   // because it disrupts the running stack.
   async snapshot(ctx: RuntimeContext): Promise<string> {
-    const inputsHash = computeInputsHash(ctx.lichYamlPath, ctx.profileName);
+    const inputsHash = await computeBakeInputsHash({
+      worktreePath: ctx.worktreePath,
+      lichYamlPath: ctx.lichYamlPath,
+      profileName: ctx.profileName,
+      bakeInputs: this.config.bake_inputs,
+    });
     const runVm = runName(ctx.worktreeId, ctx.profileName);
     const goldenVm = goldenName(inputsHash);
 
@@ -139,7 +151,7 @@ export class SandboxRuntime {
     await this.backend.create(sandboxConfig);
     await this.backend.start(runVm);
     await new Promise(r => setTimeout(r, this.bootWaitMs));
-    return this.bringUp(ctx, runVm);
+    return this.bringUp(ctx, runVm, { skipBaked: false });
   }
 
   // The guest network lags VM "running"; tart ip fails until DHCP completes.
@@ -158,7 +170,7 @@ export class SandboxRuntime {
     throw new Error(`sandbox VM '${runVm}' got no IP within ${timeoutMs}ms${lastErr ? `: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ''}`);
   }
 
-  private async bringUp(ctx: RuntimeContext, runVm: string): Promise<string> {
+  private async bringUp(ctx: RuntimeContext, runVm: string, opts: { skipBaked: boolean }): Promise<string> {
     const target = await this.ipWithRetry(runVm);
     await this.sync.start({
       name: runVm,
@@ -168,9 +180,11 @@ export class SandboxRuntime {
       ignore: this.resolvedIgnore(),
       extraFlags: this.config.sync?.mutagen_flags,
     });
+    const env: Record<string, string> = { LICH_SANDBOX_GUEST: '1', LICH_NO_BROWSER: '1', LICH_DAEMON_HOST: '0.0.0.0' };
+    if (opts.skipBaked) env.LICH_SKIP_BAKED = '1';
     const result = await this.backend.exec(runVm,
       ['lich', 'up', ctx.profileName],
-      { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true, env: { LICH_SANDBOX_GUEST: '1', LICH_NO_BROWSER: '1', LICH_DAEMON_HOST: '0.0.0.0' } });
+      { cwd: '/workspace', timeoutMs: 600_000, inheritStdio: true, env });
     if (result.exitCode !== 0) {
       throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${result.exitCode}`);
     }

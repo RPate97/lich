@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { runLifecycle, LifecycleHookError } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
+import { filterBakedHooks, shouldSkipBaked } from "../lifecycle/skip-baked.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
 import { ensureDaemonRunning } from "../daemon/auto-start.js";
@@ -534,10 +535,13 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
 
     // before_up / after_up compose top-level then profile entries (base first, then specialization).
     // before_down inverts this — see commands/down.ts.
-    const beforeUpEntries = [
-      ...(config.lifecycle?.before_up ?? []),
-      ...(resolvedProfile?.lifecycle.before_up ?? []),
-    ];
+    const beforeUpEntries = filterBakedHooks(
+      [
+        ...(config.lifecycle?.before_up ?? []),
+        ...(resolvedProfile?.lifecycle.before_up ?? []),
+      ],
+      shouldSkipBaked(),
+    );
     // Lifecycle hooks never go through the supervisor, so per-port env vars need explicit injection here.
     const lifecycleEnv = enrichEnvWithOwnedPorts(
       topLevelEnv,
@@ -687,10 +691,13 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
       await writeStateSnapshot(state);
     }
 
-    const afterUpEntries = [
-      ...(config.lifecycle?.after_up ?? []),
-      ...(resolvedProfile?.lifecycle.after_up ?? []),
-    ];
+    const afterUpEntries = filterBakedHooks(
+      [
+        ...(config.lifecycle?.after_up ?? []),
+        ...(resolvedProfile?.lifecycle.after_up ?? []),
+      ],
+      shouldSkipBaked(),
+    );
     if (afterUpEntries.length > 0) {
       const phase = output.phase("after_up");
       const afterUpLogPath = phaseLogPath(worktree.stack_id, "after_up");
