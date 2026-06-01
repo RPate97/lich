@@ -234,10 +234,14 @@ export class SandboxRuntime {
     const argv = ['lich', 'up', ctx.profileName];
     const sshOpts = { cwd: '/workspace', env };
     if (this.sshExec.execCapturingStderr) {
-      const { exitCode, stderrTail } = await this.sshExec.execCapturingStderr(target, argv, sshOpts);
+      const { exitCode, stdoutTail, stderrTail } = await this.sshExec.execCapturingStderr(target, argv, sshOpts);
       if (exitCode !== 0) {
-        const tail = stderrTail.trim();
-        const suffix = tail ? `\n--- stderr tail ---\n${tail}` : "";
+        const parts: string[] = [];
+        const stderrTrimmed = stderrTail.trim();
+        const stdoutTrimmed = stdoutTail.trim();
+        if (stderrTrimmed) parts.push(`--- stderr tail ---\n${stderrTrimmed}`);
+        if (stdoutTrimmed) parts.push(`--- stdout tail ---\n${stdoutTrimmed}`);
+        const suffix = parts.length > 0 ? `\n${parts.join("\n")}` : "";
         throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${exitCode}${suffix}`);
       }
     } else {

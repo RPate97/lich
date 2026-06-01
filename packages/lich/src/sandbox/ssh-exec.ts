@@ -19,15 +19,15 @@ export interface InVmSshExecutor {
   ): Promise<number>;
 
   /**
-   * Same as exec() but also captures and returns the tail of stderr — used
-   * when a non-zero exit needs a diagnostic surface (vitest can swallow
-   * inherited stderr inside per-test buffers).
+   * Same as exec() but also captures and returns the tails of stdout AND
+   * stderr — used when a non-zero exit needs a diagnostic surface (vitest
+   * can swallow inherited fds inside per-test buffers).
    */
   execCapturingStderr?(
     target: string,
     argv: ReadonlyArray<string>,
     opts: { cwd: string; env: Record<string, string> },
-  ): Promise<{ exitCode: number; stderrTail: string }>;
+  ): Promise<{ exitCode: number; stdoutTail: string; stderrTail: string }>;
 }
 
 const SSH_KEEPALIVE_FLAGS = [
@@ -44,12 +44,13 @@ export interface RealInVmSshExecutorOpts {
   sshPath?: string;
 }
 
-// Tail of stderr captured even when stdio is inherited — surfaces in the
-// error message on non-zero exit so failures aren't opaque "exit 1".
-const STDERR_TAIL_BYTES = 4096;
+// Tails captured even when stdio is mirrored — surface on the error message
+// on non-zero exit so failures aren't opaque "exit 1".
+const STDIO_TAIL_BYTES = 4096;
 
 export interface InVmSshExecResult {
   exitCode: number;
+  stdoutTail: string;
   stderrTail: string;
 }
 
@@ -79,20 +80,30 @@ export class RealInVmSshExecutor implements InVmSshExecutor {
     const remoteCmd = buildRemoteCommand(opts.cwd, opts.env, argv);
     const sshArgs = [...SSH_KEEPALIVE_FLAGS, `${this.user}@${target}`, remoteCmd];
     return new Promise<InVmSshExecResult>((resolve, reject) => {
-      // stdin inherited (no input), stdout inherited (user sees live output),
-      // stderr piped so we can mirror + capture tail.
-      const child = spawn(this.sshPath, sshArgs, { stdio: ["inherit", "inherit", "pipe"] });
+      // Pipe both streams so we can mirror live AND keep a rolling tail to
+      // surface in any thrown error (vitest can buffer inherited fds per-test
+      // and lose them when a test rejects).
+      const child = spawn(this.sshPath, sshArgs, { stdio: ["inherit", "pipe", "pipe"] });
+      let stdoutTail = "";
       let stderrTail = "";
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        process.stdout.write(text);
+        stdoutTail += text;
+        if (stdoutTail.length > STDIO_TAIL_BYTES) {
+          stdoutTail = stdoutTail.slice(stdoutTail.length - STDIO_TAIL_BYTES);
+        }
+      });
       child.stderr?.on("data", (chunk: Buffer | string) => {
         const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
         process.stderr.write(text);
         stderrTail += text;
-        if (stderrTail.length > STDERR_TAIL_BYTES) {
-          stderrTail = stderrTail.slice(stderrTail.length - STDERR_TAIL_BYTES);
+        if (stderrTail.length > STDIO_TAIL_BYTES) {
+          stderrTail = stderrTail.slice(stderrTail.length - STDIO_TAIL_BYTES);
         }
       });
       child.on("error", reject);
-      child.on("close", (code) => resolve({ exitCode: code ?? -1, stderrTail }));
+      child.on("close", (code) => resolve({ exitCode: code ?? -1, stdoutTail, stderrTail }));
     });
   }
 }
