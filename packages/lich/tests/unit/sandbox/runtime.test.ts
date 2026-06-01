@@ -457,6 +457,12 @@ describe("SandboxRuntime", () => {
       expect(backend.execEnvByOp[upOp]?.LICH_DAEMON_HOST).toBe("0.0.0.0");
     });
 
+    it("in-VM `lich up` runs with LICH_HOME=/home/admin/.lich (so ${LICH_HOME} in hooks resolves to a writable path)", async () => {
+      const { rt } = withSync();
+      await rt.up(ctx());
+      expect(backend.execEnvByOp[upOp]?.LICH_HOME).toBe("/home/admin/.lich");
+    });
+
     it("cold-boot bringUp does NOT set LICH_SKIP_BAKED", async () => {
       const outcome = await runtime().up(ctx());
       expect(outcome.path).toBe("cold");

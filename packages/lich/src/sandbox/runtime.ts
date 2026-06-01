@@ -212,7 +212,15 @@ export class SandboxRuntime {
       ignore: this.resolvedIgnore(),
       extraFlags: this.config.sync?.mutagen_flags,
     });
-    const env: Record<string, string> = { LICH_SANDBOX_GUEST: '1', LICH_NO_BROWSER: '1', LICH_DAEMON_HOST: '0.0.0.0' };
+    // LICH_HOME pins the in-VM home so lifecycle hooks that reference
+    // ${LICH_HOME} resolve to a writable path; without it sh substitutes empty,
+    // hooks redirect to / (which `admin` can't write), and exit 2.
+    const env: Record<string, string> = {
+      LICH_SANDBOX_GUEST: '1',
+      LICH_NO_BROWSER: '1',
+      LICH_DAEMON_HOST: '0.0.0.0',
+      LICH_HOME: '/home/admin/.lich',
+    };
     if (opts.skipBaked) env.LICH_SKIP_BAKED = '1';
     const result = await this.backend.exec(runVm,
       ['lich', 'up', ctx.profileName],
