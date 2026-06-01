@@ -67,8 +67,8 @@ import {
   type OutputMode,
 } from "../output/index.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
-import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
 import { isSandboxStack } from "../sandbox/marker.js";
+import { pickExecutor } from "../stack/executor.js";
 
 export interface RunDownInput {
   cwd?: string;
@@ -153,6 +153,61 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   const cwd = input.cwd ?? process.cwd();
   const out = input.out ?? process.stdout;
   const outputMode: OutputMode = input.outputMode ?? "pretty";
+  const output = createOutput({ mode: outputMode, stream: out, showTiming: true });
+  const warnings: DownWarning[] = [];
+
+  let worktree: Worktree;
+  if (input.worktreeArg !== undefined && input.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: input.worktreeArg });
+      const snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        writeLine(out, `no stack found with ID/name '${input.worktreeArg}'; try \`lich stacks\``);
+        await output.close();
+        return { exitCode: 1, warnings };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (err) {
+      writeLine(out, `lich down: ${(err as Error).message}`);
+      await output.close();
+      return { exitCode: 1, warnings };
+    }
+  } else {
+    try {
+      worktree = detectWorktree(cwd);
+    } catch {
+      const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
+      if (!fallback) {
+        writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
+        await output.close();
+        return { exitCode: 0, warnings };
+      }
+      worktree = fallback;
+    }
+  }
+
+  const snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  if (snap === null) {
+    writeLine(out, "no stack found for this worktree");
+    await output.close();
+    return { exitCode: 0, warnings };
+  }
+
+  if (shouldEarlyExitOnStopped(snap, input.purge)) {
+    writeLine(out, `stack already stopped: ${worktree.stack_id}`);
+    await output.close();
+    return { exitCode: 0, warnings };
+  }
+
+  await output.close();
+  const configPath = join(worktree.path, "lich.yaml");
+  return pickExecutor(snap, { worktree, lichYamlPath: configPath }).down(input);
+}
+
+export async function runDownLocal(input: RunDownInput): Promise<RunDownResult> {
+  const cwd = input.cwd ?? process.cwd();
+  const out = input.out ?? process.stdout;
+  const outputMode: OutputMode = input.outputMode ?? "pretty";
   const output = createOutput({
     mode: outputMode,
     stream: out,
@@ -214,27 +269,10 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     (s) => s.kind === "owned" && s.resolved_env !== undefined,
   ) || snap.before_down !== undefined || snap.after_down !== undefined;
 
-  // Only parse lich.yaml when actually needed: sandbox routing or legacy snapshot fallback.
-  // Modern non-sandbox host stacks (hasFullTeardownData === true) skip the file read entirely.
-  const needsParse = isSandboxStack(snap) || !hasFullTeardownData;
+  // Only parse lich.yaml when needed for legacy snapshot fallback.
+  // Modern snapshots (hasFullTeardownData === true) skip the file read entirely.
+  const needsParse = !hasFullTeardownData;
   const parsed = needsParse && existsSync(configPath) ? await parseConfig(configPath) : null;
-
-  const sandboxConfig = parsed?.ok ? parsed.config.runtime?.sandbox : undefined;
-  const routed = await maybeRouteToSandbox({
-    kind: 'down',
-    snapshot: snap,
-    worktree,
-    lichYamlPath: configPath,
-    argv: { purge: input.purge },
-    sandboxConfig,
-  });
-  if (routed !== null) {
-    snap.status = "stopped";
-    snap.routing = [];
-    await writeSnapshot(snap).catch(() => {});
-    await output.close();
-    return { exitCode: routed.exitCode, warnings };
-  }
 
   // Legacy fallback: re-parse yaml only when the snapshot lacks full teardown data.
   // New snapshots (post-LEV-513) never need this path; yaml edits between up and down are ignored.

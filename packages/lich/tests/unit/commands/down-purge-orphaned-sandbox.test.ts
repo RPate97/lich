@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -11,7 +11,7 @@ import {
   type StackSnapshot,
 } from "../../../src/state/snapshot.js";
 import { release } from "../../../src/ports/allocator.js";
-import { _runtimeFactory } from "../../../src/sandbox/command-routing.js";
+import * as executorMod from "../../../src/stack/executor.js";
 
 // Regression: `lich down --purge` should clean up an orphaned sandbox VM
 // even when the cwd has no lich.yaml AND the snapshot is "stopped" — the
@@ -19,21 +19,10 @@ import { _runtimeFactory } from "../../../src/sandbox/command-routing.js";
 // persists in ~/.lich and the VM persists in Tart, but the project dir
 // and its yaml are gone.
 
-class FakeSandboxRuntime {
-  calls: Array<{ method: string; args: unknown[] }> = [];
-  async down(...args: unknown[]) { this.calls.push({ method: "down", args }); }
-  async exec(...args: unknown[]) {
-    this.calls.push({ method: "exec", args });
-    return { exitCode: 0, stdout: "", stderr: "" };
-  }
-}
-
 let homeDir: string;
 let projectDir: string;
 let prevHome: string | undefined;
 let createdStackIds: string[];
-let prevFactory: (typeof _runtimeFactory)["current"];
-let fakeRuntime: FakeSandboxRuntime;
 
 beforeEach(() => {
   homeDir = mkdtempSync(join(tmpdir(), "lich-orphan-home-"));
@@ -41,11 +30,6 @@ beforeEach(() => {
   prevHome = process.env.LICH_HOME;
   process.env.LICH_HOME = homeDir;
   createdStackIds = [];
-
-  fakeRuntime = new FakeSandboxRuntime();
-  prevFactory = _runtimeFactory.current;
-  _runtimeFactory.current = (() =>
-    fakeRuntime as unknown as ReturnType<typeof _runtimeFactory.current>) as typeof _runtimeFactory.current;
 });
 
 afterEach(async () => {
@@ -54,7 +38,6 @@ afterEach(async () => {
   else process.env.LICH_HOME = prevHome;
   rmSync(homeDir, { recursive: true, force: true });
   rmSync(projectDir, { recursive: true, force: true });
-  _runtimeFactory.current = prevFactory;
 });
 
 function makeWorktreeFor(dir: string) {
@@ -83,16 +66,26 @@ async function seedSandboxStoppedSnapshot(): Promise<string> {
 }
 
 describe("lich down --purge — orphaned sandbox stack", () => {
-  it("routes to SandboxRuntime.down({purge:true}) even with no lich.yaml AND status:stopped", async () => {
+  it("dispatches through pickExecutor.down({purge:true}) even with no lich.yaml AND status:stopped", async () => {
     await seedSandboxStoppedSnapshot();
+
+    const fakeExecutor = {
+      up: vi.fn(async () => ({ exitCode: 0 })),
+      down: vi.fn(async () => ({ exitCode: 0, warnings: [] })),
+      exec: vi.fn(async () => ({ exitCode: 0 })),
+      logs: vi.fn(),
+    };
+    const spy = vi.spyOn(executorMod, "pickExecutor").mockReturnValue(fakeExecutor as any);
+
     const out = new PassThrough();
     out.on("data", () => {});
     const result = await runDown({ cwd: projectDir, out, purge: true });
 
     expect(result.exitCode).toBe(0);
-    const downCalls = fakeRuntime.calls.filter((c) => c.method === "down");
-    expect(downCalls).toHaveLength(1);
-    const [, opts] = downCalls[0]!.args as [unknown, unknown];
-    expect(opts).toEqual({ purge: true });
+    expect(spy).toHaveBeenCalled();
+    expect(fakeExecutor.down).toHaveBeenCalledTimes(1);
+    expect(fakeExecutor.down.mock.calls[0]![0]).toMatchObject({ purge: true });
+
+    spy.mockRestore();
   });
 });

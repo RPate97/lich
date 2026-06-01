@@ -6,8 +6,8 @@ import * as execMod from "../../../../src/commands/exec.js";
 import * as logsMod from "../../../../src/commands/logs.js";
 
 describe("LocalStackExecutor", () => {
-  it("delegates down() to runDown unchanged", async () => {
-    const spy = vi.spyOn(downMod, "runDown").mockResolvedValue({ exitCode: 0, warnings: [] });
+  it("delegates down() to runDownLocal unchanged", async () => {
+    const spy = vi.spyOn(downMod, "runDownLocal").mockResolvedValue({ exitCode: 0, warnings: [] });
     const exe = new LocalStackExecutor();
     const result = await exe.down({ purge: true, outputMode: "pretty" });
     expect(spy).toHaveBeenCalledWith({ purge: true, outputMode: "pretty" });
