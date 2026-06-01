@@ -471,8 +471,6 @@ export async function startDashboardServer(
   // Bind IPv4 + IPv6 loopback separately: `hostname: "localhost"` picks
   // one family (macOS picks ::1), then `curl http://127.0.0.1` fails
   // with ECONNREFUSED. IPv4 first to lock in the port; IPv6 is best-effort.
-  // When a custom hostname is set (e.g. 0.0.0.0), skip the IPv6 bind — the
-  // caller controls the bind surface.
   const serverV4 = Bun.serve({
     port: opts.port ?? 0,
     hostname: bindHost,
