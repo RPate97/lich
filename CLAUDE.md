@@ -46,8 +46,8 @@ packages/e2e/fixtures/dogfood-stack/       # the canonical example — Next + Ex
 packages/e2e/                 # end-to-end tests; spawn real binary, run against dogfood-stack
   tests/                      # per-feature .test.ts files
   helpers/                    # shared helpers (tmpdir, lich spawn, wait, dbmode, urls)
-  vitest.workspace.ts         # dual-pool config (fast = dev:fast, compose = dev)
-  _pool-manifest.ts           # which tests need the compose pool
+  vitest.workspace.ts         # dual-pool config (fast = dev:fast, heavy = dev + sandbox/Tart)
+  _pool-manifest.ts           # which tests need the heavy pool (long timeouts, singleFork)
   AUDIT.md                    # per-test pool assignment + hardening notes
 
 docs/superpowers/
@@ -100,10 +100,11 @@ cd packages/e2e && bunx vitest run --project fast
 
 Requires:
 
-- Docker Desktop (or OrbStack) running, for the `compose` pool
-- The `fast` pool needs no docker; it runs `dev:fast` (api + web on the host)
+- Docker Desktop (or OrbStack) running, for the docker-dependent tests in the `heavy` pool
+- Tart (optional) for the sandbox tests in the `heavy` pool — auto-skipped if missing
+- The `fast` pool needs neither; it runs `dev:fast` (api + web on the host)
 
-If docker isn't running, the `compose` pool tests will fail with a docker connectivity error — that's correct, the compose pool exists to verify docker-orchestrated behavior. The `fast` pool runs independently and is the right preflight check during local iteration.
+If docker isn't running, the docker-dependent `heavy` pool tests will fail with a connectivity error — that's correct, those tests exist to verify docker-orchestrated behavior. The sandbox/Tart tests in the heavy pool auto-skip when Tart isn't installed. The `fast` pool runs independently and is the right preflight check during local iteration.
 
 ## Conventions
 

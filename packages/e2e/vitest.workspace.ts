@@ -1,19 +1,20 @@
 import { defineWorkspace } from "vitest/config";
-import { COMPOSE_REQUIRED } from "./_pool-manifest";
+import { HEAVY_POOL_TESTS } from "./_pool-manifest";
 
-const composeGlobs = COMPOSE_REQUIRED.map((f) => `**/${f}`);
+const heavyGlobs = HEAVY_POOL_TESTS.map((f) => `**/${f}`);
 
 // Two projects, same root, different include/pool config:
-//   - "fast"    : everything except COMPOSE_REQUIRED, dev:fast profile (no docker).
-//   - "compose" : just COMPOSE_REQUIRED, dev profile, singleFork (host docker
-//                 daemon serializes), larger timeouts for postgres + after_up.
+//   - "fast"  : everything except HEAVY_POOL_TESTS, dev:fast profile (no docker).
+//   - "heavy" : just HEAVY_POOL_TESTS, singleFork + longer timeouts. Covers
+//               both docker-compose-dependent tests (dev profile) and Tart
+//               sandbox tests (need ~free host RAM for VM boot).
 export default defineWorkspace([
   {
     extends: "./vitest.config.ts",
     test: {
       name: "fast",
       include: ["**/*.test.ts"],
-      exclude: ["node_modules/**", ...composeGlobs],
+      exclude: ["node_modules/**", ...heavyGlobs],
       pool: "forks",
       // singleFork: the cross-LICH_HOME port allocator race and the daemon's
       // pinned proxy_port:3300 both make parallel fast-pool unreliable.
@@ -27,10 +28,10 @@ export default defineWorkspace([
   {
     extends: "./vitest.config.ts",
     test: {
-      name: "compose",
+      name: "heavy",
       // Placeholder glob avoids accidentally including all tests when
-      // COMPOSE_REQUIRED is empty.
-      include: composeGlobs.length > 0 ? composeGlobs : ["__no-files__"],
+      // HEAVY_POOL_TESTS is empty.
+      include: heavyGlobs.length > 0 ? heavyGlobs : ["__no-files__"],
       pool: "forks",
       poolOptions: { forks: { singleFork: true } },
       testTimeout: 120_000,

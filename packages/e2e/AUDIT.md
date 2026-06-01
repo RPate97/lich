@@ -28,17 +28,17 @@ and `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md`.
 | `failure-port-already-in-use.test.ts` | Allocator pre-check rejects bound ports | `--no-browser` |
 | `failure-process-exit.test.ts` | Owned service early exit detection | `--no-browser` |
 | `failure-ready-timeout.test.ts` | `ready_when.timeout` fires when probe never succeeds | `--no-browser` |
-| `parallel-stacks.test.ts` | (Sentinel) Two dogfood-stack copies coexist | **PARTIAL MIGRATION** — see Compose pool below; the file lives in compose because test 2 needs `dev` profile, but test 1 (sentinel) works under either |
+| `parallel-stacks.test.ts` | (Sentinel) Two dogfood-stack copies coexist | **PARTIAL MIGRATION** — see Heavy pool below; the file lives in heavy because test 2 needs `dev` profile, but test 1 (sentinel) works under either |
 | `profiles-default.test.ts` | Default profile resolution | Updated default assertion `dev` → `dev:fast`; service-list `[api,postgres,tunnel_demo,web]` → `[api,web]`; `expectDbMode("stub")` |
 | `profiles-lich-profile-env.test.ts` | `LICH_PROFILE` env var precedence | Synthetic-yaml test, classification-only |
 | `profiles-switch-refused.test.ts` | Profile switch refused while stack is up | Synthetic-yaml test, classification-only |
 
-### Compose pool (`dev` profile, real postgres + tmpfs, singleFork)
+### Heavy pool (`dev` profile, real postgres + tmpfs OR Tart sandbox VMs; singleFork)
 
 | Test file | Primary assertion | Hardening applied |
 |---|---|---|
 | `dogfood-ready-when-cmd.test.ts` | `health_probe` owned service reaches `state:ready` via `ready_when.cmd` under `lich up dev` (LEV-471) | Compose recipe; `lich up dev`; manifest entry |
-| `env-dotenv.test.ts` | env_files (.env + .env.local) precedence and overlay on resolved DATABASE_URL | `runLich(["up", "dev", ...])`; `expectDbMode("live")`; added to `COMPOSE_REQUIRED` |
+| `env-dotenv.test.ts` | env_files (.env + .env.local) precedence and overlay on resolved DATABASE_URL | `runLich(["up", "dev", ...])`; `expectDbMode("live")`; added to `HEAVY_POOL_TESTS` |
 | `env-groups-isolation.test.ts` | `isolated-tools` env_group does NOT inherit stack DATABASE_URL | Compose recipe; manifest entry |
 | `exec.test.ts` | `lich exec sh -c 'echo $DATABASE_URL'` resolves to interpolated postgresql URL | `runLich(["up", "dev", "--no-browser"], ...)`; manifest entry |
 | `lifecycle-env-group.test.ts` | Top-level `lifecycle.after_up` runs with the resolved `stack-plus-test` env_group's env (DATABASE_URL + TEST_MODE both present) | Compose recipe; manifest entry |
@@ -47,6 +47,19 @@ and `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md`.
 | `profiles-env-override.test.ts` | `dev:env-override` profile inherits dev + overrides DATABASE_URL to intentionally-non-resolving host | Compose recipe; `expectDbMode` wrapped in try/catch (the bogus DATABASE_URL leaves api partial-ready); manifest entry |
 | `profiles-lifecycle-scoping.test.ts` | psql `select count(*) from things` returns seeded rows | Compose recipe; **tightened `>= 3` to `== 3`** (tmpfs makes postgres data ephemeral per up/down — see spec §8); manifest entry |
 | `profiles-named.test.ts` | Named profile resolution (`dev`, `dev:env-override`) | Manifest-only (test already used explicit profile args) |
+
+**Sandbox / Tart tests** (added 2026-05-31 after diagnosing fast-pool VM-boot timeouts — under accumulated fast-pool memory pressure, `tart run` can take >30s to reach `running` even though direct CLI boots are sub-1s; heavy pool's 120s test ceiling + earlier scheduling absorbs that load):
+
+| Test file | Primary assertion | Skip-if guards |
+|---|---|---|
+| `dashboard-metrics-proxy.test.ts` | Sandbox stack dashboard metrics + proc-tree proxy through HttpStackDataProvider | `isTartAvailable() && imageExists()` |
+| `dev-heavy-profile.test.ts` | `dev:heavy` (500 migrations + 50k seed rows) completes on host | (none — needs postgres compose only) |
+| `mutagen-roundtrip.test.ts` | MutagenSync over SSH round-trip on a real Tart VM | `isTartAvailable() && imageExists() && mutagenOk` |
+| `sandbox-cold-up.test.ts` | `lich up` cold-boots into a sandbox VM | `isTartAvailable() && imageExists()` |
+| `sandbox-full-loop.test.ts` | cold-boot → snapshot → purge → warm-fork → purge | `isTartAvailable() && imageExists()` |
+| `sandbox-tools.test.ts` | `lich sandbox status/purge/refresh` | `isTartAvailable()` |
+| `tart-lifecycle.test.ts` | `TartBackend.start/inspect/exec/stop` against cirruslabs ubuntu | `isTartAvailable()` |
+| `tart-snapshot-fork.test.ts` | `TartBackend` CoW clone of a stopped golden | `isTartAvailable()` |
 
 ### No migration needed (validate-only — no `lich up`)
 
@@ -70,19 +83,19 @@ and `docs/superpowers/plans/2026-05-25-e2e-suite-solid-and-fast.md`.
 - **Wall clock: 3m39s** (target was 3-5 min warm; meets the looser target, misses the aspirational 3-min)
 - All 30 active test files green
 
-### Compose pool alone — `bunx vitest run --project compose`
+### Heavy pool alone — `bunx vitest run --project heavy`
 
 - **8 test files run, 8 pass individually**
 - **Wall clock: 1m50s**
 
 ### Full suite — `bunx vitest run` (both pools)
 
-- **34 / 39 test files green; 5 compose-pool files fail under sequential run** because of the cross-test docker port-allocator gap (see Known limitations).
+- **34 / 39 test files green; 5 heavy-pool files fail under sequential run** because of the cross-test docker port-allocator gap (see Known limitations).
 - Wall clock: 4m59s
 
 ## Known limitations
 
-### 1. ~~Cross-test docker port-allocator gap (compose pool)~~ — RESOLVED (commit `57e8147`)
+### 1. ~~Cross-test docker port-allocator gap (heavy pool)~~ — RESOLVED (commit `57e8147`)
 
 **Was:** compose-pool tests leaked containers/networks across runs; the lich port allocator couldn't see Docker's port table, so test N+1 would EADDRINUSE on test N's leftover postgres.
 
@@ -112,11 +125,11 @@ Under dev:fast's ~3s startup, the daemon's routing watcher hasn't always registe
 
 | Criterion | Status |
 |---|---|
-| All e2e tests pass | **Partial** — green individually, 5/8 compose tests fail when run back-to-back due to docker-allocator gap |
+| All e2e tests pass | **Partial** — green individually, 5/8 heavy-pool docker tests fail when run back-to-back due to docker-allocator gap |
 | Suite wall-clock <3 min warm | **Missed** — 3m39s fast alone, 4m59s full |
 | `dev:fast` is the default profile | **Met** — verified via `lich up` + `/health: db: stub` |
 | Every test has `expectDbMode` | **Mostly met** — exceptions: validate-only tests (N/A), down.test.ts (no api probe), dashboard-failed-service (no api at all) |
-| `COMPOSE_REQUIRED` ≤8 entries | **Met** — exactly 8 |
+| `HEAVY_POOL_TESTS` ≤20 entries | **Met** — 18 entries (10 compose + 8 sandbox); originally ≤8 covering only compose tests |
 | `AUDIT.md` exists | **Met** (this document) |
 | No silent skips | **Met** — 1 `it.skip` in basic-up.test.ts with explicit TODO + coverage note pointing to friendly-urls.test.ts |
 | API serves contract | **Met** — `/health` reports `db: live/stub`; `/api/things` 503s in stub mode |
@@ -126,7 +139,7 @@ Under dev:fast's ~3s startup, the daemon's routing watcher hasn't always registe
 ## Recommended follow-ups (out of scope for this plan — all filed)
 
 1. **[LEV-477](https://linear.app/levelzero/issue/LEV-477)** — Lich compose override drops non-port/env fields. Fixing this unblocks inlining `services.postgres` back into lich.yaml.
-2. **[LEV-478](https://linear.app/levelzero/issue/LEV-478)** — Lich port allocator should probe Docker's port table (`docker ps --format "{{.Ports}}"`). Unblocks the compose-pool serial race (Known Limitations §1).
+2. **[LEV-478](https://linear.app/levelzero/issue/LEV-478)** — Lich port allocator should probe Docker's port table (`docker ps --format "{{.Ports}}"`). Unblocks the heavy-pool serial race (Known Limitations §1).
 3. **[LEV-479](https://linear.app/levelzero/issue/LEV-479)** — Daemon should pick a free proxy port when the pinned one is in use, OR auto-derive from worktree id. Unblocks fast-pool parallel forks (Known Limitations §2).
 4. **[LEV-480](https://linear.app/levelzero/issue/LEV-480)** — Plan 5 routing watcher debounce investigation. Unblocks basic-up.test.ts's `it.skip`'d friendly URL test (Known Limitations §3).
 
