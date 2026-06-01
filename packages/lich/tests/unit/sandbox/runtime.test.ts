@@ -190,6 +190,31 @@ describe("SandboxRuntime", () => {
       backend.exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
       await expect(runtime().up(ctx())).rejects.toThrow(/lich up dev.*exit 1/);
     });
+
+    it("warm-fork records the fork in the store", async () => {
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+      store.upsert({
+        inputsHash: hash,
+        vmName: golden,
+        profileName: "dev",
+        lichYamlSnapshot: "",
+        createdAt: "2026-05-31T00:00:00Z",
+      });
+      backend.states.set(golden, "stopped");
+
+      await runtime().up(ctx());
+
+      const forks = store.forks();
+      expect(forks.length).toBe(1);
+      expect(forks[0]).toMatchObject({ runVm: RUN, goldenHash: hash });
+      expect(forks[0]!.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("cold-boot does NOT record a fork", async () => {
+      await runtime().up(ctx());
+      expect(store.forks()).toEqual([]);
+    });
   });
 
   describe("snapshot", () => {
@@ -208,6 +233,17 @@ describe("SandboxRuntime", () => {
 
     it("throws when there is no run VM to snapshot", async () => {
       await expect(runtime().snapshot(ctx())).rejects.toThrow(/Run 'lich up/);
+    });
+
+    it("is a no-op when the golden for this hash already exists in tart", async () => {
+      await runtime().up(ctx());
+      await runtime().snapshot(ctx());
+
+      const opsBefore = [...backend.ops];
+      await runtime().snapshot(ctx());
+
+      const newOps = backend.ops.slice(opsBefore.length);
+      expect(newOps.filter(o => o.startsWith("stop:") || o.startsWith("destroy:") || o.startsWith("clone:") || o.startsWith("start:"))).toEqual([]);
     });
   });
 

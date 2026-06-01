@@ -97,6 +97,11 @@ export class SandboxRuntime {
         await this.backend.clone(golden.vmName, runVm);
         await this.backend.start(runVm);
         const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true });
+        this.store.recordFork({
+          runVm,
+          goldenHash: inputsHash,
+          createdAt: new Date().toISOString(),
+        });
         return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
       }
       // Golden VM gone (deleted out of band). Drop the stale manifest entry.
@@ -119,6 +124,15 @@ export class SandboxRuntime {
     });
     const runVm = runName(ctx.worktreeId, ctx.profileName);
     const goldenVm = goldenName(inputsHash);
+
+    // First-writer-wins: if another agent already baked this hash and the VM
+    // is still present, reuse it. Stale manifest (VM deleted out of band)
+    // falls through and gets overwritten by upsert below.
+    const existing = this.store.findByHash(inputsHash);
+    if (existing) {
+      const existingState = await this.backend.inspect(existing.vmName);
+      if (existingState.state !== 'absent') return existing.vmName;
+    }
 
     const runState = await this.backend.inspect(runVm);
     if (runState.state === 'absent') {

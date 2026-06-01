@@ -15,6 +15,12 @@ export interface GoldenManifest {
   sizeBytes?: number;
 }
 
+export interface Fork {
+  runVm: string;
+  goldenHash: string;
+  createdAt: string;
+}
+
 export class SnapshotStore {
   constructor(private readonly storeDir: string) {
     mkdirSync(storeDir, { recursive: true });
@@ -70,5 +76,53 @@ export class SnapshotStore {
     return this.readAll()
       .filter(e => e.profileName === profileName)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  // Forks live in a sibling file so concurrent fork-recording and golden-bake
+  // don't race on the same on-disk JSON.
+  private get forksPath(): string {
+    return join(this.storeDir, 'forks.json');
+  }
+
+  private readForks(): Fork[] {
+    if (!existsSync(this.forksPath)) return [];
+    try {
+      const content = readFileSync(this.forksPath, 'utf8');
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private writeForks(entries: Fork[]): void {
+    mkdirSync(dirname(this.forksPath), { recursive: true });
+    writeFileSync(this.forksPath, JSON.stringify(entries, null, 2));
+  }
+
+  recordFork(fork: Fork): void {
+    const all = this.readForks().filter(e => e.runVm !== fork.runVm);
+    all.push(fork);
+    this.writeForks(all);
+  }
+
+  removeFork(runVm: string): boolean {
+    const before = this.readForks();
+    const after = before.filter(e => e.runVm !== runVm);
+    if (after.length === before.length) return false;
+    this.writeForks(after);
+    return true;
+  }
+
+  forks(): ReadonlyArray<Fork> {
+    return this.readForks();
+  }
+
+  forksOf(goldenHash: string): ReadonlyArray<Fork> {
+    return this.readForks().filter(e => e.goldenHash === goldenHash);
+  }
+
+  clearForks(): void {
+    this.writeForks([]);
   }
 }
