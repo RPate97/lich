@@ -16,6 +16,8 @@ runtime:
   sandbox:
     backend: tart
     image: ${IMAGE}
+    bake_inputs:
+      - "src/**"
 profiles:
   "dev:box":
     default: true
