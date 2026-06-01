@@ -61,7 +61,7 @@ describe("runLogs — executor dispatch", () => {
     expect(result.exitCode).toBe(0);
     expect(spy).toHaveBeenCalled();
     expect(fakeExecutor.logs).toHaveBeenCalledTimes(1);
-    expect(fakeExecutor.logs.mock.calls[0]![0]).toMatchObject({ follow: false, count: 100 });
+    expect((fakeExecutor.logs.mock.calls as any)[0]![0]).toMatchObject({ follow: false, count: 100 });
 
     spy.mockRestore();
   });

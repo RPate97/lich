@@ -56,7 +56,7 @@ describe("runExec — executor dispatch", () => {
     expect(result.exitCode).toBe(0);
     expect(spy).toHaveBeenCalled();
     expect(fakeExecutor.exec).toHaveBeenCalledTimes(1);
-    expect(fakeExecutor.exec.mock.calls[0]![0]).toMatchObject({ argv: ["echo", "hello"] });
+    expect((fakeExecutor.exec.mock.calls as any)[0]![0]).toMatchObject({ argv: ["echo", "hello"] });
 
     spy.mockRestore();
   });

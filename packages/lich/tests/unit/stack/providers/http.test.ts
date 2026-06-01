@@ -87,7 +87,7 @@ describe("HttpStackDataProvider", () => {
   it("procTree fetches /services/:svc/proc-tree", async () => {
     const provider = new HttpStackDataProvider(serverUrl, "remote-1");
     const tree = await provider.procTree("x", "web");
-    expect(tree?.root.pid).toBe(100);
+    expect((tree as any)?.root.pid).toBe(100);
   });
 
   it("tailLogs passes through SSE bytes", async () => {

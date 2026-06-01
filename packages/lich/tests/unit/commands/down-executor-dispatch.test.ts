@@ -59,7 +59,7 @@ describe("runDown — executor dispatch", () => {
     expect(result.exitCode).toBe(0);
     expect(spy).toHaveBeenCalled();
     expect(fakeExecutor.down).toHaveBeenCalledTimes(1);
-    expect(fakeExecutor.down.mock.calls[0]![0]).toMatchObject({ purge: true });
+    expect((fakeExecutor.down.mock.calls as any)[0]![0]).toMatchObject({ purge: true });
 
     spy.mockRestore();
   });
