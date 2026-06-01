@@ -1,5 +1,13 @@
-import { describe, test, expect } from "vitest";
-import { MutagenSync, isMutagenAvailable } from "../../../src/sandbox/mutagen.js";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  MutagenSync,
+  isMutagenAvailable,
+  upsertSshConfigBlock,
+  removeSshConfigBlock,
+} from "../../../src/sandbox/mutagen.js";
 import type { MutagenCli } from "../../../src/sandbox/mutagen.js";
 
 class FakeMutagenCli implements MutagenCli {
@@ -107,6 +115,87 @@ describe("MutagenSync", () => {
     const cli = new FakeMutagenCli();
     cli.failNext = "mutagen daemon not running";
     await expect(new MutagenSync(cli).terminate("x")).rejects.toThrow(/daemon not running/);
+  });
+});
+
+describe("upsertSshConfigBlock / removeSshConfigBlock", () => {
+  let dir: string;
+  let configPath: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lich-ssh-cfg-"));
+    configPath = join(dir, "config");
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const entry = (over: Partial<{ host: string; user: string; keyPath: string; knownHostsPath: string }> = {}) => ({
+    host: "192.168.64.5",
+    user: "admin",
+    keyPath: "/tmp/key",
+    knownHostsPath: "/tmp/known_hosts",
+    ...over,
+  });
+
+  test("upsert creates the config file with our marked block", () => {
+    upsertSshConfigBlock(configPath, "vm-a", entry());
+    const content = readFileSync(configPath, "utf8");
+    expect(content).toContain("# === lich-tart: vm-a (auto-generated; safe to delete) ===");
+    expect(content).toContain("Host 192.168.64.5");
+    expect(content).toContain("IdentitiesOnly yes");
+    expect(content).toContain("IdentityFile /tmp/key");
+    expect(content).toContain("UserKnownHostsFile /tmp/known_hosts");
+    expect(content).toContain("# === end lich-tart: vm-a ===");
+  });
+
+  test("upsert is idempotent for the same name (replaces the block)", () => {
+    upsertSshConfigBlock(configPath, "vm-a", entry({ keyPath: "/tmp/key-old" }));
+    upsertSshConfigBlock(configPath, "vm-a", entry({ keyPath: "/tmp/key-new" }));
+    const content = readFileSync(configPath, "utf8");
+    expect(content).not.toContain("/tmp/key-old");
+    expect(content).toContain("/tmp/key-new");
+    expect(content.match(/# === lich-tart: vm-a/g)?.length).toBe(1);
+  });
+
+  test("upsert preserves blocks for other names", () => {
+    upsertSshConfigBlock(configPath, "vm-a", entry({ host: "192.168.64.5" }));
+    upsertSshConfigBlock(configPath, "vm-b", entry({ host: "192.168.64.6" }));
+    const content = readFileSync(configPath, "utf8");
+    expect(content).toContain("# === lich-tart: vm-a");
+    expect(content).toContain("# === lich-tart: vm-b");
+    expect(content).toContain("Host 192.168.64.5");
+    expect(content).toContain("Host 192.168.64.6");
+  });
+
+  test("upsert preserves existing user content (appended below)", () => {
+    writeFileSync(configPath, "Host github.com\n    User git\n");
+    upsertSshConfigBlock(configPath, "vm-a", entry());
+    const content = readFileSync(configPath, "utf8");
+    expect(content).toContain("Host github.com");
+    expect(content).toContain("User git");
+    expect(content).toContain("# === lich-tart: vm-a");
+    expect(content.indexOf("Host github.com")).toBeLessThan(content.indexOf("lich-tart"));
+  });
+
+  test("remove deletes only the named block", () => {
+    upsertSshConfigBlock(configPath, "vm-a", entry({ host: "192.168.64.5" }));
+    upsertSshConfigBlock(configPath, "vm-b", entry({ host: "192.168.64.6" }));
+    removeSshConfigBlock(configPath, "vm-a");
+    const content = readFileSync(configPath, "utf8");
+    expect(content).not.toContain("# === lich-tart: vm-a");
+    expect(content).not.toContain("Host 192.168.64.5");
+    expect(content).toContain("# === lich-tart: vm-b");
+    expect(content).toContain("Host 192.168.64.6");
+  });
+
+  test("remove is a no-op when the file does not exist", () => {
+    expect(() => removeSshConfigBlock(configPath, "missing")).not.toThrow();
+  });
+
+  test("remove is a no-op when the marker is absent", () => {
+    writeFileSync(configPath, "Host github.com\n    User git\n");
+    removeSshConfigBlock(configPath, "vm-a");
+    expect(readFileSync(configPath, "utf8")).toBe("Host github.com\n    User git\n");
   });
 });
 

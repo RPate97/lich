@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, existsSync, readFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { ALWAYS_IGNORE, type SandboxSync, type SyncStartOpts } from "./sync.js";
 
@@ -43,12 +43,15 @@ export class RealMutagenCli implements MutagenCli {
 }
 
 // SSH transport setup so mutagen can reach the Tart guest. The recipe (proven
-// against mutagen 0.18.1 + cirruslabs ubuntu + openssh-server): per-run ephemeral
+// against mutagen 0.18.1 + cirruslabs ubuntu + openssh-server): per-VM ephemeral
 // ed25519 key pushed into the guest's admin user, host key appended to the host's
-// known_hosts via ssh-keyscan, key added to ssh-agent so mutagen's ssh subprocess
-// finds it. NEVER touches ~/.ssh/config. The known_hosts append is append-only
-// and is what every interactive `ssh -o StrictHostKeyChecking=accept-new` would
-// do — same standard-ssh behavior.
+// known_hosts via ssh-keyscan, and a per-VM Host block appended to ~/.ssh/config
+// pinning IdentitiesOnly + IdentityFile so sshd doesn't disconnect on
+// MaxAuthTries when the user's agent has many unrelated keys loaded.
+//
+// Both known_hosts and ssh/config edits are append-only inside marked blocks
+// (`# === lich-tart: <name> ===`) so cleanup() can locate and remove them
+// without disturbing user content.
 export interface MutagenTransport {
   prepare(opts: { name: string; host: string }): Promise<{ user: string }>;
   cleanup(opts: { name: string }): Promise<void>;
@@ -65,6 +68,7 @@ export class RealSshTransport implements MutagenTransport {
     private readonly tartPath: string = "tart",
     private readonly user: string = "admin",
     private readonly knownHostsPath: string = join(homedir(), ".ssh", "known_hosts"),
+    private readonly sshConfigPath: string = join(homedir(), ".ssh", "config"),
   ) {}
 
   private keyPath(name: string): string {
@@ -94,16 +98,18 @@ export class RealSshTransport implements MutagenTransport {
       appendFileSync(this.knownHostsPath, scan, { mode: 0o600 });
     }
 
-    execFileSync("ssh-add", [keyPath], { stdio: "ignore" });
+    upsertSshConfigBlock(this.sshConfigPath, opts.name, {
+      host: opts.host,
+      user: this.user,
+      keyPath,
+      knownHostsPath: this.knownHostsPath,
+    });
 
     return { user: this.user };
   }
 
   async cleanup(opts: { name: string }): Promise<void> {
-    const keyPath = this.keyPath(opts.name);
-    if (existsSync(keyPath)) {
-      try { execFileSync("ssh-add", ["-d", keyPath], { stdio: "ignore" }); } catch { /* not in agent */ }
-    }
+    removeSshConfigBlock(this.sshConfigPath, opts.name);
   }
 }
 
@@ -112,6 +118,53 @@ function existingKnownHost(path: string, host: string): boolean {
     return readFileSync(path, "utf8").split("\n").some((line) => line.startsWith(host + " ") || line.startsWith(host + ","));
   } catch {
     return false;
+  }
+}
+
+interface SshConfigEntry {
+  host: string;
+  user: string;
+  keyPath: string;
+  knownHostsPath: string;
+}
+
+function sshConfigBlock(name: string, entry: SshConfigEntry): string {
+  return [
+    `# === lich-tart: ${name} (auto-generated; safe to delete) ===`,
+    `Host ${entry.host}`,
+    `    User ${entry.user}`,
+    `    IdentitiesOnly yes`,
+    `    IdentityFile ${entry.keyPath}`,
+    `    StrictHostKeyChecking accept-new`,
+    `    UserKnownHostsFile ${entry.knownHostsPath}`,
+    `# === end lich-tart: ${name} ===`,
+    ``,
+  ].join("\n");
+}
+
+function lichTartBlockRegex(name: string): RegExp {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `\\n*# === lich-tart: ${escaped} \\(auto-generated; safe to delete\\) ===[\\s\\S]*?# === end lich-tart: ${escaped} ===\\n?`,
+    "g",
+  );
+}
+
+export function upsertSshConfigBlock(configPath: string, name: string, entry: SshConfigEntry): void {
+  mkdirSync(dirname(configPath), { recursive: true });
+  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const stripped = existing.replace(lichTartBlockRegex(name), "");
+  const needsLeadingNewline = stripped.length > 0 && !stripped.endsWith("\n");
+  const next = stripped + (needsLeadingNewline ? "\n" : "") + "\n" + sshConfigBlock(name, entry);
+  writeFileSync(configPath, next, { mode: 0o600 });
+}
+
+export function removeSshConfigBlock(configPath: string, name: string): void {
+  if (!existsSync(configPath)) return;
+  const existing = readFileSync(configPath, "utf8");
+  const stripped = existing.replace(lichTartBlockRegex(name), "");
+  if (stripped !== existing) {
+    writeFileSync(configPath, stripped, { mode: 0o600 });
   }
 }
 
