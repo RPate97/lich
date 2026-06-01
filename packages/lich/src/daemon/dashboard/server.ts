@@ -17,8 +17,26 @@ import {
   indexByPpid,
   type ProcessNode,
 } from "../metrics/proc-tree.js";
+import { pickDataProvider, type DataProviderDeps } from "../../stack/data-provider.js";
 
 const execFile = promisify(execFileCb);
+
+/** Read state.json for a stack from a custom stateRoot (not global stackDir). Returns null on ENOENT or parse failure. */
+async function readSnapshotLocal(stateRoot: string, stackId: string): Promise<StackSnapshot | null> {
+  const file = join(stateRoot, stackId, "state.json");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as StackSnapshot;
+  } catch {
+    return null;
+  }
+}
 
 /** Minimal contract for the SSE handler — start/onLine/stop. Real LogTail satisfies this structurally; tests inject fakes. */
 export interface LogTailLike {
@@ -162,6 +180,14 @@ export async function startDashboardServer(
       return stdout;
     });
 
+  const buildDeps = (): DataProviderDeps => ({
+    stateRoot: opts.stateRoot,
+    proxyPort: opts.proxyPort ?? 3300,
+    tailFactory,
+    metricsSampler: opts.metricsSampler,
+    psFn: async () => parsePsOutput(await psProbe()),
+  });
+
   const handler = async (req: Request): Promise<Response> => {
     const u = new URL(req.url);
     const path = u.pathname;
@@ -261,7 +287,13 @@ export async function startDashboardServer(
         if (req.method !== "GET") {
           return methodNotAllowed("GET");
         }
-        if (!opts.metricsSampler) {
+        const stackId = segments[0];
+        const stackSnap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!stackSnap) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        // Local stacks require a sampler; http (sandbox) stacks fetch from the VM daemon.
+        if (!opts.metricsSampler && stackSnap.data_source?.kind !== "http") {
           return new Response(
             JSON.stringify({
               error: "metrics sampler not configured on this daemon",
@@ -274,22 +306,12 @@ export async function startDashboardServer(
             },
           );
         }
-        const stackId = segments[0];
-        const stack = cache.find((s) => s.id === stackId);
-        if (!stack) {
-          return notFound(`stack not found: ${stackId}`);
-        }
+        const provider = pickDataProvider(stackSnap, buildDeps());
         if (segments.length === 3) {
-          return sseResponse(
-            buildMetricsStream({
-              sampler: opts.metricsSampler,
-              stackId,
-              clientSignal: req.signal,
-            }),
-          );
+          return sseResponse(provider.metricsStream(stackId, req.signal));
         }
-        const snap = opts.metricsSampler.latest(stackId);
-        if (snap === null) {
+        const metricsSnap = await provider.metricsLatest(stackId);
+        if (metricsSnap === null) {
           // Sample hasn't fired yet — return an empty-but-shaped payload so
           // clients don't have to special-case the warmup window.
           return jsonResponse({
@@ -299,38 +321,41 @@ export async function startDashboardServer(
             services: [],
           });
         }
-        return jsonResponse(snap);
+        return jsonResponse(metricsSnap);
       }
 
       if (segments.length === 1) {
-        const stack = cache.find((s) => s.id === segments[0]);
+        const stackId = segments[0];
+        const snap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!snap) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        const provider = pickDataProvider(snap, buildDeps());
+        const stack = await provider.loadStack(stackId);
         if (!stack) {
-          return notFound(`stack not found: ${segments[0]}`);
+          return notFound(`stack not found: ${stackId}`);
         }
         return jsonResponse(stack);
       }
 
       if (segments.length === 2 && segments[1] === "logs") {
         const stackId = segments[0];
+        const serviceName = u.searchParams.get("service");
+        if (serviceName !== null) {
+          const snap = await readSnapshotLocal(opts.stateRoot, stackId);
+          if (!snap) {
+            return notFound(`stack not found: ${stackId}`);
+          }
+          if (!snap.services.find((s) => s.name === serviceName)) {
+            return notFound(`service not found: ${serviceName}`);
+          }
+          const provider = pickDataProvider(snap, buildDeps());
+          return sseResponse(provider.tailLogs(stackId, serviceName, req.signal));
+        }
+        // Merged stream: keep local path (no provider interface for multi-service tail).
         const stack = cache.find((s) => s.id === stackId);
         if (!stack) {
           return notFound(`stack not found: ${stackId}`);
-        }
-        const serviceName = u.searchParams.get("service");
-        if (serviceName !== null) {
-          const service = stack.services.find((sv) => sv.name === serviceName);
-          if (!service) {
-            return notFound(`service not found: ${serviceName}`);
-          }
-          return sseResponse(
-            buildSingleServiceStream({
-              stateRoot: opts.stateRoot,
-              stackId,
-              service: serviceName,
-              tailFactory,
-              clientSignal: req.signal,
-            }),
-          );
         }
         return sseResponse(
           buildMergedStream({
@@ -366,19 +391,21 @@ export async function startDashboardServer(
         if (req.method !== "GET") {
           return methodNotAllowed("GET");
         }
-        const stack = cache.find((s) => s.id === segments[0]);
-        if (!stack) {
-          return notFound(`stack not found: ${segments[0]}`);
+        const procStackId = segments[0];
+        const procSvcName = segments[2];
+        const procSnap = await readSnapshotLocal(opts.stateRoot, procStackId);
+        if (!procSnap) {
+          return notFound(`stack not found: ${procStackId}`);
         }
-        const service = stack.services.find((sv) => sv.name === segments[2]);
-        if (!service) {
-          return notFound(`service not found: ${segments[2]}`);
+        const procSvc = procSnap.services.find((s) => s.name === procSvcName);
+        if (!procSvc) {
+          return notFound(`service not found: ${procSvcName}`);
         }
-        if (service.kind !== "owned") {
+        if (procSvc.kind !== "owned") {
           return new Response(
             JSON.stringify({
               error: "compose_service_has_no_process_tree",
-              message: `service ${service.name} is a compose service; use 'docker stats' for its container metrics`,
+              message: `service ${procSvc.name} is a compose service; use 'docker stats' for its container metrics`,
             }),
             {
               status: 409,
@@ -386,10 +413,18 @@ export async function startDashboardServer(
             },
           );
         }
+        if (procSnap.data_source?.kind === "http") {
+          const provider = pickDataProvider(procSnap, buildDeps());
+          const result = await provider.procTree(procStackId, procSvcName);
+          if (result === null) {
+            return notFound(`service not running: ${procSvcName}`);
+          }
+          return jsonResponse(result);
+        }
         return handleProcTreeRequest({
           stateRoot: opts.stateRoot,
-          stackId: segments[0],
-          service: service.name,
+          stackId: procStackId,
+          service: procSvcName,
           psProbe,
         });
       }

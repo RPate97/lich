@@ -770,3 +770,85 @@ describe("dashboard server — POST /api/routing/reload", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 18 — /api/stacks/:id dispatches via pickDataProvider (http path)
+// ---------------------------------------------------------------------------
+
+describe("dashboard server — GET /api/stacks/:id (sandbox/http provider)", () => {
+  let upstream: { stop: () => void; url: string } | null = null;
+
+  afterEach(() => {
+    upstream?.stop();
+    upstream = null;
+  });
+
+  it("fetches live data from the in-VM daemon for sandbox stacks", async () => {
+    const remoteView = {
+      id: "vm-stack-1",
+      worktree_name: "vm-feature",
+      status: "up",
+      services: [{ name: "web", kind: "owned", state: "ready" }],
+    };
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req: Request): Response {
+        const u = new URL(req.url);
+        if (u.pathname === "/api/stacks/vm-stack-1") {
+          return new Response(JSON.stringify(remoteView), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeStateJson("host-stack-1", {
+      stack_id: "host-stack-1",
+      worktree_name: "vm-feature",
+      worktree_path: "/tmp/vm-feature",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [{ name: "web", kind: "owned", state: "ready" }],
+      data_source: { kind: "http", base_url: upstream.url, stack_id: "vm-stack-1" },
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const res = await fetch(url("/api/stacks/host-stack-1"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    // Response comes from the fake upstream (in-VM daemon), not the local snapshot
+    expect(body.id).toBe("vm-stack-1");
+    expect(body.worktree_name).toBe("vm-feature");
+    expect(body.services[0].name).toBe("web");
+  });
+
+  it("returns 404 when the remote stack is not found (non-200 from upstream)", async () => {
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(): Response {
+        return new Response("not found", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeStateJson("host-stack-2", {
+      stack_id: "host-stack-2",
+      worktree_name: "vm-feature-2",
+      worktree_path: "/tmp/vm-feature-2",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [],
+      data_source: { kind: "http", base_url: upstream.url, stack_id: "remote-missing" },
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const res = await fetch(url("/api/stacks/host-stack-2"));
+    expect(res.status).toBe(404);
+  });
+});
