@@ -69,6 +69,9 @@ export interface ExecResult {
   exitCode: number;
 }
 
+export type RunExecInput = ExecOptions;
+export type RunExecResult = ExecResult;
+
 export async function runExec(opts: ExecOptions): Promise<ExecResult> {
   const cwd = opts.cwd ?? process.cwd();
   const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
