@@ -112,6 +112,23 @@ export interface ProcessNode {
   children: ProcessNode[];
 }
 
+export interface ProcTreeNode {
+  pid: number;
+  ppid: number;
+  rss_bytes: number;
+  cpu_pct_cumulative: number;
+  children: ProcTreeNode[];
+}
+
+export interface ProcTreeResponse {
+  service: string;
+  pid: number;
+  process_count: number;
+  mem_bytes: number;
+  cpu_pct_cumulative: number;
+  tree: ProcTreeNode | null;
+}
+
 /** Build a node-with-children tree rooted at `rootPid`. Returns null when the root isn't in the snapshot. */
 export function buildTree(
   rootPid: number,
