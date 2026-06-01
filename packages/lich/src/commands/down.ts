@@ -67,7 +67,6 @@ import {
   type OutputMode,
 } from "../output/index.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
-import { isSandboxStack } from "../sandbox/marker.js";
 import { pickExecutor } from "../stack/executor.js";
 
 export interface RunDownInput {
@@ -102,7 +101,7 @@ export function shouldEarlyExitOnStopped(
   snapshot: StackSnapshot,
   purge: boolean | undefined,
 ): boolean {
-  return snapshot.status === "stopped" && !(isSandboxStack(snapshot) && purge === true);
+  return snapshot.status === "stopped" && !(snapshot.sandbox === true && purge === true);
 }
 
 const SIGTERM_GRACE_MS = 5_000;
