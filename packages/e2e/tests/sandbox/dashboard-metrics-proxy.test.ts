@@ -26,8 +26,9 @@ owned:
   web:
     cmd: "python3 -m http.server 8088"
     cwd: "."
+    port: 8088
     ready_when:
-      http: "http://localhost:8088/"
+      http_get: /
       timeout: 60s
 `;
 
