@@ -852,3 +852,98 @@ describe("dashboard server — GET /api/stacks/:id (sandbox/http provider)", () 
     expect(res.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 19 — /api/stacks/:id/logs?service=X dispatches via pickDataProvider (http path)
+// ---------------------------------------------------------------------------
+
+describe("dashboard server — GET /api/stacks/:id/logs?service (sandbox/http provider)", () => {
+  let upstream: { stop: () => void; url: string } | null = null;
+
+  afterEach(() => {
+    upstream?.stop();
+    upstream = null;
+  });
+
+  it("proxies SSE log bytes from the in-VM daemon for sandbox stacks", async () => {
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req: Request): Response {
+        const u = new URL(req.url);
+        if (
+          u.pathname === "/api/stacks/vm-stack-2/logs" &&
+          u.searchParams.get("service") === "api"
+        ) {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("data: {\"service\":\"api\",\"line\":\"hello from vm\"}\n\n"));
+              controller.close();
+            },
+          });
+          return new Response(body, { headers: { "content-type": "text/event-stream" } });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeStateJson("sandbox-stack-1", {
+      stack_id: "sandbox-stack-1",
+      worktree_name: "vm-logs",
+      worktree_path: "/tmp/vm-logs",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [{ name: "api", kind: "owned", state: "ready" }],
+      data_source: { kind: "http", base_url: upstream.url, stack_id: "vm-stack-2" },
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const controller = new AbortController();
+    const res = await fetch(url("/api/stacks/sandbox-stack-1/logs?service=api"), {
+      signal: controller.signal,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value);
+      if (received.includes("hello from vm")) break;
+    }
+    expect(received).toContain("hello from vm");
+    controller.abort();
+    try { await reader.cancel(); } catch { /* ignore */ }
+  });
+
+  it("returns 404 when the service is not in the local snapshot for sandbox stacks", async () => {
+    const s = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(): Response {
+        return new Response("nope", { status: 404 });
+      },
+    });
+    upstream = { stop: () => s.stop(true), url: `http://127.0.0.1:${s.port}` };
+
+    writeStateJson("sandbox-stack-2", {
+      stack_id: "sandbox-stack-2",
+      worktree_name: "vm-logs-2",
+      worktree_path: "/tmp/vm-logs-2",
+      status: "up",
+      started_at: "2026-05-31T00:00:00.000Z",
+      services: [{ name: "api", kind: "owned", state: "ready" }],
+      data_source: { kind: "http", base_url: upstream.url, stack_id: "vm-stack-3" },
+    });
+
+    server = await startDashboardServer({ port: 0, stateRoot });
+
+    const res = await fetch(url("/api/stacks/sandbox-stack-2/logs?service=missing-svc"));
+    expect(res.status).toBe(404);
+  });
+});
