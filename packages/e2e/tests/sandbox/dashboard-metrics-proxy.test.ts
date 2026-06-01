@@ -8,7 +8,7 @@ import { isTartAvailable, imageExists } from "../../helpers/tart.js";
 import { waitForDaemonRunning } from "../../helpers/daemon.js";
 
 const _here = dirname(fileURLToPath(import.meta.url));
-const LICH_BIN = resolve(_here, "../../../../lich/dist/lich");
+const LICH_BIN = resolve(_here, "../../../lich/dist/lich");
 const IMAGE = process.env.LICH_SANDBOX_TEST_IMAGE ?? "lich-sandbox-base";
 
 const LICH_YAML = `version: "1"
@@ -67,7 +67,7 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox dashboard metrics
 
     if (result.status !== 0) {
       throw new Error(
-        `lich up failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        `lich up failed (exit ${result.status}, error=${result.error?.message ?? "none"}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
       );
     }
 
