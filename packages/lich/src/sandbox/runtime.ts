@@ -101,7 +101,7 @@ export class SandboxRuntime {
         // Fork: CoW-clone the golden's baked disk and boot it.
         await this.backend.clone(golden.vmName, runVm);
         await this.backend.start(runVm);
-        const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true });
+        const vmIp = await this.bringUp(ctx, runVm, { skipBaked: true, cleanInVmState: true });
         this.store.recordFork({
           runVm,
           goldenHash: inputsHash,
@@ -206,7 +206,7 @@ export class SandboxRuntime {
     throw new Error(`sandbox VM '${runVm}' got no IP within ${timeoutMs}ms${lastErr ? `: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ''}`);
   }
 
-  private async bringUp(ctx: RuntimeContext, runVm: string, opts: { skipBaked: boolean }): Promise<string> {
+  private async bringUp(ctx: RuntimeContext, runVm: string, opts: { skipBaked: boolean; cleanInVmState?: boolean }): Promise<string> {
     const target = await this.ipWithRetry(runVm);
     await this.sync.start({
       name: runVm,
@@ -226,6 +226,17 @@ export class SandboxRuntime {
       LICH_HOME: '/home/admin/.lich',
     };
     if (opts.skipBaked) env.LICH_SKIP_BAKED = '1';
+    if (opts.cleanInVmState) {
+      // The fork inherits the golden's stale supervisor state — daemon.pid +
+      // stacks/<id>/state.json all point at PIDs that died with the golden.
+      // Without clearing, in-VM `lich up` short-circuits with "stack already
+      // up". Bake artifacts (node_modules, postgres tmpfs migrations baked
+      // into the image, etc.) live elsewhere and are preserved.
+      await this.sshExec.exec(target,
+        ['sh', '-c', 'rm -rf /home/admin/.lich/stacks /home/admin/.lich/daemon.pid /home/admin/.lich/daemon.url /home/admin/.lich/daemon.proxy-url'],
+        { cwd: '/home/admin', env: {} },
+      );
+    }
     // SSH instead of `tart exec` for the lich up call: the latter's gRPC
     // stream has been observed to die mid-up under bun install + next dev
     // load with "Transport became inactive" while in-VM lich is still

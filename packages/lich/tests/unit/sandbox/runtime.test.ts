@@ -506,6 +506,30 @@ describe("SandboxRuntime", () => {
       expect(backend.execEnvByOp[upOp]?.LICH_SKIP_BAKED).toBe("1");
     });
 
+    it("warm-fork clears stale in-VM supervisor state BEFORE the lich up", async () => {
+      const hash = await computeHash();
+      const golden = goldenName(hash);
+      store.upsert({ inputsHash: hash, vmName: golden, profileName: "dev", lichYamlSnapshot: 'version: "1"\n', createdAt: "t" });
+      backend.states.set(golden, "stopped");
+
+      await runtime().up(ctx());
+      const cleanupIdx = backend.ops.findIndex((o) => o.includes("rm -rf /home/admin/.lich"));
+      const upIdx = backend.ops.indexOf(upOp);
+      expect(cleanupIdx).toBeGreaterThanOrEqual(0);
+      expect(upIdx).toBeGreaterThan(cleanupIdx);
+    });
+
+    it("cold-boot does NOT issue a state cleanup (no stale state to clear)", async () => {
+      await runtime().up(ctx());
+      expect(backend.ops.some((o) => o.includes("rm -rf /home/admin/.lich"))).toBe(false);
+    });
+
+    it("re-up does NOT issue a state cleanup (state reflects current truth)", async () => {
+      backend.states.set(RUN, "running");
+      await runtime().up(ctx());
+      expect(backend.ops.some((o) => o.includes("rm -rf /home/admin/.lich"))).toBe(false);
+    });
+
     it("re-up on a running run VM sets LICH_SKIP_BAKED=1", async () => {
       backend.states.set(RUN, "running");
       await runtime().up(ctx());
