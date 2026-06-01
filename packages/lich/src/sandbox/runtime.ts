@@ -231,12 +231,20 @@ export class SandboxRuntime {
     // load with "Transport became inactive" while in-VM lich is still
     // working, wedging the test runner. The SSH transport (same key+config
     // mutagen uses) survives long quiet periods via ServerAliveInterval.
-    const exitCode = await this.sshExec.exec(target, ['lich', 'up', ctx.profileName], {
-      cwd: '/workspace',
-      env,
-    });
-    if (exitCode !== 0) {
-      throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${exitCode}`);
+    const argv = ['lich', 'up', ctx.profileName];
+    const sshOpts = { cwd: '/workspace', env };
+    if (this.sshExec.execCapturingStderr) {
+      const { exitCode, stderrTail } = await this.sshExec.execCapturingStderr(target, argv, sshOpts);
+      if (exitCode !== 0) {
+        const tail = stderrTail.trim();
+        const suffix = tail ? `\n--- stderr tail ---\n${tail}` : "";
+        throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${exitCode}${suffix}`);
+      }
+    } else {
+      const exitCode = await this.sshExec.exec(target, argv, sshOpts);
+      if (exitCode !== 0) {
+        throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${exitCode}`);
+      }
     }
     return target;
   }

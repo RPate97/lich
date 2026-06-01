@@ -17,6 +17,17 @@ export interface InVmSshExecutor {
     argv: ReadonlyArray<string>,
     opts: { cwd: string; env: Record<string, string> },
   ): Promise<number>;
+
+  /**
+   * Same as exec() but also captures and returns the tail of stderr — used
+   * when a non-zero exit needs a diagnostic surface (vitest can swallow
+   * inherited stderr inside per-test buffers).
+   */
+  execCapturingStderr?(
+    target: string,
+    argv: ReadonlyArray<string>,
+    opts: { cwd: string; env: Record<string, string> },
+  ): Promise<{ exitCode: number; stderrTail: string }>;
 }
 
 const SSH_KEEPALIVE_FLAGS = [
@@ -33,6 +44,15 @@ export interface RealInVmSshExecutorOpts {
   sshPath?: string;
 }
 
+// Tail of stderr captured even when stdio is inherited — surfaces in the
+// error message on non-zero exit so failures aren't opaque "exit 1".
+const STDERR_TAIL_BYTES = 4096;
+
+export interface InVmSshExecResult {
+  exitCode: number;
+  stderrTail: string;
+}
+
 export class RealInVmSshExecutor implements InVmSshExecutor {
   private readonly user: string;
   private readonly sshPath: string;
@@ -47,12 +67,32 @@ export class RealInVmSshExecutor implements InVmSshExecutor {
     argv: ReadonlyArray<string>,
     opts: { cwd: string; env: Record<string, string> },
   ): Promise<number> {
+    const result = await this.execCapturingStderr(target, argv, opts);
+    return result.exitCode;
+  }
+
+  async execCapturingStderr(
+    target: string,
+    argv: ReadonlyArray<string>,
+    opts: { cwd: string; env: Record<string, string> },
+  ): Promise<InVmSshExecResult> {
     const remoteCmd = buildRemoteCommand(opts.cwd, opts.env, argv);
     const sshArgs = [...SSH_KEEPALIVE_FLAGS, `${this.user}@${target}`, remoteCmd];
-    return new Promise<number>((resolve, reject) => {
-      const child = spawn(this.sshPath, sshArgs, { stdio: "inherit" });
+    return new Promise<InVmSshExecResult>((resolve, reject) => {
+      // stdin inherited (no input), stdout inherited (user sees live output),
+      // stderr piped so we can mirror + capture tail.
+      const child = spawn(this.sshPath, sshArgs, { stdio: ["inherit", "inherit", "pipe"] });
+      let stderrTail = "";
+      child.stderr?.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        process.stderr.write(text);
+        stderrTail += text;
+        if (stderrTail.length > STDERR_TAIL_BYTES) {
+          stderrTail = stderrTail.slice(stderrTail.length - STDERR_TAIL_BYTES);
+        }
+      });
       child.on("error", reject);
-      child.on("close", (code) => resolve(code ?? -1));
+      child.on("close", (code) => resolve({ exitCode: code ?? -1, stderrTail }));
     });
   }
 }
