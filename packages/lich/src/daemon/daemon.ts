@@ -27,6 +27,8 @@ import { MetricsSampler } from "./metrics/sampler.js";
 export interface RunDaemonOpts {
   lichHome?: string;
   proxyPort?: number;
+  /** Dashboard bind hostname. Defaults to "127.0.0.1". Set to "0.0.0.0" for non-loopback access. */
+  hostname?: string;
   uiDir?: string;
   embeddedUi?: EmbeddedAssetSource;
   signal?: AbortSignal;
@@ -181,6 +183,7 @@ export async function runDaemon(
       port: 0,
       stateRoot,
       proxyPort,
+      hostname: opts.hostname,
       uiDir: opts.uiDir,
       embeddedUi: opts.embeddedUi,
       routingTable: {

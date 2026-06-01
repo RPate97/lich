@@ -69,6 +69,8 @@ export interface DashboardServerOpts {
   uiDir?: string;
   /** In-memory SPA assets (the embedded manifest). Used only when `uiDir` is unset. */
   embeddedUi?: EmbeddedAssetSource;
+  /** Bind hostname. Defaults to "127.0.0.1". Pass "0.0.0.0" to accept non-loopback connections (e.g. in-VM daemon). */
+  hostname?: string;
   /** When aborted, the server stops accepting new connections. */
   signal?: AbortSignal;
   /** Factory for log tails. Defaults to real LogTail; tests inject fakes. */
@@ -460,30 +462,36 @@ export async function startDashboardServer(
     });
   };
 
+  const bindHost = opts.hostname ?? "127.0.0.1";
+
   // Bind IPv4 + IPv6 loopback separately: `hostname: "localhost"` picks
   // one family (macOS picks ::1), then `curl http://127.0.0.1` fails
   // with ECONNREFUSED. IPv4 first to lock in the port; IPv6 is best-effort.
+  // When a custom hostname is set (e.g. 0.0.0.0), skip the IPv6 bind — the
+  // caller controls the bind surface.
   const serverV4 = Bun.serve({
     port: opts.port ?? 0,
-    hostname: "127.0.0.1",
+    hostname: bindHost,
     fetch: handler,
   });
 
   let serverV6: ReturnType<typeof Bun.serve> | null = null;
-  try {
-    serverV6 = Bun.serve({
-      port: serverV4.port,
-      hostname: "::1",
-      fetch: handler,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `dashboard: IPv6 loopback bind on [::1]:${serverV4.port} failed (${(err as Error).message}); IPv4 only`,
-    );
+  if (opts.hostname === undefined) {
+    try {
+      serverV6 = Bun.serve({
+        port: serverV4.port,
+        hostname: "::1",
+        fetch: handler,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `dashboard: IPv6 loopback bind on [::1]:${serverV4.port} failed (${(err as Error).message}); IPv4 only`,
+      );
+    }
   }
 
-  const url = `http://127.0.0.1:${serverV4.port}`;
+  const url = `http://${bindHost}:${serverV4.port}`;
 
   let stopped = false;
   const stop = async (): Promise<void> => {

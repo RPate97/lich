@@ -25,11 +25,17 @@ const uiDir =
     ? process.env.LICH_UI_DIR
     : undefined;
 
+const hostname =
+  process.env.LICH_DAEMON_HOST && process.env.LICH_DAEMON_HOST.length > 0
+    ? process.env.LICH_DAEMON_HOST
+    : undefined;
+
 const embeddedUi = hasEmbeddedAssets() ? { get: getEmbeddedAsset } : undefined;
 
 const { exitCode } = await runDaemon({
   lichHome,
   proxyPort,
+  hostname,
   uiDir,
   embeddedUi,
 });
