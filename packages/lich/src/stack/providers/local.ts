@@ -11,7 +11,6 @@ import {
   type TailFactory,
   type MetricsSamplerHandle,
 } from "../../daemon/dashboard/server.js";
-import { parsePsOutput } from "../../daemon/metrics/ps.js";
 import {
   aggregateSubtree,
   indexByPid,
