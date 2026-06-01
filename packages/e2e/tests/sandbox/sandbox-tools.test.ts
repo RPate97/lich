@@ -2,10 +2,12 @@ import { describe, test, expect, beforeAll } from 'vitest';
 import { execSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isTartAvailable } from '../../helpers/tart.js';
 
-const LICH = process.env.LICH ?? `${process.cwd()}/../lich/dist/lich`;
+const _here = dirname(fileURLToPath(import.meta.url));
+const LICH = process.env.LICH ?? resolve(_here, '../../../lich/dist/lich');
 
 function lichRun(args: string, env: Record<string, string> = {}): { stdout: string; status: number } {
   try {

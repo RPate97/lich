@@ -14,7 +14,9 @@ export default defineWorkspace([
     test: {
       name: "fast",
       include: ["**/*.test.ts"],
-      exclude: ["node_modules/**", ...heavyGlobs],
+      // `.claude/worktrees/**`: orphan git worktrees from prior agent sessions
+      // can shadow real test files when vitest is invoked from the repo root.
+      exclude: ["node_modules/**", ".claude/worktrees/**", "**/.claude/worktrees/**", ...heavyGlobs],
       pool: "forks",
       // singleFork: the cross-LICH_HOME port allocator race and the daemon's
       // pinned proxy_port:3300 both make parallel fast-pool unreliable.
@@ -32,6 +34,7 @@ export default defineWorkspace([
       // Placeholder glob avoids accidentally including all tests when
       // HEAVY_POOL_TESTS is empty.
       include: heavyGlobs.length > 0 ? heavyGlobs : ["__no-files__"],
+      exclude: ["node_modules/**", ".claude/worktrees/**", "**/.claude/worktrees/**"],
       pool: "forks",
       poolOptions: { forks: { singleFork: true } },
       testTimeout: 120_000,
