@@ -20,6 +20,7 @@ export interface RuntimeContext {
 export interface UpOutcome {
   path: 'cold' | 'warm';
   vmName: string;
+  vmIp: string;
   durationMs: number;
 }
 
@@ -75,8 +76,8 @@ export class SandboxRuntime {
         await this.backend.start(runVm);
         await new Promise(r => setTimeout(r, this.bootWaitMs));
       }
-      await this.bringUp(ctx, runVm);
-      return { path: 'warm', vmName: runVm, durationMs: Date.now() - start };
+      const vmIp = await this.bringUp(ctx, runVm);
+      return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
     }
 
     const golden = this.store.findByHash(inputsHash);
@@ -88,15 +89,15 @@ export class SandboxRuntime {
         // Fork: CoW-clone the golden's baked disk and boot it.
         await this.backend.clone(golden.vmName, runVm);
         await this.backend.start(runVm);
-        await this.bringUp(ctx, runVm);
-        return { path: 'warm', vmName: runVm, durationMs: Date.now() - start };
+        const vmIp = await this.bringUp(ctx, runVm);
+        return { path: 'warm', vmName: runVm, vmIp, durationMs: Date.now() - start };
       }
       // Golden VM gone (deleted out of band). Drop the stale manifest entry.
       this.store.remove(inputsHash);
     }
 
-    await this.coldBoot(ctx, runVm);
-    return { path: 'cold', vmName: runVm, durationMs: Date.now() - start };
+    const vmIp = await this.coldBoot(ctx, runVm);
+    return { path: 'cold', vmName: runVm, vmIp, durationMs: Date.now() - start };
   }
 
   // Create a golden snapshot from the current run VM. Stops the stack to flush
@@ -127,7 +128,7 @@ export class SandboxRuntime {
     return goldenVm;
   }
 
-  private async coldBoot(ctx: RuntimeContext, runVm: string): Promise<void> {
+  private async coldBoot(ctx: RuntimeContext, runVm: string): Promise<string> {
     const sandboxConfig: SandboxConfig = {
       name: runVm,
       image: this.config.image ?? 'lich-sandbox-base',
@@ -137,7 +138,7 @@ export class SandboxRuntime {
     await this.backend.create(sandboxConfig);
     await this.backend.start(runVm);
     await new Promise(r => setTimeout(r, this.bootWaitMs));
-    await this.bringUp(ctx, runVm);
+    return this.bringUp(ctx, runVm);
   }
 
   // The guest network lags VM "running"; tart ip fails until DHCP completes.
@@ -156,7 +157,7 @@ export class SandboxRuntime {
     throw new Error(`sandbox VM '${runVm}' got no IP within ${timeoutMs}ms${lastErr ? `: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ''}`);
   }
 
-  private async bringUp(ctx: RuntimeContext, runVm: string): Promise<void> {
+  private async bringUp(ctx: RuntimeContext, runVm: string): Promise<string> {
     const target = await this.ipWithRetry(runVm);
     await this.sync.start({
       name: runVm,
@@ -172,6 +173,7 @@ export class SandboxRuntime {
     if (result.exitCode !== 0) {
       throw new Error(`in-VM 'lich up ${ctx.profileName}' failed with exit ${result.exitCode}`);
     }
+    return target;
   }
 
   async down(ctx: RuntimeContext, opts: { purge?: boolean } = {}): Promise<void> {

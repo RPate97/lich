@@ -331,5 +331,11 @@ describe("SandboxRuntime", () => {
       expect(sync.startCalls[0].ignore).toContain("coverage");
       expect(sync.startCalls[0].ignore).toContain("node_modules");
     });
+
+    it("up() returns vmIp from backend.ip()", async () => {
+      const { rt } = withSync();
+      const outcome = await rt.up(ctx());
+      expect(outcome.vmIp).toBe("10.0.0.1");
+    });
   });
 });
