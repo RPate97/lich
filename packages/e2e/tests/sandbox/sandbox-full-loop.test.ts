@@ -102,7 +102,14 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
 
   test("snapshot creates a golden", async () => {
     const golden = await runtime.snapshot(ctx());
-    expect(golden).toBe(goldenName((await import("../../../lich/src/sandbox/inputs-hash.js")).computeInputsHash(join(worktree, "lich.yaml"), PROFILE)));
+    const { computeBakeInputsHash } = await import("../../../lich/src/sandbox/inputs-hash.js");
+    const expectedHash = await computeBakeInputsHash({
+      worktreePath: worktree,
+      lichYamlPath: join(worktree, "lich.yaml"),
+      profileName: PROFILE,
+      bakeInputs: ["lich.yaml"],
+    });
+    expect(golden).toBe(goldenName(expectedHash));
     expect((await backend.inspect(golden)).state).toBe("stopped");
   }, 120_000);
 
