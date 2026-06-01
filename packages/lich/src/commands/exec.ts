@@ -30,8 +30,7 @@ import {
   resolveProfile,
   type ResolvedProfile,
 } from "../profiles/resolve.js";
-import { isSandboxStack } from "../sandbox/marker.js";
-import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
+import { pickExecutor } from "../stack/executor.js";
 
 export interface RunExecInput {
   /**
@@ -70,6 +69,58 @@ export interface RunExecResult {
 }
 
 export async function runExec(opts: RunExecInput): Promise<RunExecResult> {
+  const cwd = opts.cwd ?? process.cwd();
+  const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
+
+  if (!opts.argv || opts.argv.length === 0) {
+    err("usage: lich exec [--env-group=<group>] <cmd> [args...]\n");
+    return { exitCode: 2 };
+  }
+
+  let worktree: Worktree;
+  let snap: StackSnapshot | null;
+  if (opts.worktreeArg !== undefined && opts.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: opts.worktreeArg });
+      snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        err(`lich exec: no snapshot for stack '${resolved.stackId}'\n`);
+        return { exitCode: 1 };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+  } else {
+    const yamlPathCwd = join(cwd, "lich.yaml");
+    if (!existsSync(yamlPathCwd)) {
+      err(`lich exec: lich.yaml not found at ${yamlPathCwd}\n`);
+      return { exitCode: 1 };
+    }
+    try {
+      worktree = detectWorktree(cwd);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+    snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  }
+
+  if (snap === null) {
+    const yamlPath = join(worktree.path, "lich.yaml");
+    if (!existsSync(yamlPath)) {
+      err(`lich exec: lich.yaml not found at ${yamlPath}\n`);
+      return { exitCode: 1 };
+    }
+    return runExecLocal(opts);
+  }
+
+  const configPath = join(worktree.path, "lich.yaml");
+  return pickExecutor(snap, { worktree, lichYamlPath: configPath }).exec(opts);
+}
+
+export async function runExecLocal(opts: RunExecInput): Promise<RunExecResult> {
   const cwd = opts.cwd ?? process.cwd();
   const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
   const stdio = opts.stdio ?? "inherit";
@@ -134,18 +185,6 @@ export async function runExec(opts: RunExecInput): Promise<RunExecResult> {
   if (!opts.noPreflight) {
     const warning = preflightWarning(snap, worktree.name, opts.now?.() ?? new Date());
     if (warning) err(`[lich] ${warning}\n`);
-  }
-
-  if (isSandboxStack(snap)) {
-    const routed = await maybeRouteToSandbox({
-      kind: "exec",
-      snapshot: snap,
-      worktree,
-      lichYamlPath: yamlPath,
-      argv: opts.argv,
-      sandboxConfig: config.runtime?.sandbox,
-    });
-    if (routed !== null) return { exitCode: routed.exitCode };
   }
 
   // Re-resolve the active profile from the on-disk yaml so the env group
