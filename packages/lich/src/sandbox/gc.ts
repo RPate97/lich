@@ -44,18 +44,28 @@ export function selectGoldensToEvict(
   return goldens.filter((g) => evict.has(g.inputsHash));
 }
 
+export interface RunGcResult {
+  evicted: GoldenManifest[];
+  warnings: Array<{ vmName: string; inputsHash: string; message: string }>;
+}
+
 export async function runGc(
   store: SnapshotStore,
   backend: SandboxBackend,
   policy: GcPolicy,
-): Promise<GoldenManifest[]> {
+): Promise<RunGcResult> {
+  const warnings: RunGcResult['warnings'] = [];
+
+  const forks = store.forks();
+  const inspections = await Promise.all(
+    forks.map((f) => backend.inspect(f.runVm).then((state) => ({ fork: f, state }))),
+  );
   const liveGoldenHashes = new Set<string>();
-  for (const f of store.forks()) {
-    const vm = await backend.inspect(f.runVm);
-    if (vm.state !== 'absent') {
-      liveGoldenHashes.add(f.goldenHash);
+  for (const { fork, state } of inspections) {
+    if (state.state !== 'absent') {
+      liveGoldenHashes.add(fork.goldenHash);
     } else {
-      store.removeFork(f.runVm);
+      store.removeFork(fork.runVm);
     }
   }
 
@@ -63,10 +73,14 @@ export async function runGc(
   for (const g of toEvict) {
     try {
       await backend.destroy(g.vmName);
-    } catch {
-      // Best-effort: still drop the manifest entry so the orphan can't pin GC forever.
+    } catch (e) {
+      warnings.push({
+        vmName: g.vmName,
+        inputsHash: g.inputsHash,
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
     store.remove(g.inputsHash);
   }
-  return toEvict;
+  return { evicted: toEvict, warnings };
 }

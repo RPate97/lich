@@ -155,7 +155,10 @@ export class SandboxRuntime {
     });
 
     try {
-      await runGc(this.store, this.backend, this.gcPolicy());
+      const result = await runGc(this.store, this.backend, this.gcPolicy());
+      for (const w of result.warnings) {
+        console.warn(`gc warning: destroy failed for ${w.vmName}: ${w.message}`);
+      }
     } catch (e) {
       console.warn(`post-bake GC failed: ${e instanceof Error ? e.message : String(e)}`);
     }

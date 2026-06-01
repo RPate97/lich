@@ -40,11 +40,18 @@ export const sandboxGc: CommandHandler = async () => {
       : DEFAULT_POLICY.maxTotalBytes,
   };
 
-  const evicted = await runGc(store, backend, policy);
+  const { evicted, warnings } = await runGc(store, backend, policy);
+
+  const warningLines = warnings.map(w => `⚠ destroy failed for ${w.vmName}: ${w.message}`);
 
   if (evicted.length === 0) {
-    return { ok: true, message: 'nothing to collect' };
+    const base = 'nothing to collect';
+    return { ok: true, message: warningLines.length ? `${base}\n${warningLines.join('\n')}` : base };
   }
   const lines = evicted.map(g => `  - ${g.vmName} (${g.profileName}, hash ${g.inputsHash.slice(0, 12)})`);
-  return { ok: true, message: `evicted ${evicted.length} golden${evicted.length === 1 ? '' : 's'}:\n${lines.join('\n')}` };
+  const header = `evicted ${evicted.length} golden${evicted.length === 1 ? '' : 's'}:`;
+  const message = warningLines.length
+    ? `${header}\n${lines.join('\n')}\n${warningLines.join('\n')}`
+    : `${header}\n${lines.join('\n')}`;
+  return { ok: true, message };
 };

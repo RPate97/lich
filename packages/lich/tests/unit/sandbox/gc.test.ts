@@ -112,7 +112,7 @@ describe('runGc', () => {
     seedGolden('b', 'dev', 2);
     seedGolden('c', 'dev', 3);
 
-    const evicted = await runGc(store, backend, policy);
+    const { evicted } = await runGc(store, backend, policy);
 
     expect(evicted.map(e => e.inputsHash)).toEqual(['a']);
     expect(backend.destroyCalls).toContain('golden-a');
@@ -126,7 +126,7 @@ describe('runGc', () => {
     store.recordFork({ runVm: 'run-a', goldenHash: 'a', createdAt: '2026-05-30T00:00:00Z' });
     backend.states.set('run-a', 'running');
 
-    const evicted = await runGc(store, backend, policy);
+    const { evicted } = await runGc(store, backend, policy);
 
     expect(evicted.map(e => e.inputsHash)).not.toContain('a');
     expect(store.findByHash('a')).toBeDefined();
@@ -145,7 +145,7 @@ describe('runGc', () => {
     seedGolden('a', 'dev', 1, 15);
     seedGolden('b', 'dev', 2, 15);
 
-    const evicted = await runGc(store, backend, policy);
+    const { evicted } = await runGc(store, backend, policy);
 
     expect(evicted.map(e => e.inputsHash)).toEqual(['a']);
     expect(backend.destroyCalls).toContain('golden-a');
@@ -156,9 +156,10 @@ describe('runGc', () => {
     store.recordFork({ runVm: 'run-a', goldenHash: 'a', createdAt: '2026-05-30T00:00:00Z' });
     backend.states.set('run-a', 'running');
 
-    const evicted = await runGc(store, backend, policy);
+    const { evicted, warnings } = await runGc(store, backend, policy);
 
     expect(evicted).toEqual([]);
+    expect(warnings).toEqual([]);
     expect(backend.destroyCalls).toEqual([]);
   });
 
@@ -171,11 +172,14 @@ describe('runGc', () => {
     seedGolden('f', 'web', 3);
     backend.destroyFails.add('golden-a');
 
-    const evicted = await runGc(store, backend, policy);
+    const { evicted, warnings } = await runGc(store, backend, policy);
 
     expect(evicted.map(e => e.inputsHash).sort()).toEqual(['a', 'd']);
     expect(backend.destroyCalls.sort()).toEqual(['golden-a', 'golden-d']);
     expect(store.findByHash('a')).toBeUndefined();
     expect(store.findByHash('d')).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].vmName).toBe('golden-a');
+    expect(warnings[0].inputsHash).toBe('a');
   });
 });
