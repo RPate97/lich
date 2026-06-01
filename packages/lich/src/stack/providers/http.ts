@@ -40,12 +40,13 @@ export class HttpStackDataProvider implements StackDataProvider {
 
   private passThroughSse(pathAndQuery: string, signal: AbortSignal): ReadableStream<Uint8Array> {
     const passthrough = new TransformStream<Uint8Array, Uint8Array>();
+    let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
     (async () => {
       try {
         const res = await fetch(`${this.baseUrl}${pathAndQuery}`, { signal });
         if (!res.body) { passthrough.writable.close().catch(() => {}); return; }
         const reader = res.body.getReader();
-        const writer = passthrough.writable.getWriter();
+        writer = passthrough.writable.getWriter();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -53,7 +54,11 @@ export class HttpStackDataProvider implements StackDataProvider {
         }
         await writer.close();
       } catch {
-        passthrough.writable.close().catch(() => {});
+        if (writer !== null) {
+          writer.close().catch(() => {});
+        } else {
+          passthrough.writable.close().catch(() => {});
+        }
       }
     })();
     return passthrough.readable;

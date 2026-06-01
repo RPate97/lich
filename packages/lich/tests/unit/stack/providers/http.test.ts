@@ -29,6 +29,15 @@ beforeEach(async () => {
       });
       return new Response(body, { headers: { "content-type": "text/event-stream" } });
     }
+    if (url.pathname === "/api/stacks/remote-open/logs") {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: line-1\n\n"));
+          // stream intentionally left open — simulates a live SSE feed
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    }
     if (url.pathname === "/api/stacks/remote-1/metrics/stream") {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -119,5 +128,33 @@ describe("HttpStackDataProvider", () => {
       safeClose = false;
     }
     expect(safeClose).toBe(true);
+  });
+
+  it("tailLogs abort fired AFTER stream starts reading still closes cleanly", async () => {
+    const provider = new HttpStackDataProvider(serverUrl, "remote-open");
+    const controller = new AbortController();
+    const stream = provider.tailLogs("x", "web", controller.signal);
+    const reader = stream.getReader();
+
+    // Wait for first byte so the writer is definitely acquired.
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+
+    // Abort mid-stream and verify the readable terminates within 3 seconds.
+    controller.abort();
+    let closed = false;
+    const deadline = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error("stream did not close after abort")), 3000),
+    );
+    await Promise.race([
+      (async () => {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) { closed = true; return; }
+        }
+      })(),
+      deadline,
+    ]);
+    expect(closed).toBe(true);
   });
 });
