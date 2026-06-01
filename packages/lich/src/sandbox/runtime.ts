@@ -125,9 +125,7 @@ export class SandboxRuntime {
     const runVm = runName(ctx.worktreeId, ctx.profileName);
     const goldenVm = goldenName(inputsHash);
 
-    // First-writer-wins: if another agent already baked this hash and the VM
-    // is still present, reuse it. Stale manifest (VM deleted out of band)
-    // falls through and gets overwritten by upsert below.
+    // First-writer-wins: reuse an existing golden VM for this hash; stale manifest falls through.
     const existing = this.store.findByHash(inputsHash);
     if (existing) {
       const existingState = await this.backend.inspect(existing.vmName);

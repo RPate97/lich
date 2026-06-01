@@ -78,8 +78,7 @@ export class SnapshotStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  // Forks live in a sibling file so concurrent fork-recording and golden-bake
-  // don't race on the same on-disk JSON.
+  // Sibling file so fork-recording doesn't race with golden-bake on the same JSON.
   private get forksPath(): string {
     return join(this.storeDir, 'forks.json');
   }
