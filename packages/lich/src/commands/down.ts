@@ -200,7 +200,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
 
   await output.close();
   const configPath = join(worktree.path, "lich.yaml");
-  return pickExecutor(snap, { worktree, lichYamlPath: configPath }).down(input);
+  return (await pickExecutor(snap, { worktree, lichYamlPath: configPath })).down(input);
 }
 
 export async function runDownLocal(input: RunDownInput): Promise<RunDownResult> {

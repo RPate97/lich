@@ -220,7 +220,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     executor: ref,
     active_profile: profileNameOrDefault,
   };
-  const executor = pickExecutor(dispatchSnap, { worktree, lichYamlPath: configPath });
+  const executor = await pickExecutor(dispatchSnap, { worktree, lichYamlPath: configPath });
   return executor.up(input);
 }
 

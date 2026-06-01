@@ -104,7 +104,7 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
       stack_id: snapshot.stack_id,
     };
     const configPath = join(wt.path, "lich.yaml");
-    const inner = pickExecutor(snapshot, { worktree: wt, lichYamlPath: configPath }).logs(input);
+    const inner = (await pickExecutor(snapshot, { worktree: wt, lichYamlPath: configPath })).logs(input);
     await inner.done;
     holder.code = inner.exitCode;
   })().catch((err) => {

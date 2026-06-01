@@ -8,6 +8,7 @@ import type { ExecutorRef } from "./types.js";
 import { LocalStackExecutor } from "./executors/local.js";
 import { SandboxStackExecutor } from "./executors/sandbox-tart.js";
 import { SandboxRuntime } from "../sandbox/runtime.js";
+import { parseConfig } from "../config/parse.js";
 
 export interface StackExecutor {
   up(input: RunUpInput): Promise<RunUpResult>;
@@ -29,11 +30,27 @@ function deriveRef(snap: StackSnapshot): ExecutorRef {
   return { kind: "local" };
 }
 
-export function pickExecutor(snap: StackSnapshot, deps: ExecutorDeps): StackExecutor {
+export async function pickExecutor(snap: StackSnapshot, deps: ExecutorDeps): Promise<StackExecutor> {
   const ref = deriveRef(snap);
   if (ref.kind === "local") return new LocalStackExecutor();
   if (ref.kind === "sandbox-tart") {
-    const runtime = new SandboxRuntime({ backend: "tart", bake_inputs: [] });
+    // Parse the lich.yaml so the runtime gets the real sandbox config —
+    // critically including bake_inputs, which content-addresses the
+    // golden. A placeholder empty array makes every worktree hash to
+    // the same key and breaks fork divergence.
+    const parsed = await parseConfig(deps.lichYamlPath);
+    if (!parsed.ok) {
+      throw new Error(
+        `sandbox executor selected but lich.yaml at ${deps.lichYamlPath} failed to parse`,
+      );
+    }
+    const sandboxConfig = parsed.config.runtime?.sandbox;
+    if (!sandboxConfig) {
+      throw new Error(
+        `sandbox executor selected but lich.yaml at ${deps.lichYamlPath} has no runtime.sandbox block`,
+      );
+    }
+    const runtime = new SandboxRuntime(sandboxConfig);
     return new SandboxStackExecutor(runtime, {
       worktreeId: deps.worktree.id,
       worktreePath: deps.worktree.path,

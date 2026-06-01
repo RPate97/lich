@@ -117,7 +117,7 @@ export async function runExec(opts: RunExecInput): Promise<RunExecResult> {
   }
 
   const configPath = join(worktree.path, "lich.yaml");
-  return pickExecutor(snap, { worktree, lichYamlPath: configPath }).exec(opts);
+  return (await pickExecutor(snap, { worktree, lichYamlPath: configPath })).exec(opts);
 }
 
 export async function runExecLocal(opts: RunExecInput): Promise<RunExecResult> {
