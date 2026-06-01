@@ -34,7 +34,7 @@ export class SandboxStackExecutor implements StackExecutor {
     const follow = input.follow === true;
     const args: string[] = ["lich", "logs", ...(input.sources ?? [])];
     args.push(follow ? "--follow" : "--no-follow");
-    if (!follow) args.push("--tail", String(input.count));
+    if (!follow && input.count > 0) args.push("--tail", String(input.count));
     const done = this.runtime.exec(this.ctx, args, {
       inheritStdio: true,
       timeoutMs: follow ? undefined : 30_000,

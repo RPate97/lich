@@ -71,4 +71,13 @@ describe("SandboxStackExecutor.logs", () => {
     expect(args).toEqual(["lich", "logs", "--no-follow", "--tail", "50"]);
     expect(opts.timeoutMs).toBe(30_000);
   });
+
+  it("omits --tail when count is 0 (parity with old maybeRouteToSandbox guard)", async () => {
+    const rt = new FakeRuntime();
+    const exe = new SandboxStackExecutor(rt as any, fakeCtx());
+    const result = exe.logs({ sources: [], follow: false, count: 0, all: false, json: false } as any);
+    await result.done;
+    const [, args] = rt.calls[0]!.args as [unknown, string[], any];
+    expect(args).not.toContain("--tail");
+  });
 });
