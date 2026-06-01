@@ -26,10 +26,16 @@ describe.skipIf(!isTartAvailable() || !imageExists())('sandbox cold-up (e2e)', (
       cwd: join(workTmp, 'stack'),
       stdio: 'inherit',
     });
-    // Append runtime.sandbox to the lich.yaml.
     const yamlPath = join(workTmp, 'stack', 'lich.yaml');
     const yaml = readFileSync(yamlPath, 'utf8');
-    writeFileSync(yamlPath, yaml + `\nruntime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    warm_fork: false\n`);
+    if (!/^runtime:\s*$/m.test(yaml)) {
+      throw new Error('dogfood-stack/lich.yaml no longer has a top-level `runtime:` key; update injection logic');
+    }
+    const injected = yaml.replace(
+      /^runtime:\s*$/m,
+      'runtime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    warm_fork: false',
+    );
+    writeFileSync(yamlPath, injected);
   });
 
   afterAll(() => {
