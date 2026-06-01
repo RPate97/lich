@@ -33,7 +33,7 @@ import {
 import { isSandboxStack } from "../sandbox/marker.js";
 import { maybeRouteToSandbox } from "../sandbox/command-routing.js";
 
-export interface ExecOptions {
+export interface RunExecInput {
   /**
    * Single entry → `/bin/sh -c <entry>` (shell mode). Multiple entries →
    * `spawn(argv[0], argv.slice(1))` (literal mode). Empty → usage + exit 2.
@@ -57,7 +57,7 @@ export interface ExecOptions {
   now?: () => Date;
 }
 
-export interface ExecResult {
+export interface RunExecResult {
   /**
    * Exit code conventions:
    *   2   — usage error (empty argv, unknown env-group)
@@ -69,10 +69,7 @@ export interface ExecResult {
   exitCode: number;
 }
 
-export type RunExecInput = ExecOptions;
-export type RunExecResult = ExecResult;
-
-export async function runExec(opts: ExecOptions): Promise<ExecResult> {
+export async function runExec(opts: RunExecInput): Promise<RunExecResult> {
   const cwd = opts.cwd ?? process.cwd();
   const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
   const stdio = opts.stdio ?? "inherit";
@@ -183,7 +180,7 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
   const command = isShellForm ? "/bin/sh" : opts.argv[0];
   const args = isShellForm ? ["-c", opts.argv[0]] : opts.argv.slice(1);
 
-  return new Promise<ExecResult>((resolve) => {
+  return new Promise<RunExecResult>((resolve) => {
     let aborted = false;
     let settled = false;
 
