@@ -39,7 +39,7 @@ export function pickExecutor(snap: StackSnapshot, deps: ExecutorDeps): StackExec
       worktreePath: deps.worktree.path,
       lichYamlPath: deps.lichYamlPath,
       profileName: snap.active_profile ?? "default",
-    });
+    }, { worktree: deps.worktree });
   }
   throw new Error(`unknown executor kind: ${(ref as { kind: string }).kind}`);
 }

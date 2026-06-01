@@ -1,21 +1,62 @@
-import type { RuntimeContext } from "../../sandbox/runtime.js";
+import type { RuntimeContext, UpOutcome } from "../../sandbox/runtime.js";
 import type { ExecResult, ExecOptions } from "../../sandbox/backend.js";
 import type { StackExecutor } from "../executor.js";
 import type { RunUpInput, RunUpResult } from "../../commands/up.js";
 import type { RunDownInput, RunDownResult } from "../../commands/down.js";
 import type { RunExecInput, RunExecResult } from "../../commands/exec.js";
 import type { RunLogsInput, RunLogsResult } from "../../commands/logs.js";
+import type { Worktree } from "../../worktree/detect.js";
+import type { StackView } from "../../daemon/dashboard/stacks-view.js";
+import { writeSnapshot } from "../../state/snapshot.js";
 
 interface RuntimeLike {
+  up(ctx: RuntimeContext): Promise<UpOutcome>;
   down(ctx: RuntimeContext, opts?: { purge?: boolean }): Promise<void>;
   exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;
+  scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null>;
 }
 
 export class SandboxStackExecutor implements StackExecutor {
-  constructor(private readonly runtime: RuntimeLike, private readonly ctx: RuntimeContext) {}
+  constructor(
+    private readonly runtime: RuntimeLike,
+    private readonly ctx: RuntimeContext,
+    private readonly deps: { worktree: Worktree },
+  ) {}
 
   async up(_input: RunUpInput): Promise<RunUpResult> {
-    throw new Error("SandboxStackExecutor.up: not yet wired (see Phase E task)");
+    const outcome = await this.runtime.up(this.ctx);
+    const scraped = await this.runtime.scrapeInVmStack(this.ctx, outcome.vmName);
+    const services = (scraped?.services ?? []).map((s) => ({
+      name: s.name,
+      kind: (s.kind ?? "owned") as "owned" | "compose",
+      state: s.state as import("../../state/snapshot.js").ServiceState,
+      allocated_ports: s.ports ?? {},
+    }));
+    const routing = (scraped?.services ?? [])
+      .filter((s) => s.ports && Object.keys(s.ports).length > 0)
+      .map((s) => {
+        const port = Object.values(s.ports!)[0]!;
+        return {
+          hostname: `${s.name}.${this.deps.worktree.name}`,
+          upstream_url: `http://${outcome.vmIp}:${port}`,
+          service: s.name,
+        };
+      });
+    await writeSnapshot({
+      stack_id: this.deps.worktree.stack_id,
+      worktree_name: this.deps.worktree.name,
+      worktree_path: this.deps.worktree.path,
+      status: "up",
+      started_at: new Date().toISOString(),
+      services,
+      routing,
+      active_profile: this.ctx.profileName,
+      executor: { kind: "sandbox-tart", vm_name: outcome.vmName },
+      data_source: scraped
+        ? { kind: "http", base_url: `http://${outcome.vmIp}:3300`, stack_id: scraped.id }
+        : { kind: "local" },
+    });
+    return { exitCode: 0, stackId: this.deps.worktree.stack_id };
   }
 
   async down(input: RunDownInput): Promise<RunDownResult> {

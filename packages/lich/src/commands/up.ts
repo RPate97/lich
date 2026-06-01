@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-import { SandboxRuntime } from "../sandbox/runtime.js";
 import { runLifecycle, LifecycleHookError } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
@@ -103,6 +102,9 @@ import {
   buildRawUrls,
 } from "../urls/format.js";
 import { join } from "node:path";
+import { pickExecutor } from "../stack/executor.js";
+import { runName } from "../sandbox/naming.js";
+import type { ExecutorRef } from "../stack/types.js";
 
 /** Snapshot replay payload — `lich restart` hands pre-resolved env/cmd/cwd/stop_cmd to re-up. */
 export interface OwnedSnapshotOverride {
@@ -176,7 +178,49 @@ interface UpState {
 }
 
 export async function runUp(input: RunUpInput): Promise<RunUpResult> {
-  return runUpLocal(input);
+  const cwd = input.cwd ?? process.cwd();
+  const configPath = join(cwd, "lich.yaml");
+  const parsed = await parseConfig(configPath);
+  if (!parsed.ok) {
+    return runUpLocal(input);
+  }
+  const config = parsed.config;
+
+  // Resolve profile name for executor selection.
+  const profiles = config.profiles;
+  const hasProfilesSection = profiles !== undefined && Object.keys(profiles).length > 0;
+  let profileNameOrDefault: string;
+  if (input.profile !== undefined) {
+    profileNameOrDefault = input.profile;
+  } else if (!hasProfilesSection) {
+    profileNameOrDefault = "default";
+  } else {
+    const pick = pickDefaultProfile(config);
+    profileNameOrDefault = pick.name ?? "default";
+  }
+
+  const isSandbox = !process.env.LICH_SANDBOX_GUEST && !!config.runtime?.sandbox;
+  const worktree = detectWorktree(cwd);
+  const ref: ExecutorRef = isSandbox
+    ? { kind: "sandbox-tart", vm_name: runName(worktree.id, profileNameOrDefault) }
+    : { kind: "local" };
+
+  if (ref.kind === "local") {
+    return runUpLocal(input);
+  }
+
+  const dispatchSnap: StackSnapshot = {
+    stack_id: worktree.stack_id,
+    worktree_name: worktree.name,
+    worktree_path: worktree.path,
+    status: "starting",
+    started_at: new Date().toISOString(),
+    services: [],
+    executor: ref,
+    active_profile: profileNameOrDefault,
+  };
+  const executor = pickExecutor(dispatchSnap, { worktree, lichYamlPath: configPath });
+  return executor.up(input);
 }
 
 export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
@@ -333,38 +377,6 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
     };
     worktreePhase.step(`stack_id=${worktree.stack_id}`);
     worktreePhase.end("ok");
-
-    // Route through sandbox runtime when runtime.sandbox is configured.
-    // LICH_SANDBOX_GUEST is set by SandboxRuntime when it runs `lich up` inside
-    // the VM; the guest runs the stack natively, never re-entering the sandbox.
-    const sandboxCfg = process.env.LICH_SANDBOX_GUEST ? undefined : config.runtime?.sandbox;
-    if (sandboxCfg) {
-      const sbRuntime = new SandboxRuntime(sandboxCfg);
-      const outcome = await sbRuntime.up({
-        worktreeId: worktree.id,
-        worktreePath: worktree.path,
-        lichYamlPath: configPath!,
-        profileName: resolvedProfile?.name ?? 'default',
-      });
-      output.info(
-        outcome.path === 'warm'
-          ? `sandbox VM '${outcome.vmName}' warm-forked in ${outcome.durationMs}ms`
-          : `sandbox VM '${outcome.vmName}' cold-booted in ${outcome.durationMs}ms`,
-      );
-      await writeSnapshot({
-        stack_id: worktree.stack_id,
-        worktree_name: worktree.name,
-        worktree_path: worktree.path,
-        status: 'up',
-        started_at: state.startedAt,
-        services: [],
-        active_profile: resolvedProfile?.name,
-        sandbox: true,
-        sandbox_vm: outcome.vmName,
-      });
-      await output.close();
-      return { exitCode: 0, stackId: worktree.stack_id };
-    }
 
     // Refuse mid-flight profile switch: if a prior `up` is in-flight or up under a different profile, require explicit `lich down` first.
     {
