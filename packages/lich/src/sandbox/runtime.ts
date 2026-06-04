@@ -312,4 +312,16 @@ export class SandboxRuntime {
       return null;
     }
   }
+
+  // The in-VM daemon writes its dashboard URL to ~/.lich/daemon.url; the port
+  // is picked dynamically (not 3300 by default), so the host must read it
+  // before constructing the data_source.base_url.
+  async scrapeInVmDaemonPort(runVm: string): Promise<number | null> {
+    const result = await this.backend.exec(runVm, ['cat', '/home/admin/.lich/daemon.url'], { cwd: '/home/admin', timeoutMs: 5_000 });
+    if (result.exitCode !== 0) return null;
+    const match = result.stdout.trim().match(/:(\d+)\/?$/);
+    if (!match) return null;
+    const port = parseInt(match[1]!, 10);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  }
 }

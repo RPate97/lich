@@ -16,6 +16,7 @@ interface RuntimeLike {
   down(ctx: RuntimeContext, opts?: { purge?: boolean; bakeBeforeStop?: boolean }): Promise<{ warnings: string[] }>;
   exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;
   scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null>;
+  scrapeInVmDaemonPort?(runVm: string): Promise<number | null>;
 }
 
 export class SandboxStackExecutor implements StackExecutor {
@@ -42,6 +43,10 @@ export class SandboxStackExecutor implements StackExecutor {
     const out = input.out ?? process.stdout;
     out.write(`sandbox VM '${outcome.vmName}' ${verb} in ${outcome.durationMs}ms\n`);
     const scraped = await this.runtime.scrapeInVmStack(this.ctx, outcome.vmName);
+    // In-VM daemon picks a free port at startup (not 3300). The host needs
+    // the actual port to construct a working data_source.base_url; 3300 is
+    // the legacy fallback if the scrape can't find it.
+    const apiPort = (await this.runtime.scrapeInVmDaemonPort?.(outcome.vmName)) ?? 3300;
     const services = (scraped?.services ?? []).map((s) => ({
       name: s.name,
       kind: (s.kind ?? "owned") as "owned" | "compose",
@@ -69,7 +74,7 @@ export class SandboxStackExecutor implements StackExecutor {
       active_profile: this.ctx.profileName,
       executor: { kind: "sandbox-tart", vm_name: outcome.vmName },
       data_source: scraped
-        ? { kind: "http", base_url: `http://${outcome.vmIp}:3300`, stack_id: scraped.id }
+        ? { kind: "http", base_url: `http://${outcome.vmIp}:${apiPort}`, stack_id: scraped.id }
         : { kind: "local" },
     });
     await this.ensureHostDaemon(input, out);

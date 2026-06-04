@@ -166,6 +166,76 @@ describe("SandboxStackExecutor.up", () => {
     }
   });
 
+  it("uses the in-VM daemon's actual API port for data_source.base_url when scrape succeeds", async () => {
+    class FakeRuntimeWithDaemonScrape extends FakeRuntime {
+      override async up(...args: unknown[]) {
+        this.calls.push({ method: "up", args });
+        return { path: "cold" as const, vmName: "lich-run-x", vmIp: "10.0.0.5", durationMs: 100 };
+      }
+      override async scrapeInVmStack(_ctx: any, _vm: string) {
+        return {
+          id: "workspace-c52ddf65",
+          worktree_name: "workspace",
+          status: "up",
+          services: [{ name: "web", kind: "owned" as const, state: "ready", ports: { PORT: 8088 } }],
+        };
+      }
+      async scrapeInVmDaemonPort(_vm: string): Promise<number | null> {
+        return 38165;
+      }
+    }
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-port-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new FakeRuntimeWithDaemonScrape();
+      const wt = { name: "demo", id: "abc12345", path: "/work/demo", stack_id: "demo-abc12345" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      await exe.up({ outputMode: "pretty" } as any);
+      const snap = await readSnapshot("demo-abc12345");
+      expect(snap?.data_source).toEqual({ kind: "http", base_url: "http://10.0.0.5:38165", stack_id: "workspace-c52ddf65" });
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to :3300 in data_source.base_url when daemon-port scrape returns null", async () => {
+    class FakeRuntimeWithNullDaemonScrape extends FakeRuntime {
+      override async up(...args: unknown[]) {
+        this.calls.push({ method: "up", args });
+        return { path: "cold" as const, vmName: "lich-run-x", vmIp: "10.0.0.5", durationMs: 100 };
+      }
+      override async scrapeInVmStack(_ctx: any, _vm: string) {
+        return {
+          id: "workspace-c52ddf65",
+          worktree_name: "workspace",
+          status: "up",
+          services: [{ name: "web", kind: "owned" as const, state: "ready", ports: { PORT: 8088 } }],
+        };
+      }
+      async scrapeInVmDaemonPort(_vm: string): Promise<number | null> {
+        return null;
+      }
+    }
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-port-fb-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new FakeRuntimeWithNullDaemonScrape();
+      const wt = { name: "demo", id: "abc12345", path: "/work/demo", stack_id: "demo-abc12345" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      await exe.up({ outputMode: "pretty" } as any);
+      const snap = await readSnapshot("demo-abc12345");
+      expect(snap?.data_source).toEqual({ kind: "http", base_url: "http://10.0.0.5:3300", stack_id: "workspace-c52ddf65" });
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("returns exitCode 0 and stackId from deps.worktree when scrape returns null", async () => {
     const home = mkdtempSync(join(tmpdir(), "lich-sandbox-up-null-"));
     const prev = process.env.LICH_HOME;
