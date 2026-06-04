@@ -26,7 +26,7 @@ function prepareWorktree(name: string): string {
   }
   const injected = yaml.replace(
     /^runtime:\s*$/m,
-    'runtime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    bake_inputs: ["db/migrations/**", "db/migrations-heavy/**", "db/seed-heavy.sql"]',
+    'runtime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    memory: 8192\n    bake_inputs: ["db/migrations/**", "db/migrations-heavy/**", "db/seed-heavy.sql"]',
   );
   writeFileSync(yamlPath, injected);
   return dir;
