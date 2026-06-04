@@ -595,13 +595,24 @@ describe("SandboxRuntime", () => {
       expect(outcome.vmIp).toBe("10.0.0.1");
     });
 
-    it("scrapeInVmStack returns the parsed StackView for the active profile", async () => {
+    it("scrapeInVmStack returns the StackView (with id + service ports) from the in-VM dashboard API", async () => {
       const { rt } = withSync();
       backend.exec = async (_name, cmd) => {
-        if (cmd.join(" ") === "lich stacks --json") {
+        const joined = cmd.join(" ");
+        if (joined === "cat /home/admin/.lich/daemon.url") {
+          return { exitCode: 0, stdout: "http://0.0.0.0:38165\n", stderr: "" };
+        }
+        if (cmd[0] === "curl" && joined.includes("/api/stacks")) {
           return {
             exitCode: 0,
-            stdout: JSON.stringify([{ id: "workspace-c52ddf65", worktree_name: "workspace", status: "up", services: [{ name: "web", state: "ready", allocated_ports: { PORT: 8088 } }] }]),
+            stdout: JSON.stringify([
+              {
+                id: "workspace-c52ddf65",
+                worktree_name: "workspace",
+                status: "up",
+                services: [{ name: "web", kind: "owned", state: "ready", ports: { PORT: 8088 } }],
+              },
+            ]),
             stderr: "",
           };
         }
@@ -610,6 +621,19 @@ describe("SandboxRuntime", () => {
       const scraped = await rt.scrapeInVmStack(ctx(), runName("wt123", "dev"));
       expect(scraped?.id).toBe("workspace-c52ddf65");
       expect(scraped?.services[0]!.name).toBe("web");
+      expect(scraped?.services[0]!.ports).toEqual({ PORT: 8088 });
+    });
+
+    it("scrapeInVmStack returns null when daemon-port scrape fails (no port to talk to)", async () => {
+      const { rt } = withSync();
+      backend.exec = async (_name, cmd) => {
+        if (cmd.join(" ") === "cat /home/admin/.lich/daemon.url") {
+          return { exitCode: 1, stdout: "", stderr: "No such file" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      };
+      const scraped = await rt.scrapeInVmStack(ctx(), runName("wt123", "dev"));
+      expect(scraped).toBeNull();
     });
   });
 });

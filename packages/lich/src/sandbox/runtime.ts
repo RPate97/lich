@@ -302,8 +302,18 @@ export class SandboxRuntime {
     return this.backend.exec(runVm, args, { cwd: '/workspace', ...opts });
   }
 
+  // The CLI's `lich stacks --json` emits StackRow (stack_id, no service ports) — a
+  // different wire format than StackView. We hit the in-VM dashboard's /api/stacks
+  // instead so we get the real StackView shape (id + services[*].ports), which the
+  // host needs to populate data_source.stack_id and the routing table.
   async scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null> {
-    const result = await this.backend.exec(runVm, ['lich', 'stacks', '--json'], { cwd: '/workspace', timeoutMs: 10_000 });
+    const port = await this.scrapeInVmDaemonPort(runVm);
+    if (port === null) return null;
+    const result = await this.backend.exec(
+      runVm,
+      ['curl', '-fsS', `http://127.0.0.1:${port}/api/stacks`],
+      { cwd: '/home/admin', timeoutMs: 10_000 },
+    );
     if (result.exitCode !== 0) return null;
     try {
       const all = JSON.parse(result.stdout) as StackView[];
