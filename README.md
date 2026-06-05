@@ -2,18 +2,15 @@
 
 > Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.
 
-**What it is:** A single binary that reads a `lich.yaml` file describing your stack (docker containers, host processes, env, lifecycle) and brings it up with per-worktree isolation — dynamic port allocation, isolated state, automatic routing. Run `lich up` in two worktrees, get two independent stacks, no port collisions, no compose project conflicts.
+**What it is:** A CLI that reads a `lich.yaml` file describing your stack (docker containers, host processes, env variables, lifecycle) and brings it up with per-worktree isolation. Ports are allocated and mapped dynamically, state is isolated, service communication is properly routed. Run `lich up` in two worktrees, get two independent stacks running whatever code exists in those worktrees.
 
-**Who it's for:**
-- Developers running parallel branches via git worktrees
-- Teams where multiple stacks must coexist on one machine
-- Agent-driven workflows that spin up isolated dev environments
+**Who it's for:** Developers who want to run parallel development stacks from multiple worktrees. Typically this is to enable workflows that make using parallel agents.
 
-**What it isn't:** Not a container runtime (it drives one), not a framework (it drives yours), not a scaffolder, not opinionated about your stack. It's a thin wrapper that gives your existing dev stack a uniform interface.
+**What it isn't:** Not a container runtime (it drives one), not a framework (it drives yours), not a scaffolder, not opinionated about your stack. It's a thin wrapper on top of your existing stack that allows it to run in parallel with a consistent interface.
 
 ## Why
 
-Compose alone can't run two copies of the same stack on one machine — ports collide, container names collide, project names collide. Manual port juggling works for one stack; it falls apart at two and is unusable at four. Lich solves the multiplexing problem so you can have N stacks alive simultaneously, one per worktree.
+Traditional local dev tooling is done ad hoc. It uses various tools: bash/npm scripts, procfiles, docker compose, etc. These systems generally can't run multiple copies of the same stack on one machine at the same time. Ports collide, container names conflict, memory leaks from zombie processes never cleaned up, agents get derailed running down bugs in tooling instead fixing actual problems. Lich implements a robust and observable system to manage this complexity.
 
 ## Install
 
@@ -25,15 +22,26 @@ Or download a release tarball from [GitHub Releases](https://github.com/RPate97/
 
 ## Quickstart
 
+Install the instrumentation skill:
 ```bash
-cd your-project
-lich init               # writes a starter lich.yaml
+npx skills add https://github.com/RPate97/lich/skills/lich-instrument
+```
+
+Open your favorite coding agent and run the skill:
+```bash
+/lich-instrument
+```
+
+> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](/reference/lich-yaml). It's recommended to start with a smaller slice of your stack such as just your UI and database to get a feel for lich before instrumenting your entire application especially if you are running a large multi-service app.
+
+Start using Lich:
+```bash
 lich up                 # brings the stack up
 lich logs               # tail logs
 lich down               # stop it
 ```
 
-In another worktree of the same repo, `lich up` again — both stacks run side by side.
+In another worktree of the same repo, `lich up` again. Both stacks run side by side.
 
 ## Minimal lich.yaml
 
