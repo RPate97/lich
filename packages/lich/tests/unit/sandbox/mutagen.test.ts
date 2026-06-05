@@ -7,6 +7,7 @@ import {
   isMutagenAvailable,
   upsertSshConfigBlock,
   removeSshConfigBlock,
+  gcOrphanedSshConfigBlocks,
 } from "../../../src/sandbox/mutagen.js";
 import type { MutagenCli } from "../../../src/sandbox/mutagen.js";
 
@@ -195,6 +196,71 @@ describe("upsertSshConfigBlock / removeSshConfigBlock", () => {
   test("remove is a no-op when the marker is absent", () => {
     writeFileSync(configPath, "Host github.com\n    User git\n");
     removeSshConfigBlock(configPath, "vm-a");
+    expect(readFileSync(configPath, "utf8")).toBe("Host github.com\n    User git\n");
+  });
+});
+
+describe("gcOrphanedSshConfigBlocks", () => {
+  let dir: string;
+  let configPath: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lich-ssh-gc-"));
+    configPath = join(dir, "config");
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const entry = (host: string) => ({
+    host,
+    user: "admin",
+    keyPath: "/tmp/key",
+    knownHostsPath: "/tmp/known_hosts",
+  });
+
+  test("removes blocks whose VM is not in the known list", () => {
+    upsertSshConfigBlock(configPath, "vm-orphan-a", entry("10.0.0.1"));
+    upsertSshConfigBlock(configPath, "vm-live", entry("10.0.0.2"));
+    upsertSshConfigBlock(configPath, "vm-orphan-b", entry("10.0.0.3"));
+
+    const result = gcOrphanedSshConfigBlocks(configPath, ["vm-live"]);
+
+    expect(new Set(result.removed)).toEqual(new Set(["vm-orphan-a", "vm-orphan-b"]));
+    const content = readFileSync(configPath, "utf8");
+    expect(content).not.toContain("vm-orphan-a");
+    expect(content).not.toContain("vm-orphan-b");
+    expect(content).toContain("vm-live");
+  });
+
+  test("returns empty removed list when all blocks are live", () => {
+    upsertSshConfigBlock(configPath, "vm-a", entry("10.0.0.1"));
+    upsertSshConfigBlock(configPath, "vm-b", entry("10.0.0.2"));
+
+    const result = gcOrphanedSshConfigBlocks(configPath, ["vm-a", "vm-b"]);
+    expect(result.removed).toEqual([]);
+  });
+
+  test("preserves non-lich-tart user content", () => {
+    writeFileSync(configPath, "Host github.com\n    User git\n");
+    upsertSshConfigBlock(configPath, "vm-orphan", entry("10.0.0.1"));
+
+    gcOrphanedSshConfigBlocks(configPath, []);
+
+    const content = readFileSync(configPath, "utf8");
+    expect(content).toContain("Host github.com");
+    expect(content).toContain("User git");
+    expect(content).not.toContain("vm-orphan");
+  });
+
+  test("no-op when config file does not exist", () => {
+    const result = gcOrphanedSshConfigBlocks(configPath, []);
+    expect(result.removed).toEqual([]);
+  });
+
+  test("no-op when config has no lich-tart blocks", () => {
+    writeFileSync(configPath, "Host github.com\n    User git\n");
+    const result = gcOrphanedSshConfigBlocks(configPath, []);
+    expect(result.removed).toEqual([]);
     expect(readFileSync(configPath, "utf8")).toBe("Host github.com\n    User git\n");
   });
 });

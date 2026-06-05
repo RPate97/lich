@@ -168,6 +168,34 @@ export function removeSshConfigBlock(configPath: string, name: string): void {
   }
 }
 
+const LICH_TART_BLOCK_NAME_REGEX = /# === lich-tart: (.+?) \(auto-generated; safe to delete\) ===/g;
+
+// Self-heals SSH config when prior runs leaked blocks (test panic, OOM kill,
+// fallback `tart delete` bypassing MutagenSync.terminate, etc.). Idempotent;
+// bounded to our marked blocks only.
+export function gcOrphanedSshConfigBlocks(
+  configPath: string,
+  knownVmNames: ReadonlyArray<string>,
+): { removed: string[] } {
+  if (!existsSync(configPath)) return { removed: [] };
+  const existing = readFileSync(configPath, "utf8");
+  const found = new Set<string>();
+  let match: RegExpExecArray | null;
+  const re = new RegExp(LICH_TART_BLOCK_NAME_REGEX.source, "g");
+  while ((match = re.exec(existing)) !== null) {
+    found.add(match[1]!);
+  }
+  const knownSet = new Set(knownVmNames);
+  const orphans = [...found].filter((name) => !knownSet.has(name));
+  if (orphans.length === 0) return { removed: [] };
+  let next = existing;
+  for (const orphan of orphans) {
+    next = next.replace(lichTartBlockRegex(orphan), "");
+  }
+  writeFileSync(configPath, next, { mode: 0o600 });
+  return { removed: orphans };
+}
+
 export class MutagenSync implements SandboxSync {
   constructor(
     private readonly cli: MutagenCli = new RealMutagenCli(),

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SnapshotStore } from '../../sandbox/snapshot-store.js';
 import { TartBackend } from '../../sandbox/tart.js';
 import { runGc, type GcPolicy } from '../../sandbox/gc.js';
+import { gcOrphanedSshConfigBlocks } from '../../sandbox/mutagen.js';
 import { parseConfig } from '../../config/parse.js';
 import { detectWorktree } from '../../worktree/detect.js';
 
@@ -42,16 +43,27 @@ export const sandboxGc: CommandHandler = async () => {
 
   const { evicted, warnings } = await runGc(store, backend, policy);
 
+  let sshRemoved: string[] = [];
+  try {
+    const vms = await backend.list();
+    const result = gcOrphanedSshConfigBlocks(join(homedir(), '.ssh', 'config'), vms.map(v => v.name));
+    sshRemoved = result.removed;
+  } catch { /* best-effort */ }
+
   const warningLines = warnings.map(w => `⚠ destroy failed for ${w.vmName}: ${w.message}`);
+  const sshLine = sshRemoved.length > 0
+    ? `cleaned ${sshRemoved.length} orphaned ssh config block${sshRemoved.length === 1 ? '' : 's'}: ${sshRemoved.join(', ')}`
+    : null;
+  const sshSuffix = sshLine ? `\n${sshLine}` : '';
 
   if (evicted.length === 0) {
     const base = 'nothing to collect';
-    return { ok: true, message: warningLines.length ? `${base}\n${warningLines.join('\n')}` : base };
+    return { ok: true, message: (warningLines.length ? `${base}\n${warningLines.join('\n')}` : base) + sshSuffix };
   }
   const lines = evicted.map(g => `  - ${g.vmName} (${g.profileName}, hash ${g.inputsHash.slice(0, 12)})`);
   const header = `evicted ${evicted.length} golden${evicted.length === 1 ? '' : 's'}:`;
-  const message = warningLines.length
+  const message = (warningLines.length
     ? `${header}\n${lines.join('\n')}\n${warningLines.join('\n')}`
-    : `${header}\n${lines.join('\n')}`;
+    : `${header}\n${lines.join('\n')}`) + sshSuffix;
   return { ok: true, message };
 };

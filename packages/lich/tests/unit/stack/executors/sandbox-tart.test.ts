@@ -25,6 +25,10 @@ class FakeRuntime {
     this.calls.push({ method: "scrapeInVmStack", args });
     return null;
   }
+  async gcStaleSshConfigBlocks(): Promise<{ removed: string[] } | null> {
+    this.calls.push({ method: "gcStaleSshConfigBlocks", args: [] });
+    return { removed: [] };
+  }
 }
 
 const fakeCtx = () => ({
@@ -127,6 +131,51 @@ describe("SandboxStackExecutor.logs", () => {
 });
 
 describe("SandboxStackExecutor.up", () => {
+  it("calls runtime.gcStaleSshConfigBlocks before up so leaked blocks are cleaned", async () => {
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-gc-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new FakeRuntime();
+      const wt = { name: "demo", id: "abc12345", path: "/work/demo", stack_id: "demo-abc12345" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      await exe.up({ outputMode: "pretty" } as any);
+      const gcIdx = rt.calls.findIndex(c => c.method === "gcStaleSshConfigBlocks");
+      const upIdx = rt.calls.findIndex(c => c.method === "up");
+      expect(gcIdx).toBeGreaterThanOrEqual(0);
+      expect(upIdx).toBeGreaterThanOrEqual(0);
+      expect(gcIdx).toBeLessThan(upIdx);
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("up still succeeds when runtime omits gcStaleSshConfigBlocks (older runtime compat)", async () => {
+    class LegacyRuntime {
+      calls: Array<{ method: string }> = [];
+      async up() { this.calls.push({ method: "up" }); return { path: "cold", vmName: "v", vmIp: "1.1.1.1", durationMs: 1 }; }
+      async down() { return { warnings: [] }; }
+      async exec() { return { exitCode: 0, stdout: "", stderr: "" }; }
+      async scrapeInVmStack() { return null; }
+    }
+    const home = mkdtempSync(join(tmpdir(), "lich-sandbox-legacy-"));
+    const prev = process.env.LICH_HOME;
+    process.env.LICH_HOME = home;
+    try {
+      const rt = new LegacyRuntime();
+      const wt = { name: "demo", id: "abc12345", path: "/work/demo", stack_id: "demo-abc12345" };
+      const exe = new SandboxStackExecutor(rt as any, fakeCtx(), { worktree: wt as any });
+      const result = await exe.up({ outputMode: "pretty" } as any);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.LICH_HOME;
+      else process.env.LICH_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("writes host snapshot with data_source, executor, services mirror, and routing entries", async () => {
     class FakeRuntimeWithScrape extends FakeRuntime {
       override async up(...args: unknown[]) {

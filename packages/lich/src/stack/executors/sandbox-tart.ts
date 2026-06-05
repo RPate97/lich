@@ -17,6 +17,7 @@ interface RuntimeLike {
   exec(ctx: RuntimeContext, args: ReadonlyArray<string>, opts?: ExecOptions): Promise<ExecResult>;
   scrapeInVmStack(ctx: RuntimeContext, runVm: string): Promise<StackView | null>;
   scrapeInVmDaemonPort?(runVm: string): Promise<number | null>;
+  gcStaleSshConfigBlocks?(): Promise<{ removed: string[] } | null>;
 }
 
 export class SandboxStackExecutor implements StackExecutor {
@@ -38,6 +39,7 @@ export class SandboxStackExecutor implements StackExecutor {
   }
 
   async up(input: RunUpInput): Promise<RunUpResult> {
+    await this.runtime.gcStaleSshConfigBlocks?.();
     const outcome = await this.runtime.up(this.ctx);
     const verb = outcome.path === "warm" ? "warm-forked" : "cold-booted";
     const out = input.out ?? process.stdout;

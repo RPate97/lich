@@ -8,7 +8,7 @@ import { SnapshotStore } from './snapshot-store.js';
 import { goldenName, runName } from './naming.js';
 import { computeBakeInputsHash } from './inputs-hash.js';
 import { DEFAULT_IGNORE, type SandboxSync } from './sync.js';
-import { MutagenSync, RealMutagenCli, RealSshTransport } from './mutagen.js';
+import { MutagenSync, RealMutagenCli, RealSshTransport, gcOrphanedSshConfigBlocks } from './mutagen.js';
 import { runGc, type GcPolicy } from './gc.js';
 import { RealInVmSshExecutor, type InVmSshExecutor } from './ssh-exec.js';
 import type { StackView } from '../daemon/dashboard/stacks-view.js';
@@ -318,6 +318,19 @@ export class SandboxRuntime {
     try {
       const all = JSON.parse(result.stdout) as StackView[];
       return all.find((s) => s.active_profile === ctx.profileName) ?? all[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Best-effort GC of ~/.ssh/config blocks whose VM no longer exists in tart.
+  // Self-heals after prior runs that leaked (test panic, OOM kill, fallback
+  // `tart delete` bypassing MutagenSync.terminate). Never throws.
+  async gcStaleSshConfigBlocks(): Promise<{ removed: string[] } | null> {
+    try {
+      const vms = await this.backend.list();
+      const sshConfigPath = join(homedir(), '.ssh', 'config');
+      return gcOrphanedSshConfigBlocks(sshConfigPath, vms.map(v => v.name));
     } catch {
       return null;
     }
