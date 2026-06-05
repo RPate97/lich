@@ -55,6 +55,11 @@ lich-starter-t3-feature        up      00:00:08  2/2       http://web.lich-start
 
 Two stacks. Two databases. Two dev servers. No port collisions. Same `lich.yaml`. Both URLs work independently in your browser.
 
+Tear down both:
+```bash
+lich nuke
+```
+
 ### Use lich on your own app
 
 To wire lich into an existing app, install the `lich-instrument` skill and run it in your coding agent:
