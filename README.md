@@ -24,40 +24,53 @@ Or download a release tarball from [GitHub Releases](https://github.com/RPate97/
 
 ## Quickstart
 
-Install the instrumentation skill:
+The fastest way to see lich working is the [t3 starter](https://github.com/RPate97/lich-starter-t3). A [T3 Stack](https://create.t3.gg/) (Next.js + tRPC + Prisma + Postgres + Tailwind) preconfigured with a `lich.yaml`:
+
 ```bash
-npx skills add https://github.com/RPate97/lich/skills/lich-instrument
+git clone https://github.com/RPate97/lich-starter-t3
+cd lich-starter-t3
+lich up
 ```
 
-Open your favorite coding agent and run the skill:
-```bash
-/lich-instrument
-```
+Postgres boots in a Docker container on a dynamically allocated port, `DATABASE_URL` is wired automatically, Prisma pushes the schema, Next.js starts. Open the URL lich prints and you have a working full-stack app.
 
-> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](https://lich.sh/reference/lich-yaml-spec).
+### Run two stacks in parallel
 
-Start using Lich:
-```bash
-lich up                 # brings the stack up
-lich logs               # tail logs
-lich down               # stop it
-```
+Add a worktree and bring up a second stack from the same template:
 
-Commit your new lich.yaml, then create a another worktree and run `lich up` again. Both stacks run side by side:
 ```bash
-git add lich.yaml
-git commit -m "chore: setup lich"
-git worktree add ../myapp-feature -b feature
-cd ../myapp-feature
+git worktree add ../lich-starter-t3-feature -b feature
+cd ../lich-starter-t3-feature
 lich up
 lich stacks
 ```
 
-You should see something like this:
+```
+WORKTREE                       STATUS  UPTIME    SERVICES  URL
+lich-starter-t3                up      00:02:15  2/2       http://web.lich-starter-t3.lich.localhost:3300/
+lich-starter-t3-feature        up      00:00:08  2/2       http://web.lich-starter-t3-feature.lich.localhost:3300/
+```
+
+Two stacks. Two databases. Two dev servers. No port collisions. Same `lich.yaml`. Both URLs work independently in your browser.
+
+### Use lich on your own app
+
+To wire lich into an existing app, install the `lich-instrument` skill and run it in your coding agent:
+
 ```bash
-WORKTREE         STATUS  UPTIME    SERVICES  URL
-myapp            up      00:02:15  3/3       http://api.myapp.lich.localhost:3300/
-myapp-feature    up      00:00:08  3/3       http://api.myapp-feature.lich.localhost:3300/
+npx skills add https://github.com/RPate97/lich/skills/lich-instrument
+```
+
+```bash
+/lich-instrument
+```
+
+The skill walks an agent through writing a `lich.yaml` for your stack. You may need to iterate a few times to get the env variable mapping and loading right; if you get stuck, the [lich.yaml reference](https://lich.sh/reference/lich-yaml-spec) is the place to look. Then it's the same workflow:
+
+```bash
+lich up                 # brings the stack up
+lich logs               # tail logs
+lich down               # stop it
 ```
 
 ## Minimal lich.yaml
