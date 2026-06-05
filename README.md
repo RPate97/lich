@@ -1,6 +1,6 @@
 # lich
 
-> Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.
+Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.
 
 **What it is** 
 
