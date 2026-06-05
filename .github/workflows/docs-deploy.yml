@@ -74,6 +74,9 @@ jobs:
         working-directory: docs/site
         run: npx vitepress build
 
+      - name: Copy install.sh to site root
+        run: cp install.sh docs/site/.vitepress/dist/install.sh
+
       - name: Setup Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5

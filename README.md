@@ -17,7 +17,7 @@ Traditional local dev tooling is done ad hoc. It uses various tools: bash/npm sc
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
+curl -fsSL https://lich.sh/install.sh | bash
 ```
 
 Or download a release tarball from [GitHub Releases](https://github.com/RPate97/lich/releases) and put `lich` on your PATH.
