@@ -1,14 +1,8 @@
-# Build the lich docs site and upload the result as an artifact.
+# Build the lich docs site and deploy to GitHub Pages.
 #
-# V0 status (LEV-507): this workflow only BUILDS the site. It does not
-# deploy anywhere. Once the user picks a deploy target (Cloudflare Pages,
-# Vercel, GitHub Pages, Netlify, etc.) and registers a domain, swap the
-# upload-pages-artifact / Pages deploy job in below, or wire the artifact
-# into a downstream deploy job.
-#
-# Triggers on pushes to main that touch either the site itself OR the
-# skill references the site syncs from. Also exposes a manual trigger
-# from the Actions tab for ad-hoc rebuilds.
+# One-time GitHub setup: Settings → Pages → Source: "GitHub Actions".
+# The deploy job runs only on main; pull_request runs build-only for
+# preview validation.
 
 name: docs-deploy
 
@@ -25,6 +19,15 @@ on:
       - "skills/lich-instrument/references/**"
       - ".github/workflows/docs-deploy.yml"
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -70,35 +73,25 @@ jobs:
         working-directory: docs/site
         run: npx vitepress build
 
-      - name: Upload site artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: docs-site
-          path: docs/site/.vitepress/dist/
-          retention-days: 14
-          if-no-files-found: error
+      - name: Setup Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
 
-      # ---------------------------------------------------------------
-      # TODO(user): wire this artifact to a real deploy target.
-      #
-      # Cloudflare Pages example:
-      #   - uses: cloudflare/pages-action@v1
-      #     with:
-      #       apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      #       accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      #       projectName: lich-docs
-      #       directory: docs/site/.vitepress/dist
-      #       branch: main
-      #
-      # GitHub Pages example (enable Pages → Source: GitHub Actions first):
-      #   - uses: actions/upload-pages-artifact@v3
-      #     with:
-      #       path: docs/site/.vitepress/dist
-      #   (then a separate deploy job using actions/deploy-pages@v4)
-      #
-      # Vercel example:
-      #   - run: npx vercel --prod --token ${{ secrets.VERCEL_TOKEN }}
-      #
-      # For now this workflow only proves the build is green — pick a
-      # target and add the deploy step when ready.
-      # ---------------------------------------------------------------
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/site/.vitepress/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

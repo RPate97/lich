@@ -34,7 +34,7 @@ Open your favorite coding agent and run the skill:
 /lich-instrument
 ```
 
-> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](/docs/site/reference/lich-yaml-spec.md).
+> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](https://rpate97.github.io/lich/reference/lich-yaml-spec).
 
 Start using Lich:
 ```bash
@@ -84,14 +84,14 @@ owned:
 
 ## Docs
 
-The full documentation site lives under [`docs/site/`](docs/site/) (a deployed URL is coming soon). Useful entry points:
+Full docs at **[rpate97.github.io/lich](https://rpate97.github.io/lich/)**. Entry points:
 
-- [Getting started](docs/site/getting-started/index.md)
-- [lich.yaml reference](docs/site/reference/lich-yaml-spec.md)
-- [CLI reference](docs/site/reference/cli.md)
-- [Recipes](docs/site/recipes/index.md)
-- [Worktree isolation](docs/site/concepts/worktrees-isolation.md)
-- [Troubleshooting](docs/site/troubleshooting.md)
+- [Getting started](https://rpate97.github.io/lich/getting-started/)
+- [lich.yaml reference](https://rpate97.github.io/lich/reference/lich-yaml-spec)
+- [CLI reference](https://rpate97.github.io/lich/reference/cli)
+- [Recipes](https://rpate97.github.io/lich/recipes/)
+- [Worktree isolation](https://rpate97.github.io/lich/concepts/worktrees-isolation)
+- [Troubleshooting](https://rpate97.github.io/lich/troubleshooting)
 
 ## Agent skills
 
