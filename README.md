@@ -86,7 +86,7 @@ owned:
 
 Full docs at **[lich.sh](https://lich.sh)**. Entry points:
 
-- [Getting started](https://lich.sh/getting-started/)
+- [Getting started](https://lich.sh/)
 - [lich.yaml reference](https://lich.sh/reference/lich-yaml-spec)
 - [CLI reference](https://lich.sh/reference/cli)
 - [Recipes](https://lich.sh/recipes/)

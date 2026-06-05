@@ -33,7 +33,7 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
-      { text: "Get started", link: "/getting-started/" },
+      { text: "Get started", link: "/" },
       { text: "Reference", link: "/reference/lich-yaml-spec" },
       { text: "Concepts", link: "/concepts/worktrees-isolation" },
       { text: "Recipes", link: "/recipes/" },
@@ -48,7 +48,7 @@ export default defineConfig({
       {
         text: "Getting started",
         items: [
-          { text: "Install + first stack", link: "/getting-started/" },
+          { text: "Install + first stack", link: "/" },
           { text: "Why lich", link: "/getting-started/why-lich" },
           {
             text: "Instrument with an agent",
