@@ -16,7 +16,7 @@ describe.skipIf(!isTartAvailable())('TartBackend disk-fork (e2e)', () => {
   beforeAll(async () => {
     await backend.destroy(SRC);
     await backend.destroy(FORK);
-    await backend.create({ name: SRC, image: TEST_IMAGE });
+    await backend.create({ name: SRC, image: TEST_IMAGE, memoryMb: 2048 });
     await backend.start(SRC);
   }, 180_000);
 

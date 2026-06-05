@@ -16,6 +16,7 @@ runtime:
   sandbox:
     backend: tart
     image: ${IMAGE}
+    memory: 3072
     bake_inputs:
       - "src/**"
 profiles:

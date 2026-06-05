@@ -6,7 +6,7 @@ const TEST_IMAGE = process.env.LICH_SANDBOX_TEST_IMAGE ?? 'ghcr.io/cirruslabs/ub
 
 describe.skipIf(!isTartAvailable())('TartBackend lifecycle (e2e)', () => {
   const backend = new TartBackend();
-  const { name } = withFreshVm(backend, { name: 'lich-test-lifecycle', image: TEST_IMAGE });
+  const { name } = withFreshVm(backend, { name: 'lich-test-lifecycle', image: TEST_IMAGE, memoryMb: 2048 });
 
   test('inspect reports running', async () => {
     expect((await backend.inspect(name)).state).toBe('running');
