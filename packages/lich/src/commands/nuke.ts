@@ -51,7 +51,7 @@ import {
   readStartedLog,
   type StartedEntry,
 } from "../state/started-log.js";
-import { hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { findMainWorktreePath, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 
 export interface RunNukeInput {
   /** `--yes` / `-y` skips the confirmation prompt. */
@@ -679,6 +679,7 @@ function reconstructWorktree(snapshot: StackSnapshot): Worktree {
     id: hashPath(snapshot.worktree_path),
     path: snapshot.worktree_path,
     stack_id: snapshot.stack_id,
+    main_path: findMainWorktreePath(snapshot.worktree_path) ?? snapshot.worktree_path,
   };
 }
 

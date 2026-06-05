@@ -13,6 +13,14 @@ export interface Worktree {
   path: string;
   /** Resolved stack id: `${name}-${id.slice(0, 8)}`. */
   stack_id: string;
+  /**
+   * Absolute path to the *main* worktree (the directory containing the shared
+   * `.git` dir). Equals `path` when this IS the main worktree, or when not in
+   * a git repo at all. Used as a fallback root for relative `env_files` so
+   * secondary worktrees can transparently share a `.env` kept in the main
+   * checkout without symlinks.
+   */
+  main_path: string;
 }
 
 const CONFIG_FILENAME = "lich.yaml";
@@ -57,7 +65,32 @@ function buildWorktree(rootPath: string): Worktree {
     id,
     path: abs,
     stack_id: `${name}-${id.slice(0, 8)}`,
+    main_path: findMainWorktreePath(abs) ?? abs,
   };
+}
+
+/**
+ * Main worktree path = parent of the shared `.git` directory.
+ * `git rev-parse --git-common-dir` returns the shared dir (absolute in
+ * secondary worktrees, relative `.git` in the main); we resolve it
+ * against the worktree root and take the parent.
+ *
+ * Returns null when not in a git repo (lich works without git too).
+ */
+export function findMainWorktreePath(worktreeRoot: string): string | null {
+  if (!safeIsDir(worktreeRoot)) return null;
+  try {
+    const out = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: worktreeRoot,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    }).trim();
+    if (!out) return null;
+    const absoluteCommonDir = resolve(worktreeRoot, out);
+    return realPathSafe(dirname(absoluteCommonDir));
+  } catch {
+    return null;
+  }
 }
 
 /**

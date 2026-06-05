@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   detectWorktree,
+  findMainWorktreePath,
   sanitizeName,
   hashPath,
 } from "../../../src/worktree/detect.js";
@@ -137,5 +138,56 @@ describe("detectWorktree", () => {
 
     const wt = detectWorktree(sub);
     expect(wt.path).toBe(realpathSync(root));
+  });
+
+  it("populates main_path = path for the main worktree (single-checkout case)", () => {
+    const root = makeTmpdir("lich-main-");
+    execFileSync("git", ["init", "-q", root], { stdio: "ignore" });
+    writeFileSync(join(root, "lich.yaml"), "");
+
+    const wt = detectWorktree(root);
+    expect(wt.main_path).toBe(realpathSync(root));
+    expect(wt.main_path).toBe(wt.path);
+  });
+
+  it("populates main_path = path when not in a git repo at all", () => {
+    const root = makeTmpdirOutsideGit();
+    writeFileSync(join(root, "lich.yaml"), "");
+
+    const wt = detectWorktree(root);
+    expect(wt.main_path).toBe(wt.path);
+  });
+});
+
+describe("findMainWorktreePath", () => {
+  it("returns the main worktree's path from a secondary git worktree", () => {
+    const mainRoot = makeTmpdir("lich-main-");
+    execFileSync("git", ["init", "-q", "-b", "main", mainRoot], { stdio: "ignore" });
+    execFileSync("git", ["-C", mainRoot, "commit", "--allow-empty", "-m", "init"], {
+      stdio: "ignore",
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@e", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@e" },
+    });
+    const wtParent = makeTmpdir("lich-wts-");
+    const secondaryPath = join(wtParent, "feature-x");
+    execFileSync("git", ["-C", mainRoot, "worktree", "add", "-b", "feature-x", secondaryPath], { stdio: "ignore" });
+    createdDirs.push(secondaryPath);
+
+    expect(findMainWorktreePath(secondaryPath)).toBe(realpathSync(mainRoot));
+  });
+
+  it("returns the same path when called from the main worktree", () => {
+    const mainRoot = makeTmpdir("lich-main-");
+    execFileSync("git", ["init", "-q", mainRoot], { stdio: "ignore" });
+
+    expect(findMainWorktreePath(mainRoot)).toBe(realpathSync(mainRoot));
+  });
+
+  it("returns null outside a git repo", () => {
+    const dir = makeTmpdirOutsideGit();
+    expect(findMainWorktreePath(dir)).toBeNull();
+  });
+
+  it("returns null when given a non-existent path", () => {
+    expect(findMainWorktreePath("/no/such/path/xyz")).toBeNull();
   });
 });

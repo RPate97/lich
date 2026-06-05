@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, findMainWorktreePath, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
@@ -260,7 +260,7 @@ function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
   const path = snap.worktree_path;
   const name = sanitizeName(snap.worktree_name);
   const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id };
+  return { name, id, path, stack_id: snap.stack_id, main_path: findMainWorktreePath(path) ?? path };
 }
 
 /** Map a POSIX signal name to its number for `128 + N` exit-code derivation. */

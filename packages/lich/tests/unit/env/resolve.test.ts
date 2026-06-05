@@ -34,6 +34,7 @@ const worktree: Worktree = {
   id: "abc123def456",
   path: "/tmp/feature-x",
   stack_id: "feature-x-abc123de",
+  main_path: "/tmp/feature-x",
 };
 
 function baseInput(
@@ -133,6 +134,95 @@ describe("resolveEnvForService — single-layer sanity", () => {
       baseInput({ config: { version: "1", env_files: [f] } }),
     );
     expect(env.ABS).toBe("yep");
+  });
+});
+
+describe("resolveEnvForService — env_files fallback to main worktree", () => {
+  let mainTmp: string;
+  let worktreeTmp: string;
+  beforeEach(() => {
+    mainTmp = mkdtempSync(path.join(os.tmpdir(), "lich-env-main-"));
+    worktreeTmp = mkdtempSync(path.join(os.tmpdir(), "lich-env-wt-"));
+  });
+  afterEach(() => {
+    rmSync(mainTmp, { recursive: true, force: true });
+    rmSync(worktreeTmp, { recursive: true, force: true });
+  });
+
+  it("loads from the main worktree when the file does not exist in the current worktree", async () => {
+    writeFileSync(path.join(mainTmp, ".env"), "FROM_MAIN=yes\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        projectRootFallback: mainTmp,
+        config: { version: "1", env_files: [".env"] },
+      }),
+    );
+    expect(env.FROM_MAIN).toBe("yes");
+  });
+
+  it("current worktree wins when the file exists in both places", async () => {
+    writeFileSync(path.join(mainTmp, ".env"), "VAL=from-main\n", "utf8");
+    writeFileSync(path.join(worktreeTmp, ".env"), "VAL=from-worktree\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        projectRootFallback: mainTmp,
+        config: { version: "1", env_files: [".env"] },
+      }),
+    );
+    expect(env.VAL).toBe("from-worktree");
+  });
+
+  it("merges entries: shared .env from main, worktree-specific .env.local from current", async () => {
+    writeFileSync(path.join(mainTmp, ".env"), "BASE=from-main\n", "utf8");
+    writeFileSync(path.join(worktreeTmp, ".env.local"), "WT=local-override\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        projectRootFallback: mainTmp,
+        config: { version: "1", env_files: [".env", ".env.local"] },
+      }),
+    );
+    expect(env.BASE).toBe("from-main");
+    expect(env.WT).toBe("local-override");
+  });
+
+  it("absolute env_files paths ignore the fallback", async () => {
+    const absFile = path.join(mainTmp, "outside.env");
+    writeFileSync(absFile, "ABS=absolute\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        projectRootFallback: mainTmp,
+        config: { version: "1", env_files: [absFile] },
+      }),
+    );
+    expect(env.ABS).toBe("absolute");
+  });
+
+  it("no fallback applied when projectRoot === projectRootFallback (main worktree case)", async () => {
+    writeFileSync(path.join(worktreeTmp, ".env"), "OK=yes\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        projectRootFallback: worktreeTmp,
+        config: { version: "1", env_files: [".env"] },
+      }),
+    );
+    expect(env.OK).toBe("yes");
+  });
+
+  it("derives fallback from worktree.main_path when projectRootFallback is omitted", async () => {
+    writeFileSync(path.join(mainTmp, ".env"), "DERIVED=ok\n", "utf8");
+    const env = await resolveEnvForService(
+      baseInput({
+        projectRoot: worktreeTmp,
+        worktree: { ...worktree, path: worktreeTmp, main_path: mainTmp },
+        config: { version: "1", env_files: [".env"] },
+      }),
+    );
+    expect(env.DERIVED).toBe("ok");
   });
 });
 
