@@ -19,7 +19,7 @@
 | `lifecycle` | `object` | no | Top-level hooks at stack boundaries: before_up, after_up, before_down, after_down. |
 | `env_groups` | `object` | no | Named env-var bundles for `lich exec --env-group` and `lifecycle.*[].env_group:`. |
 | `commands` | `object` | no | Custom CLI commands invoked via `lich <name>`. Inherit the stack's env by default. |
-| `profiles` | `object` | no | Named subsets of the stack — pick a service set and env for a given run. |
+| `profiles` | `object` | no | Named subsets of the stack. Pick a service set and env for a given run. |
 
 
 ## Compose service (`services.<name>`) {#services}
@@ -48,13 +48,13 @@
 | `cwd` | `string` | no | Working directory for the cmd, relative to the repo root. Defaults to the root. |
 | `depends_on` | `string[]` | no | Other owned or compose services that must be ready before this one starts. |
 | `port` | `integer \| object` | no | Single allocated port for this service. Lich injects the host port as the named env var. |
-| `ports` | `object` | no | Multi-port shape — map of port-key to descriptor. Each gets its own injected env var. |
+| `ports` | `object` | no | Multi-port shape: map of port-key to descriptor. Each gets its own injected env var. |
 | `oneshot` | `boolean` | no | If true, lich runs cmd to completion (non-zero = fail) instead of supervising it. Pair with `stop_cmd`. |
 | `stop_cmd` | `string` | no | Teardown command invoked on `lich down` / `lich nuke`. Used with `oneshot` to clean up side-effects. |
 | `owned_containers` | `object` | no | Docker label or name pattern. After `stop_cmd` runs, lich force-removes any container matching the filter (`docker rm -f`). Pick exactly one of `label` or `name_pattern`. |
-| `env` | `object` | no | Service-scoped env vars. Merges with top-level `env:` — per-service wins on collision. |
+| `env` | `object` | no | Service-scoped env vars. Merges with top-level `env:`; per-service wins on collision. |
 | `env_files` | `string[]` | no | Service-scoped dotenv files to load. Merges with top-level `env_files:`. |
-| `env_from` | `array` | no | Service-scoped shell-out env sources. Merges with top-level — per-service wins on collision. |
+| `env_from` | `array` | no | Service-scoped shell-out env sources. Merges with top-level; per-service wins on collision. |
 | `ready_when` | `object` | no | Readiness probe for this service. Pick http_get, tcp, log_match, or cmd. |
 | `fail_when` | `object` | no | Hard-fail signal for this service. A match short-circuits ready_when and fails the stack. |
 | `lifecycle` | `object` | no | Per-service hooks (before_start, after_ready, before_down). |

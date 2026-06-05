@@ -1,6 +1,6 @@
 # Local-dev test-key overrides
 
-**When to use this:** the app integrates with a service that has "always-pass" test keys for localhost development. Cloudflare Turnstile, Stripe, GitHub OAuth, reCAPTCHA, Auth0, etc. Production keys come from a secret manager (`env_from`); locally you want to override them with the public test keys so the dev flow works without real credentials.
+**When to use this:** the app integrates with a service that has "always-pass" test keys for localhost development — Cloudflare Turnstile, Stripe, GitHub OAuth, reCAPTCHA, Auth0, etc. Production keys come from a secret manager (`env_from`); locally you want to override them with the public test keys so the dev flow works without real credentials.
 
 The pattern relies on lich's env precedence: **top-level `env:` literals win over top-level `env_from:`** (and top-level `env_from`'s output gets overwritten by the `env:` literal of the same key). So you can leave the `env_from:` secret-manager pull in place and explicitly override the keys you want test versions of.
 
