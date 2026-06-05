@@ -3,9 +3,11 @@
 > Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.
 
 **What it is** 
+
 A CLI that reads a `lich.yaml` file describing your stack (docker containers, host processes, env variables, lifecycle) and brings it up with per-worktree isolation. Run `lich up` in two worktrees, get two independent stacks running whatever code exists in those worktrees.
 
 **Who it's for** 
+
 Developers who want to run parallel development stacks from multiple worktrees. Typically this is to enable workflows that make using parallel agents.
 
 ## Why
