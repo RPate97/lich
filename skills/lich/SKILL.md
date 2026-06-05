@@ -45,6 +45,7 @@ When a flag does something unexpected or you're unsure which option to pass, che
 
 - **State per stack:** Every running stack has a state directory at `<LICH_HOME>/stacks/<id>/` (default `LICH_HOME=~/.lich`). Logs, snapshots, routing config — all live there.
 - **Worktree scoping:** Your current cwd determines which stack lich operates on. To target a different worktree's stack from a current cwd, use `--worktree <id>` (see `lich <command> --help` for support per command).
+- **env_files cross worktrees:** Relative `env_files` paths resolve against the current worktree first, then fall back to the main worktree (the directory containing the shared `.git` dir). A `.env` kept only in the main checkout is visible from every `git worktree add`'d branch automatically; no symlinks or copying needed. Absolute paths are never re-resolved against the fallback. So when the user says "my .env isn't being picked up", check both the current worktree AND the main worktree before assuming the file is missing.
 - **The daemon is shared:** A single `lich-daemon` runs across all stacks, proxying friendly URLs and serving the dashboard. You don't normally interact with it directly.
 
 ## Reading logs
