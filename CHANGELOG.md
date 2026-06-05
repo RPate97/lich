@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/RPate97/lich/compare/v0.1.0...v0.2.0) (2026-06-05)
+
+
+### Features
+
+* **daemon:** honor LICH_DAEMON_HOST env var for non-loopback bind ([4e218b3](https://github.com/RPate97/lich/commit/4e218b36164c7c0ce7b7c58bf4c0941bdc4898f0))
+* **env:** env_files in worktrees fall back to the main worktree ([50c15e0](https://github.com/RPate97/lich/commit/50c15e0400613fb8993f2f816bcdfe1d2c57153d))
+
 ## [0.1.0](https://github.com/RPate97/lich/compare/v0.0.1...v0.1.0) (2026-05-31)
 
 
