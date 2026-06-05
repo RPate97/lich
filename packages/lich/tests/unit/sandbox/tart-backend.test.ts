@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'vitest';
-import { TartBackend } from '../../../src/sandbox/tart.js';
+import { TartBackend, parseVmStatFreeMemory, buildStartTimeoutError } from '../../../src/sandbox/tart.js';
 import type { TartCli } from '../../../src/sandbox/tart-cli.js';
 import { SandboxAlreadyExistsError, SandboxNotFoundError } from '../../../src/sandbox/errors.js';
 
@@ -107,5 +107,69 @@ describe('TartBackend lifecycle', () => {
       { Name: 'dst', State: 'stopped' },
     ]));
     await expect(backend.clone('src', 'dst')).rejects.toBeInstanceOf(SandboxAlreadyExistsError);
+  });
+});
+
+describe('parseVmStatFreeMemory', () => {
+  test('parses macOS vm_stat output with 16KB pages', () => {
+    const sample = [
+      'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+      'Pages free:                                    11542.',
+      'Pages active:                                 364755.',
+      'Pages inactive:                               361464.',
+      'Pages speculative:                              2868.',
+    ].join('\n');
+    const got = parseVmStatFreeMemory(sample);
+    expect(got).not.toBeNull();
+    expect(got!.freeMb).toBe(Math.round((11542 * 16384) / (1024 * 1024)));
+    expect(got!.reclaimableMb).toBe(
+      Math.round(((11542 + 361464 + 2868) * 16384) / (1024 * 1024)),
+    );
+  });
+
+  test('parses macOS vm_stat output with 4KB pages', () => {
+    const sample = [
+      'Mach Virtual Memory Statistics: (page size of 4096 bytes)',
+      'Pages free:                                    100000.',
+      'Pages inactive:                                200000.',
+    ].join('\n');
+    const got = parseVmStatFreeMemory(sample);
+    expect(got).not.toBeNull();
+    expect(got!.freeMb).toBe(Math.round((100000 * 4096) / (1024 * 1024)));
+  });
+
+  test('returns null when page size is missing', () => {
+    const sample = 'Pages free: 11542.';
+    expect(parseVmStatFreeMemory(sample)).toBeNull();
+  });
+
+  test('returns null when Pages free is missing', () => {
+    const sample = 'Mach Virtual Memory Statistics: (page size of 16384 bytes)';
+    expect(parseVmStatFreeMemory(sample)).toBeNull();
+  });
+});
+
+describe('buildStartTimeoutError', () => {
+  test('includes deadline in seconds in the error message', () => {
+    const err = buildStartTimeoutError('lich-test-vm', 45_000, null);
+    expect(err.stderr).toContain('45s');
+    expect(err.stderr).toContain('VM did not reach running state');
+    expect(err.command).toEqual(['run', 'lich-test-vm']);
+  });
+
+  test('includes host memory summary when probe succeeded', () => {
+    const err = buildStartTimeoutError('lich-test-vm', 45_000, {
+      freeMb: 180,
+      reclaimableMb: 6000,
+    });
+    expect(err.stderr).toContain('180');
+    expect(err.stderr).toContain('6000');
+    expect(err.stderr).toContain('host');
+  });
+
+  test('omits host suffix when memory probe returned null', () => {
+    const err = buildStartTimeoutError('lich-test-vm', 45_000, null);
+    expect(err.stderr).not.toContain('host:');
+    expect(err.stderr).not.toContain('MB');
   });
 });

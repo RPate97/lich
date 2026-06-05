@@ -1,8 +1,52 @@
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import type { SandboxBackend, SandboxConfig, SandboxState, ExecResult, ExecOptions } from './backend.js';
 import type { TartCli } from './tart-cli.js';
 import { RealTartCli } from './tart-cli.js';
 import { SandboxNotFoundError, SandboxAlreadyExistsError, TartCommandError } from './errors.js';
+
+const START_DEADLINE_MS = 45_000;
+
+export interface HostMemorySnapshot {
+  freeMb: number;
+  reclaimableMb: number;
+}
+
+export function parseVmStatFreeMemory(vmStatOutput: string): HostMemorySnapshot | null {
+  const pageSize = vmStatOutput.match(/page size of (\d+) bytes/);
+  const freePages = vmStatOutput.match(/Pages free:\s+(\d+)/);
+  if (!pageSize || !freePages) return null;
+  const ps = parseInt(pageSize[1]!, 10);
+  const free = parseInt(freePages[1]!, 10);
+  const inactivePages = vmStatOutput.match(/Pages inactive:\s+(\d+)/);
+  const speculativePages = vmStatOutput.match(/Pages speculative:\s+(\d+)/);
+  const inactive = inactivePages ? parseInt(inactivePages[1]!, 10) : 0;
+  const speculative = speculativePages ? parseInt(speculativePages[1]!, 10) : 0;
+  return {
+    freeMb: Math.round((free * ps) / (1024 * 1024)),
+    reclaimableMb: Math.round(((free + inactive + speculative) * ps) / (1024 * 1024)),
+  };
+}
+
+export function buildStartTimeoutError(
+  name: string,
+  deadlineMs: number,
+  hostMemory: HostMemorySnapshot | null,
+): TartCommandError {
+  const seconds = deadlineMs / 1000;
+  const suffix = hostMemory
+    ? ` (host: ${hostMemory.freeMb} MB free, ~${hostMemory.reclaimableMb} MB reclaimable — memory pressure can stall VM boot)`
+    : '';
+  return new TartCommandError(['run', name], -1, '', `VM did not reach running state in ${seconds}s${suffix}`);
+}
+
+function probeHostMemory(): HostMemorySnapshot | null {
+  try {
+    const out = execSync('vm_stat', { encoding: 'utf8', timeout: 2_000 });
+    return parseVmStatFreeMemory(out);
+  } catch {
+    return null;
+  }
+}
 
 interface TartListEntry {
   Name: string;
@@ -63,13 +107,13 @@ export class TartBackend implements SandboxBackend {
       detached: true,
     });
     child.unref();
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + START_DEADLINE_MS;
     while (Date.now() < deadline) {
       const s = await this.inspect(name);
       if (s.state === 'running') return;
       await new Promise(r => setTimeout(r, 500));
     }
-    throw new TartCommandError(['run', name], -1, '', 'VM did not reach running state in 30s');
+    throw buildStartTimeoutError(name, START_DEADLINE_MS, probeHostMemory());
   }
 
   // Graceful in-guest shutdown. `tart stop` hard-terminates and drops unsynced
