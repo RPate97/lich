@@ -10,7 +10,7 @@ A CLI that reads a `lich.yaml` file describing your stack (docker containers, ho
 
 **Who it's for** 
 
-Developers who want to run parallel development stacks from multiple worktrees. Typically this is to enable workflows that make using parallel agents.
+Developers who want to run parallel development stacks from multiple worktrees. Typically this is to enable workflows using multiple parallel coding agents.
 
 ## Why
 
