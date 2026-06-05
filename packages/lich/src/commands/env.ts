@@ -8,7 +8,7 @@
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
@@ -140,13 +140,6 @@ export async function runEnvCmd(
   return { exitCode: 0 };
 }
 
-/** Rebuild a `Worktree` from a snapshot for cross-worktree command targeting. */
-function worktreeFromSnapshot(snap: import("../state/snapshot.js").StackSnapshot): Worktree {
-  const path = snap.worktree_path;
-  const name = sanitizeName(snap.worktree_name);
-  const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id };
-}
 
 /**
  * Conservative whitelist for "unquoted dotenv value that round-trips through

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import { resolveStackId } from "../state/resolve-stack.js";
 import {
   readSnapshot,
@@ -329,12 +329,6 @@ async function runPerServiceRestart(
   };
 }
 
-function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
-  const path = snap.worktree_path;
-  const name = sanitizeName(snap.worktree_name);
-  const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id };
-}
 
 async function stopOwned(
   svcSnap: ServiceSnapshot,

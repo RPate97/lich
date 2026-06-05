@@ -51,7 +51,7 @@ import {
   readStartedLog,
   type StartedEntry,
 } from "../state/started-log.js";
-import { hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import { purgeAllSandboxes } from "../sandbox/purge-all.js";
 
 export interface RunNukeInput {
@@ -678,12 +678,7 @@ function isTTY(stdin: NodeJS.ReadableStream): boolean {
  * the synthesized id matches the original whenever worktree_path is reproduced on disk.
  */
 function reconstructWorktree(snapshot: StackSnapshot): Worktree {
-  return {
-    name: sanitizeName(snapshot.worktree_name),
-    id: hashPath(snapshot.worktree_path),
-    path: snapshot.worktree_path,
-    stack_id: snapshot.stack_id,
-  };
+  return worktreeFromSnapshot(snapshot);
 }
 
 function writeLine(out: NodeJS.WritableStream, text: string): void {

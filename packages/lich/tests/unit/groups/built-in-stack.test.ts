@@ -23,6 +23,7 @@ const worktree: Worktree = {
   id: "abc123def456",
   path: "/tmp/feature-x",
   stack_id: "feature-x-abc123de",
+  main_path: "/tmp/feature-x",
 };
 
 describe("resolveStackGroup", () => {

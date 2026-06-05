@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { logsDir, phaseLogPath, serviceLogPath } from "../state/directory.js";
 import { readSnapshot, type StackSnapshot } from "../state/snapshot.js";
-import { detectWorktree, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import { resolveStackId } from "../state/resolve-stack.js";
 import type { LifecyclePhase } from "../lifecycle/executor.js";
 import { pickExecutor } from "../stack/executor.js";
@@ -97,12 +97,7 @@ export function runLogs(input: RunLogsInput): RunLogsResult {
       return;
     }
 
-    const wt: Worktree = worktree ?? {
-      name: snapshot.worktree_name,
-      id: stackId,
-      path: snapshot.worktree_path,
-      stack_id: snapshot.stack_id,
-    };
+    const wt: Worktree = worktree ?? worktreeFromSnapshot(snapshot);
     const configPath = join(wt.path, "lich.yaml");
     const inner = (await pickExecutor(snapshot, { worktree: wt, lichYamlPath: configPath })).logs(input);
     await inner.done;

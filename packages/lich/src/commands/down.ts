@@ -23,7 +23,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import { resolveStackId } from "../state/resolve-stack.js";
 import { release } from "../ports/allocator.js";
 import {
@@ -1364,21 +1364,11 @@ async function runSnapshotLifecycle(
   }
 }
 
-function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
-  const path = snap.worktree_path;
-  const name = sanitizeName(snap.worktree_name);
-  const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id };
-}
-
 async function findWorktreeBySnapshot(
   cwd: string,
   opts: { includeStoppedSandbox?: boolean } = {},
 ): Promise<Worktree | null> {
   const { realpathSync, existsSync: fsExists } = await import("node:fs");
-  const { hashPath, sanitizeName } = await import("../worktree/detect.js");
-  const { basename } = await import("node:path");
-
   const safeReal = (p: string): string => {
     try { return realpathSync(p); } catch { return p; }
   };
@@ -1397,9 +1387,7 @@ async function findWorktreeBySnapshot(
     const snapPath = safeReal(snap.worktree_path);
     if (!cwdReal.startsWith(snapPath)) continue;
 
-    const name = sanitizeName(basename(snapPath));
-    const id = hashPath(snapPath);
-    return { name, id, path: snapPath, stack_id: `${name}-${id.slice(0, 8)}` };
+    return worktreeFromSnapshot({ ...snap, worktree_path: snapPath });
   }
   return null;
 }

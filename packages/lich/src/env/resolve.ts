@@ -27,7 +27,8 @@
  * interpolation runs).
  */
 
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, isAbsolute } from "node:path";
+import { existsSync } from "node:fs";
 
 import type { LichConfig, EnvMap, EnvFiles, EnvFrom } from "../config/types.js";
 import {
@@ -66,6 +67,15 @@ export interface ResolveEnvForServiceInput {
   processEnv?: NodeJS.ProcessEnv;
   /** Project root for relative env_files paths AND env_from cwd default. */
   projectRoot: string;
+  /**
+   * Override for the env_files fallback root. Defaults to `worktree.main_path`
+   * (the parent of the shared `.git` dir), so a `.env` kept only in the main
+   * checkout is transparently visible from `git worktree`-created secondary
+   * worktrees without symlinks. Tests pin this explicitly; product callers
+   * should leave it unset and let it derive from `worktree`. Absolute
+   * `env_files` paths are never re-resolved against the fallback.
+   */
+  projectRootFallback?: string;
   /**
    * Active profile. When set, the profile's `env_from`/`env_files`/`env`
    * layer between top-level and per-service, and `LICH_PROFILE` is
@@ -138,9 +148,20 @@ function processEnvToRecord(
 function absolutizeFiles(
   files: EnvFiles | undefined,
   projectRoot: string,
+  projectRootFallback?: string,
 ): string[] {
   if (!files || files.length === 0) return [];
-  return files.map((f) => resolvePath(projectRoot, f));
+  const hasFallback =
+    projectRootFallback !== undefined && projectRootFallback !== projectRoot;
+  return files.map((f) => {
+    const primary = resolvePath(projectRoot, f);
+    if (!hasFallback) return primary;
+    if (isAbsolute(f)) return primary;
+    if (existsSync(primary)) return primary;
+    const fallback = resolvePath(projectRootFallback, f);
+    if (existsSync(fallback)) return fallback;
+    return primary;
+  });
 }
 
 /**
@@ -230,8 +251,9 @@ async function layerBundle(args: {
   env_files: EnvFiles | undefined;
   env: EnvMap | undefined;
   projectRoot: string;
+  projectRootFallback?: string;
 }): Promise<Record<string, string | null>> {
-  const { into, env_from, env_files, env, projectRoot } = args;
+  const { into, env_from, env_files, env, projectRoot, projectRootFallback } = args;
 
   if (env_from && env_from.length > 0) {
     const fromShell = await loadEnvFromShellOut({
@@ -244,7 +266,7 @@ async function layerBundle(args: {
 
   if (env_files && env_files.length > 0) {
     const fromFiles = await loadEnvFiles({
-      files: absolutizeFiles(env_files, projectRoot),
+      files: absolutizeFiles(env_files, projectRoot, projectRootFallback),
     });
     Object.assign(into, fromFiles);
   }
@@ -298,6 +320,7 @@ export async function resolveEnvForService(
     env_files: input.config.env_files,
     env: input.config.env,
     projectRoot: input.projectRoot,
+    projectRootFallback: input.projectRootFallback ?? input.worktree.main_path,
   });
 
   if (input.profile) {
@@ -317,6 +340,7 @@ export async function resolveEnvForService(
     env_files: bundle.env_files,
     env: bundle.env,
     projectRoot: input.projectRoot,
+    projectRootFallback: input.projectRootFallback ?? input.worktree.main_path,
   });
 
   const finalEnv = dropNullValues(merged);
@@ -353,6 +377,7 @@ export async function resolveTopLevelEnv(
     env_files: input.config.env_files,
     env: input.config.env,
     projectRoot: input.projectRoot,
+    projectRootFallback: input.projectRootFallback ?? input.worktree.main_path,
   });
 
   if (input.profile) {
