@@ -25,6 +25,8 @@ runtime:
   sandbox:
     backend: tart
     image: lich-sandbox-base
+    bake_inputs:
+      - "src/**"
 owned:
   api:
     cmd: echo hi
