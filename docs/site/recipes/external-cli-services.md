@@ -1,8 +1,8 @@
 # External CLI services (supabase, dbmate, prisma migrate, etc.)
 
-When the stack you're instrumenting depends on a CLI that **spawns its own side-effects** — `supabase start` brings up ~10 containers, `dbmate up` runs migrations, `prisma migrate dev` runs migrations and (sometimes) starts a shadow DB — the right shape in `lich.yaml` is rarely "wrap it as a regular long-lived `owned` service" and rarely "shell out from `before_up`."
+When the stack you're instrumenting depends on a CLI that **spawns its own side-effects** (`supabase start` brings up ~10 containers), `localstack start` runs AWS simulation via docker. This type of service fits neither standard `owned` services nor `before_up`.
 
-The right shape is a **oneshot owned service** with a `stop_cmd` for teardown and `${worktree.id}` for per-worktree namespacing. This file walks through why, with the canonical supabase example.
+The right shape is a **oneshot owned service** with a `stop_cmd` for teardown and `${worktree.id}` for per-worktree namespacing where necessary. This file walks through why, with the canonical supabase example.
 
 ## The pattern
 
