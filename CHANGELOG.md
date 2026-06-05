@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/RPate97/lich/compare/v0.2.0...v0.2.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** docs-deploy build step uses working-directory ([4ec74c7](https://github.com/RPate97/lich/commit/4ec74c7ba253914a519da86f3ca250add2eb8c65))
+
 ## [0.2.0](https://github.com/RPate97/lich/compare/v0.1.0...v0.2.0) (2026-06-05)
 
 
