@@ -34,7 +34,7 @@ describe.skipIf(!isTartAvailable() || !imageExists() || !mutagenOk)("mutagen liv
     sync = new MutagenSync(new RealMutagenCli(), new RealSshTransport(join(work, "mut")));
 
     await backend.destroy(vm).catch(() => {});
-    await backend.create({ name: vm, image: "lich-sandbox-base", memoryMb: 2048 });
+    await backend.create({ name: vm, image: "lich-sandbox-base", memoryMb: 1024 });
     await backend.start(vm);
     await new Promise((r) => setTimeout(r, 8000));
   }, 180000);

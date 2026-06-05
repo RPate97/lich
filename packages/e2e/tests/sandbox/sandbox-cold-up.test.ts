@@ -33,7 +33,7 @@ describe.skipIf(!isTartAvailable() || !imageExists())('sandbox cold-up (e2e)', (
     }
     const injected = yaml.replace(
       /^runtime:\s*$/m,
-      'runtime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    warm_fork: false\n    memory: 6144\n    bake_inputs:\n      - "db/migrations/**"\n      - "db/migrations-heavy/**"\n      - "db/seed.sql"\n      - "db/seed-heavy.sql"',
+      'runtime:\n  sandbox:\n    backend: tart\n    image: lich-sandbox-base\n    warm_fork: false\n    memory: 4096\n    bake_inputs:\n      - "db/migrations/**"\n      - "db/migrations-heavy/**"\n      - "db/seed.sql"\n      - "db/seed-heavy.sql"',
     );
     writeFileSync(yamlPath, injected);
   });
