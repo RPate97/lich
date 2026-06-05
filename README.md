@@ -60,9 +60,9 @@ Tear down both:
 lich nuke
 ```
 
-### Use lich on your own app
+### Use lich in your own repo
 
-To wire lich into an existing app, install the `lich-instrument` skill and run it in your coding agent:
+To wire lich into an existing repo, install the `lich-instrument` skill and run it in your coding agent:
 
 ```bash
 npx skills add https://github.com/RPate97/lich/skills/lich-instrument
