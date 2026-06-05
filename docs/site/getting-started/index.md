@@ -7,7 +7,7 @@ Lich is a CLI plus a long-running daemon. Install the CLI, write a `lich.yaml`, 
 Available for macOS (arm64 / x64), Linux (arm64 / x64), and Windows via WSL.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RPate97/lich/main/install.sh | bash
+curl -fsSL https://lich.sh/install.sh | bash
 ```
 
 The installer downloads pre-built `lich` and `lich-daemon` binaries from the latest GitHub release and drops them in `~/.local/bin`. Make sure that's on your `PATH`:
