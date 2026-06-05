@@ -56,9 +56,10 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Build docs (generate + sync)
+        working-directory: packages/lich
         run: |
-          cd packages/lich && bun install --frozen-lockfile
-          cd packages/lich && bun run build:docs
+          bun install --frozen-lockfile
+          bun run build:docs
 
       - name: Verify mirrors are committed
         run: |
