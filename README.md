@@ -32,7 +32,7 @@ Open your favorite coding agent and run the skill:
 /lich-instrument
 ```
 
-> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](/reference/lich-yaml). It's recommended to start with a smaller slice of your stack such as just your UI and database to get a feel for lich before instrumenting your entire application especially if you are running a large multi-service app.
+> You may need to iterate a few times with your coding agent to get the lich.yaml setup correctly. You'll want to pay particular attention to environment variable mapping and loading. If you get stuck, take a look at the [lich.yaml reference](/docs/site/reference/lich-yaml-spec.md).
 
 Start using Lich:
 ```bash
@@ -41,7 +41,22 @@ lich logs               # tail logs
 lich down               # stop it
 ```
 
-In another worktree of the same repo, `lich up` again. Both stacks run side by side.
+Commit your new lich.yaml, then create a another worktree and run `lich up` again. Both stacks run side by side:
+```bash
+git add lich.yaml
+git commit -m "chore: setup lich"
+git worktree add ../myapp-feature -b feature
+cd ../myapp-feature
+lich up
+lich stacks
+```
+
+You should see something like this:
+```bash
+WORKTREE         STATUS  UPTIME    SERVICES  URL
+myapp            up      00:02:15  3/3       http://api.myapp.lich.localhost:3300/
+myapp-feature    up      00:00:08  3/3       http://api.myapp-feature.lich.localhost:3300/
+```
 
 ## Minimal lich.yaml
 
