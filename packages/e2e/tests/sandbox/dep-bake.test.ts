@@ -36,7 +36,7 @@ function injectSandboxProfile(yamlPath: string): void {
       '    backend: tart',
       '    image: lich-sandbox-base',
       '    warm_fork: true',
-      '    memory: 8192',
+      '    memory: 6144',
       '    bake_inputs:',
       '      - bun.lock',
       '      - package.json',
