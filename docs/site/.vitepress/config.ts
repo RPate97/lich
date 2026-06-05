@@ -10,10 +10,10 @@ export default defineConfig({
   description:
     "Worktree-scoped dev stack orchestrator. Run as many dev stacks as you have worktrees.",
   lang: "en-US",
-  // Deployed at https://rpate97.github.io/lich/, so the base must match the
-  // repo-name subpath. Override via the LICH_DOCS_BASE env var when serving
-  // under a different prefix (custom domain, local preview, etc.).
-  base: process.env.LICH_DOCS_BASE ?? "/lich/",
+  // Deployed at https://lich.sh (apex custom domain), so base is "/".
+  // Override via LICH_DOCS_BASE for preview deploys at a different prefix
+  // (e.g. LICH_DOCS_BASE=/lich/ to preview at rpate97.github.io/lich/).
+  base: process.env.LICH_DOCS_BASE ?? "/",
   cleanUrls: true,
   // The generated reference pages live next to manually-authored content.
   // Don't fail the build if a relative link points at a section that
