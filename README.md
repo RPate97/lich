@@ -143,6 +143,26 @@ cd packages/lich && bun test                                 # unit
 cd packages/e2e && bun run test                              # end-to-end
 ```
 
+## Telemetry
+
+Lich collects anonymous CLI usage telemetry (command name, exit code, duration, version, platform). No paths, no `lich.yaml` contents, no env values, no log content. Anonymous per-installation UUID stored at `~/.lich/installation-id`.
+
+Disable:
+
+```bash
+export LICH_TELEMETRY=0                      # per-shell
+echo '{"telemetry":false}' > ~/.lich/config.json  # per-user, persistent
+```
+
+Or in `lich.yaml`:
+
+```yaml
+runtime:
+  telemetry: false
+```
+
+Full disclosure of what's collected, where it goes, and how to delete the per-installation ID: [lich.sh/telemetry](https://lich.sh/telemetry).
+
 ## License
 
 MIT.

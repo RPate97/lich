@@ -571,6 +571,10 @@ export const runtimeSchema = {
       type: "boolean",
       description: "Cascade-kill siblings if one service fails during `lich up` startup. Default true.",
     },
+    telemetry: {
+      type: "boolean",
+      description: "Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it.",
+    },
   },
   additionalProperties: false,
 } as const;

@@ -131,6 +131,17 @@ echo ""
 echo "✓ Installed lich $VERSION to $bin_dir"
 echo ""
 
+# ---- Telemetry ping (opt-out: LICH_INSTALL_NO_TELEMETRY=1) ----------------
+# Anonymous: just version + platform + success flag. Fails silently.
+if [ -z "${LICH_INSTALL_NO_TELEMETRY:-}" ]; then
+  curl -fsS -m 3 -X POST \
+    -H 'Content-Type: application/json' \
+    "https://us.i.posthog.com/capture/" \
+    -d "{\"api_key\":\"phc_4WuVzdM5ssfft0P2Halmp0nJ6LeBjRxK2rLs8h9dQvV\",\"event\":\"install\",\"distinct_id\":\"anonymous-installer\",\"properties\":{\"version\":\"$VERSION\",\"platform\":\"$target\",\"prefix\":\"$([ "$PREFIX" = "$HOME/.local" ] && echo default || echo custom)\"}}" \
+    > /dev/null 2>&1 || true
+fi
+
+
 # ---- PATH hint ------------------------------------------------------------
 
 case ":$PATH:" in

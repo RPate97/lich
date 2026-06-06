@@ -11,6 +11,9 @@ import {
 } from "../state/snapshot.js";
 import { dispatchUserCommand } from "../commands/dispatch.js";
 import { runGlobalHelp, runCommandHelp } from "../commands/help.js";
+import { captureCommand, flush as flushTelemetry } from "../telemetry/client.js";
+import { isTelemetryEnabled, readLichYamlTelemetry } from "../telemetry/config.js";
+import { maybeShowFirstRunNotice } from "../telemetry/notice.js";
 import { join } from "node:path";
 
 const argv = mri(process.argv.slice(2), {
@@ -39,6 +42,22 @@ if (argv.version) {
 
 const [commandName, ...rest] = argv._;
 
+// Telemetry: opt-out via LICH_TELEMETRY=0, user config, or lich.yaml runtime.telemetry.
+// Show the one-time notice on the very first run when telemetry is enabled.
+const telemetryOn = isTelemetryEnabled({
+  lichYamlTelemetry: readLichYamlTelemetry(process.cwd()),
+});
+if (telemetryOn) maybeShowFirstRunNotice();
+const commandStartMs = Date.now();
+
+async function exitWithTelemetry(exitCode: number, command: string): Promise<never> {
+  if (telemetryOn) {
+    captureCommand({ command, exitCode, durationMs: Date.now() - commandStartMs });
+    await flushTelemetry();
+  }
+  process.exit(exitCode);
+}
+
 // `--help` short-circuits before any handler runs. Global help when no
 // command is given (or when only `--help` is passed); per-command help
 // when a name is present.
@@ -48,10 +67,10 @@ if (argv.help || !commandName) {
       commandName,
       cwd: process.cwd(),
     });
-    process.exit(r.exitCode);
+    await exitWithTelemetry(r.exitCode, "help");
   }
   const r = await runGlobalHelp({ cwd: process.cwd() });
-  process.exit(r.exitCode);
+  await exitWithTelemetry(r.exitCode, "help");
 }
 
 // First SIGINT aborts for graceful cleanup; second within the grace window forces exit 130.
@@ -82,7 +101,7 @@ if (isCommand(commandName)) {
     const rejection = rejectWorktreeFlag(commandName);
     if (rejection !== null) {
       process.stderr.write(rejection);
-      process.exit(2);
+      await exitWithTelemetry(2, commandName);
     }
   }
 
@@ -97,16 +116,16 @@ if (isCommand(commandName)) {
   }
 
   if (controller.signal.aborted) {
-    process.exit(130);
+    await exitWithTelemetry(130, commandName);
   }
   if (typeof result.exitCode === "number") {
-    process.exit(result.exitCode);
+    await exitWithTelemetry(result.exitCode, commandName);
   }
-  process.exit(result.ok ? 0 : 1);
+  await exitWithTelemetry(result.ok ? 0 : 1, commandName);
 }
 
 const exitCode = await dispatchUnknown(commandName, rest);
-process.exit(exitCode);
+await exitWithTelemetry(exitCode, "custom");
 
 async function dispatchUnknown(
   name: string,

@@ -125,3 +125,4 @@
 | `port_range` | `integer[]` | no | Two-element `[min, max]` range lich allocates dynamic host ports from. |
 | `ready_when_timeout` | `string \| integer` | no | Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides. |
 | `kill_others_on_fail` | `boolean` | no | Cascade-kill siblings if one service fails during `lich up` startup. Default true. |
+| `telemetry` | `boolean` | no | Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it. |

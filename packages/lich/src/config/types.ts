@@ -149,6 +149,8 @@ export interface Runtime {
   ready_when_timeout?: string | number;
   /** Cascade-kill siblings on startup failure. Defaults to `true`. */
   kill_others_on_fail?: boolean;
+  /** Project-scoped telemetry opt-out. Defaults to `true` (enabled). */
+  telemetry?: boolean;
 }
 
 export interface EnvGroupDef {
