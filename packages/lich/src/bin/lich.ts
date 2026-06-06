@@ -15,7 +15,7 @@ import { captureCommand, flush as flushTelemetry } from "../telemetry/client.js"
 import { isTelemetryEnabled, readLichYamlTelemetry } from "../telemetry/config.js";
 import { maybeShowFirstRunNotice } from "../telemetry/notice.js";
 import { join } from "node:path";
-
+ 
 const argv = mri(process.argv.slice(2), {
   alias: { v: "version", h: "help", y: "yes" },
   // Declare booleans explicitly so mri doesn't swallow a trailing positional as the flag value.
