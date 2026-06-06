@@ -84,3 +84,4 @@ PostHog Cloud (US region, `us.i.posthog.com`). It's a paid SaaS analytics produc
 ## Where to ask questions
 
 If anything here is unclear or you spot a privacy issue, open an issue at [github.com/RPate97/lich/issues](https://github.com/RPate97/lich/issues).
+ 
