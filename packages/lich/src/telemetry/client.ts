@@ -5,7 +5,7 @@ import { isTelemetryEnabled } from "./config.js";
 
 // PostHog public write key. Safe to embed in client code; PostHog scopes it
 // to write-only event capture (cannot read or list anything).
-const POSTHOG_API_KEY = "phc_rUHDAjA73r6HV7CJWn5tUB2ULJvpUe4p4yc2CFUgs645";
+const POSTHOG_API_KEY = "phc_sGvHNd7WNParEj4yL2unUFvUhuWSzvQneQgqR6K9P8Pe";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 let client: PostHog | null = null;

@@ -137,7 +137,7 @@ if [ -z "${LICH_INSTALL_NO_TELEMETRY:-}" ]; then
   curl -fsS -m 3 -X POST \
     -H 'Content-Type: application/json' \
     "https://us.i.posthog.com/capture/" \
-    -d "{\"api_key\":\"phc_rUHDAjA73r6HV7CJWn5tUB2ULJvpUe4p4yc2CFUgs645\",\"event\":\"install\",\"distinct_id\":\"anonymous-installer\",\"properties\":{\"version\":\"$VERSION\",\"platform\":\"$target\",\"prefix\":\"$([ "$PREFIX" = "$HOME/.local" ] && echo default || echo custom)\"}}" \
+    -d "{\"api_key\":\"phc_sGvHNd7WNParEj4yL2unUFvUhuWSzvQneQgqR6K9P8Pe\",\"event\":\"install\",\"distinct_id\":\"anonymous-installer\",\"properties\":{\"version\":\"$VERSION\",\"platform\":\"$target\",\"prefix\":\"$([ "$PREFIX" = "$HOME/.local" ] && echo default || echo custom)\"}}" \
     > /dev/null 2>&1 || true
 fi
 
