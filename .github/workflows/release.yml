@@ -2,9 +2,11 @@
 # and Linux (arm64/x64), tars each pair, and attaches them to a GitHub Release.
 #
 # Triggers:
-#   - release: published — fires automatically when release-please's release PR
-#     gets merged. The PR has already bumped packages/lich/src/version.ts;
-#     this workflow checks out the tagged commit and builds from there.
+#   - release: created — release-please creates each release as a DRAFT
+#     (release-please-config.json: "draft": true). This workflow builds the
+#     binaries, attaches them, and publishes the draft (draft: false in the
+#     gh-release action). Net effect: the release never appears as
+#     "published" without binaries — closes the install.sh race window.
 #   - workflow_dispatch — manual fallback (Actions tab → "release" → Run
 #     workflow → enter version). Sets up the version on the fly via sed.
 #
@@ -20,7 +22,7 @@ name: release
 
 on:
   release:
-    types: [published]
+    types: [created]
   workflow_dispatch:
     inputs:
       version:

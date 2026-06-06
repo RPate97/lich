@@ -5,7 +5,7 @@
   "bump-patch-for-minor-pre-major": false,
   "include-v-in-tag": true,
   "include-component-in-tag": false,
-  "draft": false,
+  "draft": true,
   "prerelease": false,
   "packages": {
     ".": {
