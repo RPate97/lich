@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/RPate97/lich/compare/v0.2.1...v0.2.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** release-please uses PAT so release.yml fires on publish ([9dbf376](https://github.com/RPate97/lich/commit/9dbf3769e056f50f6c312ce933ee45474eb57c86))
+
 ## [0.2.1](https://github.com/RPate97/lich/compare/v0.2.0...v0.2.1) (2026-06-05)
 
 
