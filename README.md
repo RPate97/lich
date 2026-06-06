@@ -176,6 +176,10 @@ runtime:
 
 Full disclosure of what's collected, where it goes, and how to delete the per-installation ID: [lich.sh/telemetry](https://lich.sh/telemetry).
 
+[Check the code.](https://github.com/RPate97/lich/blob/main/packages/lich/src/telemetry/client.ts#L44)
+
+> If you can, please leave telemetry enabled.
+
 ## License
 
 MIT.
