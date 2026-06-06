@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/RPate97/lich/compare/v0.2.2...v0.3.0) (2026-06-06)
+
+
+### Features
+
+* **telemetry:** add opt-out anonymous CLI usage telemetry ([83e5a1b](https://github.com/RPate97/lich/commit/83e5a1b63b2a913adfa3be6d6b9dd75682b7bdc7))
+
 ## [0.2.2](https://github.com/RPate97/lich/compare/v0.2.1...v0.2.2) (2026-06-05)
 
 
