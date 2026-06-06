@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2](https://github.com/RPate97/lich/compare/v0.4.1...v0.4.2) (2026-06-06)
+
+
+### Bug Fixes
+
+* **ci:** close the release-published-without-binaries race window properly ([2e346c6](https://github.com/RPate97/lich/commit/2e346c6657a8585aa05102d9df1db9159a3ce96f))
+* **install:** fall back to most recent release with assets when latest 404s ([7e0d414](https://github.com/RPate97/lich/commit/7e0d414da94381539893a38470a4b8214fa0dddf))
+
 ## [0.4.1](https://github.com/RPate97/lich/compare/v0.4.0...v0.4.1) (2026-06-06)
 
 
