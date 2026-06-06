@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/RPate97/lich/compare/v0.3.1...v0.4.0) (2026-06-06)
+
+
+### Features
+
+* **up:** don't auto-open the dashboard by default ([7c06048](https://github.com/RPate97/lich/commit/7c060485aad40a59db659e5ab36999f314663086))
+
+
+### Bug Fixes
+
+* **telemetry:** close the unit-test leak — bun test ignored vitest.config.ts ([095c5ea](https://github.com/RPate97/lich/commit/095c5eae6bc7ea4663d74d0dcfab1cf9ffeefddb))
+* **telemetry:** derive distinct_id from machine identity, not random UUID per LICH_HOME ([947af46](https://github.com/RPate97/lich/commit/947af4642e255df97d92b6a65215a7eacdb72fdf))
+
 ## [0.3.1](https://github.com/RPate97/lich/compare/v0.3.0...v0.3.1) (2026-06-06)
 
 
