@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/RPate97/lich/compare/v0.3.1...v0.4.0) (2026-06-06)
+
+
+### Features
+
+* **up:** don't auto-open the dashboard by default ([7c06048](https://github.com/RPate97/lich/commit/7c060485aad40a59db659e5ab36999f314663086))
+
 ## [0.3.1](https://github.com/RPate97/lich/compare/v0.3.0...v0.3.1) (2026-06-06)
 
 
