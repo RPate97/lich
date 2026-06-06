@@ -117,8 +117,8 @@ Full docs at **[lich.sh](https://lich.sh)**. Entry points:
 
 Lich ships agent skills that let Claude (or other agents) work with lich effectively:
 
-- [`lich`](skills/lich/) — daily-driver on-ramp; understand the CLI surface and use it
-- [`lich-instrument`](skills/lich-instrument/) — guides an agent through writing your first `lich.yaml`
+- [`lich`](skills/lich/): daily-driver on-ramp; understand the CLI surface and use it
+- [`lich-instrument`](skills/lich-instrument/): guides an agent through writing a `lich.yaml` for your repo
 
 Add a skill:
 
