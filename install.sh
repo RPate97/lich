@@ -94,10 +94,46 @@ tmpdir=$(mktemp -d -t lich-install.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
 echo "Downloading $asset..."
-if ! curl -fsSL "$asset_url" -o "$tmpdir/$asset"; then
-  echo "Error: download failed for $asset_url" >&2
-  echo "Check that the release exists at https://github.com/$REPO/releases" >&2
-  exit 1
+if ! curl -fsSL "$asset_url" -o "$tmpdir/$asset" 2>/dev/null; then
+  # Race window: release-please publishes a release before release.yml's
+  # binaries finish uploading (~5-10 min). When that window is open, the
+  # tag exists but the platform tarball doesn't. Walk back through recent
+  # releases until we find one with our asset, then install that.
+  echo "Note: $asset is not (yet) attached to $VERSION — the release build may still be running." >&2
+  echo "Searching recent releases for one with $asset attached..." >&2
+
+  releases_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=10" 2>/dev/null || true)
+  if [ -z "$releases_json" ]; then
+    echo "Error: could not list releases at https://api.github.com/repos/$REPO/releases" >&2
+    echo "If a release was just published, try again in 5-10 minutes." >&2
+    exit 1
+  fi
+
+  fallback=""
+  for tag in $(echo "$releases_json" | grep -o '"tag_name": *"[^"]*"' | sed -E 's/.*"([^"]+)"$/\1/'); do
+    [ "$tag" = "$VERSION" ] && continue
+    probe_url="$BASE_URL/$REPO/releases/download/$tag/$asset"
+    if curl -fsSL -I "$probe_url" -o /dev/null 2>/dev/null; then
+      fallback="$tag"
+      break
+    fi
+  done
+
+  if [ -z "$fallback" ]; then
+    echo "Error: no recent release has $asset attached." >&2
+    echo "Check https://github.com/$REPO/releases or retry later." >&2
+    exit 1
+  fi
+
+  echo "Installing $fallback instead (the most recent release whose binaries are uploaded)." >&2
+  echo "Re-run this installer after $VERSION's build finishes to upgrade." >&2
+  VERSION="$fallback"
+  asset_url="$BASE_URL/$REPO/releases/download/$VERSION/$asset"
+  sha_url="$asset_url.sha256"
+  if ! curl -fsSL "$asset_url" -o "$tmpdir/$asset"; then
+    echo "Error: download failed for $asset_url" >&2
+    exit 1
+  fi
 fi
 
 # SHA verification is best-effort: skip silently if the .sha256 file
