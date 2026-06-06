@@ -1,5 +1,18 @@
 name: release-please
 
+# release-please-action creates the release as a DRAFT (per
+# release-please-config.json: "draft": true). The build matrix below
+# only runs when release_created=true; each job cross-compiles the
+# lich + lich-daemon binaries for one platform, tars them, and uploads
+# an artifact. The publish job then downloads every artifact, attaches
+# them to the draft release, and flips it to published in a single
+# softprops/action-gh-release step (draft: false). Net effect: the
+# release never appears as "published" without binaries — no install.sh
+# race window, no event-fire gotcha. (GitHub's `release: created` event
+# does NOT fire for releases created in draft state via the REST API,
+# which is why the previous release.yml-as-separate-trigger approach
+# couldn't work.)
+
 on:
   push:
     branches:
@@ -12,15 +25,131 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           # Must be a PAT (or GitHub App token), NOT secrets.GITHUB_TOKEN.
           # Events triggered by GITHUB_TOKEN don't fire downstream workflows
-          # (GitHub anti-loop protection), so release.yml never runs when
-          # release-please publishes a release. Using a PAT here makes the
-          # `release: published` event count as "external" and triggers
-          # release.yml normally.
+          # (GitHub anti-loop protection); the PAT makes downstream events
+          # fire normally.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  build:
+    name: Build ${{ matrix.target.name }}
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: darwin-arm64
+            bun_target: bun-darwin-arm64
+            runner: macos-14
+          - name: darwin-x64
+            bun_target: bun-darwin-x64
+            runner: macos-15-intel
+          - name: linux-arm64
+            bun_target: bun-linux-arm64
+            runner: ubuntu-24.04-arm
+          - name: linux-x64
+            bun_target: bun-linux-x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.target.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Build the exact commit release-please tagged, not whatever's on
+          # main right now (which may have moved during the build window).
+          ref: ${{ needs.release-please.outputs.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+
+      - name: Setup Node (for UI build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install root deps
+        run: bun install --frozen-lockfile
+
+      - name: Build dashboard UI (Vite)
+        run: bun run --cwd packages/lich build:ui
+
+      - name: Embed UI manifest
+        run: bun run --cwd packages/lich build:ui:embed
+
+      - name: Cross-compile lich CLI
+        run: |
+          cd packages/lich
+          bun build --compile --target=${{ matrix.target.bun_target }} \
+            --outfile=dist/lich src/bin/lich.ts
+
+      - name: Cross-compile lich daemon
+        run: |
+          cd packages/lich
+          bun build --compile --target=${{ matrix.target.bun_target }} \
+            --outfile=dist/lich-daemon src/bin/lich-daemon.ts
+
+      - name: Verify binaries
+        run: |
+          cd packages/lich
+          file dist/lich dist/lich-daemon
+          ls -lh dist/lich dist/lich-daemon
+
+      - name: Package tarball
+        run: |
+          cd packages/lich/dist
+          tar czf lich-${{ matrix.target.name }}.tar.gz lich lich-daemon
+          shasum -a 256 lich-${{ matrix.target.name }}.tar.gz \
+            > lich-${{ matrix.target.name }}.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lich-${{ matrix.target.name }}
+          path: |
+            packages/lich/dist/lich-${{ matrix.target.name }}.tar.gz
+            packages/lich/dist/lich-${{ matrix.target.name }}.tar.gz.sha256
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [release-please, build]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh artifacts/
+
+      - name: Attach assets and publish the draft
+        uses: softprops/action-gh-release@v2
+        with:
+          # release-please created the draft with this tag; we upload files
+          # and flip draft -> published in one step.
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          draft: false
+          files: |
+            artifacts/lich-*.tar.gz
+            artifacts/lich-*.tar.gz.sha256
+          fail_on_unmatched_files: true

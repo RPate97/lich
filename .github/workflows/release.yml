@@ -1,30 +1,22 @@
-# Release workflow — builds lich + lich-daemon binaries for macOS (arm64/x64)
-# and Linux (arm64/x64), tars each pair, and attaches them to a GitHub Release.
+# Manual release fallback — for emergencies only. The normal release flow
+# is fully automated inside release-please.yml (release-please creates a
+# draft, the same workflow run builds binaries and publishes the draft).
 #
-# Triggers:
-#   - release: published — fires automatically when release-please's release PR
-#     gets merged. The PR has already bumped packages/lich/src/version.ts;
-#     this workflow checks out the tagged commit and builds from there.
-#   - workflow_dispatch — manual fallback (Actions tab → "release" → Run
-#     workflow → enter version). Sets up the version on the fly via sed.
+# Use this workflow when:
+#   - A platform's build failed during the automated flow and you need to
+#     rebuild + attach binaries to an existing release.
+#   - You need to ship a release without going through release-please
+#     (e.g. emergency hotfix tagged manually).
 #
-# Dashboard SPA is embedded in the lich-daemon binary (see scripts/embed-ui.ts),
-# so the tarball per platform contains exactly two files: lich + lich-daemon.
-# The install script in install.sh at the repo root downloads + extracts them
-# into ~/.local/bin.
-#
-# Windows: WSL users run the Linux binary. A native Windows build is out of
-# scope for v0.1.0.
+# Invocation: Actions tab -> "release" -> Run workflow -> enter version.
 
 name: release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.1.0, no v prefix). Manual fallback path."
+        description: "Version to release (e.g. 0.1.0, no v prefix)."
         required: true
         type: string
       prerelease:
@@ -32,7 +24,7 @@ on:
         type: boolean
         default: false
       draft:
-        description: "Create the release as a draft (review before publishing)"
+        description: "Create/leave the release as a draft (review before publishing)"
         type: boolean
         default: false
 
@@ -64,16 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            tag="${{ github.event.release.tag_name }}"
-            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -87,10 +69,9 @@ jobs:
       - name: Install root deps
         run: bun install --frozen-lockfile
 
-      - name: Sync version.ts (manual dispatch only)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Sync version.ts
         run: |
-          sed -i.bak 's/export const VERSION = .*/export const VERSION = "${{ steps.version.outputs.version }}"; \/\/ x-release-please-version/' packages/lich/src/version.ts && rm packages/lich/src/version.ts.bak
+          sed -i.bak 's/export const VERSION = .*/export const VERSION = "${{ inputs.version }}"; \/\/ x-release-please-version/' packages/lich/src/version.ts && rm packages/lich/src/version.ts.bak
 
       - name: Build dashboard UI (Vite)
         run: bun run --cwd packages/lich build:ui
@@ -141,16 +122,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            tag="${{ github.event.release.tag_name }}"
-            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -163,11 +134,11 @@ jobs:
       - name: Attach assets to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
-          generate_release_notes: ${{ github.event_name == 'workflow_dispatch' }}
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
           files: |
             artifacts/lich-*.tar.gz
             artifacts/lich-*.tar.gz.sha256
