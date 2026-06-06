@@ -75,13 +75,13 @@ const upHandler: CommandHandler = async (ctx) => {
       : "pretty";
   const positional = ctx.argv._[0];
   const profile = typeof positional === "string" ? positional : undefined;
-  const noBrowser = ctx.argv.browser === false;
+  const openBrowser = ctx.argv.browser === true;
   const raw = ctx.argv.raw === true;
   const result = await runUp({
     outputMode: mode as "pretty" | "json" | "quiet",
     signal: ctx.signal,
     profile,
-    noBrowser,
+    openBrowser,
     raw,
   });
   return { ok: result.exitCode === 0, message: "" };

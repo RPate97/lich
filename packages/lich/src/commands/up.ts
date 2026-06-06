@@ -124,8 +124,8 @@ export interface RunUpInput {
   signal?: AbortSignal;
   /** Profile to activate. Omit to pick the `default: true` profile (errors on missing/ambiguous). */
   profile?: string;
-  /** Suppress the daemon's browser-open side effect on first-spawn. */
-  noBrowser?: boolean;
+  /** Open the dashboard in the browser after the stack is up. Default off; LICH_NO_BROWSER=1 forces off. */
+  openBrowser?: boolean;
   /** Emit raw upstream URLs in the summary instead of friendly proxied URLs. */
   raw?: boolean;
   /** Per-owned-service snapshot replay map — bypasses yaml env resolution for matching services. */
@@ -737,12 +737,12 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     const envNoBrowser =
       process.env.LICH_NO_BROWSER === "1" ||
       process.env.LICH_NO_BROWSER === "true";
-    const noBrowser = (input.noBrowser ?? false) || envNoBrowser;
+    const openBrowser = (input.openBrowser ?? false) && !envNoBrowser;
     const configuredProxyPort = config.runtime?.proxy_port;
     try {
       const lichHomeEnv = process.env.LICH_HOME;
       const ensureOpts: Parameters<typeof ensureDaemonRunning>[0] = {
-        openBrowser: !noBrowser,
+        openBrowser,
       };
       if (lichHomeEnv !== undefined) ensureOpts.lichHome = lichHomeEnv;
       if (typeof configuredProxyPort === "number") {
