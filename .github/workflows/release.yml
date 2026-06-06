@@ -22,8 +22,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-permissions:
-  contents: read
     inputs:
       version:
         description: "Version to release (e.g. 0.1.0, no v prefix). Manual fallback path."
@@ -37,6 +35,9 @@ permissions:
         description: "Create the release as a draft (review before publishing)"
         type: boolean
         default: false
+
+permissions:
+  contents: read
 
 jobs:
   build:
