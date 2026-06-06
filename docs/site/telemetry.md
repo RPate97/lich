@@ -15,9 +15,9 @@ One event per invocation of the `lich` binary. The event is `cli_command` with t
 | `duration_ms` | `4521` | How long the command took |
 | `version` | `0.2.1` | Lich CLI version |
 | `platform` | `darwin-arm64` | Same shape as release tarball names |
-| `distinct_id` | UUID v4 | Anonymous per-installation identifier, stored at `~/.lich/installation-id` |
+| `distinct_id` | 32-char hex | Anonymous machine-stable identifier, cached at `~/.lich/installation-id` |
 
-The `distinct_id` is generated once on first run and stays the same for that machine. It's not linked to anything: not your email, not your GitHub, not your IP (PostHog anonymizes that). Deleting `~/.lich/installation-id` resets it.
+The `distinct_id` is a SHA-256 hash of three machine-stable inputs (your home directory path, your hostname, and your platform string) truncated to 32 hex characters. The hash is one-way — those inputs never leave your machine, and the hash can't be reversed to recover them. It stays the same for that user on that machine across worktrees, fresh `~/.lich` dirs, and container rebuilds. It is not linked to your email, GitHub, or IP (PostHog anonymizes IP via `disableGeoip`). To change it, overwrite `~/.lich/installation-id` with any 32-hex value (or a UUIDv4; legacy IDs from older installs continue to work).
 
 ### Installer
 

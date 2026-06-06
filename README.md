@@ -158,7 +158,7 @@ echo 'export LICH_TELEMETRY=0' >> ~/.zshrc  # or ~/.bashrc
 
 ## Telemetry
 
-Lich collects anonymous CLI usage telemetry (command name, exit code, duration, version, platform). No paths, no `lich.yaml` contents, no env values, no log content. Anonymous per-installation UUID stored at `~/.lich/installation-id`.
+Lich collects anonymous CLI usage telemetry (command name, exit code, duration, version, platform). No paths, no `lich.yaml` contents, no env values, no log content. The `distinct_id` is a machine-stable SHA-256 hash of your home directory + hostname + platform (one-way, no reversal), cached at `~/.lich/installation-id`.
 
 Disable:
 
