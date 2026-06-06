@@ -18,9 +18,11 @@ export interface RunLichOptions {
   timeout?: number;
 }
 
-// Suppresses browser auto-open across all tests.
+// Suppresses browser auto-open AND disables telemetry across all tests so
+// the suite never pollutes real-user analytics with CI/dev events.
 const DEFAULT_TEST_ENV = {
   LICH_NO_BROWSER: "1",
+  LICH_TELEMETRY: "0",
 };
 
 /** Run the lich binary synchronously and capture output. */

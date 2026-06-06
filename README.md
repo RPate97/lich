@@ -143,6 +143,12 @@ cd packages/lich && bun test                                 # unit
 cd packages/e2e && bun run test                              # end-to-end
 ```
 
+The test suites disable telemetry automatically (set in `vitest.config.ts` and the e2e helper). For ad-hoc local runs of the lich binary while developing, set `LICH_TELEMETRY=0` in your shell so your dev usage doesn't show up in real-user analytics:
+
+```bash
+echo 'export LICH_TELEMETRY=0' >> ~/.zshrc  # or ~/.bashrc
+```
+
 ## Telemetry
 
 Lich collects anonymous CLI usage telemetry (command name, exit code, duration, version, platform). No paths, no `lich.yaml` contents, no env values, no log content. Anonymous per-installation UUID stored at `~/.lich/installation-id`.
