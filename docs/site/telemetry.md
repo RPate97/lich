@@ -72,14 +72,14 @@ The docs site also respects your browser's Do Not Track header automatically.
 
 Two questions I cannot answer without telemetry:
 
-1. **Are people using this?** Without download numbers I have no idea whether to keep investing in lich. One number per day is enough.
+1. **Are people using this?** Without download numbers I have no idea whether to keep investing in lich.
 2. **Where do commands fail?** If `lich up` exits non-zero 30% of the time, something is wrong and I want to know.
 
 Both questions are answered by the minimal data above. There's no plan to expand the schema. If that ever changes, it'll go through a versioned, public update with the option to re-consent.
 
 ## Where the data lives
 
-PostHog Cloud (US region, `us.i.posthog.com`). It's a paid SaaS analytics product. Only I (the maintainer) have access. The PostHog public write key embedded in the CLI and the docs is intentionally public — it can only write events, not read them back.
+PostHog Cloud (US region, `us.i.posthog.com`). It's a paid SaaS analytics product. Only I (the maintainer) have access.
 
 ## Where to ask questions
 
