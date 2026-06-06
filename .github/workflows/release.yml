@@ -2,11 +2,13 @@
 # and Linux (arm64/x64), tars each pair, and attaches them to a GitHub Release.
 #
 # Triggers:
-#   - release: created — release-please creates each release as a DRAFT
-#     (release-please-config.json: "draft": true). This workflow builds the
-#     binaries, attaches them, and publishes the draft (draft: false in the
-#     gh-release action). Net effect: the release never appears as
-#     "published" without binaries — closes the install.sh race window.
+#   - release: published — release-please publishes each release directly.
+#     This workflow runs ~immediately and uploads binaries within 5-10min.
+#     During that window, install.sh's `latest` resolves to the new tag
+#     but 404s on assets — install.sh handles this with a fallback to the
+#     most recent release whose assets ARE uploaded. The "build inline in
+#     release-please.yml" pattern is the proper fix; until then, the
+#     installer fallback bridges the gap.
 #   - workflow_dispatch — manual fallback (Actions tab → "release" → Run
 #     workflow → enter version). Sets up the version on the fly via sed.
 #
@@ -22,7 +24,7 @@ name: release
 
 on:
   release:
-    types: [created]
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
