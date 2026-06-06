@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/RPate97/lich/compare/v0.3.0...v0.3.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* **ci:** repair release.yml YAML structure broken in 32d16ff ([06bb6ea](https://github.com/RPate97/lich/commit/06bb6eae9e2af71d1b5c8abfed33022be6085bcf))
+
 ## [0.3.0](https://github.com/RPate97/lich/compare/v0.2.2...v0.3.0) (2026-06-06)
 
 
