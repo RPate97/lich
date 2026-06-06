@@ -68,14 +68,17 @@ export function captureCommand(args: {
 
 /**
  * Flush queued events and shut down the client. Call once before
- * `process.exit`. Bounded: returns within ~2s even if PostHog is unreachable.
+ * `process.exit`. Pass shutdownTimeoutMs to posthog-node directly so it
+ * manages its own in-flight requests instead of being abandoned mid-flush
+ * by an outer Promise.race. Outer race is a hard ceiling at 6s in case
+ * posthog-node's internal timer is broken.
  */
 export async function flush(): Promise<void> {
   if (!client) return;
   try {
     await Promise.race([
-      client.shutdown(),
-      new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      client.shutdown(5000),
+      new Promise<void>((resolve) => setTimeout(resolve, 6000)),
     ]);
   } catch {
     // never throw from telemetry
