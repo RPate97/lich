@@ -131,6 +131,16 @@ describe("formatFailure — kind: 'fail_when'", () => {
 
     expect(block.reason).toContain('\\"./missing\\"');
   });
+
+  it("escapes backslashes before quotes so a line containing \\\" doesn't break the surrounding quotes", () => {
+    const block = formatFailure({
+      kind: "fail_when",
+      service: "api",
+      matchedLine: 'got value "a\\"b"',
+    });
+
+    expect(block.reason).toContain('"got value \\"a\\\\\\"b\\""');
+  });
 });
 
 describe("formatFailure — kind: 'capture_miss'", () => {

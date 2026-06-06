@@ -74,7 +74,9 @@ export function formatFailure(input: FailureInput): FailureBlock {
     }
 
     case "fail_when": {
-      const safeLine = input.matchedLine.replace(/"/g, '\\"');
+      const safeLine = input.matchedLine
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"');
       const block: FailureBlock = {
         title: `service "${input.service}" matched fail_when pattern`,
         reason: `fail_when matched log line: "${safeLine}"`,

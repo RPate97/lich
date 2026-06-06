@@ -142,7 +142,7 @@ describe("lich up — port already in use on a pinned owned port", () => {
       expect(
         occurrences,
         `expected exactly one occurrence of the api block's port descriptor ` +
-          `(\`${needle.replace("\n", "\\n")}\`) in dogfood-stack/lich.yaml; ` +
+          `(\`${needle.replaceAll("\n", "\\n")}\`) in dogfood-stack/lich.yaml; ` +
           `got ${occurrences}. Did the api block's formatting change? ` +
           `Update this test's mutation to match.`,
       ).toBe(1);

@@ -22,6 +22,8 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+permissions:
+  contents: read
     inputs:
       version:
         description: "Version to release (e.g. 0.1.0, no v prefix). Manual fallback path."
@@ -39,6 +41,8 @@ on:
 jobs:
   build:
     name: Build ${{ matrix.target.name }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
