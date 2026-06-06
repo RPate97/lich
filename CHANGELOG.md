@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/RPate97/lich/compare/v0.5.0...v0.6.0) (2026-06-06)
+
+
+### Features
+
+* test release ([d91d28c](https://github.com/RPate97/lich/commit/d91d28cf91245e33f9a6a90751377d0949a3470d))
+
 ## [0.5.0](https://github.com/RPate97/lich/compare/v0.4.0...v0.5.0) (2026-06-06)
 
 
