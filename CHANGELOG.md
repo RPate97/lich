@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/RPate97/lich/compare/v0.4.0...v0.4.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* **telemetry:** hand posthog-node the shutdown timeout instead of racing it ([9161a2c](https://github.com/RPate97/lich/commit/9161a2cc9a33acc5141903ce3ea99cc7fd328286))
+
 ## [0.4.0](https://github.com/RPate97/lich/compare/v0.3.1...v0.4.0) (2026-06-06)
 
 
