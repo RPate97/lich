@@ -261,13 +261,13 @@ owned:
       /* drain */
     });
 
-    // wait for phase_begin so SIGINT lands after the signal handler is armed
+    // wait for the service to begin starting so SIGINT lands after the signal handler is armed
     const startDeadline = Date.now() + 5_000;
     while (Date.now() < startDeadline) {
-      if (stdoutBuf.includes('"name":"start ')) break;
+      if (stdoutBuf.includes('"type":"service"')) break;
       await new Promise((r) => setTimeout(r, 50));
     }
-    expect(stdoutBuf).toContain('"name":"start ');
+    expect(stdoutBuf).toContain('"type":"service"');
 
     const startedAt = Date.now();
     proc.kill("SIGINT");
@@ -325,7 +325,7 @@ owned:
 
     const startDeadline = Date.now() + 5_000;
     while (Date.now() < startDeadline) {
-      if (stdoutBuf.includes("start-level-")) break;
+      if (stdoutBuf.includes('"type":"service"')) break;
       await new Promise((r) => setTimeout(r, 50));
     }
 

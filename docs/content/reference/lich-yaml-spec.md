@@ -445,7 +445,7 @@ Lich evaluates `${...}` expressions in yaml values at well-defined points in the
 
 - Most keys are resolved AT UP TIME, after port allocation has completed for all services.
 - `worktree.*` keys are resolved immediately, before any service starts.
-- `owned.<name>.captured.<key>` keys are resolved as log captures complete (may evaluate to undefined if read before the capture fires).
+- `owned.<name>.captured.<key>` keys are resolved as log captures complete. Each service starts as soon as its own dependencies are ready, so declare `depends_on: [<name>]` on the reading service to guarantee the capture is available before it starts — without that edge the value may still be unset.
 
 **Port allocation timing.** Ports are allocated **once, up front** during step 4 of `lich up`, before any service (compose, owned, or oneshot launcher) starts. That means `${owned.X.port}` / `${owned.X.ports.<key>}` are already resolved to real integers by the time another service's `cmd` or env runs. This is what lets oneshot launchers (supabase et al.) configure their spawned services with lich-allocated ports without pinning anything.
 

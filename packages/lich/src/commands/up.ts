@@ -80,9 +80,11 @@ import {
   buildGraph,
   validateGraph,
   DependencyError,
+  type Graph,
   type NodeDecl,
 } from "../deps/graph.js";
 import { topoLevels, CycleError } from "../deps/sort.js";
+import { runGraph } from "../deps/schedule.js";
 import {
   createOutput,
   type Output,
@@ -371,11 +373,12 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
 
     const graphPhase = output.phase("dependency-graph");
     const decls = buildNodeDecls(effectiveConfig);
-    let levels: string[][];
+    let graph: Graph;
     try {
-      const graph = buildGraph(decls);
+      graph = buildGraph(decls);
       validateGraph(graph);
-      levels = topoLevels(graph);
+      // Cycle detection only — throws CycleError. Scheduling is graph-driven, not level-based.
+      topoLevels(graph);
     } catch (err) {
       graphPhase.end("fail");
       const msg = formatGraphError(err, resolvedProfile);
@@ -387,7 +390,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       await output.close();
       return { exitCode: 1, stackId: worktree.stack_id };
     }
-    graphPhase.end("ok", `${levels.length} level${levels.length === 1 ? "" : "s"}`);
+    graphPhase.end("ok", `${decls.length} service${decls.length === 1 ? "" : "s"}`);
 
     for (const decl of decls) {
       state.services.set(decl.name, {
@@ -547,109 +550,118 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       phase.end("ok");
     }
 
-    // Per-level startup: services in the same topo level run in parallel.
-    for (let levelIdx = 0; levelIdx < levels.length; levelIdx++) {
-      const level = levels[levelIdx];
-      const phaseName = `start ${levelIdx + 1}/${levels.length} (${level.join(", ")})`;
-      const phase = output.phase(phaseName);
-
-      // allSettled — surface every parallel failure, not just the first to reject.
-      const results = await Promise.allSettled(
-        level.map((name) =>
-          startOneService({
-            name,
-            config: effectiveConfig,
-            worktree,
-            allocatedPorts,
-            topLevelEnv,
-            sharedEnvBase,
-            composeCtx: composeCli && composeProject
-              ? {
-                  cli: composeCli,
-                  project: composeProject,
-                  files: composeFiles,
-                  cwd: worktree.path,
-                  env: topLevelEnv,
-                }
-              : null,
-            state: state!,
-            output,
-            signal,
-            resolveEnvGroup: lifecycleResolveEnvGroup,
-            ownedSnapshotOverride: input.ownedSnapshotOverrides?.get(name),
-          }),
-        ),
-      );
-
-      const failures = results.filter(
-        (r): r is PromiseRejectedResult => r.status === "rejected",
-      );
-      if (failures.length > 0) {
-        phase.end("fail");
-        if (cancelled) {
-          output.error({
-            title: "lich up cancelled",
-            detail: "cancelled by user (SIGINT)",
-          });
-          const cleanup = cancelledCleanup as Promise<void> | null;
-          if (cleanup !== null) {
-            await cleanup.catch(() => {});
+    const composeCtx: RunnerCtx | null =
+      composeCli && composeProject
+        ? {
+            cli: composeCli,
+            project: composeProject,
+            files: composeFiles,
+            cwd: worktree.path,
+            env: topLevelEnv,
           }
-        } else {
-          // Per-service failure block already rendered by startOneService; just name the failed services here.
-          const failedNames = level.filter((n) => {
-            const snap = state!.services.get(n);
-            return snap?.state === "failed";
-          });
-          // cascade-kill in-flight siblings (default ON via `runtime.kill_others_on_fail`).
-          // Cancellation branch above already tore children down via `cancelledCleanup`.
-          let killedNames: string[] = [];
-          if (killOthersEnabled(config.runtime)) {
-            killedNames = await cascadeKillSiblings({
-              ownedHandles: state.ownedHandles,
-              services: state.services,
-              failedNames: new Set(failedNames),
-              composeCtx: composeCli && composeProject
-                ? {
-                    cli: composeCli,
-                    project: composeProject,
-                    files: composeFiles,
-                    cwd: worktree.path,
-                    env: topLevelEnv,
-                  }
-                : null,
-              oneshotStopCmds: buildOneshotStopCmds(effectiveConfig, state),
-            });
-          }
-          const baseDetail =
-            failedNames.length > 0
-              ? `failed services: ${failedNames.join(", ")}`
-              : `${failures.length} service${failures.length === 1 ? "" : "s"} failed in this step`;
-          const detail =
-            killedNames.length > 0
-              ? `${baseDetail}; killed: ${killedNames.join(", ")}`
-              : baseDetail;
-          output.error({
-            title: `failed to start services in step ${levelIdx + 1}/${levels.length} (${level.join(", ")})`,
-            detail,
-          });
-        }
-        for (const tail of state.logTails.values()) {
-          await tail.stop().catch(() => {});
-        }
-        await markStackFailed(state);
-        await output.close();
-        if (signal) signal.removeEventListener("abort", onAbort);
-        return {
-          exitCode: 1,
-          stackId: worktree.stack_id,
-          services: snapshotServiceStates(state),
-        };
+        : null;
+
+    // Nodes settle concurrently; serialize snapshot writes so concurrent
+    // settles never interleave a torn state.json. Each node persists on settle
+    // (success or failure) so a mid-up crash leaves a useful trail.
+    let snapshotWrites: Promise<void> = Promise.resolve();
+    const persistSnapshot = (): void => {
+      snapshotWrites = snapshotWrites.then(() =>
+        writeStateSnapshot(state!).catch(() => {}),
+      );
+    };
+
+    // Graph scheduling: each node starts the moment its own transitive deps are
+    // ready — no topological wave barrier. Independent chains progress at their
+    // own pace. Kill-others-on-fail (default) folds into abortOnFailure +
+    // onFirstFailure so the first failure cascade-kills in-flight siblings.
+    let killedNames: string[] = [];
+    const result = await runGraph({
+      graph,
+      abortOnFailure: killOthersEnabled(config.runtime),
+      runNode: (name, nodeSignal) =>
+        startOneService({
+          name,
+          config: effectiveConfig,
+          worktree,
+          allocatedPorts,
+          topLevelEnv,
+          sharedEnvBase,
+          composeCtx,
+          state: state!,
+          output,
+          signal: nodeSignal,
+          resolveEnvGroup: lifecycleResolveEnvGroup,
+          ownedSnapshotOverride: input.ownedSnapshotOverrides?.get(name),
+        }).finally(persistSnapshot),
+      onFirstFailure: async () => {
+        const failedNames = [...state!.services.keys()].filter(
+          (n) => state!.services.get(n)?.state === "failed",
+        );
+        killedNames = await cascadeKillSiblings({
+          ownedHandles: state!.ownedHandles,
+          services: state!.services,
+          failedNames: new Set(failedNames),
+          composeCtx,
+          oneshotStopCmds: buildOneshotStopCmds(effectiveConfig, state!),
+        });
+      },
+      ...(signal ? { signal } : {}),
+    });
+
+    await snapshotWrites;
+
+    if (cancelled) {
+      output.error({
+        title: "lich up cancelled",
+        detail: "cancelled by user (SIGINT)",
+      });
+      const cleanup = cancelledCleanup as Promise<void> | null;
+      if (cleanup !== null) {
+        await cleanup.catch(() => {});
       }
-      phase.end("ok");
+      for (const tail of state.logTails.values()) {
+        await tail.stop().catch(() => {});
+      }
+      await markStackFailed(state);
+      await output.close();
+      if (signal) signal.removeEventListener("abort", onAbort);
+      return {
+        exitCode: 1,
+        stackId: worktree.stack_id,
+        services: snapshotServiceStates(state),
+      };
+    }
 
-      // Persist between levels so a crash mid-up leaves a useful trail.
-      await writeStateSnapshot(state);
+    if (result.failures.length > 0) {
+      // Per-service failure blocks already rendered by startOneService; just name the failed services here.
+      const failedNames = [...state.services.keys()].filter((n) => {
+        const snap = state!.services.get(n);
+        return snap?.state === "failed";
+      });
+      const baseDetail =
+        failedNames.length > 0
+          ? `failed services: ${failedNames.join(", ")}`
+          : `${result.failures.length} service${result.failures.length === 1 ? "" : "s"} failed`;
+      const detail =
+        killedNames.length > 0
+          ? `${baseDetail}; killed: ${killedNames.join(", ")}`
+          : baseDetail;
+      output.error({
+        title: "failed to start services",
+        detail,
+      });
+      for (const tail of state.logTails.values()) {
+        await tail.stop().catch(() => {});
+      }
+      await markStackFailed(state);
+      await output.close();
+      if (signal) signal.removeEventListener("abort", onAbort);
+      return {
+        exitCode: 1,
+        stackId: worktree.stack_id,
+        services: snapshotServiceStates(state),
+      };
     }
 
     const afterUpEntries = [
@@ -684,28 +696,20 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
           afterUpLogPath,
         );
         // after_up runs after all services are ready but before the stack is marked up — cascade-kill since no siblings remain useful.
-        let killedNames: string[] = [];
+        let afterUpKilled: string[] = [];
         if (killOthersEnabled(config.runtime)) {
-          killedNames = await cascadeKillSiblings({
+          afterUpKilled = await cascadeKillSiblings({
             ownedHandles: state.ownedHandles,
             services: state.services,
             failedNames: new Set(),
-            composeCtx: composeCli && composeProject
-              ? {
-                  cli: composeCli,
-                  project: composeProject,
-                  files: composeFiles,
-                  cwd: worktree.path,
-                  env: topLevelEnv,
-                }
-              : null,
+            composeCtx,
             oneshotStopCmds: buildOneshotStopCmds(effectiveConfig, state),
           });
         }
         const baseDetail = (err as Error).message;
         const detail =
-          killedNames.length > 0
-            ? `${baseDetail}; killed: ${killedNames.join(", ")}`
+          afterUpKilled.length > 0
+            ? `${baseDetail}; killed: ${afterUpKilled.join(", ")}`
             : baseDetail;
         output.error({
           title: "lifecycle.after_up failed",
@@ -887,7 +891,7 @@ interface StartOneInput {
   ownedSnapshotOverride?: OwnedSnapshotOverride;
 }
 
-/** Start a single service to "ready". Throws on any failure — caller's Promise.allSettled aggregates failures across a level. */
+/** Start a single service to "ready". Throws on any failure — runGraph records it and (under kill-others) tears down siblings. */
 async function startOneService(input: StartOneInput): Promise<void> {
   const { name, config, state, output } = input;
   const snap = state.services.get(name);
@@ -1109,8 +1113,8 @@ async function startOwned(
     resolvedStopCmd = input.ownedSnapshotOverride.stop_cmd;
     resolvedCwd = input.ownedSnapshotOverride.cwd;
   } else {
-    // capturedValues threads `${owned.<earlier>.captured.<key>}` from earlier services into env interpolation.
-    // Same-level services CAN'T see each other's captures — start in parallel; declare a depends_on edge to force ordering.
+    // capturedValues threads `${owned.<dep>.captured.<key>}` into env interpolation.
+    // A node starts only after its declared deps are ready, so it reliably sees its declared dependencies' captures (no edge → no guarantee).
     env = await resolveEnvForService({
       config,
       service: { kind: "owned", name },
