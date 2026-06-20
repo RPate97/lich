@@ -67,9 +67,9 @@ function startStub(opts: {
     | { kind: "503" }
     | { kind: "entries"; entries: Array<{ hostname: string; upstream_url: string }> }
     | {
-        kind: "entries-after-ms";
+        kind: "entries-after-gets";
         entries: Array<{ hostname: string; upstream_url: string }>;
-        delayMs: number;
+        emptyGets: number;
       }
     | { kind: "always-empty" }
     | { kind: "transport-error" };
@@ -86,7 +86,6 @@ function startStub(opts: {
     return { url: stub.url };
   }
   const reloadStatus = opts.reloadResponse === "503" ? 503 : 204;
-  const startMs = Date.now();
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -121,10 +120,9 @@ function startStub(opts: {
               status: 200,
               headers: { "content-type": "application/json; charset=utf-8" },
             });
-          case "entries-after-ms": {
-            const elapsed = Date.now() - startMs;
+          case "entries-after-gets": {
             const entries =
-              elapsed >= opts.routingResponse.delayMs
+              getCount > opts.routingResponse.emptyGets
                 ? opts.routingResponse.entries
                 : [];
             return new Response(JSON.stringify(entries), {
@@ -240,8 +238,8 @@ describe("runUp wait-for-routing — delayed routing", () => {
     const expectedHostname = `svc.${wt.name}`;
     const { url } = startStub({
       routingResponse: {
-        kind: "entries-after-ms",
-        delayMs: 200,
+        kind: "entries-after-gets",
+        emptyGets: 1,
         entries: [
           { hostname: expectedHostname, upstream_url: "http://127.0.0.1:1234" },
         ],

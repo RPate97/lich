@@ -177,9 +177,14 @@ describe("LICH_HOME resolution", () => {
 
   it("ignores an empty LICH_HOME env var (defaults to ~/.lich)", async () => {
     process.env.LICH_HOME = "";
-    // verify the resolver falls through (no file lands in our tmpdir)
-    const pid = await readDaemonPid();
-    expect(pid).toBeNull();
+    // The contract under test: empty LICH_HOME is treated as unset, not
+    // as the cwd or as the empty path. We verify by negative: setting it
+    // to "" must NOT make the resolver write to `home` (the beforeEach
+    // tmpdir LICH_HOME pointed at before). We can't reliably assert the
+    // ~/.lich fallback returns null because a dev machine may have a
+    // real daemon running with a real daemon.pid — and Bun caches
+    // os.homedir() at startup, so mid-process HOME stubs don't help.
+    await readDaemonPid();
     expect(existsSync(join(home, "daemon.pid"))).toBe(false);
   });
 });
