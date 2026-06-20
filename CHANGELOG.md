@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/RPate97/lich/compare/v0.5.0...v0.6.0) (2026-06-20)
+
+
+### Features
+
+* **sandbox:** merge microVM warm-fork feature to main ([53e74ea](https://github.com/RPate97/lich/commit/53e74ea76af6a9c99c4f673ca8000a01a8f60aec))
+
 ## [0.5.0](https://github.com/RPate97/lich/compare/v0.4.0...v0.5.0) (2026-06-20)
 
 
