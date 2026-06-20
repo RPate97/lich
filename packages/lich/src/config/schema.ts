@@ -577,6 +577,8 @@ export const runtimeSchema = {
     },
     sandbox: {
       type: "object",
+      description:
+        "macOS only. Routes the stack into a Tart microVM with warm-fork: the first `lich up` cold-boots and bakes a snapshot, every subsequent up clones the snapshot in ~14s. See `sandbox-warm-fork.md` for setup, `bake_inputs` selection, and gotchas.",
       additionalProperties: false,
       required: ["backend", "bake_inputs"],
       properties: {

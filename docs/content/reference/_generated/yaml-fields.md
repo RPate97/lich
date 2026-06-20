@@ -125,4 +125,4 @@
 | `port_range` | `integer[]` | no | Two-element `[min, max]` range lich allocates dynamic host ports from. |
 | `ready_when_timeout` | `string \| integer` | no | Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides. |
 | `kill_others_on_fail` | `boolean` | no | Cascade-kill siblings if one service fails during `lich up` startup. Default true. |
-| `sandbox` | `object` | no | — |
+| `sandbox` | `object` | no | macOS only. Routes the stack into a Tart microVM with warm-fork: the first `lich up` cold-boots and bakes a snapshot, every subsequent up clones the snapshot in ~14s. See `sandbox-warm-fork.md` for setup, `bake_inputs` selection, and gotchas. |

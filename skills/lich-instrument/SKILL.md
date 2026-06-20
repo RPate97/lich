@@ -52,6 +52,13 @@ Read these signals in roughly this order. Be quick — you're building a mental 
 - `firebase emulators:start`, `localstack start`, `wrangler dev`: similar shape — external CLI that owns its own daemons.
 - Anything in scripts that's named `*:up`, `*:start`, `*-up.sh` and shells out to a tool's CLI is worth checking.
 
+**Heavy-cold-boot signals** (flag for the sandbox suggestion — see `references/sandbox-warm-fork.md`):
+- Large lockfile or > 100 deps in `package.json` (long `bun install` / `pnpm install`).
+- `supabase/config.toml` + `supabase start` (pulls and starts ~10 containers from scratch).
+- Migrations directory with many files (`db/migrations/*.sql`, `prisma/migrations/`) or a heavy seed file.
+- User mentions `lich up` takes "a couple minutes" or they have to wait for fresh worktrees.
+- The user is on macOS with Apple Silicon (sandbox is macOS-only via Tart).
+
 **Env signals:**
 - `.env`, `.env.example`, `.env.development`: existing env vars. Note which look stack-specific (DATABASE_URL, REDIS_URL, API_URL — wire these via lich) vs secrets (API_KEY, OAUTH_SECRET — user-managed).
 
@@ -77,6 +84,11 @@ Likely questions, in priority order:
 5. **Profiles**. Only ask if you saw signs the app handles DB-absent gracefully (e.g., `if (process.env.DATABASE_URL) ...`). "Want a `dev:fast` profile that skips postgres (api falls back to a stub), or just one default profile?" If the codebase doesn't tolerate DB-absent, don't offer profiles — one profile is fine.
 
 6. **Lifecycle hooks**. Only if you saw migration scripts in the repo. "Should `lich up` run `prisma migrate dev` after services start?"
+
+7. **Sandbox warm-fork** (only if heavy-cold-boot signals fired AND the user is on macOS Apple Silicon).
+   > "Your cold boot is going to be expensive (heavy `bun install` / supabase / migrations). Lich supports baking the whole stack into a snapshot once and forking it for every subsequent up — typical cold drops from 1-3 min to ~14s. Worth wiring in? It does mean services run inside a Linux microVM instead of on the host. Setup is a one-time `bash packages/lich/scripts/build-sandbox-image.sh`."
+
+   If yes: consult `references/sandbox-warm-fork.md` for the `runtime.sandbox` block shape and the `bake_inputs` selection. If they're on Linux/Windows, don't offer it — Tart is macOS-only.
 
 Keep questions tight. One or two at a time, not a barrage.
 
@@ -129,6 +141,7 @@ If the survey turned up anything beyond a vanilla single-app shape, consult the 
 - Integrations with test-key-friendly services (Turnstile/Stripe/OAuth): **`references/test-key-overrides.md`**
 - N near-identical worker processes (`*Worker.ts` / `*Processor.ts`): **`references/worker-pools.md`**
 - External CLI launcher (supabase/dbmate/firebase emulators): **`references/external-cli-services.md`**
+- Heavy cold-boot the user wants amortized across worktrees (macOS only): **`references/sandbox-warm-fork.md`**
 
 ## Pass 4: Write + Verify
 
@@ -157,6 +170,7 @@ Read these as needed — they're the source of truth for what lich supports.
 - **`references/install-caching.md`** — `before_up` pattern that skips `pnpm install` when the lockfile is unchanged. Consult during Pass 3 if cold-cache reinstalls are slow.
 - **`references/test-key-overrides.md`** — local-dev test-key overrides for Turnstile/Stripe/OAuth/etc. via env-precedence rules. Consult during Pass 3 if the app integrates a service with "always-pass" test keys.
 - **`references/worker-pools.md`** — `discover:` block for N near-identical workers (`*Worker.ts` / `*Processor.ts`). Consult during Pass 3 if the stack has 3+ owned services with the same shape.
+- **`references/sandbox-warm-fork.md`** — the `runtime.sandbox` block for macOS users with heavy cold boot. The whole stack runs inside a Tart microVM; the first `lich up` cold-boots and bakes a snapshot, every subsequent up warm-forks (~14s). Consult during Pass 2/3 if the survey flags heavy `bun install` / supabase / large migrations / seed data AND the user is on macOS Apple Silicon.
 - **`references/cli.md`** — auto-generated reference for every `lich` subcommand. Consult when you need exact flag syntax or behavior for a command you'd suggest the user run (e.g., `lich validate`, `lich up`, `lich exec`).
 
 ## Skill version and refresh
