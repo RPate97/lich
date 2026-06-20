@@ -374,13 +374,11 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     const graphPhase = output.phase("dependency-graph");
     const decls = buildNodeDecls(effectiveConfig);
     let graph: Graph;
-    let levels: string[][];
     try {
       graph = buildGraph(decls);
       validateGraph(graph);
-      // topoLevels is retained purely for cycle detection (throws CycleError);
-      // scheduling no longer uses levels.
-      levels = topoLevels(graph);
+      // Cycle detection only — throws CycleError. Scheduling is graph-driven, not level-based.
+      topoLevels(graph);
     } catch (err) {
       graphPhase.end("fail");
       const msg = formatGraphError(err, resolvedProfile);
@@ -392,7 +390,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       await output.close();
       return { exitCode: 1, stackId: worktree.stack_id };
     }
-    graphPhase.end("ok", `${levels.length} level${levels.length === 1 ? "" : "s"}`);
+    graphPhase.end("ok", `${decls.length} service${decls.length === 1 ? "" : "s"}`);
 
     for (const decl of decls) {
       state.services.set(decl.name, {
@@ -893,7 +891,7 @@ interface StartOneInput {
   ownedSnapshotOverride?: OwnedSnapshotOverride;
 }
 
-/** Start a single service to "ready". Throws on any failure — caller's Promise.allSettled aggregates failures across a level. */
+/** Start a single service to "ready". Throws on any failure — runGraph records it and (under kill-others) tears down siblings. */
 async function startOneService(input: StartOneInput): Promise<void> {
   const { name, config, state, output } = input;
   const snap = state.services.get(name);
