@@ -111,7 +111,7 @@ function captureOut(): { stream: PassThrough; text: () => string } {
 }
 
 describe("runUp — daemon trigger fired after status:up", () => {
-  it("calls ensureDaemonRunning with openBrowser: true by default", async () => {
+  it("calls ensureDaemonRunning with openBrowser: false by default (no auto-open)", async () => {
     writeMinimalYaml();
     const wt = detectWorktree(projectDir);
     createdStackIds.push(wt.stack_id);
@@ -129,11 +129,11 @@ describe("runUp — daemon trigger fired after status:up", () => {
       openBrowser?: boolean;
       lichHome?: string;
     };
-    expect(callArgs.openBrowser).toBe(true);
+    expect(callArgs.openBrowser).toBe(false);
     expect(callArgs.lichHome).toBe(homeDir);
   });
 
-  it("noBrowser: true → openBrowser: false in the hook call", async () => {
+  it("openBrowser: true → openBrowser: true in the hook call (explicit opt-in)", async () => {
     writeMinimalYaml();
     const wt = detectWorktree(projectDir);
     createdStackIds.push(wt.stack_id);
@@ -143,7 +143,7 @@ describe("runUp — daemon trigger fired after status:up", () => {
       cwd: projectDir,
       outputMode: "pretty",
       out: stream,
-      noBrowser: true,
+      openBrowser: true,
     });
 
     expect(result.exitCode).toBe(0);
@@ -151,28 +151,36 @@ describe("runUp — daemon trigger fired after status:up", () => {
     const callArgs = ensureDaemonRunningSpy.mock.calls[0][0] as {
       openBrowser?: boolean;
     };
-    expect(callArgs.openBrowser).toBe(false);
+    expect(callArgs.openBrowser).toBe(true);
   });
 
-  it("noBrowser: false explicit → openBrowser: true (same as default)", async () => {
-    // Pin the explicit-false path so a future refactor that swaps the
-    // default doesn't silently flip behavior. `noBrowser: false` is the
+  it("LICH_NO_BROWSER=1 forces openBrowser: false even when openBrowser: true is passed", async () => {
     writeMinimalYaml();
     const wt = detectWorktree(projectDir);
     createdStackIds.push(wt.stack_id);
 
-    const { stream } = captureOut();
-    await runUp({
-      cwd: projectDir,
-      outputMode: "pretty",
-      out: stream,
-      noBrowser: false,
-    });
+    const prev = process.env.LICH_NO_BROWSER;
+    process.env.LICH_NO_BROWSER = "1";
+    try {
+      const { stream } = captureOut();
+      await runUp({
+        cwd: projectDir,
+        outputMode: "pretty",
+        out: stream,
+        openBrowser: true,
+      });
 
-    const callArgs = ensureDaemonRunningSpy.mock.calls[0][0] as {
-      openBrowser?: boolean;
-    };
-    expect(callArgs.openBrowser).toBe(true);
+      const callArgs = ensureDaemonRunningSpy.mock.calls[0][0] as {
+        openBrowser?: boolean;
+      };
+      expect(callArgs.openBrowser).toBe(false);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LICH_NO_BROWSER;
+      } else {
+        process.env.LICH_NO_BROWSER = prev;
+      }
+    }
   });
 });
 

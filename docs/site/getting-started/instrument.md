@@ -1,6 +1,6 @@
 # Instrument an existing repo with an agent
 
-Writing a `lich.yaml` from scratch is mechanical work — survey the repo, name the services, wire the env, get the ports right, run `lich validate`. The `lich-instrument` agent skill does all of this for you.
+Writing a `lich.yaml` from scratch is mechanical work. Survey the repo, name the services, wire the env, get the ports right, run `lich validate`. The `lich-instrument` agent skill does all of this for you.
 
 It's the path of least resistance for getting an existing app onto lich.
 
@@ -10,7 +10,7 @@ It's the path of least resistance for getting an existing app onto lich.
 npx skills add https://github.com/rpate97/lich/skills/lich-instrument
 ```
 
-This installs the skill into your local agent setup (Claude Code, Cursor, etc. — anywhere the [skills CLI](https://github.com/anthropics/skills) is wired up). The skill ships with reference files for the lich.yaml schema, framework defaults, external-CLI patterns (supabase / dbmate / firebase emulators), and recipes for monorepo tooling.
+This installs the skill into your local agent setup (Claude Code, Cursor, etc. Anywhere the [skills CLI](https://github.com/anthropics/skills) works). The skill ships with reference files for the lich.yaml schema, framework defaults, external-CLI patterns (supabase / dbmate / firebase emulators), and recipes for monorepo tooling.
 
 ## Run it
 
@@ -36,25 +36,18 @@ A `lich.yaml` that:
 - Matches your actual dev workflow (not a generic template).
 - Uses per-worktree port allocation (the whole point).
 - Wires env vars correctly between services (the load-bearing feature).
-- Handles your existing `docker-compose.yml` services without rewriting them.
+- Handles your existing `docker-compose.yml` services if you use them.
 - Includes profiles only if you asked for them (no profile bloat by default).
-- Models external CLI launchers (supabase, dbmate, prisma migrate, firebase emulators, localstack) as oneshot services with proper `stop_cmd:` and per-worktree namespacing via `${worktree.id}` — so multi-worktree workflows actually work.
+- Models external CLI launchers (supabase, dbmate, prisma migrate, firebase emulators, localstack) as oneshot services with proper `stop_cmd:` and per-worktree namespacing via `${worktree.id}` if necessary.
 
 ## Tweaking the output
 
 The skill stops as soon as `lich validate` passes. You'll still want to:
 
 - Run `lich up` and confirm everything starts.
-- Check that your friendly URLs work (`lich urls` prints them).
-- Skim the [recipes](/recipes/) for patterns the skill might have missed (lockfile preflight, test-key overrides, etc.).
+- Skim the [recipes](/recipes/) for patterns the skill might have missed (lockfile preflight, test-key overrides, etc).
+- Test and debug your setup.
 
-If something is wrong, edit `lich.yaml` directly and re-run `lich validate`. The skill is a starter, not a permanent middleman.
+If something is wrong, edit `lich.yaml` directly or point it out and ask your agent to fix it. Then re-run `lich validate`. The skill is a starter, not a permanent middleman. It's not guarenteed to perfectly instrument your stack on the first try. 
 
-## When the skill gets it wrong
-
-The skill is conservative: it stops and asks rather than guess. If it produces something weird, you have two options:
-
-1. **Fix it in place.** Tell the agent what's wrong; it revises and re-runs validate.
-2. **File feedback.** The skill auto-detects common failure modes (validate rejecting a property it just advertised, repeated revision cycles for the same shape, etc.) and offers to file a structured report via `lich feedback`. There's also a dedicated [`lich-feedback`](https://github.com/rpate97/lich/tree/main/skills/lich-feedback) skill for the longer kind.
-
-See the [feedback page](/feedback) for how the feedback flow works on the lich-team side.
+> You can think of Lich as a replacement for all of the scripts you use to manage your local development stack. It's powerful, but does require thoughtful setup to perform extremely well.

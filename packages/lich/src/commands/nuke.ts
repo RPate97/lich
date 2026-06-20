@@ -32,7 +32,11 @@ import {
   isDaemonAlive,
   readDaemonPid,
 } from "../daemon/pid-file.js";
-import { resolveEnvForService } from "../env/resolve.js";
+import {
+  resolveEnvForService,
+  resolveSharedEnvBase,
+  type SharedEnvBase,
+} from "../env/resolve.js";
 import { release } from "../ports/allocator.js";
 import { survivors, signalGroup } from "../owned/supervisor.js";
 import {
@@ -197,6 +201,8 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
     // Reconstruct Worktree from snapshot (NOT detectWorktree — the worktree dir may have moved/been renamed/be gone).
     const worktree: Worktree = reconstructWorktree(snap);
     const allocatedPorts = rebuildAllocatedPorts(snap);
+    // Resolved lazily on the first owned stop_cmd, then reused so top-level env_from doesn't re-run per service.
+    let sharedEnvBase: SharedEnvBase | undefined;
 
     for (const svc of snap.services) {
       if (svc.kind !== "owned") continue;
@@ -207,12 +213,21 @@ async function nukeOneStack(stackId: string): Promise<NukeOutcome> {
       // Env-resolve failure falls back to process.env — better to attempt stop_cmd with partial env than skip entirely.
       let stopEnv: NodeJS.ProcessEnv = process.env;
       try {
+        if (sharedEnvBase === undefined) {
+          sharedEnvBase = await resolveSharedEnvBase({
+            config,
+            worktree,
+            allocatedPorts,
+            projectRoot: snap.worktree_path,
+          });
+        }
         stopEnv = await resolveEnvForService({
           config,
           service: { kind: "owned", name: svc.name },
           worktree,
           allocatedPorts,
           projectRoot: snap.worktree_path,
+          baseEnv: sharedEnvBase,
         });
       } catch (err) {
         warnings.push(

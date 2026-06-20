@@ -1,6 +1,6 @@
 # env_groups
 
-Named env-var bundles you can reach for from `lich exec`, lifecycle hooks, and custom commands. Think of them as "the stack's env, but with X swapped" or "just these vars, none of the inherited stuff."
+Env groups are named env-var bundles you can reach for from `lich exec`, lifecycle hooks, and custom commands. Think of them as "the stack's env, but with X swapped" or "just these vars, none of the inherited stuff."
 
 ## When to use them
 
@@ -12,7 +12,7 @@ Named env-var bundles you can reach for from `lich exec`, lifecycle hooks, and c
 
 ```yaml
 env_groups:
-  # Pattern A: standalone — only these vars, no inheritance.
+  # Pattern A: standalone. Only these vars, no inheritance.
   isolated-tools:
     process_env: false              # don't inherit shell env either
     env:
@@ -25,11 +25,11 @@ env_groups:
       TEST_MODE: integration
 
   # Pattern C: stack-derived (built-in `stack` group).
-  # The `stack` group is implicit — contains top-level `env:` +
+  # The `stack` group is implicit. It contains top-level `env:` +
   # per-service `port:` / `host_port` exposures.
 ```
 
-You don't have to define `stack` — it's always available. Define your own groups when you need to deviate from it.
+You don't have to define `stack`. It's always available. Define your own groups when you need to deviate from it.
 
 ## Where they're used
 
@@ -50,7 +50,7 @@ lifecycle:
       env_group: stack-plus-test
 ```
 
-The seed script runs with `stack-plus-test` env loaded — stack defaults plus `TEST_MODE=integration`.
+The seed script runs with `stack-plus-test` env loaded. Stack defaults plus `TEST_MODE=integration`.
 
 ### `commands:` (custom CLI commands)
 

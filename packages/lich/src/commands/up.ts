@@ -18,7 +18,9 @@ import {
 import { writeComposeOverride } from "../compose/override.js";
 import {
   resolveEnvForService,
+  resolveSharedEnvBase,
   resolveTopLevelEnv,
+  type SharedEnvBase,
 } from "../env/resolve.js";
 import {
   ensureStackDir,
@@ -128,8 +130,8 @@ export interface RunUpInput {
   signal?: AbortSignal;
   /** Profile to activate. Omit to pick the `default: true` profile (errors on missing/ambiguous). */
   profile?: string;
-  /** Suppress the daemon's browser-open side effect on first-spawn. */
-  noBrowser?: boolean;
+  /** Open the dashboard in the browser after the stack is up. Default off; LICH_NO_BROWSER=1 forces off. */
+  openBrowser?: boolean;
   /** Emit raw upstream URLs in the summary instead of friendly proxied URLs. */
   raw?: boolean;
   /** Per-owned-service snapshot replay map — bypasses yaml env resolution for matching services. */
@@ -473,12 +475,22 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
     portsPhase.end("ok", `${Object.keys(portMap).length} port${Object.keys(portMap).length === 1 ? "" : "s"}`);
 
     const envPhase = output.phase("resolve-env");
+    // Resolve the shared env base (incl. top-level/profile env_from shell-outs) ONCE, then
+    // reuse it for every service so secret loaders don't re-run per service.
+    const sharedEnvBase = await resolveSharedEnvBase({
+      config: effectiveConfig,
+      worktree,
+      allocatedPorts,
+      projectRoot: worktree.path,
+      profile: resolvedProfile ?? undefined,
+    });
     const topLevelEnv = await resolveTopLevelEnv({
       config: effectiveConfig,
       worktree,
       allocatedPorts,
       projectRoot: worktree.path,
       profile: resolvedProfile ?? undefined,
+      baseEnv: sharedEnvBase,
     });
     envPhase.end("ok");
 
@@ -508,6 +520,7 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
         allocatedPorts,
         projectRoot: worktree.path,
         profile: resolvedProfile ?? undefined,
+        baseEnv: sharedEnvBase,
       });
     }
 
@@ -602,6 +615,7 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
             worktree,
             allocatedPorts,
             topLevelEnv,
+            sharedEnvBase,
             composeCtx: composeCli && composeProject
               ? {
                   cli: composeCli,
@@ -793,12 +807,12 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
     const envNoBrowser =
       process.env.LICH_NO_BROWSER === "1" ||
       process.env.LICH_NO_BROWSER === "true";
-    const noBrowser = (input.noBrowser ?? false) || envNoBrowser;
+    const openBrowser = (input.openBrowser ?? false) && !envNoBrowser;
     const configuredProxyPort = config.runtime?.proxy_port;
     try {
       const lichHomeEnv = process.env.LICH_HOME;
       const ensureOpts: Parameters<typeof ensureDaemonRunning>[0] = {
-        openBrowser: !noBrowser,
+        openBrowser,
       };
       if (lichHomeEnv !== undefined) ensureOpts.lichHome = lichHomeEnv;
       if (typeof configuredProxyPort === "number") {
@@ -918,6 +932,8 @@ interface StartOneInput {
   worktree: Worktree;
   allocatedPorts: AllocatedPorts;
   topLevelEnv: NodeJS.ProcessEnv;
+  /** Shared env base resolved once for the whole `up`; reused so per-service env_from doesn't re-run top-level/profile shell-outs. */
+  sharedEnvBase: SharedEnvBase;
   composeCtx: RunnerCtx | null;
   state: UpState;
   output: Output;
@@ -1159,6 +1175,7 @@ async function startOwned(
       projectRoot: worktree.path,
       capturedValues: state.capturedValues,
       profile: state.resolvedProfile,
+      baseEnv: input.sharedEnvBase,
     });
 
     const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);

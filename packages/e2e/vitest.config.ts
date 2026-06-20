@@ -16,5 +16,11 @@ export default defineConfig({
   test: {
     // include/exclude live on the workspace projects; defining them here
     // ANDs with the project's and produces empty intersections.
+    //
+    // Never send telemetry from e2e tests. Set on the runner process so
+    // every spawned lich invocation inherits it via process.env.
+    env: {
+      LICH_TELEMETRY: "0",
+    },
   },
 });

@@ -36,9 +36,14 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build ${{ matrix.target.name }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

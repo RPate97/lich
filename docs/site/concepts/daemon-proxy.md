@@ -46,9 +46,9 @@ When you `lich up` a stack with an `api` service in a worktree named `my-feature
 api.my-feature.lich.localhost:3300  ->  localhost:<allocated-port>
 ```
 
-Anyone hitting `http://api.my-feature.lich.localhost:3300/health` reaches the daemon, which proxies the request to whatever port was allocated for that stack's `api` service. No port memorization, no DNS setup — `*.localhost` resolves to loopback on every OS.
+Anyone hitting `http://api.my-feature.lich.localhost:3300/health` reaches the daemon, which proxies the request to whatever port was allocated for that stack's `api` service. No port memorization, no DNS setup. `*.localhost` resolves to loopback correctly on every OS.
 
-The pattern is `<service>.<worktree>.lich.localhost:<proxy-port>` — see [Worktree isolation](/concepts/worktrees-isolation) for why this is the right shape.
+The pattern is `<service>.<worktree>.lich.localhost:<proxy-port>`. See [Worktree isolation](/concepts/worktrees-isolation) for why this is the shape.
 
 ## Why `:3300` specifically
 
@@ -57,11 +57,11 @@ The daemon's proxy port defaults to `3300`. You can override it:
 - Per stack, in `lich.yaml` under `runtime.proxy_port:`.
 - Globally, via the `LICH_PROXY_PORT` env var.
 
-Only pin a non-default port if you need stable friendly URLs across teammates (e.g. for webhook URLs hardcoded in third-party tools). For solo dev, the default is what you want.
+Only pin a non-default port if you need stable friendly URLs across teammates (e.g. for webhook URLs hardcoded in third-party tools). For most people, the default is probably fine.
 
 ## What the dashboard sees
 
-The dashboard at `http://lich.localhost:3300/` reads the same `~/.lich/stacks/*/state.json` files the daemon does. Every stack on the machine shows up — even ones from worktrees you haven't `cd`'d into in days. See the [Dashboard page](/dashboard) for what the UI exposes.
+The dashboard at `http://lich.localhost:3300/` reads the same `~/.lich/stacks/*/state.json` files the daemon does. Every stack on the machine shows up, even ones from worktrees created by agents or subagents. See the [Dashboard page](/dashboard) for what the UI exposes.
 
 ## Debugging routing
 
@@ -71,7 +71,7 @@ If a friendly URL 404s when you expect it to work, run:
 lich routing
 ```
 
-This prints the daemon's in-memory routing table as JSON. Compare what the daemon has loaded against the routing entries in `~/.lich/stacks/<stack-id>/state.json`. If they don't match, the daemon hasn't picked up a recent state update — restart it (`lich nuke` or kill the daemon process; it'll respawn on the next `lich` command).
+This prints the daemon's in-memory routing table as JSON. Compare what the daemon has loaded against the routing entries in `~/.lich/stacks/<stack-id>/state.json`. If they don't match, the daemon hasn't picked up a recent state update. Restart it (`lich nuke` or kill the daemon process; it'll respawn on the next `lich` command).
 
 ## Daemon lifecycle
 

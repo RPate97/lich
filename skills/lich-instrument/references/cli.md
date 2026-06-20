@@ -26,7 +26,7 @@ name to activate it explicitly.
 Flags:
   --json          Emit machine-readable progress on stdout.
   --quiet         Suppress progress; print final summary only.
-  --no-browser    Skip opening the dashboard in the browser.
+  --browser       Open the dashboard in the browser after up. (Default: don't open; run `lich dashboard` to open later.)
   --raw           Print raw localhost URLs in the summary.
 
 Exit codes: 0 on success, non-zero on any failure.

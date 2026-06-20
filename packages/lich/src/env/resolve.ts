@@ -41,6 +41,14 @@ import type { Worktree } from "../worktree/detect.js";
 import { loadEnvFiles } from "./files.js";
 import { loadEnvFromShellOut } from "./shell-out.js";
 
+/**
+ * The service-independent env layers (process.env + auto-injects + top-level +
+ * profile), merged but NOT yet interpolated and with `null` unset-markers
+ * retained. Produced by {@link resolveSharedEnvBase}; pre-interpolation so each
+ * service can still interpolate against its own capture context.
+ */
+export type SharedEnvBase = Record<string, string | null>;
+
 export interface ResolveEnvForServiceInput {
   config: LichConfig;
   service:
@@ -82,6 +90,14 @@ export interface ResolveEnvForServiceInput {
    * auto-injected. When omitted, behavior matches the no-profile pipeline.
    */
   profile?: ResolvedProfile;
+  /**
+   * Precomputed shared base from {@link resolveSharedEnvBase}. When supplied,
+   * the process.env/auto-inject/top-level/profile layers are NOT re-resolved —
+   * critically, their `env_from` shell-outs do not re-run. Callers resolving
+   * many services in one pass (e.g. `lich up`) compute this once and pass it to
+   * every call. Must derive from the same worktree/profile/config as this call.
+   */
+  baseEnv?: SharedEnvBase;
 }
 
 export type ResolveTopLevelEnvInput = Omit<
@@ -301,17 +317,20 @@ function getServiceBundle(
 }
 
 /**
- * Fully resolve env for one service. Throws `ShellOutError` on env_from failure,
- * the error from `loadEnvFiles` on dotenv parse failure, and `InterpolationError`
- * on `${...}` resolution failure.
+ * Resolve the service-independent env layers — process.env, auto-injects,
+ * top-level, and profile — into a pre-interpolation {@link SharedEnvBase}.
+ * This is where the top-level/profile `env_from` shell-outs run; computing it
+ * once and threading it back via `input.baseEnv` keeps those commands from
+ * re-running for every service. Returns a fresh object each call (a clone when
+ * `baseEnv` is supplied), so callers may safely layer onto the result.
  */
-export async function resolveEnvForService(
-  input: ResolveEnvForServiceInput,
-): Promise<Record<string, string>> {
+export async function resolveSharedEnvBase(
+  input: ResolveTopLevelEnvInput,
+): Promise<SharedEnvBase> {
+  if (input.baseEnv !== undefined) return { ...input.baseEnv };
+
   const processEnv = input.processEnv ?? process.env;
-
-  let merged: Record<string, string | null> = processEnvToRecord(processEnv);
-
+  let merged: SharedEnvBase = processEnvToRecord(processEnv);
   Object.assign(merged, autoInjects(input.worktree, input.profile?.name));
 
   merged = await layerBundle({
@@ -332,6 +351,19 @@ export async function resolveEnvForService(
       projectRoot: input.projectRoot,
     });
   }
+
+  return merged;
+}
+
+/**
+ * Fully resolve env for one service. Throws `ShellOutError` on env_from failure,
+ * the error from `loadEnvFiles` on dotenv parse failure, and `InterpolationError`
+ * on `${...}` resolution failure.
+ */
+export async function resolveEnvForService(
+  input: ResolveEnvForServiceInput,
+): Promise<Record<string, string>> {
+  let merged = await resolveSharedEnvBase(input);
 
   const bundle = getServiceBundle(input.config, input.service);
   merged = await layerBundle({
@@ -366,29 +398,7 @@ export async function resolveEnvForService(
 export async function resolveTopLevelEnv(
   input: ResolveTopLevelEnvInput,
 ): Promise<Record<string, string>> {
-  const processEnv = input.processEnv ?? process.env;
-
-  let merged: Record<string, string | null> = processEnvToRecord(processEnv);
-  Object.assign(merged, autoInjects(input.worktree, input.profile?.name));
-
-  merged = await layerBundle({
-    into: merged,
-    env_from: input.config.env_from,
-    env_files: input.config.env_files,
-    env: input.config.env,
-    projectRoot: input.projectRoot,
-    projectRootFallback: input.projectRootFallback ?? input.worktree.main_path,
-  });
-
-  if (input.profile) {
-    merged = await layerBundle({
-      into: merged,
-      env_from: input.profile.env_from,
-      env_files: input.profile.env_files,
-      env: input.profile.env,
-      projectRoot: input.projectRoot,
-    });
-  }
+  const merged = await resolveSharedEnvBase(input);
 
   const finalEnv = dropNullValues(merged);
 

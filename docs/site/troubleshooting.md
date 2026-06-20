@@ -47,7 +47,7 @@ This sweeps orphaned stacks and cleans them up.
 
 ## `command not found: turbo` (or nx, lage, wireit, prisma, etc.)
 
-Symptom: your `lich.yaml` has `cmd: turbo run dev` (or similar) and lich reports "command not found" — even though `turbo` is installed as a workspace dep at `node_modules/.bin/turbo`.
+Symptom: your `lich.yaml` has `cmd: turbo run dev` (or similar) and lich reports "command not found" even though `turbo` is installed as a workspace dep at `node_modules/.bin/turbo`.
 
 Cause: spawned commands inherit `PATH` from the parent shell, but `node_modules/.bin` isn't on `PATH` by default unless you went through the package manager (`pnpm exec`, `yarn run`, `npm exec`).
 
@@ -59,50 +59,7 @@ owned:
     cmd: pnpm exec turbo run dev --filter=server   # pnpm exec sets PATH correctly
 ```
 
-Or rely on lich's auto-prepended `node_modules/.bin` (it's part of the resolved env now — newer versions of lich handle this for you).
-
 See [Recipes → Monorepo workspace tooling](/recipes/#recipe-2-monorepo-workspace-tooling-turbo-nx-lage-wireit) for the full pattern.
-
-## `supabase start` doesn't tear down on `lich down`
-
-Symptom: after `lich down`, `docker ps` still shows the supabase containers. The next `lich up` either collides on container names or silently attaches to the previous run's containers.
-
-Cause: you wrapped `supabase start` in `lifecycle.before_up` (or modeled it as a regular long-lived owned service). Either way, lich has nothing to invoke when it's time to tear the spawned containers down.
-
-Fix: model the launcher as a oneshot owned service with `stop_cmd:`:
-
-```yaml
-owned:
-  supabase:
-    cmd: supabase start
-    oneshot: true
-    stop_cmd: supabase stop
-    env:
-      SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # per-worktree namespace
-    # ... ports, ready_when, etc.
-```
-
-See [Oneshot services](/concepts/oneshot-services) for the full walkthrough.
-
-## Supabase auth links go to the wrong port
-
-Symptom: `supabase start` runs, you sign in via magic link, the email link points to a different port than your web app is actually on. Or worse: it points to a hardcoded port that conflicts with another worktree's stack.
-
-Cause: `supabase/config.toml`'s `auth.site_url` is pinned to a specific port, but lich allocates a different port per worktree.
-
-Fix: set `SUPABASE_AUTH_SITE_URL` on the supabase service's env so the env override beats the config.toml value:
-
-```yaml
-owned:
-  supabase:
-    cmd: supabase start
-    oneshot: true
-    stop_cmd: supabase stop
-    env:
-      SUPABASE_AUTH_SITE_URL: "http://localhost:${owned.web.port}"
-```
-
-This works because lich allocates `owned.web.port` before `supabase start` runs (see [interpolation port-allocation timing](/reference/interpolation#port-allocation-timing)).
 
 ## `ready_when` times out without showing why
 
@@ -156,26 +113,9 @@ Cause: lich's schema is closed (`additionalProperties: false`) on services. The 
 
 Fix: write the unsupported fields to a sibling `compose.yaml` and reference it from `lich.yaml` via `compose_file:` / `service:` instead of inlining.
 
-## Two stacks collide on `supabase_db_myapp` (or similar container name)
-
-Symptom: running `lich up` from a second worktree fails because docker reports the container name is already in use.
-
-Cause: you forgot to include `${worktree.id}` in the supabase project_id (or whatever the per-worktree namespacing key is). Both worktrees default to the same project_id, both try to spawn a container with the same name.
-
-Fix:
-
-```yaml
-owned:
-  supabase:
-    env:
-      SUPABASE_PROJECT_ID: "myapp-${worktree.id}"   # was: "myapp"
-```
-
-Same pattern works for any external resource that needs per-instance namespacing — compose project names, KV namespaces, S3 prefixes, temporal task queues.
-
 ## `lich up` reinstalls dependencies every time
 
-Symptom: every `lich up` spends 30-60s in `pnpm install` (or `yarn install` / `npm install`) even though the lockfile hasn't changed.
+Symptom: every `lich up` spends 30-60s in `pnpm install` (or `yarn install`, `npm install`, `bun install`, etc) even though the lockfile hasn't changed.
 
 Cause: you wrapped the install in `lifecycle.before_up` without a staleness check, so it runs unconditionally.
 

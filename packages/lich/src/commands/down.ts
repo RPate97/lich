@@ -1386,6 +1386,7 @@ async function findWorktreeBySnapshot(
 
     const snapPath = safeReal(snap.worktree_path);
     if (!cwdReal.startsWith(snapPath)) continue;
+    if (!fsExists(snapPath)) continue;
 
     return worktreeFromSnapshot({ ...snap, worktree_path: snapPath });
   }

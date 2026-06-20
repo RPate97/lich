@@ -25,7 +25,9 @@ describe("version.ts release-workflow sed compatibility", () => {
     expect(patched).toBe(`export const VERSION = "${targetVersion}";\n`);
   });
 
-  it("version.ts shape is a single-line quoted string assignment", () => {
-    expect(content.trim()).toMatch(/^export const VERSION = "[^"]+";(\s*\/\/.*)?$/);
+  it("version.ts shape is a single-line quoted string assignment with the release-please marker", () => {
+    expect(content.trim()).toMatch(
+      /^export const VERSION = "[^"]+"; \/\/ x-release-please-version$/,
+    );
   });
 });

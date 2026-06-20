@@ -392,7 +392,7 @@ export const ownedServiceSchema = {
     ports: {
       type: "object",
       additionalProperties: portDescriptorSchema,
-      description: "Multi-port shape — map of port-key to descriptor. Each gets its own injected env var.",
+      description: "Multi-port shape: map of port-key to descriptor. Each gets its own injected env var.",
     },
     oneshot: {
       type: "boolean",
@@ -408,7 +408,7 @@ export const ownedServiceSchema = {
     },
     env: {
       ...envMapSchema,
-      description: "Service-scoped env vars. Merges with top-level `env:` — per-service wins on collision.",
+      description: "Service-scoped env vars. Merges with top-level `env:`; per-service wins on collision.",
     },
     env_files: {
       ...envFilesSchema,
@@ -416,7 +416,7 @@ export const ownedServiceSchema = {
     },
     env_from: {
       ...envFromSchema,
-      description: "Service-scoped shell-out env sources. Merges with top-level — per-service wins on collision.",
+      description: "Service-scoped shell-out env sources. Merges with top-level; per-service wins on collision.",
     },
     ready_when: {
       ...readyWhenSchema,
@@ -575,6 +575,10 @@ export const runtimeSchema = {
       type: "boolean",
       description: "Cascade-kill siblings if one service fails during `lich up` startup. Default true.",
     },
+    telemetry: {
+      type: "boolean",
+      description: "Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it.",
+    },
     sandbox: {
       type: "object",
       description:
@@ -672,7 +676,7 @@ export const schema = {
     profiles: {
       type: "object",
       additionalProperties: profileSchema,
-      description: "Named subsets of the stack — pick a service set and env for a given run.",
+      description: "Named subsets of the stack. Pick a service set and env for a given run.",
     },
   },
   required: ["version"],
