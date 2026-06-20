@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { isTartAvailable, imageExists } from "../../helpers/tart.js";
 import { waitForDaemonRunning } from "../../helpers/daemon.js";
+import {
+  sweepStaleLichResources,
+  waitForFreeMemoryHeadroom,
+} from "../../helpers/heavy-pool-cleanup.js";
 
 const _here = dirname(fileURLToPath(import.meta.url));
 const LICH_BIN = resolve(_here, "../../../lich/dist/lich");
@@ -53,6 +57,8 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox dashboard metrics
   let dashboardUrl: string;
 
   beforeAll(async () => {
+    sweepStaleLichResources();
+    await waitForFreeMemoryHeadroom(2048);
     projectDir = mkdtempSync(join(tmpdir(), "lich-e2e-dash-proxy-"));
     lichHome = mkdtempSync(join(tmpdir(), "lich-e2e-dash-proxy-home-"));
 
@@ -94,6 +100,8 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox dashboard metrics
     } catch {
       // best-effort
     }
+    sweepStaleLichResources();
+    await new Promise((r) => setTimeout(r, 1_500));
     try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* ignore */ }
     try { rmSync(lichHome, { recursive: true, force: true }); } catch { /* ignore */ }
   }, 90_000);

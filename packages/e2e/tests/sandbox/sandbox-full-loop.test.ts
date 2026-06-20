@@ -7,6 +7,11 @@ import { SnapshotStore } from "../../../lich/src/sandbox/snapshot-store.js";
 import { TartBackend } from "../../../lich/src/sandbox/tart.js";
 import { runName, goldenName } from "../../../lich/src/sandbox/naming.js";
 import { isTartAvailable, imageExists } from "../../helpers/tart.js";
+import {
+  sweepStaleLichResources,
+  waitForFreeMemoryHeadroom,
+  waitForStackTeardown,
+} from "../../helpers/heavy-pool-cleanup.js";
 import type { SandboxRuntime as SandboxConfig } from "../../../lich/src/config/types.js";
 
 // First real lich-stack-in-a-sandbox lifecycle: cold-boot → serve → snapshot →
@@ -57,6 +62,8 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
   });
 
   beforeAll(async () => {
+    sweepStaleLichResources();
+    await waitForFreeMemoryHeadroom(2048);
     worktree = mkdtempSync(join(tmpdir(), "lich-fullloop-wt-"));
     storeDir = mkdtempSync(join(tmpdir(), "lich-fullloop-store-"));
     writeFileSync(join(worktree, "lich.yaml"), LICH_YAML);
@@ -70,7 +77,7 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
       bootWaitMs: 8000,
     });
     await backend.destroy(runVm);
-  }, 60_000);
+  }, 90_000);
 
   afterAll(async () => {
     await runtime.down(ctx(), { purge: true }).catch(() => {});
@@ -79,6 +86,9 @@ describe.skipIf(!isTartAvailable() || !imageExists())("sandbox full loop (e2e)",
     for (const vm of await backend.list().catch(() => [])) {
       if (vm.name.startsWith("lich-golden-")) await backend.destroy(vm.name).catch(() => {});
     }
+    // Block until the host actually shows the run VM gone — protects the
+    // next test from "got no IP" / "port 5432 already in use" on cold start.
+    await waitForStackTeardown({ runVmNames: [runVm] });
     rmSync(worktree, { recursive: true, force: true });
     rmSync(storeDir, { recursive: true, force: true });
     if (Object.keys(timings).length) console.log(`[full-loop] timings(ms): ${JSON.stringify(timings)}`);

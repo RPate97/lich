@@ -9,6 +9,7 @@ import { runLich } from "../helpers/lich.js";
 import { parseLichUrls } from "../helpers/urls.js";
 import { waitForHttp200 } from "../helpers/wait.js";
 import { expectDbMode } from "../helpers/dbmode.js";
+import { sweepStaleLichResources } from "../helpers/heavy-pool-cleanup.js";
 import { LICH_BINARY as lichBinary, REPO_ROOT as repoRoot } from "@/helpers/paths.js";
 
 beforeAll(() => {
@@ -39,6 +40,10 @@ interface Fixture {
 let fixture: Fixture | null = null;
 
 function makeFixture(): Fixture {
+  // Clear any docker compose containers a previous heavy test left half-down
+  // — without this, `lich up` here can hit a port 5432 conflict from a
+  // stale postgres container that's mid-teardown, exit non-zero in ~8s.
+  sweepStaleLichResources();
   const stack = copyExampleToTmpdir("dogfood-stack", { install: true });
   // Defensive: cpSync should preserve mode but a future helper change shouldn't EACCES
   chmodSync(join(stack.path, "scripts/write-marker.sh"), 0o755);

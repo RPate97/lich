@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { copyFixtureToTmpdir } from '../../helpers/tmpdir.js';
 import { runLich } from '../../helpers/lich.js';
+import { sweepStaleLichResources } from '../../helpers/heavy-pool-cleanup.js';
 
 describe('dev:heavy profile boots end-to-end (host, no sandbox)', () => {
   let stackPath: string;
@@ -13,6 +14,9 @@ describe('dev:heavy profile boots end-to-end (host, no sandbox)', () => {
   let lichHome: string;
 
   beforeAll(() => {
+    // Clear any docker compose containers a previous heavy test left half-down
+    // (port 5432 / container-name conflicts cause an 8s `lich up` exit-1 flake).
+    sweepStaleLichResources();
     const stack = copyFixtureToTmpdir('dogfood-stack', { install: true });
     stackPath = stack.path;
     cleanup = stack.cleanup;
@@ -20,13 +24,16 @@ describe('dev:heavy profile boots end-to-end (host, no sandbox)', () => {
     execSync('bash scripts/generate-heavy-migrations.sh', { cwd: stackPath, stdio: 'inherit' });
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     try {
       runLich(['down'], { cwd: stackPath, env: { LICH_HOME: lichHome }, timeout: 30_000 });
     } catch { /* best-effort */ }
     try {
       runLich(['nuke', '--yes'], { cwd: stackPath, env: { LICH_HOME: lichHome }, timeout: 30_000 });
     } catch { /* best-effort */ }
+    // Give docker compose a moment to actually release ports.
+    sweepStaleLichResources();
+    await new Promise((r) => setTimeout(r, 1_500));
     try { cleanup(); } catch { /* best-effort */ }
   });
 

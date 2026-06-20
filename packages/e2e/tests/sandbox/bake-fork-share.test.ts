@@ -4,6 +4,10 @@ import { mkdtempSync, cpSync, writeFileSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isTartAvailable, imageExists } from '../../helpers/tart.js';
+import {
+  sweepStaleLichResources,
+  waitForFreeMemoryHeadroom,
+} from '../../helpers/heavy-pool-cleanup.js';
 
 const LICH = process.env.LICH ?? `${process.cwd()}/../lich/dist/lich`;
 const FIXTURE = join(__dirname, '../../fixtures/dogfood-stack');
@@ -48,18 +52,24 @@ describe.skipIf(!isTartAvailable() || !imageExists())('bake-fork sharing/diverge
   let wt3: string;
   let lichHome: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    sweepStaleLichResources();
+    await waitForFreeMemoryHeadroom(2048);
     lichHome = mkdtempSync(join(tmpdir(), 'lich-bake-share-home-'));
     wt1 = prepareWorktree('bake-wt1');
     wt2 = prepareWorktree('bake-wt2');
     wt3 = prepareWorktree('bake-wt3');
   }, 300_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     for (const wt of [wt1, wt2, wt3]) {
       try { execSync(`${LICH} down ${PROFILE} --purge`, { cwd: wt, env: { ...process.env, LICH_HOME: lichHome }, stdio: 'ignore', timeout: 120_000 }); } catch { /* best-effort */ }
     }
     try { execSync(`${LICH} nuke --yes`, { cwd: wt1, env: { ...process.env, LICH_HOME: lichHome }, stdio: 'ignore', timeout: 120_000 }); } catch { /* best-effort */ }
+    // Belt-and-suspenders: sweep any lich-run leftovers nuke missed so the
+    // next heavy test starts on a clean host.
+    sweepStaleLichResources();
+    await new Promise((r) => setTimeout(r, 1_500));
     for (const wt of [wt1, wt2, wt3, lichHome]) {
       try { rmSync(wt, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
