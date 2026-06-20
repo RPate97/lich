@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/RPate97/lich/compare/v0.4.0...v0.5.0) (2026-06-20)
+
+
+### Features
+
+* **deps:** add pure runGraph scheduler for dependency-graph startup ([11311a6](https://github.com/RPate97/lich/commit/11311a67c3ae973dfb99d60b91d549f984d23fb4))
+* **up:** schedule services by dependency graph instead of topological waves ([10f11af](https://github.com/RPate97/lich/commit/10f11af92672306080abc751760b9303a886a64f))
+* **up:** schedule services by dependency graph, not topological waves ([dad570e](https://github.com/RPate97/lich/commit/dad570ef0c61f72e5f885cdf62f5b70461f7b82a))
+
+
+### Bug Fixes
+
+* **telemetry:** hand posthog-node the shutdown timeout instead of racing it ([9161a2c](https://github.com/RPate97/lich/commit/9161a2cc9a33acc5141903ce3ea99cc7fd328286))
+
+
+### Performance Improvements
+
+* **env:** resolve top-level/profile env_from once per up, not per service ([103573f](https://github.com/RPate97/lich/commit/103573f81fefb1557224a89e253e9a9679c8eb7b))
+* **env:** resolve top-level/profile env_from once per up/nuke, not per service ([b4a8468](https://github.com/RPate97/lich/commit/b4a846812e22ca706af33899b96f398bf6acee8a))
+* **env:** reuse shared env base across owned stop_cmds in nuke ([a845cc0](https://github.com/RPate97/lich/commit/a845cc09afacde20932494ef1f0c5fc30ca39bb4))
+
 ## [0.4.0](https://github.com/RPate97/lich/compare/v0.3.1...v0.4.0) (2026-06-06)
 
 
