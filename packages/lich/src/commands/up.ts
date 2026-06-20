@@ -17,7 +17,9 @@ import {
 import { writeComposeOverride } from "../compose/override.js";
 import {
   resolveEnvForService,
+  resolveSharedEnvBase,
   resolveTopLevelEnv,
+  type SharedEnvBase,
 } from "../env/resolve.js";
 import {
   ensureStackDir,
@@ -423,12 +425,22 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
     portsPhase.end("ok", `${Object.keys(portMap).length} port${Object.keys(portMap).length === 1 ? "" : "s"}`);
 
     const envPhase = output.phase("resolve-env");
+    // Resolve the shared env base (incl. top-level/profile env_from shell-outs) ONCE, then
+    // reuse it for every service so secret loaders don't re-run per service.
+    const sharedEnvBase = await resolveSharedEnvBase({
+      config: effectiveConfig,
+      worktree,
+      allocatedPorts,
+      projectRoot: worktree.path,
+      profile: resolvedProfile ?? undefined,
+    });
     const topLevelEnv = await resolveTopLevelEnv({
       config: effectiveConfig,
       worktree,
       allocatedPorts,
       projectRoot: worktree.path,
       profile: resolvedProfile ?? undefined,
+      baseEnv: sharedEnvBase,
     });
     envPhase.end("ok");
 
@@ -458,6 +470,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
         allocatedPorts,
         projectRoot: worktree.path,
         profile: resolvedProfile ?? undefined,
+        baseEnv: sharedEnvBase,
       });
     }
 
@@ -549,6 +562,7 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
             worktree,
             allocatedPorts,
             topLevelEnv,
+            sharedEnvBase,
             composeCtx: composeCli && composeProject
               ? {
                   cli: composeCli,
@@ -862,6 +876,8 @@ interface StartOneInput {
   worktree: Worktree;
   allocatedPorts: AllocatedPorts;
   topLevelEnv: NodeJS.ProcessEnv;
+  /** Shared env base resolved once for the whole `up`; reused so per-service env_from doesn't re-run top-level/profile shell-outs. */
+  sharedEnvBase: SharedEnvBase;
   composeCtx: RunnerCtx | null;
   state: UpState;
   output: Output;
@@ -1103,6 +1119,7 @@ async function startOwned(
       projectRoot: worktree.path,
       capturedValues: state.capturedValues,
       profile: state.resolvedProfile,
+      baseEnv: input.sharedEnvBase,
     });
 
     const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1169,5 +1170,65 @@ describe("runNuke --rescue", () => {
     expect(result.rescue).toBeUndefined();
     expect(existsSync(sentinel)).toBe(false);
     expect(existsSync(stackDir("regression"))).toBe(false);
+  });
+});
+
+describe("runNuke — top-level env_from resolves once across owned services", () => {
+  it("runs a top-level env_from command once even with multiple owned stop_cmds", async () => {
+    // env_from + stop_cmd both run with cwd = worktree_path, so relative paths
+    // land in projectDir. env_from appends one line per execution.
+    const projectDir = makeProjectDir(
+      "env-from-once",
+      `version: "1"
+env_from:
+  - 'echo ran >> env-from-runs.log; echo "SHARED=top"'
+owned:
+  alpha:
+    cmd: "true"
+    stop_cmd: "touch stopped-alpha"
+  beta:
+    cmd: "true"
+    stop_cmd: "touch stopped-beta"
+  gamma:
+    cmd: "true"
+    stop_cmd: "touch stopped-gamma"
+`,
+    );
+
+    await writeSnapshot(
+      snap({
+        stack_id: "env-from-once-abc12345",
+        worktree_name: "env-from-once",
+        worktree_path: projectDir,
+        services: [
+          { name: "alpha", kind: "owned", state: "stopped", pid: 2_147_483_630 },
+          { name: "beta", kind: "owned", state: "stopped", pid: 2_147_483_631 },
+          { name: "gamma", kind: "owned", state: "stopped", pid: 2_147_483_632 },
+        ],
+      }),
+    );
+
+    const { out } = makeSink();
+    const result = await runNuke({ out, yes: true });
+    expect(result.exitCode).toBe(0);
+
+    // All three stop_cmds ran — the shared base is reused per service, not
+    // computed once and then leaving later services unresolved.
+    expect(existsSync(join(projectDir, "stopped-alpha"))).toBe(true);
+    expect(existsSync(join(projectDir, "stopped-beta"))).toBe(true);
+    expect(existsSync(join(projectDir, "stopped-gamma"))).toBe(true);
+
+    const runsPath = join(projectDir, "env-from-runs.log");
+    const runs = existsSync(runsPath)
+      ? readFileSync(runsPath, "utf8")
+          .split("\n")
+          .filter((l) => l.trim().length > 0).length
+      : 0;
+    expect(
+      runs,
+      "top-level env_from should resolve once for the whole nuke, not once per service",
+    ).toBe(1);
+
+    expect(existsSync(stackDir("env-from-once-abc12345"))).toBe(false);
   });
 });
