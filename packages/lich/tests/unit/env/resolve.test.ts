@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, realpathSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  realpathSync,
+} from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import {
   resolveEnvForService,
+  resolveSharedEnvBase,
   resolveTopLevelEnv,
   type ResolveEnvForServiceInput,
 } from "../../../src/env/resolve.js";
@@ -1314,5 +1321,152 @@ describe("resolveEnvForService — per-service env_from", () => {
     expect(
       Object.prototype.hasOwnProperty.call(env, "OWNED_SCOPED"),
     ).toBe(false);
+  });
+});
+
+describe("resolveSharedEnvBase — shared base reuse", () => {
+  function countingFrom(file: string, kv: string): string {
+    return `echo ran >> '${file}'; echo "${kv}"`;
+  }
+
+  function runCount(file: string): number {
+    let raw: string;
+    try {
+      raw = readFileSync(file, "utf8");
+    } catch {
+      return 0;
+    }
+    return raw.split("\n").filter((l) => l.trim().length > 0).length;
+  }
+
+  it("threading baseEnv runs top-level env_from exactly once across services", async () => {
+    const counter = path.join(tmp, "top-count.log");
+    const config: LichConfig = {
+      version: "1",
+      env_from: [countingFrom(counter, "SHARED=top")],
+      owned: {
+        api: { cmd: "echo", env: { A: "1" } },
+        web: { cmd: "echo", env: { B: "2" } },
+      },
+    };
+
+    const base = await resolveSharedEnvBase({
+      config,
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    const apiEnv = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "api" }, baseEnv: base }),
+    );
+    const webEnv = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "web" }, baseEnv: base }),
+    );
+
+    expect(runCount(counter)).toBe(1);
+    expect(apiEnv.SHARED).toBe("top");
+    expect(apiEnv.A).toBe("1");
+    expect(webEnv.SHARED).toBe("top");
+    expect(webEnv.B).toBe("2");
+  });
+
+  it("baseEnv threading yields the same env as resolving the service standalone", async () => {
+    const config: LichConfig = {
+      version: "1",
+      env: { TOP: "t" },
+      env_from: ['echo "FROM_TOP=shell"'],
+      owned: {
+        api: { cmd: "echo", env: { OWN: "o" }, env_from: ['echo "FROM_SVC=svc"'] },
+      },
+    };
+    const standalone = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "api" } }),
+    );
+    const base = await resolveSharedEnvBase({
+      config,
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    const viaBase = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "api" }, baseEnv: base }),
+    );
+    expect(viaBase).toEqual(standalone);
+  });
+
+  it("per-service env_from still runs when a base is threaded", async () => {
+    const counter = path.join(tmp, "svc-count.log");
+    const config: LichConfig = {
+      version: "1",
+      owned: {
+        api: { cmd: "echo", env_from: [countingFrom(counter, "SVC=1")] },
+      },
+    };
+    const base = await resolveSharedEnvBase({
+      config,
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    const env = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "api" }, baseEnv: base }),
+    );
+    expect(env.SVC).toBe("1");
+    expect(runCount(counter)).toBe(1);
+  });
+
+  it("per-service layering does not mutate the shared base (no cross-service leak)", async () => {
+    const config: LichConfig = {
+      version: "1",
+      env: { SHARED: "top" },
+      owned: {
+        api: { cmd: "echo", env: { ONLY_API: "a" } },
+        web: { cmd: "echo", env: { ONLY_WEB: "w" } },
+      },
+    };
+    const base = await resolveSharedEnvBase({
+      config,
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    const apiEnv = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "api" }, baseEnv: base }),
+    );
+    const webEnv = await resolveEnvForService(
+      baseInput({ config, service: { kind: "owned", name: "web" }, baseEnv: base }),
+    );
+    expect(apiEnv.ONLY_API).toBe("a");
+    expect(apiEnv.ONLY_WEB).toBeUndefined();
+    expect(webEnv.ONLY_WEB).toBe("w");
+    expect(webEnv.ONLY_API).toBeUndefined();
+  });
+
+  it("base is pre-interpolation: a top-level literal with a capture resolves per-service", async () => {
+    const config: LichConfig = {
+      version: "1",
+      env: { DB: "${owned.pg.captured.url}" },
+      owned: { api: { cmd: "echo" } },
+    };
+    const base = await resolveSharedEnvBase({
+      config,
+      worktree,
+      allocatedPorts: { compose: {}, owned: {} },
+      processEnv: {},
+      projectRoot: tmp,
+    });
+    const env = await resolveEnvForService(
+      baseInput({
+        config,
+        service: { kind: "owned", name: "api" },
+        baseEnv: base,
+        capturedValues: { pg: { url: "postgres://x" } },
+      }),
+    );
+    expect(env.DB).toBe("postgres://x");
   });
 });
