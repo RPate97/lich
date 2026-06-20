@@ -55,7 +55,8 @@ import {
   readStartedLog,
   type StartedEntry,
 } from "../state/started-log.js";
-import { findMainWorktreePath, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
+import { purgeAllSandboxes } from "../sandbox/purge-all.js";
 
 export interface RunNukeInput {
   /** `--yes` / `-y` skips the confirmation prompt. */
@@ -105,6 +106,7 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
     if (daemonWarning !== null) {
       writeLine(out, `warning: ${daemonWarning}`);
     }
+    await runSandboxPurge(out);
     writeLine(out, "no stacks to nuke");
     return { exitCode: 0, outcomes: [] };
   }
@@ -142,6 +144,8 @@ export async function runNuke(input: RunNukeInput): Promise<RunNukeResult> {
   if (daemonWarning !== null) {
     writeLine(out, `warning: ${daemonWarning}`);
   }
+
+  await runSandboxPurge(out);
 
   // Suppress the summary line in rescue mode when no stacks existed — rescue's own summary tells the story.
   if (ids.length > 0) {
@@ -689,13 +693,7 @@ function isTTY(stdin: NodeJS.ReadableStream): boolean {
  * the synthesized id matches the original whenever worktree_path is reproduced on disk.
  */
 function reconstructWorktree(snapshot: StackSnapshot): Worktree {
-  return {
-    name: sanitizeName(snapshot.worktree_name),
-    id: hashPath(snapshot.worktree_path),
-    path: snapshot.worktree_path,
-    stack_id: snapshot.stack_id,
-    main_path: findMainWorktreePath(snapshot.worktree_path) ?? snapshot.worktree_path,
-  };
+  return worktreeFromSnapshot(snapshot);
 }
 
 function writeLine(out: NodeJS.WritableStream, text: string): void {
@@ -709,6 +707,19 @@ function sleep(ms: number): Promise<void> {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+async function runSandboxPurge(out: NodeJS.WritableStream): Promise<void> {
+  try {
+    const result = await purgeAllSandboxes();
+    if (result.removedVms > 0 || result.removedManifest > 0) {
+      const vmWord = result.removedVms === 1 ? "VM" : "VMs";
+      const entryWord = result.removedManifest === 1 ? "entry" : "entries";
+      writeLine(out, `sandbox: removed ${result.removedVms} ${vmWord}, ${result.removedManifest} manifest ${entryWord}`);
+    }
+  } catch (err) {
+    writeLine(out, `warning: sandbox purge failed: ${errorMessage(err)}`);
+  }
 }
 
 /**

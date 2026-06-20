@@ -28,6 +28,7 @@ const argv = mri(process.argv.slice(2), {
     "raw",
     "browser",
     "all",
+    "purge",
     "preflight",
     "follow",
   ],

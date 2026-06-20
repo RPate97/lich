@@ -12,10 +12,14 @@ import {
   type ServiceSnapshot,
   type StackSnapshot,
 } from "../state/snapshot.js";
+import { TartBackend } from "../sandbox/tart.js";
+import type { SandboxState } from "../sandbox/backend.js";
 
 export interface RunStacksInput {
   out?: NodeJS.WritableStream;
   json?: boolean;
+  /** Injectable for tests; defaults to TartBackend. Reports sandbox VM state. */
+  backend?: { inspect(name: string): Promise<SandboxState> };
 }
 
 export interface RunStacksResult {
@@ -32,6 +36,10 @@ export interface StackRow {
   primary_url?: string;
   /** Omitted from JSON when the snapshot has no profile recorded. */
   active_profile?: string;
+  /** Set only for sandboxed stacks. */
+  sandbox?: boolean;
+  sandbox_vm?: string;
+  sandbox_state?: string;
   /** Per-phase lifecycle status from the snapshot, or undefined on pre-LEV-531 snapshots. */
   lifecycle?: LifecycleSnapshotStatus;
   // Derived counts — kept off the JSON wire; tools compute from `services`.
@@ -66,6 +74,18 @@ export async function runStacks(
     .map((snap) => snapshotToRow(snap, now))
     .sort((a, b) => a.worktree_name.localeCompare(b.worktree_name));
 
+  const sandboxRows = rows.filter((r) => r.sandbox && r.sandbox_vm);
+  if (sandboxRows.length > 0) {
+    const backend = input.backend ?? new TartBackend();
+    for (const row of sandboxRows) {
+      try {
+        row.sandbox_state = (await backend.inspect(row.sandbox_vm!)).state;
+      } catch {
+        row.sandbox_state = "unknown";
+      }
+    }
+  }
+
   if (json) {
     writeLine(out, renderJson(rows));
   } else {
@@ -94,6 +114,8 @@ export function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
     })),
     primary_url: pickPrimaryUrl(services),
     active_profile: snap.active_profile,
+    sandbox: snap.sandbox === true ? true : undefined,
+    sandbox_vm: snap.sandbox === true ? snap.sandbox_vm : undefined,
     lifecycle: snap.lifecycle,
     ready_count,
     total_count,
@@ -170,6 +192,11 @@ export function renderJson(rows: StackRow[]): string {
     if (r.primary_url) obj.primary_url = r.primary_url;
     // Omit (don't serialize null) so pre-profile snapshots stay clean.
     if (r.active_profile !== undefined) obj.active_profile = r.active_profile;
+    if (r.sandbox) {
+      obj.sandbox = true;
+      if (r.sandbox_vm) obj.sandbox_vm = r.sandbox_vm;
+      if (r.sandbox_state) obj.sandbox_state = r.sandbox_state;
+    }
     return obj;
   });
   return JSON.stringify(payload, null, 2);
@@ -187,7 +214,9 @@ export function renderPretty(rows: StackRow[]): string {
       formatStatus(r),
       formatUptime(r.uptime_seconds),
       formatServiceCount(r),
-      r.primary_url ?? "",
+      r.sandbox && r.sandbox_vm
+        ? `sandbox:${r.sandbox_vm}${r.sandbox_state ? ` (${r.sandbox_state})` : ""}`
+        : (r.primary_url ?? ""),
     ]);
   }
 

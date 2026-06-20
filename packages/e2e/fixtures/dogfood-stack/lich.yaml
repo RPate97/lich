@@ -224,6 +224,32 @@ profiles:
         - psql "$DATABASE_URL" -f db/migrations/01_init.sql
         - psql "$DATABASE_URL" -f db/seed.sql
 
+  # `dev:heavy` — exists to give sandbox warm-fork V0 something with a
+  # genuinely expensive cold-boot. ~500 synthetic migrations + 50k seed
+  # rows. Cold boot ~60-180s; warm-fork should land in <10s.
+  # See docs/superpowers/plans/2026-05-30-sandbox-warm-fork-v0.md
+  dev:heavy:
+    services: [postgres]
+    owned: [api, web]
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:${services.postgres.host_port}/dogfood"
+    lifecycle:
+      before_up:
+        # node_modules is in the sync ignore list (so it gets baked, not
+        # round-tripped). In-VM cold-boots therefore have to install
+        # dependencies themselves before owned services try to invoke
+        # node_modules/.bin binaries (web -> next dev). On host the test
+        # harness pre-runs `bun install` so this is a no-op; both paths now
+        # reach `bun run dev` with a populated node_modules.
+        - bun install --frozen-lockfile
+      after_up:
+        # -v ON_ERROR_STOP=1: any psql error aborts the script with a non-zero
+        # exit, so future schema/seed drift surfaces at `lich up` time instead
+        # of silently inserting zero rows.
+        - psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f db/migrations/01_init.sql
+        - bash -c 'set -e; for f in db/migrations-heavy/*.sql; do psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$f"; done'
+        - psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f db/seed-heavy.sql
+
   # Minimal fast-iteration profile: keeps postgres + api + web, drops
   # tunnel_demo + health_probe. Demonstrates the exclude-services pattern —
   # the explicit owned list REPLACES the implicit "all declared" set rather

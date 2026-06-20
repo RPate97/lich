@@ -1553,11 +1553,11 @@ describe("runValidate", () => {
   });
 
   it("summary includes profile count for the dogfood yaml", async () => {
-    // dogfood declares 4 profiles: dev:fast (default), dev, dev:lite, dev:env-override
+    // dogfood declares 5 profiles: dev:fast (default), dev, dev:heavy, dev:lite, dev:env-override
     const res = await run({ path: DOGFOOD_YAML });
     expect(res.exitCode).toBe(0);
     expect(res.report.summary).toBeDefined();
-    expect(res.report.summary?.profiles).toBe(4);
+    expect(res.report.summary?.profiles).toBe(5);
   });
 
   it("summary.profiles is 0 when no profiles section is defined", async () => {

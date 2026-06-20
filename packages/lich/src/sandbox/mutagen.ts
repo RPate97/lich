@@ -1,0 +1,252 @@
+import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { ALWAYS_IGNORE, type SandboxSync, type SyncStartOpts } from "./sync.js";
+
+export interface MutagenCli {
+  run(args: ReadonlyArray<string>, opts?: { timeoutMs?: number }): Promise<{ stdout: string; stderr: string }>;
+}
+
+export class RealMutagenCli implements MutagenCli {
+  constructor(private readonly mutagenPath = "mutagen") {}
+
+  async run(
+    args: ReadonlyArray<string>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.mutagenPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      child.stdout.on("data", (d) => { stdout += d.toString(); });
+      child.stderr.on("data", (d) => { stderr += d.toString(); });
+      if (opts.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`mutagen ${args.join(" ")} timed out after ${opts.timeoutMs}ms`));
+        }, opts.timeoutMs);
+      }
+      child.on("close", (code) => {
+        if (timer) clearTimeout(timer);
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`mutagen ${args.join(" ")} failed (exit ${code}): ${stderr || stdout}`));
+      });
+      child.on("error", (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+}
+
+// SSH transport setup so mutagen can reach the Tart guest. The recipe (proven
+// against mutagen 0.18.1 + cirruslabs ubuntu + openssh-server): per-VM ephemeral
+// ed25519 key pushed into the guest's admin user, host key appended to the host's
+// known_hosts via ssh-keyscan, and a per-VM Host block appended to ~/.ssh/config
+// pinning IdentitiesOnly + IdentityFile so sshd doesn't disconnect on
+// MaxAuthTries when the user's agent has many unrelated keys loaded.
+//
+// Both known_hosts and ssh/config edits are append-only inside marked blocks
+// (`# === lich-tart: <name> ===`) so cleanup() can locate and remove them
+// without disturbing user content.
+export interface MutagenTransport {
+  prepare(opts: { name: string; host: string }): Promise<{ user: string }>;
+  cleanup(opts: { name: string }): Promise<void>;
+}
+
+export const noopTransport: MutagenTransport = {
+  async prepare() { return { user: "admin" }; },
+  async cleanup() {},
+};
+
+export class RealSshTransport implements MutagenTransport {
+  constructor(
+    private readonly workDir: string = join(process.env.LICH_HOME ?? join(homedir(), ".lich"), "mutagen"),
+    private readonly tartPath: string = "tart",
+    private readonly user: string = "admin",
+    private readonly knownHostsPath: string = join(homedir(), ".ssh", "known_hosts"),
+    private readonly sshConfigPath: string = join(homedir(), ".ssh", "config"),
+  ) {}
+
+  private keyPath(name: string): string {
+    return join(this.workDir, "keys", name);
+  }
+
+  async prepare(opts: { name: string; host: string }): Promise<{ user: string }> {
+    const keyDir = join(this.workDir, "keys");
+    mkdirSync(keyDir, { recursive: true });
+    const keyPath = this.keyPath(opts.name);
+
+    if (!existsSync(keyPath)) {
+      execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-f", keyPath, "-q"]);
+    }
+    const pub = readFileSync(`${keyPath}.pub`, "utf8").trim();
+
+    const pushScript =
+      `install -d -m700 -o ${this.user} -g ${this.user} /home/${this.user}/.ssh; ` +
+      `printf '%s\\n' '${pub}' > /home/${this.user}/.ssh/authorized_keys; ` +
+      `chown ${this.user}:${this.user} /home/${this.user}/.ssh/authorized_keys; ` +
+      `chmod 600 /home/${this.user}/.ssh/authorized_keys`;
+    execFileSync(this.tartPath, ["exec", opts.name, "sudo", "bash", "-c", pushScript], { stdio: "ignore" });
+
+    const scan = execFileSync("ssh-keyscan", ["-t", "ed25519", opts.host], { encoding: "utf8" });
+    if (!existingKnownHost(this.knownHostsPath, opts.host)) {
+      mkdirSync(join(homedir(), ".ssh"), { recursive: true });
+      appendFileSync(this.knownHostsPath, scan, { mode: 0o600 });
+    }
+
+    upsertSshConfigBlock(this.sshConfigPath, opts.name, {
+      host: opts.host,
+      user: this.user,
+      keyPath,
+      knownHostsPath: this.knownHostsPath,
+    });
+
+    return { user: this.user };
+  }
+
+  async cleanup(opts: { name: string }): Promise<void> {
+    removeSshConfigBlock(this.sshConfigPath, opts.name);
+  }
+}
+
+function existingKnownHost(path: string, host: string): boolean {
+  try {
+    return readFileSync(path, "utf8").split("\n").some((line) => line.startsWith(host + " ") || line.startsWith(host + ","));
+  } catch {
+    return false;
+  }
+}
+
+interface SshConfigEntry {
+  host: string;
+  user: string;
+  keyPath: string;
+  knownHostsPath: string;
+}
+
+function sshConfigBlock(name: string, entry: SshConfigEntry): string {
+  return [
+    `# === lich-tart: ${name} (auto-generated; safe to delete) ===`,
+    `Host ${entry.host}`,
+    `    User ${entry.user}`,
+    `    IdentitiesOnly yes`,
+    `    IdentityFile ${entry.keyPath}`,
+    `    StrictHostKeyChecking accept-new`,
+    `    UserKnownHostsFile ${entry.knownHostsPath}`,
+    `# === end lich-tart: ${name} ===`,
+    ``,
+  ].join("\n");
+}
+
+function lichTartBlockRegex(name: string): RegExp {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `\\n*# === lich-tart: ${escaped} \\(auto-generated; safe to delete\\) ===[\\s\\S]*?# === end lich-tart: ${escaped} ===\\n?`,
+    "g",
+  );
+}
+
+export function upsertSshConfigBlock(configPath: string, name: string, entry: SshConfigEntry): void {
+  mkdirSync(dirname(configPath), { recursive: true });
+  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const stripped = existing.replace(lichTartBlockRegex(name), "");
+  const needsLeadingNewline = stripped.length > 0 && !stripped.endsWith("\n");
+  const next = stripped + (needsLeadingNewline ? "\n" : "") + "\n" + sshConfigBlock(name, entry);
+  writeFileSync(configPath, next, { mode: 0o600 });
+}
+
+export function removeSshConfigBlock(configPath: string, name: string): void {
+  if (!existsSync(configPath)) return;
+  const existing = readFileSync(configPath, "utf8");
+  const stripped = existing.replace(lichTartBlockRegex(name), "");
+  if (stripped !== existing) {
+    writeFileSync(configPath, stripped, { mode: 0o600 });
+  }
+}
+
+const LICH_TART_BLOCK_NAME_REGEX = /# === lich-tart: (.+?) \(auto-generated; safe to delete\) ===/g;
+
+// Self-heals SSH config when prior runs leaked blocks (test panic, OOM kill,
+// fallback `tart delete` bypassing MutagenSync.terminate, etc.). Idempotent;
+// bounded to our marked blocks only.
+export function gcOrphanedSshConfigBlocks(
+  configPath: string,
+  knownVmNames: ReadonlyArray<string>,
+): { removed: string[] } {
+  if (!existsSync(configPath)) return { removed: [] };
+  const existing = readFileSync(configPath, "utf8");
+  const found = new Set<string>();
+  let match: RegExpExecArray | null;
+  const re = new RegExp(LICH_TART_BLOCK_NAME_REGEX.source, "g");
+  while ((match = re.exec(existing)) !== null) {
+    found.add(match[1]!);
+  }
+  const knownSet = new Set(knownVmNames);
+  const orphans = [...found].filter((name) => !knownSet.has(name));
+  if (orphans.length === 0) return { removed: [] };
+  let next = existing;
+  for (const orphan of orphans) {
+    next = next.replace(lichTartBlockRegex(orphan), "");
+  }
+  writeFileSync(configPath, next, { mode: 0o600 });
+  return { removed: orphans };
+}
+
+export class MutagenSync implements SandboxSync {
+  constructor(
+    private readonly cli: MutagenCli = new RealMutagenCli(),
+    private readonly transport: MutagenTransport = noopTransport,
+  ) {}
+
+  async start(opts: SyncStartOpts): Promise<void> {
+    // Idempotent: clean up any leftover session of the same name first. Re-up
+    // on a still-running run VM (warm path) would otherwise hit `session name
+    // already exists`. terminate is best-effort — `no such session` is fine.
+    await this.cli.run(["sync", "terminate", opts.name]).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/no such session|unable to locate/i.test(msg)) throw err;
+    });
+    const { user } = await this.transport.prepare({ name: opts.name, host: opts.target });
+    const ignores = [...new Set([...ALWAYS_IGNORE, ...opts.ignore])];
+    const args: string[] = ["sync", "create", "--name", opts.name];
+    for (const ig of ignores) args.push("--ignore", ig);
+    if (opts.extraFlags) args.push(...opts.extraFlags);
+    args.push(opts.hostPath, `${user}@${opts.target}:${opts.guestPath}`);
+    await this.cli.run(args);
+  }
+
+  async flush(name: string): Promise<void> {
+    await this.cli.run(["sync", "flush", name]);
+  }
+
+  async terminate(name: string): Promise<void> {
+    try {
+      await this.cli.run(["sync", "terminate", name]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/no such session|unable to locate/i.test(msg)) {
+        await this.transport.cleanup({ name });
+        throw err;
+      }
+    }
+    await this.transport.cleanup({ name });
+  }
+
+  async status(name: string): Promise<string> {
+    const { stdout } = await this.cli.run(["sync", "list", name]);
+    return stdout;
+  }
+}
+
+export async function isMutagenAvailable(cli: MutagenCli = new RealMutagenCli()): Promise<boolean> {
+  try {
+    await cli.run(["version"]);
+    return true;
+  } catch {
+    return false;
+  }
+}

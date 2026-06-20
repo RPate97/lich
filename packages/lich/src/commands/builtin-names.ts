@@ -13,6 +13,7 @@ export const BUILTIN_COMMAND_NAMES = [
   "env",
   "routing",
   "dashboard",
+  "sandbox",
   "top",
 ] as const;
 

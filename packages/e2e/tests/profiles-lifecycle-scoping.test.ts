@@ -140,7 +140,7 @@ describe("profile-scoped lifecycle: after_up runs under dev (Plan 3 Task 23)", (
       didUp = true;
       // Explicit "dev" profile arg: the e2e suite's default flipped to
       // dev:fast (no postgres). This test exercises postgres + after_up
-      // migration/seed and lives in the compose pool — see
+      // migration/seed and lives in the heavy pool — see
       // tests/e2e/_pool-manifest.ts.
       const upResult = runLich(["up", "dev"], {
         cwd: fix.stackPath,

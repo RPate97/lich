@@ -16,6 +16,7 @@ function fakeHandle(result: ExitResult, delayMs: number): OwnedHandle {
     ),
     stop: async () => {},
     stopWarning: null,
+    logStartOffset: 0,
   };
 }
 
@@ -117,6 +118,7 @@ describe("failOnExitDuringReady", () => {
       exited: new Promise(() => {}),
       stop: async () => {},
       stopWarning: null,
+    logStartOffset: 0,
     };
     const watcher = new ProcessExitWatcher(neverExitsHandle, {
       readSignal: () => "before_ready",

@@ -70,6 +70,27 @@ function buildWorktree(rootPath: string): Worktree {
 }
 
 /**
+ * Build a `Worktree` for cross-worktree commands that operate on a saved
+ * snapshot (e.g. `lich down --all`, `lich logs <stack>`). The snapshot has the
+ * worktree's path and name but not its `main_path`, so we recompute it via
+ * git from the saved path.
+ */
+export function worktreeFromSnapshot(snap: {
+  worktree_path: string;
+  worktree_name: string;
+  stack_id: string;
+}): Worktree {
+  const path = snap.worktree_path;
+  return {
+    name: sanitizeName(snap.worktree_name),
+    id: hashPath(path),
+    path,
+    stack_id: snap.stack_id,
+    main_path: findMainWorktreePath(path) ?? path,
+  };
+}
+
+/**
  * Main worktree path = parent of the shared `.git` directory.
  * `git rev-parse --git-common-dir` returns the shared dir (absolute in
  * secondary worktrees, relative `.git` in the main); we resolve it

@@ -134,6 +134,47 @@ export async function parseConfig(filePath: string): Promise<ParseResult> {
 
   const config = value as unknown as LichConfig;
 
+  // Defense-in-depth + friendlier message: schema's `minItems: 1` rejects
+  // empty bake_inputs already, but a custom message helps users.
+  const sandbox = config.runtime?.sandbox;
+  if (sandbox) {
+    const bakeInputs = (sandbox as { bake_inputs?: unknown }).bake_inputs;
+    if (!Array.isArray(bakeInputs)) {
+      const location =
+        locateInstancePath("/runtime/sandbox", doc, lineCounter, filePath) ?? filePath;
+      return {
+        ok: false,
+        sourcePath: filePath,
+        errors: [
+          {
+            kind: "schema",
+            message:
+              "/runtime/sandbox requires `bake_inputs` — a non-empty list of globs " +
+              "(e.g. `db/migrations/**`, `bun.lockb`) whose content keys the golden snapshot.",
+            location,
+          },
+        ],
+      };
+    }
+    if (bakeInputs.length === 0) {
+      const location =
+        locateInstancePath("/runtime/sandbox/bake_inputs", doc, lineCounter, filePath) ?? filePath;
+      return {
+        ok: false,
+        sourcePath: filePath,
+        errors: [
+          {
+            kind: "schema",
+            message:
+              "/runtime/sandbox/bake_inputs must be non-empty — list at least one glob " +
+              "(e.g. `db/migrations/**`, `bun.lockb`) whose content keys the golden snapshot.",
+            location,
+          },
+        ],
+      };
+    }
+  }
+
   // Expand `owned.<name>.discover:` blocks after AJV so the discover
   // module can assume the parent shape conforms.
   try {

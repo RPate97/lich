@@ -23,7 +23,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, findMainWorktreePath, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import { resolveStackId } from "../state/resolve-stack.js";
 import { release } from "../ports/allocator.js";
 import {
@@ -67,6 +67,7 @@ import {
   type OutputMode,
 } from "../output/index.js";
 import type { LichConfig, OwnedService } from "../config/types.js";
+import { pickExecutor } from "../stack/executor.js";
 
 export interface RunDownInput {
   cwd?: string;
@@ -77,6 +78,8 @@ export interface RunDownInput {
   outputMode?: OutputMode;
   /** When fired, short-circuits SIGTERM grace polling — escalate to SIGKILL immediately. */
   signal?: AbortSignal;
+  /** When true, destroy the sandbox VM instead of stopping it (sandbox stacks only). */
+  purge?: boolean;
 }
 
 export interface DownWarning {
@@ -90,6 +93,15 @@ export interface DownWarning {
 export interface RunDownResult {
   exitCode: number;
   warnings: DownWarning[];
+}
+
+// Sandbox stacks need to reach the routing block to destroy their VM, even
+// when the snapshot says "stopped" — the VM persists across `lich down`.
+export function shouldEarlyExitOnStopped(
+  snapshot: StackSnapshot,
+  purge: boolean | undefined,
+): boolean {
+  return snapshot.status === "stopped" && !(snapshot.sandbox === true && purge === true);
 }
 
 const SIGTERM_GRACE_MS = 5_000;
@@ -140,6 +152,61 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
   const cwd = input.cwd ?? process.cwd();
   const out = input.out ?? process.stdout;
   const outputMode: OutputMode = input.outputMode ?? "pretty";
+  const output = createOutput({ mode: outputMode, stream: out, showTiming: true });
+  const warnings: DownWarning[] = [];
+
+  let worktree: Worktree;
+  if (input.worktreeArg !== undefined && input.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: input.worktreeArg });
+      const snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        writeLine(out, `no stack found with ID/name '${input.worktreeArg}'; try \`lich stacks\``);
+        await output.close();
+        return { exitCode: 1, warnings };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (err) {
+      writeLine(out, `lich down: ${(err as Error).message}`);
+      await output.close();
+      return { exitCode: 1, warnings };
+    }
+  } else {
+    try {
+      worktree = detectWorktree(cwd);
+    } catch {
+      const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
+      if (!fallback) {
+        writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
+        await output.close();
+        return { exitCode: 0, warnings };
+      }
+      worktree = fallback;
+    }
+  }
+
+  const snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  if (snap === null) {
+    writeLine(out, "no stack found for this worktree");
+    await output.close();
+    return { exitCode: 0, warnings };
+  }
+
+  if (shouldEarlyExitOnStopped(snap, input.purge)) {
+    writeLine(out, `stack already stopped: ${worktree.stack_id}`);
+    await output.close();
+    return { exitCode: 0, warnings };
+  }
+
+  await output.close();
+  const configPath = join(worktree.path, "lich.yaml");
+  return (await pickExecutor(snap, { worktree, lichYamlPath: configPath })).down(input);
+}
+
+export async function runDownLocal(input: RunDownInput): Promise<RunDownResult> {
+  const cwd = input.cwd ?? process.cwd();
+  const out = input.out ?? process.stdout;
+  const outputMode: OutputMode = input.outputMode ?? "pretty";
   const output = createOutput({
     mode: outputMode,
     stream: out,
@@ -169,7 +236,7 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
       worktree = detectWorktree(cwd);
     } catch {
       // lich.yaml not found — try snapshot fallback (yaml may have been deleted after lich up).
-      const fallback = await findWorktreeBySnapshot(cwd);
+      const fallback = await findWorktreeBySnapshot(cwd, { includeStoppedSandbox: input.purge === true });
       if (!fallback) {
         writeLine(out, `no stack found for this worktree: no lich.yaml and no matching snapshot`);
         await output.close();
@@ -186,11 +253,13 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     return { exitCode: 0, warnings };
   }
 
-  if (snap.status === "stopped") {
+  if (shouldEarlyExitOnStopped(snap, input.purge)) {
     writeLine(out, `stack already stopped: ${worktree.stack_id}`);
     await output.close();
     return { exitCode: 0, warnings };
   }
+
+  const configPath = join(worktree.path, "lich.yaml");
 
   // Detect whether this snapshot carries full teardown data (post-LEV-513).
   // New snapshots written by lich up have resolved_env on owned services and
@@ -199,13 +268,16 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     (s) => s.kind === "owned" && s.resolved_env !== undefined,
   ) || snap.before_down !== undefined || snap.after_down !== undefined;
 
+  // Only parse lich.yaml when needed for legacy snapshot fallback.
+  // Modern snapshots (hasFullTeardownData === true) skip the file read entirely.
+  const needsParse = !hasFullTeardownData;
+  const parsed = needsParse && existsSync(configPath) ? await parseConfig(configPath) : null;
+
   // Legacy fallback: re-parse yaml only when the snapshot lacks full teardown data.
   // New snapshots (post-LEV-513) never need this path; yaml edits between up and down are ignored.
   let config: LichConfig | null = null;
   if (!hasFullTeardownData) {
-    const configPath = join(worktree.path, "lich.yaml");
-    if (existsSync(configPath)) {
-      const parsed = await parseConfig(configPath);
+    if (parsed !== null) {
       if (parsed.ok) {
         config = parsed.config;
       } else {
@@ -528,15 +600,18 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       beforeDownPhase.end("ok", "hooks done");
     }
-    lifecycleStatus.before_down = beforeDownFailure
-      ? {
-          status: "failed",
-          failed_index: beforeDownFailure.index,
-          total: entryCount,
-          failed_cmd: truncateFailedCmd(beforeDownFailure.cmd),
-          log_path: beforeDownLogPath,
-        }
-      : { status: "ok" };
+    if (beforeDownFailure !== null) {
+      const f = beforeDownFailure as { index: number; cmd: string };
+      lifecycleStatus.before_down = {
+        status: "failed",
+        failed_index: f.index,
+        total: entryCount,
+        failed_cmd: truncateFailedCmd(f.cmd),
+        log_path: beforeDownLogPath,
+      };
+    } else {
+      lifecycleStatus.before_down = { status: "ok" };
+    }
   }
 
   if (composeNames.length > 0) {
@@ -712,15 +787,18 @@ export async function runDown(input: RunDownInput): Promise<RunDownResult> {
     } finally {
       afterDownPhase.end("ok", "hooks done");
     }
-    lifecycleStatus.after_down = afterDownFailure
-      ? {
-          status: "failed",
-          failed_index: afterDownFailure.index,
-          total: entryCount,
-          failed_cmd: truncateFailedCmd(afterDownFailure.cmd),
-          log_path: afterDownLogPath,
-        }
-      : { status: "ok" };
+    if (afterDownFailure !== null) {
+      const f = afterDownFailure as { index: number; cmd: string };
+      lifecycleStatus.after_down = {
+        status: "failed",
+        failed_index: f.index,
+        total: entryCount,
+        failed_cmd: truncateFailedCmd(f.cmd),
+        log_path: afterDownLogPath,
+      };
+    } else {
+      lifecycleStatus.after_down = { status: "ok" };
+    }
   }
 
   try {
@@ -1286,18 +1364,11 @@ async function runSnapshotLifecycle(
   }
 }
 
-function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
-  const path = snap.worktree_path;
-  const name = sanitizeName(snap.worktree_name);
-  const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id, main_path: findMainWorktreePath(path) ?? path };
-}
-
-async function findWorktreeBySnapshot(cwd: string): Promise<Worktree | null> {
+async function findWorktreeBySnapshot(
+  cwd: string,
+  opts: { includeStoppedSandbox?: boolean } = {},
+): Promise<Worktree | null> {
   const { realpathSync, existsSync: fsExists } = await import("node:fs");
-  const { hashPath, sanitizeName, findMainWorktreePath: findMain } = await import("../worktree/detect.js");
-  const { basename } = await import("node:path");
-
   const safeReal = (p: string): string => {
     try { return realpathSync(p); } catch { return p; }
   };
@@ -1306,16 +1377,18 @@ async function findWorktreeBySnapshot(cwd: string): Promise<Worktree | null> {
   const stackIds = await listStacks();
   for (const stackId of stackIds) {
     const snap = await readSnapshot(stackId).catch(() => null);
-    if (!snap || snap.status === "stopped") continue;
+    if (!snap) continue;
+    if (snap.status === "stopped") {
+      // A stopped non-sandbox stack has nothing left to reach in the OS;
+      // a stopped sandbox stack may still own a VM that --purge needs to destroy.
+      if (!(opts.includeStoppedSandbox && snap.sandbox === true)) continue;
+    }
 
     const snapPath = safeReal(snap.worktree_path);
     if (!cwdReal.startsWith(snapPath)) continue;
-
     if (!fsExists(snapPath)) continue;
 
-    const name = sanitizeName(basename(snapPath));
-    const id = hashPath(snapPath);
-    return { name, id, path: snapPath, stack_id: `${name}-${id.slice(0, 8)}`, main_path: findMain(snapPath) ?? snapPath };
+    return worktreeFromSnapshot({ ...snap, worktree_path: snapPath });
   }
   return null;
 }

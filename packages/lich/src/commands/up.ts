@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { runLifecycle, LifecycleHookError } from "../lifecycle/executor.js";
 import { runPerServiceLifecycle } from "../lifecycle/per-service.js";
+import { filterBakedHooks, shouldSkipBaked } from "../lifecycle/skip-baked.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
 import { ensureDaemonRunning } from "../daemon/auto-start.js";
@@ -106,6 +107,9 @@ import {
   buildRawUrls,
 } from "../urls/format.js";
 import { join } from "node:path";
+import { pickExecutor } from "../stack/executor.js";
+import { runName } from "../sandbox/naming.js";
+import type { ExecutorRef } from "../stack/types.js";
 
 /** Snapshot replay payload — `lich restart` hands pre-resolved env/cmd/cwd/stop_cmd to re-up. */
 export interface OwnedSnapshotOverride {
@@ -179,6 +183,52 @@ interface UpState {
 }
 
 export async function runUp(input: RunUpInput): Promise<RunUpResult> {
+  const cwd = input.cwd ?? process.cwd();
+  const configPath = join(cwd, "lich.yaml");
+  const parsed = await parseConfig(configPath);
+  if (!parsed.ok) {
+    return runUpLocal(input);
+  }
+  const config = parsed.config;
+
+  // Resolve profile name for executor selection.
+  const profiles = config.profiles;
+  const hasProfilesSection = profiles !== undefined && Object.keys(profiles).length > 0;
+  let profileNameOrDefault: string;
+  if (input.profile !== undefined) {
+    profileNameOrDefault = input.profile;
+  } else if (!hasProfilesSection) {
+    profileNameOrDefault = "default";
+  } else {
+    const pick = pickDefaultProfile(config);
+    profileNameOrDefault = pick.name ?? "default";
+  }
+
+  const isSandbox = !process.env.LICH_SANDBOX_GUEST && !!config.runtime?.sandbox;
+  const worktree = detectWorktree(cwd);
+  const ref: ExecutorRef = isSandbox
+    ? { kind: "sandbox-tart", vm_name: runName(worktree.id, profileNameOrDefault) }
+    : { kind: "local" };
+
+  if (ref.kind === "local") {
+    return runUpLocal(input);
+  }
+
+  const dispatchSnap: StackSnapshot = {
+    stack_id: worktree.stack_id,
+    worktree_name: worktree.name,
+    worktree_path: worktree.path,
+    status: "starting",
+    started_at: new Date().toISOString(),
+    services: [],
+    executor: ref,
+    active_profile: profileNameOrDefault,
+  };
+  const executor = await pickExecutor(dispatchSnap, { worktree, lichYamlPath: configPath });
+  return executor.up(input);
+}
+
+export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
   const cwd = input.cwd ?? process.cwd();
   const outputMode = input.outputMode ?? "pretty";
   const sink = input.out ?? process.stdout;
@@ -501,10 +551,13 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
 
     // before_up / after_up compose top-level then profile entries (base first, then specialization).
     // before_down inverts this — see commands/down.ts.
-    const beforeUpEntries = [
-      ...(config.lifecycle?.before_up ?? []),
-      ...(resolvedProfile?.lifecycle.before_up ?? []),
-    ];
+    const beforeUpEntries = filterBakedHooks(
+      [
+        ...(config.lifecycle?.before_up ?? []),
+        ...(resolvedProfile?.lifecycle.before_up ?? []),
+      ],
+      shouldSkipBaked(),
+    );
     // Lifecycle hooks never go through the supervisor, so per-port env vars need explicit injection here.
     const lifecycleEnv = enrichEnvWithOwnedPorts(
       topLevelEnv,
@@ -664,10 +717,13 @@ export async function runUp(input: RunUpInput): Promise<RunUpResult> {
       };
     }
 
-    const afterUpEntries = [
-      ...(config.lifecycle?.after_up ?? []),
-      ...(resolvedProfile?.lifecycle.after_up ?? []),
-    ];
+    const afterUpEntries = filterBakedHooks(
+      [
+        ...(config.lifecycle?.after_up ?? []),
+        ...(resolvedProfile?.lifecycle.after_up ?? []),
+      ],
+      shouldSkipBaked(),
+    );
     if (afterUpEntries.length > 0) {
       const phase = output.phase("after_up");
       const afterUpLogPath = phaseLogPath(worktree.stack_id, "after_up");
@@ -1127,7 +1183,7 @@ async function startOwned(
     });
 
     const interpCtx = buildInterpCtx(worktree, allocatedPorts, state.capturedValues);
-    resolvedCmd = interpolateString(def.cmd, interpCtx, `owned.${name}.cmd`, true);
+    resolvedCmd = interpolateString(def.cmd ?? "", interpCtx, `owned.${name}.cmd`, true);
     resolvedStopCmd = def.stop_cmd
       ? interpolateString(def.stop_cmd, interpCtx, `owned.${name}.stop_cmd`, true)
       : undefined;
@@ -1145,7 +1201,7 @@ async function startOwned(
 
   // Stash the resolved env + cwd so `ready_when.cmd` (run before the service is
   // ready) shells out against the same context the supervised process saw.
-  state.ownedEnv.set(name, env);
+  state.ownedEnv.set(name, env as Record<string, string>);
   state.ownedCwd.set(name, spec.cwd);
 
   // Snapshot teardown fields so `lich down` never needs to re-parse yaml.

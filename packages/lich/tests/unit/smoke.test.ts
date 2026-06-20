@@ -20,6 +20,7 @@ describe("smoke", () => {
         "nuke",
         "restart",
         "routing",
+        "sandbox",
         "stacks",
         "top",
         "up",

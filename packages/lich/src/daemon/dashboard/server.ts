@@ -10,15 +10,26 @@ import type { RoutingTable } from "../proxy/routing.js";
 import type { MetricsSampler } from "../metrics/sampler.js";
 import type { StackMetricsSnapshot } from "../metrics/types.js";
 import { parsePsOutput } from "../metrics/ps.js";
-import {
-  aggregateSubtree,
-  buildTree,
-  indexByPid,
-  indexByPpid,
-  type ProcessNode,
-} from "../metrics/proc-tree.js";
+import { pickDataProvider, type DataProviderDeps } from "../../stack/data-provider.js";
 
 const execFile = promisify(execFileCb);
+
+/** Read state.json for a stack from a custom stateRoot (not global stackDir). Returns null on ENOENT or parse failure. */
+async function readSnapshotLocal(stateRoot: string, stackId: string): Promise<StackSnapshot | null> {
+  const file = join(stateRoot, stackId, "state.json");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as StackSnapshot;
+  } catch {
+    return null;
+  }
+}
 
 /** Minimal contract for the SSE handler — start/onLine/stop. Real LogTail satisfies this structurally; tests inject fakes. */
 export interface LogTailLike {
@@ -164,6 +175,14 @@ export async function startDashboardServer(
       return stdout;
     });
 
+  const buildDeps = (): DataProviderDeps => ({
+    stateRoot: opts.stateRoot,
+    proxyPort: opts.proxyPort ?? 3300,
+    tailFactory,
+    metricsSampler: opts.metricsSampler,
+    psFn: async () => parsePsOutput(await psProbe()),
+  });
+
   const handler = async (req: Request): Promise<Response> => {
     const u = new URL(req.url);
     const path = u.pathname;
@@ -263,7 +282,13 @@ export async function startDashboardServer(
         if (req.method !== "GET") {
           return methodNotAllowed("GET");
         }
-        if (!opts.metricsSampler) {
+        const stackId = segments[0];
+        const stackSnap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!stackSnap) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        // Local stacks require a sampler; http (sandbox) stacks fetch from the VM daemon.
+        if (!opts.metricsSampler && stackSnap.data_source?.kind !== "http") {
           return new Response(
             JSON.stringify({
               error: "metrics sampler not configured on this daemon",
@@ -276,22 +301,12 @@ export async function startDashboardServer(
             },
           );
         }
-        const stackId = segments[0];
-        const stack = cache.find((s) => s.id === stackId);
-        if (!stack) {
-          return notFound(`stack not found: ${stackId}`);
-        }
+        const provider = pickDataProvider(stackSnap, buildDeps());
         if (segments.length === 3) {
-          return sseResponse(
-            buildMetricsStream({
-              sampler: opts.metricsSampler,
-              stackId,
-              clientSignal: req.signal,
-            }),
-          );
+          return sseResponse(provider.metricsStream(stackId, req.signal));
         }
-        const snap = opts.metricsSampler.latest(stackId);
-        if (snap === null) {
+        const metricsSnap = await provider.metricsLatest(stackId);
+        if (metricsSnap === null) {
           // Sample hasn't fired yet — return an empty-but-shaped payload so
           // clients don't have to special-case the warmup window.
           return jsonResponse({
@@ -301,48 +316,41 @@ export async function startDashboardServer(
             services: [],
           });
         }
-        return jsonResponse(snap);
+        return jsonResponse(metricsSnap);
       }
 
       if (segments.length === 1) {
-        const stack = cache.find((s) => s.id === segments[0]);
+        const stackId = segments[0];
+        const snap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!snap) {
+          return notFound(`stack not found: ${stackId}`);
+        }
+        const provider = pickDataProvider(snap, buildDeps());
+        const stack = await provider.loadStack(stackId);
         if (!stack) {
-          return notFound(`stack not found: ${segments[0]}`);
+          return notFound(`stack not found: ${stackId}`);
         }
         return jsonResponse(stack);
       }
 
       if (segments.length === 2 && segments[1] === "logs") {
         const stackId = segments[0];
-        const stack = cache.find((s) => s.id === stackId);
-        if (!stack) {
-          return notFound(`stack not found: ${stackId}`);
-        }
         const serviceName = u.searchParams.get("service");
         if (serviceName !== null) {
-          const service = stack.services.find((sv) => sv.name === serviceName);
-          if (!service) {
+          const snap = await readSnapshotLocal(opts.stateRoot, stackId);
+          if (!snap) {
+            return notFound(`stack not found: ${stackId}`);
+          }
+          if (!snap.services.find((s) => s.name === serviceName)) {
             return notFound(`service not found: ${serviceName}`);
           }
-          return sseResponse(
-            buildSingleServiceStream({
-              stateRoot: opts.stateRoot,
-              stackId,
-              service: serviceName,
-              tailFactory,
-              clientSignal: req.signal,
-            }),
-          );
+          const provider = pickDataProvider(snap, buildDeps());
+          return sseResponse(provider.tailLogs(stackId, serviceName, req.signal));
         }
-        return sseResponse(
-          buildMergedStream({
-            stateRoot: opts.stateRoot,
-            stackId,
-            services: stack.services.map((s) => s.name),
-            tailFactory,
-            clientSignal: req.signal,
-          }),
-        );
+        const mergedSnap = await readSnapshotLocal(opts.stateRoot, stackId);
+        if (!mergedSnap) return notFound(`stack not found: ${stackId}`);
+        const mergedProvider = pickDataProvider(mergedSnap, buildDeps());
+        return sseResponse(mergedProvider.tailAllLogs(stackId, req.signal));
       }
 
       if (segments.length === 3 && segments[1] === "services") {
@@ -368,19 +376,21 @@ export async function startDashboardServer(
         if (req.method !== "GET") {
           return methodNotAllowed("GET");
         }
-        const stack = cache.find((s) => s.id === segments[0]);
-        if (!stack) {
-          return notFound(`stack not found: ${segments[0]}`);
+        const procStackId = segments[0];
+        const procSvcName = segments[2];
+        const procSnap = await readSnapshotLocal(opts.stateRoot, procStackId);
+        if (!procSnap) {
+          return notFound(`stack not found: ${procStackId}`);
         }
-        const service = stack.services.find((sv) => sv.name === segments[2]);
-        if (!service) {
-          return notFound(`service not found: ${segments[2]}`);
+        const procSvc = procSnap.services.find((s) => s.name === procSvcName);
+        if (!procSvc) {
+          return notFound(`service not found: ${procSvcName}`);
         }
-        if (service.kind !== "owned") {
+        if (procSvc.kind !== "owned") {
           return new Response(
             JSON.stringify({
               error: "compose_service_has_no_process_tree",
-              message: `service ${service.name} is a compose service; use 'docker stats' for its container metrics`,
+              message: `service ${procSvc.name} is a compose service; use 'docker stats' for its container metrics`,
             }),
             {
               status: 409,
@@ -388,12 +398,17 @@ export async function startDashboardServer(
             },
           );
         }
-        return handleProcTreeRequest({
-          stateRoot: opts.stateRoot,
-          stackId: segments[0],
-          service: service.name,
-          psProbe,
-        });
+        const procProvider = pickDataProvider(procSnap, buildDeps());
+        let procResult: Awaited<ReturnType<typeof procProvider.procTree>>;
+        try {
+          procResult = await procProvider.procTree(procStackId, procSvcName);
+        } catch (err) {
+          return internalServerError(`ps probe failed: ${(err as Error).message}`);
+        }
+        if (procResult === null) {
+          return notFound(`service not running: ${procSvcName}`);
+        }
+        return jsonResponse(procResult);
       }
 
       // Don't fall through to the SPA — 200 on an unknown /api/* is misleading.
@@ -580,7 +595,7 @@ export async function computeTailOffset(logPath: string, tailLines: number): Pro
   return readFrom + pos + 1;
 }
 
-interface BuildStreamOpts {
+export interface BuildStreamOpts {
   stateRoot: string;
   stackId: string;
   tailFactory: TailFactory;
@@ -588,7 +603,7 @@ interface BuildStreamOpts {
   clientSignal?: AbortSignal;
 }
 
-function buildSingleServiceStream(
+export function buildSingleServiceStream(
   opts: BuildStreamOpts & { service: string },
 ): ReadableStream<Uint8Array> {
   // Function-scope so `cancel` can reach the tail to stop it.
@@ -655,7 +670,7 @@ function buildSingleServiceStream(
 }
 
 /** Merged SSE stream — one LogTail per service, each event labeled with the source service name. */
-function buildMergedStream(
+export function buildMergedStream(
   opts: BuildStreamOpts & { services: string[] },
 ): ReadableStream<Uint8Array> {
   const tails: LogTailLike[] = [];
@@ -723,14 +738,14 @@ function buildMergedStream(
   });
 }
 
-interface MetricsStreamOpts {
+export interface MetricsStreamOpts {
   sampler: MetricsSamplerHandle;
   stackId: string;
   clientSignal?: AbortSignal;
 }
 
 /** SSE stream of per-sample metrics snapshots. Sends the current latest immediately so consumers paint without waiting one tick. */
-function buildMetricsStream(
+export function buildMetricsStream(
   opts: MetricsStreamOpts,
 ): ReadableStream<Uint8Array> {
   let unsubscribe: (() => void) | null = null;
@@ -840,101 +855,6 @@ async function readWorktreePath(
   return snap.worktree_path;
 }
 
-interface ProcTreeNode {
-  pid: number;
-  ppid: number;
-  rss_bytes: number;
-  cpu_pct_cumulative: number;
-  children: ProcTreeNode[];
-}
-
-interface ProcTreeResponse {
-  service: string;
-  pid: number;
-  process_count: number;
-  mem_bytes: number;
-  cpu_pct_cumulative: number;
-  tree: ProcTreeNode | null;
-}
-
-/** Run ps, walk subtree rooted at the owned service's PID, JSON-serialize. */
-async function handleProcTreeRequest(args: {
-  stateRoot: string;
-  stackId: string;
-  service: string;
-  psProbe: () => Promise<string>;
-}): Promise<Response> {
-  // Read state.json from the dashboard's configured stateRoot rather than
-  // the global stackDir() — keeps unit tests that point a custom stateRoot
-  // working without forcing LICH_HOME.
-  const stateFile = join(args.stateRoot, args.stackId, "state.json");
-  let raw: string;
-  try {
-    raw = await readFile(stateFile, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return notFound(`stack snapshot not found: ${args.stackId}`);
-    }
-    return internalServerError(`failed to read ${stateFile}: ${(err as Error).message}`);
-  }
-  let snap: StackSnapshot;
-  try {
-    snap = JSON.parse(raw) as StackSnapshot;
-  } catch (err) {
-    return internalServerError(`failed to parse ${stateFile}: ${(err as Error).message}`);
-  }
-  const svc = snap.services.find((s) => s.name === args.service);
-  if (!svc || svc.kind !== "owned") {
-    return notFound(
-      `owned service not found in snapshot: ${args.service}`,
-    );
-  }
-  if (svc.pid === undefined || svc.pid <= 0) {
-    return jsonResponse({
-      service: svc.name,
-      pid: 0,
-      process_count: 0,
-      mem_bytes: 0,
-      cpu_pct_cumulative: 0,
-      tree: null,
-    } satisfies ProcTreeResponse);
-  }
-  let psOut: string;
-  try {
-    psOut = await args.psProbe();
-  } catch (err) {
-    return internalServerError(`ps probe failed: ${(err as Error).message}`);
-  }
-  const rows = parsePsOutput(psOut);
-  const byPid = indexByPid(rows);
-  const byPpid = indexByPpid(rows);
-  const rootTree = buildTree(svc.pid, byPid, byPpid);
-  const agg = aggregateSubtree(svc.pid, byPid, byPpid);
-  const body: ProcTreeResponse = {
-    service: svc.name,
-    pid: svc.pid,
-    process_count: agg.process_count,
-    mem_bytes: agg.mem_bytes,
-    cpu_pct_cumulative: round1(agg.cpu_pct_cumulative),
-    tree: rootTree ? toWireTree(rootTree) : null,
-  };
-  return jsonResponse(body);
-}
-
-function toWireTree(node: ProcessNode): ProcTreeNode {
-  return {
-    pid: node.pid,
-    ppid: node.ppid,
-    rss_bytes: node.rss_kb * 1024,
-    cpu_pct_cumulative: round1(node.pcpu),
-    children: node.children.map(toWireTree),
-  };
-}
-
-function round1(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 10) / 10;
-}
 
 /** 404 unknown stack; 500 on runAction throw (missing binary); 200 with `ok: false` for subprocess failures so the dashboard renders detail. */
 async function handleActionRequest(

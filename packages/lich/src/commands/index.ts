@@ -12,6 +12,7 @@ import { runEnvCmd } from "./env.js";
 import { runExec } from "./exec.js";
 import { runRouting } from "./routing.js";
 import { runDashboard } from "./dashboard.js";
+import { sandboxCommand } from "./sandbox.js";
 import { runTop, type SortKey } from "./top.js";
 
 /** `exitCode` overrides the default 0/1 mapping; keep `ok` consistent with it. */
@@ -87,18 +88,29 @@ const upHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "" };
 };
 
-const downHandler: CommandHandler = async (ctx) => {
-  const mode = ctx.argv.json
+export function buildDownInput(
+  argv: Record<string, unknown> & { _: unknown[] },
+  signal?: AbortSignal,
+): import("./down.js").RunDownInput {
+  const mode: "pretty" | "json" | "quiet" = argv.json
     ? "json"
-    : ctx.argv.quiet
+    : argv.quiet
       ? "quiet"
       : "pretty";
-  const worktreeArg = readWorktreeArg(ctx.argv);
-  const result = await runDown({
-    outputMode: mode as "pretty" | "json" | "quiet",
-    signal: ctx.signal,
-    ...(worktreeArg !== undefined && { worktreeArg }),
-  });
+  const worktreeArg = typeof argv.worktree === "string" && argv.worktree.length > 0
+    ? argv.worktree
+    : undefined;
+  const input: import("./down.js").RunDownInput = {
+    outputMode: mode,
+    purge: argv.purge === true,
+  };
+  if (signal !== undefined) input.signal = signal;
+  if (worktreeArg !== undefined) input.worktreeArg = worktreeArg;
+  return input;
+}
+
+const downHandler: CommandHandler = async (ctx) => {
+  const result = await runDown(buildDownInput(ctx.argv as Record<string, unknown> & { _: unknown[] }, ctx.signal));
   return { ok: result.exitCode === 0, message: "" };
 };
 
@@ -281,6 +293,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   env: envHandler,
   routing: routingHandler,
   dashboard: dashboardHandler,
+  sandbox: sandboxCommand,
   top: topHandler,
 };
 

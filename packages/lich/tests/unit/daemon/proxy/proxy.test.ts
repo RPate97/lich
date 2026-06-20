@@ -20,7 +20,7 @@ function makeUpstream(
   });
   return {
     url: `http://127.0.0.1:${server.port}`,
-    port: server.port,
+    port: server.port as number,
     stop: async () => {
       server.stop(true);
       await new Promise<void>((r) => setTimeout(r, 0));

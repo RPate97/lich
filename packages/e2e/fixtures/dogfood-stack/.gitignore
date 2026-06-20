@@ -6,3 +6,4 @@ dist/
 supabase/.branches/
 supabase/.temp/
 *.log
+db/migrations-heavy/

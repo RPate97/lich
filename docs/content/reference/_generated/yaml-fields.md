@@ -126,3 +126,4 @@
 | `ready_when_timeout` | `string \| integer` | no | Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides. |
 | `kill_others_on_fail` | `boolean` | no | Cascade-kill siblings if one service fails during `lich up` startup. Default true. |
 | `telemetry` | `boolean` | no | Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it. |
+| `sandbox` | `object` | no | macOS only. Routes the stack into a Tart microVM with warm-fork: the first `lich up` cold-boots and bakes a snapshot, every subsequent up clones the snapshot in ~14s. See `sandbox-warm-fork.md` for setup, `bake_inputs` selection, and gotchas. |

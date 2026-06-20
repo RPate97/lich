@@ -25,6 +25,12 @@ export type LifecycleEntry =
       cmd: string;
       env_group?: string;
       cwd?: string;
+      /**
+       * When true, this hook runs on every sandbox fork, not just the cold
+       * bake. Default false: setup hooks are baked into the golden's disk
+       * and skipped on a fork (LICH_SKIP_BAKED=1 in the in-VM env).
+       */
+      per_fork?: boolean;
     };
 
 export type LifecycleList = LifecycleEntry[];
@@ -138,6 +144,52 @@ export interface OwnedService {
   discover?: OwnedDiscover;
 }
 
+export interface SandboxGc {
+  /** Goldens to keep per profile (most-recent N). Default: 2. */
+  keep_per_profile?: number;
+  /** Global LRU cap in GB across all goldens. Default: 20. */
+  max_total_gb?: number;
+}
+
+export interface SandboxRuntime {
+  /** Backend identifier. Only "tart" supported in V0. */
+  backend: "tart";
+  /** Tart image name. Default: 'lich-sandbox-base'. */
+  image?: string;
+  /** Guest memory in MB. Default: 4096. */
+  memory?: number;
+  /** Guest vCPU count. Default: 4. */
+  cpus?: number;
+  /**
+   * When true (default), `lich up` automatically warm-forks from a
+   * snapshot golden if one exists for the current bake-inputs-hash.
+   */
+  warm_fork?: boolean;
+  /**
+   * Where to store the snapshot manifest. Default: $LICH_HOME/sandboxes.
+   * The actual VM data lives in Tart's own storage; we only manage metadata.
+   */
+  snapshot_store?: string;
+  /** Mutagen source sync into the VM. node_modules + .git are always ignored. */
+  sync?: SandboxSyncConfig;
+  /**
+   * REQUIRED when this block is present. Globs (relative to the worktree)
+   * whose content is baked into the golden — migrations, seed, lockfile, etc.
+   * The golden is keyed by the content of these files; changing any forces
+   * a rebake.
+   */
+  bake_inputs: ReadonlyArray<string>;
+  /** Golden garbage-collection policy. */
+  gc?: SandboxGc;
+}
+
+export interface SandboxSyncConfig {
+  /** Extra ignore globs, unioned with the always-ignored node_modules + .git. */
+  ignore?: string[];
+  /** Extra flags passed through to `mutagen sync create`. */
+  mutagen_flags?: string[];
+}
+
 export interface Runtime {
   /** `auto` probes docker → podman → nerdctl. */
   compose_cli?: "auto" | "docker" | "podman" | "nerdctl";
@@ -151,6 +203,7 @@ export interface Runtime {
   kill_others_on_fail?: boolean;
   /** Project-scoped telemetry opt-out. Defaults to `true` (enabled). */
   telemetry?: boolean;
+  sandbox?: SandboxRuntime;
 }
 
 export interface EnvGroupDef {

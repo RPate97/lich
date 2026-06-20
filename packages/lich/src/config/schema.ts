@@ -68,6 +68,10 @@ const lifecycleEntrySchema = {
           type: "string",
           description: "Working directory for the cmd, relative to the repo root.",
         },
+        per_fork: {
+          type: "boolean",
+          description: "When true, hook runs on every sandbox fork rather than being baked into the golden. Default false.",
+        },
       },
       required: ["cmd"],
       additionalProperties: false,
@@ -574,6 +578,43 @@ export const runtimeSchema = {
     telemetry: {
       type: "boolean",
       description: "Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it.",
+    },
+    sandbox: {
+      type: "object",
+      description:
+        "macOS only. Routes the stack into a Tart microVM with warm-fork: the first `lich up` cold-boots and bakes a snapshot, every subsequent up clones the snapshot in ~14s. See `sandbox-warm-fork.md` for setup, `bake_inputs` selection, and gotchas.",
+      additionalProperties: false,
+      required: ["backend", "bake_inputs"],
+      properties: {
+        backend: { type: "string", enum: ["tart"] },
+        image: { type: "string" },
+        memory: { type: "integer", minimum: 512 },
+        cpus: { type: "integer", minimum: 1 },
+        warm_fork: { type: "boolean" },
+        snapshot_store: { type: "string" },
+        sync: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            ignore: { type: "array", items: { type: "string" } },
+            mutagen_flags: { type: "array", items: { type: "string" } },
+          },
+        },
+        bake_inputs: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          description: "Globs (relative to worktree) whose content is baked into the golden. Required.",
+        },
+        gc: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            keep_per_profile: { type: "integer", minimum: 1 },
+            max_total_gb: { type: "number", exclusiveMinimum: 0 },
+          },
+        },
+      },
     },
   },
   additionalProperties: false,

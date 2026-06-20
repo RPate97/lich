@@ -85,6 +85,21 @@ owned:
 
 That's a complete, valid yaml. Everything else is incremental.
 
+**`sandbox`** routes the entire stack into a Tart microVM with warm-fork. The first `lich up` cold-boots and bakes a snapshot; every subsequent up (in any worktree, until `bake_inputs` content changes) clones the snapshot in ~14s. macOS Apple Silicon only — Tart requires Apple Virtualization.framework. Requires a one-time `bash packages/lich/scripts/build-sandbox-image.sh` to build the local `lich-sandbox-base` image. Minimum block:
+
+```yaml
+runtime:
+  sandbox:
+    backend: tart                   # only supported backend in v0
+    image: lich-sandbox-base
+    warm_fork: true
+    bake_inputs:                    # required; ≥1 entry, content-addressed
+      - "lich.yaml"
+      - "bun.lock"
+```
+
+See `sandbox-warm-fork.md` (in the agent skill bundle) for the full surface: when to suggest sandbox during instrumentation, the prerequisite install steps, what to put in `bake_inputs`, how lifecycle hooks bake into the golden, the `lich sandbox` subcommand surface, and the common gotchas (first up is slow, `node_modules` lives in the VM, macOS-only).
+
 ---
 
 ## `services` (compose)
@@ -791,6 +806,7 @@ runtime:
 | `ready_when_timeout` | `string \| integer` | no | Stack-wide default for every owned service's `ready_when.timeout`. Per-service value overrides. |
 | `kill_others_on_fail` | `boolean` | no | Cascade-kill siblings if one service fails during `lich up` startup. Default true. |
 | `telemetry` | `boolean` | no | Project-scoped telemetry opt-out. Set to false to disable anonymous CLI usage telemetry for this project. Overridden by LICH_TELEMETRY=0 env var or `<LICH_HOME>/config.json` if either disables it. |
+| `sandbox` | `object` | no | macOS only. Routes the stack into a Tart microVM with warm-fork: the first `lich up` cold-boots and bakes a snapshot, every subsequent up clones the snapshot in ~14s. See `sandbox-warm-fork.md` for setup, `bake_inputs` selection, and gotchas. |
 
 `compose_cli: auto` detects what's installed and is almost always correct. Only pin `proxy_port` if you need stable friendly URLs across teammates (e.g. for webhook URLs hardcoded in third-party tools).
 

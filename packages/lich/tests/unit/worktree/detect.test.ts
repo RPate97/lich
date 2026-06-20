@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import {
   detectWorktree,
   findMainWorktreePath,
+  worktreeFromSnapshot,
   sanitizeName,
   hashPath,
 } from "../../../src/worktree/detect.js";
@@ -163,6 +164,7 @@ describe("findMainWorktreePath", () => {
   it("returns the main worktree's path from a secondary git worktree", () => {
     const mainRoot = makeTmpdir("lich-main-");
     execFileSync("git", ["init", "-q", "-b", "main", mainRoot], { stdio: "ignore" });
+    // Need at least one commit before adding worktrees.
     execFileSync("git", ["-C", mainRoot, "commit", "--allow-empty", "-m", "init"], {
       stdio: "ignore",
       env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@e", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@e" },
@@ -189,5 +191,32 @@ describe("findMainWorktreePath", () => {
 
   it("returns null when given a non-existent path", () => {
     expect(findMainWorktreePath("/no/such/path/xyz")).toBeNull();
+  });
+});
+
+describe("worktreeFromSnapshot", () => {
+  it("rebuilds a Worktree with main_path resolved via git from the saved path", () => {
+    const root = makeTmpdir("lich-snap-");
+    execFileSync("git", ["init", "-q", root], { stdio: "ignore" });
+
+    const wt = worktreeFromSnapshot({
+      worktree_path: root,
+      worktree_name: "feature-x",
+      stack_id: "feature-x-12345678",
+    });
+    expect(wt.name).toBe("feature-x");
+    expect(wt.path).toBe(root);
+    expect(wt.stack_id).toBe("feature-x-12345678");
+    expect(wt.main_path).toBe(realpathSync(root));
+  });
+
+  it("falls back to path when git is unavailable from that location", () => {
+    const dir = makeTmpdirOutsideGit();
+    const wt = worktreeFromSnapshot({
+      worktree_path: dir,
+      worktree_name: "feature-x",
+      stack_id: "feature-x-12345678",
+    });
+    expect(wt.main_path).toBe(dir);
   });
 });

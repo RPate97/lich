@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseConfig } from "../config/parse.js";
-import { detectWorktree, findMainWorktreePath, hashPath, sanitizeName, type Worktree } from "../worktree/detect.js";
+import { detectWorktree, worktreeFromSnapshot, type Worktree } from "../worktree/detect.js";
 import {
   readSnapshot,
   rebuildAllocatedPorts,
@@ -30,8 +30,9 @@ import {
   resolveProfile,
   type ResolvedProfile,
 } from "../profiles/resolve.js";
+import { pickExecutor } from "../stack/executor.js";
 
-export interface ExecOptions {
+export interface RunExecInput {
   /**
    * Single entry → `/bin/sh -c <entry>` (shell mode). Multiple entries →
    * `spawn(argv[0], argv.slice(1))` (literal mode). Empty → usage + exit 2.
@@ -55,7 +56,7 @@ export interface ExecOptions {
   now?: () => Date;
 }
 
-export interface ExecResult {
+export interface RunExecResult {
   /**
    * Exit code conventions:
    *   2   — usage error (empty argv, unknown env-group)
@@ -67,7 +68,59 @@ export interface ExecResult {
   exitCode: number;
 }
 
-export async function runExec(opts: ExecOptions): Promise<ExecResult> {
+export async function runExec(opts: RunExecInput): Promise<RunExecResult> {
+  const cwd = opts.cwd ?? process.cwd();
+  const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
+
+  if (!opts.argv || opts.argv.length === 0) {
+    err("usage: lich exec [--env-group=<group>] <cmd> [args...]\n");
+    return { exitCode: 2 };
+  }
+
+  let worktree: Worktree;
+  let snap: StackSnapshot | null;
+  if (opts.worktreeArg !== undefined && opts.worktreeArg.length > 0) {
+    try {
+      const resolved = await resolveStackId({ cwd, worktreeArg: opts.worktreeArg });
+      snap = resolved.snapshot ?? (await readSnapshot(resolved.stackId).catch(() => null));
+      if (!snap) {
+        err(`lich exec: no snapshot for stack '${resolved.stackId}'\n`);
+        return { exitCode: 1 };
+      }
+      worktree = worktreeFromSnapshot(snap);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+  } else {
+    const yamlPathCwd = join(cwd, "lich.yaml");
+    if (!existsSync(yamlPathCwd)) {
+      err(`lich exec: lich.yaml not found at ${yamlPathCwd}\n`);
+      return { exitCode: 1 };
+    }
+    try {
+      worktree = detectWorktree(cwd);
+    } catch (e) {
+      err(`lich exec: ${e instanceof Error ? e.message : String(e)}\n`);
+      return { exitCode: 1 };
+    }
+    snap = await readSnapshot(worktree.stack_id).catch(() => null);
+  }
+
+  if (snap === null) {
+    const yamlPath = join(worktree.path, "lich.yaml");
+    if (!existsSync(yamlPath)) {
+      err(`lich exec: lich.yaml not found at ${yamlPath}\n`);
+      return { exitCode: 1 };
+    }
+    return runExecLocal(opts);
+  }
+
+  const configPath = join(worktree.path, "lich.yaml");
+  return (await pickExecutor(snap, { worktree, lichYamlPath: configPath })).exec(opts);
+}
+
+export async function runExecLocal(opts: RunExecInput): Promise<RunExecResult> {
   const cwd = opts.cwd ?? process.cwd();
   const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
   const stdio = opts.stdio ?? "inherit";
@@ -166,7 +219,7 @@ export async function runExec(opts: ExecOptions): Promise<ExecResult> {
   const command = isShellForm ? "/bin/sh" : opts.argv[0];
   const args = isShellForm ? ["-c", opts.argv[0]] : opts.argv.slice(1);
 
-  return new Promise<ExecResult>((resolve) => {
+  return new Promise<RunExecResult>((resolve) => {
     let aborted = false;
     let settled = false;
 
@@ -255,13 +308,6 @@ function formatRelativeAge(iso: string | undefined, now: Date): string | null {
   return `${d}d ago`;
 }
 
-/** Rebuild a `Worktree` from a snapshot for cross-worktree command targeting. */
-function worktreeFromSnapshot(snap: StackSnapshot): Worktree {
-  const path = snap.worktree_path;
-  const name = sanitizeName(snap.worktree_name);
-  const id = hashPath(path);
-  return { name, id, path, stack_id: snap.stack_id, main_path: findMainWorktreePath(path) ?? path };
-}
 
 /** Map a POSIX signal name to its number for `128 + N` exit-code derivation. */
 function signalToNumber(signal: NodeJS.Signals): number | null {

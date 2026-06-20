@@ -328,7 +328,7 @@ describe("resolveEnvGroup (profile threading)", () => {
           env: {},
           env_files: [],
           env_from: [],
-          lifecycle: { before_up: [], after_up: [], before_down: [] },
+          lifecycle: { before_up: [], after_up: [], before_down: [], after_down: [] },
         },
       }),
     );
@@ -361,7 +361,7 @@ describe("resolveEnvGroup (profile threading)", () => {
           env: { DB: "from-profile" },
           env_files: [],
           env_from: [],
-          lifecycle: { before_up: [], after_up: [], before_down: [] },
+          lifecycle: { before_up: [], after_up: [], before_down: [], after_down: [] },
         },
       }),
     );
@@ -388,7 +388,7 @@ describe("resolveEnvGroup (profile threading)", () => {
           env: {},
           env_files: [],
           env_from: [],
-          lifecycle: { before_up: [], after_up: [], before_down: [] },
+          lifecycle: { before_up: [], after_up: [], before_down: [], after_down: [] },
         },
       }),
     );
@@ -414,7 +414,7 @@ describe("resolveEnvGroup (profile threading)", () => {
           env: {},
           env_files: [],
           env_from: [],
-          lifecycle: { before_up: [], after_up: [], before_down: [] },
+          lifecycle: { before_up: [], after_up: [], before_down: [], after_down: [] },
         },
       }),
     );
