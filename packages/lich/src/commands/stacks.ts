@@ -33,7 +33,6 @@ export interface StackRow {
   started_at: string;
   uptime_seconds: number;
   services: Array<Pick<ServiceSnapshot, "name" | "kind" | "state">>;
-  primary_url?: string;
   /** Omitted from JSON when the snapshot has no profile recorded. */
   active_profile?: string;
   /** Set only for sandboxed stacks. */
@@ -112,7 +111,6 @@ export function snapshotToRow(snap: StackSnapshot, now: number): StackRow {
       kind: s.kind,
       state: s.state,
     })),
-    primary_url: pickPrimaryUrl(services),
     active_profile: snap.active_profile,
     sandbox: snap.sandbox === true ? true : undefined,
     sandbox_vm: snap.sandbox === true ? snap.sandbox_vm : undefined,
@@ -149,19 +147,6 @@ function computeUptimeSeconds(startedAtIso: string, nowMs: number): number {
   return diff < 0 ? 0 : diff;
 }
 
-/** First service (declaration order) with an allocated port. */
-function pickPrimaryUrl(services: ServiceSnapshot[]): string | undefined {
-  for (const svc of services) {
-    const ports = svc.allocated_ports;
-    if (!ports) continue;
-    const entries = Object.entries(ports);
-    if (entries.length === 0) continue;
-    const [, port] = entries[0];
-    return `http://localhost:${port}`;
-  }
-  return undefined;
-}
-
 /** `HH:MM:SS`, or `Nd HH:MM:SS` when ≥ 24h. */
 export function formatUptime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -189,7 +174,6 @@ export function renderJson(rows: StackRow[]): string {
     obj.started_at = r.started_at;
     obj.uptime_seconds = r.uptime_seconds;
     obj.services = r.services;
-    if (r.primary_url) obj.primary_url = r.primary_url;
     // Omit (don't serialize null) so pre-profile snapshots stay clean.
     if (r.active_profile !== undefined) obj.active_profile = r.active_profile;
     if (r.sandbox) {
@@ -202,7 +186,10 @@ export function renderJson(rows: StackRow[]): string {
   return JSON.stringify(payload, null, 2);
 }
 
-const HEADERS = ["WORKTREE", "STATUS", "UPTIME", "SERVICES", "URL"] as const;
+// No URL column: friendly URLs live in `lich urls`, which resolves the
+// daemon's real proxy port. The trailing column is sandbox-only (empty for
+// ordinary host stacks).
+const HEADERS = ["WORKTREE", "STATUS", "UPTIME", "SERVICES", "SANDBOX"] as const;
 
 export function renderPretty(rows: StackRow[]): string {
   if (rows.length === 0) return "no stacks running";
@@ -215,8 +202,8 @@ export function renderPretty(rows: StackRow[]): string {
       formatUptime(r.uptime_seconds),
       formatServiceCount(r),
       r.sandbox && r.sandbox_vm
-        ? `sandbox:${r.sandbox_vm}${r.sandbox_state ? ` (${r.sandbox_state})` : ""}`
-        : (r.primary_url ?? ""),
+        ? `${r.sandbox_vm}${r.sandbox_state ? ` (${r.sandbox_state})` : ""}`
+        : "",
     ]);
   }
 

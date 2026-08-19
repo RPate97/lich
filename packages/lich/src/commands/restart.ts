@@ -414,7 +414,8 @@ async function runReadyProbe(
     const url = resolveHttpUrl(readyWhen.http_get as string, svcSnap);
     probePromise = waitForHttpReady({ url, signal });
   } else if (typeof readyWhen.tcp === "string" && readyWhen.tcp.length > 0) {
-    probePromise = waitForTcpReady({ target: readyWhen.tcp as string, signal });
+    const target = resolveTcpTarget(readyWhen.tcp as string, svcSnap);
+    probePromise = waitForTcpReady({ target, signal });
   } else if (typeof readyWhen.cmd === "string" && readyWhen.cmd.length > 0) {
     probePromise = waitForCmdReady({
       shellCmd: readyWhen.cmd as string,
@@ -435,6 +436,32 @@ function readFailWhenPattern(svcSnap: ServiceSnapshot): RegExp | null {
   const logMatch = fw.log_match;
   if (typeof logMatch !== "string" || logMatch.length === 0) return null;
   return new RegExp(logMatch, "u");
+}
+
+/**
+ * Resolve a `ready_when.tcp` target for restart. The snapshot stores the
+ * target as authored in the yaml, so a `${owned.<svc>.port}`-style template
+ * survives verbatim; `up` interpolates it against the freshly-allocated
+ * ports, but restart re-probes from the snapshot and must do the same or the
+ * raw `${...}` reaches the tcp parser and fails ("invalid tcp target"). Mirror
+ * `resolveHttpUrl`: substitute the first `${...}` expression with this
+ * service's allocated port. Concrete targets (bare port / host:port, no
+ * template) pass through untouched.
+ */
+export function resolveTcpTarget(
+  target: string,
+  svcSnap: ServiceSnapshot,
+): string {
+  if (!target.includes("${")) return target;
+  const port =
+    svcSnap.allocated_ports?.default ??
+    Object.values(svcSnap.allocated_ports ?? {})[0];
+  if (port === undefined) {
+    throw new Error(
+      `ready_when.tcp references a port template but no port is allocated for '${svcSnap.name}'`,
+    );
+  }
+  return target.replace(/\$\{[^}]*\}/, String(port));
 }
 
 function resolveHttpUrl(pathOrUrl: string, svcSnap: ServiceSnapshot): string {
