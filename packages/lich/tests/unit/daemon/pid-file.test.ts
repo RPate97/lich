@@ -15,8 +15,10 @@ import {
   clearDaemonUrl,
   isDaemonAlive,
   readDaemonPid,
+  readDaemonProxyPort,
   readDaemonUrl,
   writeDaemonPid,
+  writeDaemonProxyUrl,
   writeDaemonUrl,
 } from "../../../src/daemon/pid-file.js";
 
@@ -235,6 +237,49 @@ describe("writeDaemonUrl + readDaemonUrl", () => {
   it("does not validate URL shape — round-trips arbitrary strings", async () => {
     await writeDaemonUrl("not-actually-a-url-just-a-string");
     expect(await readDaemonUrl()).toBe("not-actually-a-url-just-a-string");
+  });
+});
+
+describe("readDaemonProxyPort", () => {
+  it("parses the port from the daemon's friendly proxy URL", async () => {
+    await writeDaemonProxyUrl("http://lich.localhost:43075/");
+    expect(await readDaemonProxyPort()).toBe(43075);
+  });
+
+  it("returns the actual bound port even when it differs from the default 3300", async () => {
+    // The EADDRINUSE-fallback case: daemon wanted 3300 but bound elsewhere.
+    await writeDaemonProxyUrl("http://lich.localhost:51234/");
+    expect(await readDaemonProxyPort()).toBe(51234);
+  });
+
+  it("honors the configured default when it was actually bound", async () => {
+    await writeDaemonProxyUrl("http://lich.localhost:3300/");
+    expect(await readDaemonProxyPort()).toBe(3300);
+  });
+
+  it("returns null when the proxy-url file does not exist", async () => {
+    expect(await readDaemonProxyPort()).toBeNull();
+  });
+
+  it("returns null when the proxy-url file is empty", async () => {
+    writeFileSync(join(home, "daemon.proxy-url"), "", "utf8");
+    expect(await readDaemonProxyPort()).toBeNull();
+  });
+
+  it("returns null when the stored value is not a parseable URL", async () => {
+    writeFileSync(join(home, "daemon.proxy-url"), "not-a-url", "utf8");
+    expect(await readDaemonProxyPort()).toBeNull();
+  });
+
+  it("returns null when the URL carries no port", async () => {
+    writeFileSync(join(home, "daemon.proxy-url"), "http://lich.localhost/", "utf8");
+    expect(await readDaemonProxyPort()).toBeNull();
+  });
+
+  it("honors opts.lichHome over the env var", async () => {
+    const fresh = join(home, "proxy-home");
+    await writeDaemonProxyUrl("http://lich.localhost:6000/", { lichHome: fresh });
+    expect(await readDaemonProxyPort({ lichHome: fresh })).toBe(6000);
   });
 });
 

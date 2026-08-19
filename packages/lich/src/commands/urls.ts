@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { readSnapshot } from "../state/snapshot.js";
 import { resolveStackId } from "../state/resolve-stack.js";
+import { readDaemonProxyPort } from "../daemon/pid-file.js";
 import { parseConfig } from "../config/parse.js";
 import {
   DEFAULT_PROXY_PORT,
@@ -85,8 +86,17 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
   return { exitCode: 0 };
 }
 
-/** Best-effort proxy-port resolution from yaml; falls back to default on any problem. */
+/**
+ * Best-effort proxy-port resolution. The daemon's actually-bound port
+ * (`daemon.proxy-url`) wins — it binds `runtime.proxy_port` when free but
+ * falls back to an OS-assigned port on EADDRINUSE, so advertising the
+ * configured/default port alone points users at a dead port. Falls back to
+ * the yaml's `runtime.proxy_port`, then the default, when no daemon is up.
+ */
 async function resolveProxyPort(worktreePath: string): Promise<number> {
+  const daemonPort = await readDaemonProxyPort().catch(() => null);
+  if (daemonPort !== null) return daemonPort;
+
   const yamlPath = join(worktreePath, "lich.yaml");
   if (!existsSync(yamlPath)) return DEFAULT_PROXY_PORT;
   try {
