@@ -234,11 +234,13 @@ async function runPerServiceRestart(
       }
 
       const logPath = serviceLogPath(worktree.stack_id, name);
+      const ports = buildOwnedPortsSpec(svcSnap);
       const handle = await startOwnedService({
         name,
         cmd: svcSnap.cmd!,
         cwd: svcSnap.service_cwd ?? worktree.path,
         env: svcSnap.resolved_env!,
+        ...(ports && { ports }),
         logPath,
         runId: randomUUID(),
       });
@@ -448,6 +450,28 @@ function readFailWhenPattern(svcSnap: ServiceSnapshot): RegExp | null {
  * service's allocated port. Concrete targets (bare port / host:port, no
  * template) pass through untouched.
  */
+/**
+ * Rebuild the supervisor's port spec (`{ key: { envVar, port } }`) from the
+ * snapshot so the respawned process gets its allocated `published_env` ports
+ * re-injected — without this the service falls back to its in-cmd default
+ * (e.g. a server binding :8080 instead of its allocated port). Returns
+ * undefined when the service publishes no ports, or when an older snapshot
+ * predates `port_env_vars` (then restart behaves as before: no injection).
+ */
+export function buildOwnedPortsSpec(
+  svcSnap: ServiceSnapshot,
+): Record<string, { envVar: string; port: number }> | undefined {
+  const allocated = svcSnap.allocated_ports;
+  const envVars = svcSnap.port_env_vars;
+  if (!allocated || !envVars) return undefined;
+  const ports: Record<string, { envVar: string; port: number }> = {};
+  for (const [key, port] of Object.entries(allocated)) {
+    const envVar = envVars[key];
+    if (envVar !== undefined) ports[key] = { envVar, port };
+  }
+  return Object.keys(ports).length > 0 ? ports : undefined;
+}
+
 export function resolveTcpTarget(
   target: string,
   svcSnap: ServiceSnapshot,

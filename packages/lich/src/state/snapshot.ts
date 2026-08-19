@@ -58,6 +58,13 @@ export interface ServiceSnapshot {
   state: ServiceState;
   /** Logical port name -> allocated host port. */
   allocated_ports?: Record<string, number>;
+  /**
+   * Logical port name -> the `published_env` var it is injected as (owned
+   * services only). Persisted so `lich restart` can re-inject the allocated
+   * ports into the respawned process — `allocated_ports` keeps only the
+   * numbers, which is not enough to rebuild the supervisor's port spec.
+   */
+  port_env_vars?: Record<string, string>;
   /** ISO 8601 timestamp. */
   started_at?: string;
   /** Process id; only meaningful for owned services. */

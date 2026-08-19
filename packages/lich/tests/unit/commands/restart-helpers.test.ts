@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveTcpTarget } from "../../../src/commands/restart.js";
+import {
+  buildOwnedPortsSpec,
+  resolveTcpTarget,
+} from "../../../src/commands/restart.js";
 import type { ServiceSnapshot } from "../../../src/state/snapshot.js";
 
 /**
@@ -50,5 +53,44 @@ describe("resolveTcpTarget", () => {
     expect(() => resolveTcpTarget("localhost:${owned.web.port}", s)).toThrow(
       /no port is allocated for 'web'/,
     );
+  });
+});
+
+describe("buildOwnedPortsSpec", () => {
+  it("rebuilds the single-port spec from allocated_ports + port_env_vars", () => {
+    const s = svc({
+      allocated_ports: { default: 3005 },
+      port_env_vars: { default: "PORT" },
+    });
+    expect(buildOwnedPortsSpec(s)).toEqual({ default: { envVar: "PORT", port: 3005 } });
+  });
+
+  it("rebuilds a multi-port spec keyed by logical name", () => {
+    const s = svc({
+      allocated_ports: { api: 3000, db: 3001 },
+      port_env_vars: { api: "SUPABASE_API_PORT", db: "SUPABASE_DB_PORT" },
+    });
+    expect(buildOwnedPortsSpec(s)).toEqual({
+      api: { envVar: "SUPABASE_API_PORT", port: 3000 },
+      db: { envVar: "SUPABASE_DB_PORT", port: 3001 },
+    });
+  });
+
+  it("returns undefined when the service publishes no ports", () => {
+    expect(buildOwnedPortsSpec(svc({}))).toBeUndefined();
+  });
+
+  it("returns undefined for an older snapshot without port_env_vars", () => {
+    // Back-compat: a stack booted before this field existed → no injection,
+    // same as the pre-fix behavior (rather than a crash).
+    expect(buildOwnedPortsSpec(svc({ allocated_ports: { default: 3005 } }))).toBeUndefined();
+  });
+
+  it("skips ports that have no matching env var", () => {
+    const s = svc({
+      allocated_ports: { default: 3005, extra: 9999 },
+      port_env_vars: { default: "PORT" },
+    });
+    expect(buildOwnedPortsSpec(s)).toEqual({ default: { envVar: "PORT", port: 3005 } });
   });
 });
