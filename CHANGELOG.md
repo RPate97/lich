@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.1](https://github.com/RPate97/lich/compare/v0.6.0...v0.6.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* **restart,stacks:** correct restart port re-injection & ready-checks; drop misleading stacks URL ([4940008](https://github.com/RPate97/lich/commit/4940008da9d53275d6cc86f91bc3f5e154eab96f))
+* **restart,stacks:** resolve tcp ready-check templates; drop misleading stacks URL ([281e2dc](https://github.com/RPate97/lich/commit/281e2dcdb173a35a955270173788464f7e0df9e8))
+* **restart:** re-inject allocated published_env ports on respawn ([46c06cf](https://github.com/RPate97/lich/commit/46c06cfa9b94ca589dceeea749a382b0e75d7460))
+* **urls:** advertise the daemon's actual proxy port, not the configured default ([0bf911f](https://github.com/RPate97/lich/commit/0bf911f82357981431bb8ce48e371e46674eac80))
+* **urls:** advertise the daemon's actual proxy port, not the configured default ([cafddb9](https://github.com/RPate97/lich/commit/cafddb9e1bf9d29fa1714a3c6ccf47ecc337b497))
+
 ## [0.6.0](https://github.com/RPate97/lich/compare/v0.5.0...v0.6.0) (2026-06-20)
 
 
