@@ -80,7 +80,7 @@ describe("runStacks — empty", () => {
 });
 
 describe("runStacks — single healthy stack", () => {
-  it("pretty: shows one row with worktree, status, uptime, services, url", async () => {
+  it("pretty: shows one row with worktree, status, uptime, services, sandbox", async () => {
     await writeSnapshot(
       snap({
         stack_id: "s1",
@@ -112,16 +112,17 @@ describe("runStacks — single healthy stack", () => {
     const text = sink.text();
     const lines = text.trimEnd().split("\n");
     expect(lines.length).toBe(2);
-    expect(lines[0]).toMatch(/WORKTREE\s+STATUS\s+UPTIME\s+SERVICES\s+URL/);
+    expect(lines[0]).toMatch(/WORKTREE\s+STATUS\s+UPTIME\s+SERVICES\s+SANDBOX/);
     expect(lines[1]).toContain("dogfood-stack");
     expect(lines[1]).toContain("up");
     // ~1h with slop
     expect(lines[1]).toMatch(/\b01:00:0\d\b/);
     expect(lines[1]).toContain("3/3");
-    expect(lines[1]).toContain("http://localhost:5847");
+    // No URL column — friendly URLs live in `lich urls`.
+    expect(lines[1]).not.toContain("http://");
   });
 
-  it("json: shape includes stack_id, worktree_name, status, started_at, uptime_seconds, services, primary_url", async () => {
+  it("json: shape includes stack_id, worktree_name, status, started_at, uptime_seconds, services", async () => {
     await writeSnapshot(
       snap({
         stack_id: "s1",
@@ -155,7 +156,8 @@ describe("runStacks — single healthy stack", () => {
     expect(entry.services).toEqual([
       { name: "postgres", kind: "compose", state: "healthy" },
     ]);
-    expect(entry.primary_url).toBe("http://localhost:5847");
+    // No primary_url — `lich stacks` no longer advertises a URL.
+    expect(entry.primary_url).toBeUndefined();
   });
 });
 
@@ -274,42 +276,23 @@ describe("runStacks — failed services", () => {
   });
 });
 
-describe("runStacks — primary_url", () => {
-  it("uses the first service with allocated_ports", async () => {
+describe("runStacks — no URL advertised", () => {
+  // `lich stacks` deliberately does not show a URL: the raw first-service port
+  // it used to print was misleading (it was never the app). `lich urls` is the
+  // source of truth for reachable URLs.
+  it("emits no primary_url in json even when services have ports", async () => {
     await writeSnapshot(
       snap({
         stack_id: "u",
         worktree_name: "url-stack",
         services: [
-          { name: "noports", kind: "owned", state: "ready" },
           {
             name: "api",
             kind: "owned",
             state: "ready",
             allocated_ports: { PORT: 9100 },
           },
-          {
-            name: "web",
-            kind: "owned",
-            state: "ready",
-            allocated_ports: { PORT: 9200 },
-          },
         ],
-      }),
-    );
-
-    const { sink, out } = makeSink();
-    await runStacks({ out, json: true });
-    const [entry] = JSON.parse(sink.text());
-    expect(entry.primary_url).toBe("http://localhost:9100");
-  });
-
-  it("omits primary_url when no service has allocated_ports (json)", async () => {
-    await writeSnapshot(
-      snap({
-        stack_id: "n",
-        worktree_name: "no-url",
-        services: [{ name: "x", kind: "owned", state: "ready" }],
       }),
     );
 
@@ -319,19 +302,25 @@ describe("runStacks — primary_url", () => {
     expect(entry.primary_url).toBeUndefined();
   });
 
-  it("leaves URL column blank in pretty when no ports", async () => {
+  it("prints no http URL in pretty output even when services have ports", async () => {
     await writeSnapshot(
       snap({
-        stack_id: "n",
-        worktree_name: "no-url",
-        services: [{ name: "x", kind: "owned", state: "ready" }],
+        stack_id: "u2",
+        worktree_name: "url-stack",
+        services: [
+          {
+            name: "api",
+            kind: "owned",
+            state: "ready",
+            allocated_ports: { PORT: 9100 },
+          },
+        ],
       }),
     );
 
     const { sink, out } = makeSink();
     await runStacks({ out });
-    const lines = sink.text().trimEnd().split("\n");
-    expect(lines[1]).not.toContain("http://");
+    expect(sink.text()).not.toContain("http://");
   });
 });
 

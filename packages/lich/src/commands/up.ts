@@ -1298,6 +1298,23 @@ async function startOwned(
     }
   }
 
+  // Persist the allocated port -> published_env mapping so `lich restart` can
+  // re-inject the ports when it respawns the process (the snapshot's
+  // allocated_ports keeps only the numbers). Keyed to match allocated_ports:
+  // `default` for the single-port form, the logical key for multi-port.
+  const portEnvVars: Record<string, string> = {};
+  if (spec.portEnvVar && spec.port !== undefined) {
+    portEnvVars.default = spec.portEnvVar;
+  }
+  if (spec.ports) {
+    for (const [key, { envVar }] of Object.entries(spec.ports)) {
+      portEnvVars[key] = envVar;
+    }
+  }
+  if (svcSnap && Object.keys(portEnvVars).length > 0) {
+    svcSnap.port_env_vars = portEnvVars;
+  }
+
   if (def.oneshot) spec.oneshot = true;
   if (resolvedStopCmd) spec.stopCmd = resolvedStopCmd;
   // Thread the abort signal — supabase-style setup CLIs ignore SIGTERM, so without it Ctrl-C during a oneshot is a no-op.
