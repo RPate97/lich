@@ -185,6 +185,29 @@ export async function readDaemonProxyUrl(
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * Returns the daemon's actually-bound reverse-proxy port, parsed from
+ * `daemon.proxy-url`, or null when the file is absent/empty/unparseable.
+ *
+ * This is the source of truth for friendly-URL construction: the daemon
+ * binds `runtime.proxy_port` (default 3300) when it is free, but falls back
+ * to an OS-assigned port on EADDRINUSE (see daemon/proxy/proxy.ts). Callers
+ * that build URLs from the configured/default port alone would advertise a
+ * port nothing is listening on.
+ */
+export async function readDaemonProxyPort(
+  opts?: PidFileOpts,
+): Promise<number | null> {
+  const url = await readDaemonProxyUrl(opts);
+  if (url === null) return null;
+  try {
+    const port = Number(new URL(url).port);
+    return Number.isInteger(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Idempotent — succeeds silently when the file is already absent. */
 export async function clearDaemonProxyUrl(opts?: PidFileOpts): Promise<void> {
   const path = proxyUrlFilePath(opts);

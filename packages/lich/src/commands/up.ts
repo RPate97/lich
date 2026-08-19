@@ -7,6 +7,7 @@ import { filterBakedHooks, shouldSkipBaked } from "../lifecycle/skip-baked.js";
 import { resolveEnvGroup } from "../groups/resolve.js";
 import { parseConfig } from "../config/parse.js";
 import { ensureDaemonRunning } from "../daemon/auto-start.js";
+import { readDaemonProxyPort } from "../daemon/pid-file.js";
 import { detectWorktree, type Worktree } from "../worktree/detect.js";
 import { allocate, release } from "../ports/allocator.js";
 import { resolveComposeCli, type ComposeCli } from "../compose/detect.js";
@@ -813,6 +814,11 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
       process.env.LICH_NO_BROWSER === "true";
     const openBrowser = (input.openBrowser ?? false) && !envNoBrowser;
     const configuredProxyPort = config.runtime?.proxy_port;
+    // The daemon's actually-bound port (read below, once it is up) is the
+    // source of truth — it falls back off runtime.proxy_port on EADDRINUSE.
+    // Seed with the configured/default so the summary is still sane if the
+    // daemon auto-start fails.
+    let resolvedProxyPort = configuredProxyPort ?? DEFAULT_PROXY_PORT;
     try {
       const lichHomeEnv = process.env.LICH_HOME;
       const ensureOpts: Parameters<typeof ensureDaemonRunning>[0] = {
@@ -824,9 +830,14 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
       }
       const { url: rawDashboardUrl, alreadyRunning } =
         await ensureDaemonRunning(ensureOpts);
+      // Now that the daemon is up, prefer its actually-bound proxy port over
+      // the configured/default — they differ whenever proxy_port was taken.
+      const daemonProxyPort = await readDaemonProxyPort(
+        lichHomeEnv !== undefined ? { lichHome: lichHomeEnv } : undefined,
+      ).catch(() => null);
+      if (daemonProxyPort !== null) resolvedProxyPort = daemonProxyPort;
       // rawDashboardUrl is used for the /api/routing call below (not proxied); the user-facing line gets the friendly apex.
-      const dashboardProxyPort = configuredProxyPort ?? DEFAULT_PROXY_PORT;
-      const friendlyDashboardUrl = `http://lich.localhost:${dashboardProxyPort}/`;
+      const friendlyDashboardUrl = `http://lich.localhost:${resolvedProxyPort}/`;
       const suffix = alreadyRunning ? " (daemon was already running)" : "";
       output.info(`Dashboard: ${friendlyDashboardUrl}${suffix}`);
 
@@ -857,7 +868,7 @@ export async function runUpLocal(input: RunUpInput): Promise<RunUpResult> {
       );
     }
 
-    const summaryProxyPort = configuredProxyPort ?? DEFAULT_PROXY_PORT;
+    const summaryProxyPort = resolvedProxyPort;
     output.summary(
       buildSuccessSummary({
         stackId: worktree.stack_id,
