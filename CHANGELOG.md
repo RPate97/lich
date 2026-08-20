@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.2](https://github.com/RPate97/lich/compare/v0.6.1...v0.6.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* **state:** redact resolved env from stopped snapshots ([5c034f0](https://github.com/RPate97/lich/commit/5c034f0603ebbeb07293c4824b665a97b23dcc0b))
+* **state:** restrict permissions on stack state dir and state.json ([8d311ec](https://github.com/RPate97/lich/commit/8d311ec87fc045a17f44821d2758a336b65ad4e2))
+* **state:** restrict permissions on stack state, and redact secrets once stopped ([66feb15](https://github.com/RPate97/lich/commit/66feb15bb1dba0447d6e34385089a5c2d62439dc))
+* **urls:** exit non-zero when the stack is not up ([d2c0cfa](https://github.com/RPate97/lich/commit/d2c0cfa0b5ffd1ed0452176286649729ffe559c8))
+* **urls:** exit non-zero when the stack is not up ([6fe9383](https://github.com/RPate97/lich/commit/6fe9383bf363905c1febcf2409fb9ee45b2ca4dd))
+
 ## [0.6.1](https://github.com/RPate97/lich/compare/v0.6.0...v0.6.1) (2026-08-19)
 
 
