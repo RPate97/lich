@@ -310,6 +310,19 @@ describe("README quickstart", () => {
       const downSnap = readStateJson(lichHome, stackId!);
       expect(downSnap?.status).toBe("stopped");
 
+      // `lich urls` doubles as a liveness check for scripts. Once the stack is
+      // stopped its ports may be reused by another worktree, so `urls` must now
+      // signal not-live via a non-zero exit rather than reporting success.
+      const urlsAfterDown = runLich(["urls"], {
+        cwd: stackPath,
+        env: { LICH_HOME: lichHome },
+        timeout: 10_000,
+      });
+      expect(
+        urlsAfterDown.exitCode,
+        `lich urls should exit non-zero for a stopped stack; stderr: ${urlsAfterDown.stderr}`,
+      ).not.toBe(0);
+
       // The README promises `lich down` "tears the stack down" — the
       // explicit behavioral assertion is that the previously-allocated
       // ports stop listening. Give services a brief beat to release
