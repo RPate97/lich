@@ -43,11 +43,18 @@ export function serviceEnvPath(stackId: string, serviceName: string): string {
   return join(envDir(stackId), `${serviceName}.env`);
 }
 
-/** Creates the stack directory and its `logs/` and `env/` subdirs. Idempotent. */
+/**
+ * Creates the stack directory and its `logs/` and `env/` subdirs. Idempotent.
+ *
+ * Mode 0700: the stack dir holds `state.json` and per-service `.env` files with
+ * fully-resolved env (injected secrets), so it must not be group/world readable.
+ * `mkdir` only applies the mode to dirs it creates — dirs predating this fix keep
+ * their old mode until recreated (or chmod'd out of band).
+ */
 export async function ensureStackDir(stackId: string): Promise<void> {
-  await mkdir(stackDir(stackId), { recursive: true });
-  await mkdir(logsDir(stackId), { recursive: true });
-  await mkdir(envDir(stackId), { recursive: true });
+  await mkdir(stackDir(stackId), { recursive: true, mode: 0o700 });
+  await mkdir(logsDir(stackId), { recursive: true, mode: 0o700 });
+  await mkdir(envDir(stackId), { recursive: true, mode: 0o700 });
 }
 
 /** Removes the stack directory recursively. Idempotent. */

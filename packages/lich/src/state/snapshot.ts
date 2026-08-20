@@ -193,7 +193,11 @@ export async function writeSnapshot(snapshot: StackSnapshot): Promise<void> {
   const tmp = `${dest}.${randomBytes(8).toString("hex")}.tmp`;
 
   try {
-    await writeFile(tmp, serialized, "utf8");
+    // Mode 0600: state.json holds each service's fully-resolved env (injected
+    // secrets), so it must not be group/world readable. `rename` preserves the
+    // tmp file's mode, and replacing an existing 0644 file this way heals its
+    // permissions on the next write.
+    await writeFile(tmp, serialized, { encoding: "utf8", mode: 0o600 });
     await rename(tmp, dest);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
