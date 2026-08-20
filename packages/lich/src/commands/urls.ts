@@ -55,26 +55,44 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
     err.write("no stack found for this worktree (run lich up first)\n");
     return { exitCode: 1 };
   }
-  const worktreePath = snapshot.worktree_path;
+  // Bind to a const so the `finish` closure below keeps the non-null narrowing
+  // (`let` narrowing does not flow into closures).
+  const snap = snapshot;
+  const worktreePath = snap.worktree_path;
+
+  // `lich urls` doubles as a liveness check in scripts. A snapshot persists
+  // after `lich down` (status "stopped"/"failed"/…) and its ports may since
+  // have been reused by another worktree, so a non-"up" stack must not report
+  // success — otherwise callers route commands at stale/foreign ports. Still
+  // print what we have (useful for humans), but warn and exit non-zero.
+  const finish = (): RunUrlsResult => {
+    if (snap.status !== "up") {
+      err.write(
+        `stack is ${snap.status}, not up — these URLs may be stale (run \`lich up\`)\n`,
+      );
+      return { exitCode: 1 };
+    }
+    return { exitCode: 0 };
+  };
 
   if (raw) {
-    const rawUrls = buildRawUrls(snapshot.services);
+    const rawUrls = buildRawUrls(snap.services);
     if (rawUrls.length === 0) {
       out.write("(no ports allocated)\n");
-      return { exitCode: 0 };
+      return finish();
     }
     for (const url of rawUrls) {
       out.write(formatUrlLine(url, "raw") + "\n");
     }
-    return { exitCode: 0 };
+    return finish();
   }
 
-  const routing = snapshot.routing;
+  const routing = snap.routing;
   if (!routing || routing.length === 0) {
     out.write(
       "No routing entries — run `lich up` first, or services have no ports declared.\n",
     );
-    return { exitCode: 0 };
+    return finish();
   }
 
   const proxyPort = await resolveProxyPort(worktreePath);
@@ -83,7 +101,7 @@ export async function runUrls(input: RunUrlsInput = {}): Promise<RunUrlsResult> 
   for (const url of friendlyUrls) {
     out.write(formatUrlLine(url, "friendly") + "\n");
   }
-  return { exitCode: 0 };
+  return finish();
 }
 
 /**
