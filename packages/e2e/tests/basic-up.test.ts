@@ -347,6 +347,13 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const downSnap = readStateJson(lichHome, stackId!);
       expect(downSnap?.status).toBe("stopped");
 
+      // Teardown is complete → the resolved env (injected secrets) is redacted
+      // from the persisted snapshot, so credentials don't linger on disk. Ports
+      // and names stay for `lich stacks`/`urls`.
+      for (const svc of downSnap!.services) {
+        expect(svc.resolved_env).toBeUndefined();
+      }
+
       // brief grace for sockets to release
       await new Promise<void>((r) => setTimeout(r, 2_000));
       for (const port of allocatedPorts) {
