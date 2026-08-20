@@ -167,18 +167,65 @@ export async function readSnapshot(
   return JSON.parse(raw) as StackSnapshot;
 }
 
-/** Strips failure fields from non-failed services so stale metadata doesn't leak into state.json. */
-function sanitizeForWrite(snapshot: StackSnapshot): StackSnapshot {
+/** Blanks the injected env on lifecycle hook entries (the secret carrier). */
+function redactLifecycleEntries(
+  entries: SnapshotLifecycleEntry[] | undefined,
+): SnapshotLifecycleEntry[] | undefined {
+  if (entries === undefined) return entries;
+  return entries.map((e) => ({ ...e, env: {} }));
+}
+
+/**
+ * Drops the secret-bearing env a service ran with. Applied only once the stack
+ * is stopped: `resolved_env` and the per-service hook envs hold injected secrets
+ * that are no longer needed after teardown (down re-run early-returns, restart
+ * rejects a stopped stack, nuke re-resolves env from the yaml), so keeping them
+ * only leaves credentials in a persisted file indefinitely.
+ */
+function redactServiceEnv(svc: ServiceSnapshot): ServiceSnapshot {
+  const { resolved_env: _drop, ...rest } = svc;
   return {
-    ...snapshot,
-    services: snapshot.services.map((svc) => {
-      if (svc.state === "failed") return svc;
-      if (svc.failure_reason === undefined && svc.failure_log_tail === undefined)
-        return svc;
-      const { failure_reason: _r, failure_log_tail: _t, ...rest } = svc;
-      return rest;
+    ...rest,
+    ...(svc.before_start && {
+      before_start: redactLifecycleEntries(svc.before_start),
+    }),
+    ...(svc.after_ready && {
+      after_ready: redactLifecycleEntries(svc.after_ready),
+    }),
+    ...(svc.before_down && {
+      before_down: redactLifecycleEntries(svc.before_down),
     }),
   };
+}
+
+/**
+ * Strips failure fields from non-failed services so stale metadata doesn't leak
+ * into state.json, and — once the stack is stopped — redacts the resolved env
+ * (injected secrets) that teardown no longer needs. `lich stacks`/`urls` keep
+ * working: status, ports, and names are untouched.
+ */
+function sanitizeForWrite(snapshot: StackSnapshot): StackSnapshot {
+  const stopped = snapshot.status === "stopped";
+  const out: StackSnapshot = {
+    ...snapshot,
+    services: snapshot.services.map((svc) => {
+      let s = svc;
+      if (
+        s.state !== "failed" &&
+        (s.failure_reason !== undefined || s.failure_log_tail !== undefined)
+      ) {
+        const { failure_reason: _r, failure_log_tail: _t, ...rest } = s;
+        s = rest;
+      }
+      if (stopped) s = redactServiceEnv(s);
+      return s;
+    }),
+  };
+  if (stopped) {
+    if (out.before_down) out.before_down = redactLifecycleEntries(out.before_down);
+    if (out.after_down) out.after_down = redactLifecycleEntries(out.after_down);
+  }
+  return out;
 }
 
 /** Writes a snapshot atomically via write-to-tmp + rename. */
@@ -193,7 +240,11 @@ export async function writeSnapshot(snapshot: StackSnapshot): Promise<void> {
   const tmp = `${dest}.${randomBytes(8).toString("hex")}.tmp`;
 
   try {
-    await writeFile(tmp, serialized, "utf8");
+    // Mode 0600: state.json holds each service's fully-resolved env (injected
+    // secrets), so it must not be group/world readable. `rename` preserves the
+    // tmp file's mode, and replacing an existing 0644 file this way heals its
+    // permissions on the next write.
+    await writeFile(tmp, serialized, { encoding: "utf8", mode: 0o600 });
     await rename(tmp, dest);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});

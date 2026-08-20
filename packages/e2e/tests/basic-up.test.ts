@@ -292,6 +292,12 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
       const serviceNames = snap.services.map((s) => s.name).sort();
       expect(serviceNames).toEqual(["api", "web"]);
 
+      // state.json holds each service's resolved env (injected secrets), so the
+      // stack dir and the file itself must be owner-only — no group/world bits.
+      const stackDirPath = join(lichHome, "stacks", stackId!);
+      expect(statSync(stackDirPath).mode & 0o077).toBe(0);
+      expect(statSync(join(stackDirPath, "state.json")).mode & 0o077).toBe(0);
+
       // --raw sidesteps the friendly-URL proxy path. Friendly URLs race
       // against the routing watcher's debounce on a fast (~3s) up.
       const urlsResult = runLich(["urls", "--raw"], {
@@ -340,6 +346,13 @@ describe("lich up against dogfood-stack (Plan 1 basic flow)", () => {
 
       const downSnap = readStateJson(lichHome, stackId!);
       expect(downSnap?.status).toBe("stopped");
+
+      // Teardown is complete → the resolved env (injected secrets) is redacted
+      // from the persisted snapshot, so credentials don't linger on disk. Ports
+      // and names stay for `lich stacks`/`urls`.
+      for (const svc of downSnap!.services) {
+        expect(svc.resolved_env).toBeUndefined();
+      }
 
       // brief grace for sockets to release
       await new Promise<void>((r) => setTimeout(r, 2_000));
