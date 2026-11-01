@@ -14,6 +14,8 @@ import { runRouting } from "./routing.js";
 import { runDashboard } from "./dashboard.js";
 import { sandboxCommand } from "./sandbox.js";
 import { runTop, type SortKey } from "./top.js";
+import { runUpdate } from "./update.js";
+import { VERSION } from "../version.js";
 
 /** `exitCode` overrides the default 0/1 mapping; keep `ok` consistent with it. */
 export interface CommandResult {
@@ -261,6 +263,21 @@ const topHandler: CommandHandler = async (ctx) => {
   return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
 };
 
+const updateHandler: CommandHandler = async (ctx) => {
+  const argv = ctx.argv._.filter((a): a is string => typeof a === "string");
+  const result = await runUpdate({
+    currentVersion: VERSION,
+    argv,
+    check: ctx.argv.check === true,
+    dryRun: ctx.argv["dry-run"] === true,
+    env: process.env,
+    stdout: process.stdout,
+    stderr: process.stderr,
+    execPath: process.execPath,
+  });
+  return { ok: result.exitCode === 0, message: "", exitCode: result.exitCode };
+};
+
 const execHandler: CommandHandler = async (ctx) => {
   const envGroupName =
     typeof ctx.argv["env-group"] === "string"
@@ -295,6 +312,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   dashboard: dashboardHandler,
   sandbox: sandboxCommand,
   top: topHandler,
+  update: updateHandler,
 };
 
 export type CommandName = keyof typeof COMMANDS;

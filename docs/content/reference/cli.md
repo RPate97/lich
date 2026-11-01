@@ -337,3 +337,33 @@ Flags:
 
 Exit codes: 0 on success; non-zero if the daemon is unreachable.
 ```
+
+## `lich update`
+
+Upgrade the lich binary to the latest release.
+
+```
+Usage: lich update [<version>] [--check] [--dry-run]
+
+Upgrade the lich binary in place by re-running the install script.
+Non-interactive: no prompts. The install location is preserved by
+reading the current binary's path and passing LICH_PREFIX to the
+installer when it can be detected.
+
+With no argument, upgrades to the latest release. Pass a version
+tag (e.g. `v0.4.0`) to pin to that version instead; downgrades are
+allowed.
+
+Flags:
+  --check         Compare the running version against the latest
+                  release and print the status; perform no install.
+  --dry-run       Print the install command that would run; perform
+                  no install.
+
+Env:
+  LICH_NO_UPDATE_CHECK=1  Suppress the "out of date" notice shown
+                          on every CLI run. Does not disable this
+                          command itself.
+
+Exit codes: 0 on success; the installer's exit code on failure.
+```

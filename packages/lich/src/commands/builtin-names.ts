@@ -15,6 +15,7 @@ export const BUILTIN_COMMAND_NAMES = [
   "dashboard",
   "sandbox",
   "top",
+  "update",
 ] as const;
 
 export type BuiltinCommandName = (typeof BUILTIN_COMMAND_NAMES)[number];

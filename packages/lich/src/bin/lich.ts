@@ -14,6 +14,7 @@ import { runGlobalHelp, runCommandHelp } from "../commands/help.js";
 import { captureCommand, flush as flushTelemetry } from "../telemetry/client.js";
 import { isTelemetryEnabled, readLichYamlTelemetry } from "../telemetry/config.js";
 import { maybeShowFirstRunNotice } from "../telemetry/notice.js";
+import { runVersionCheck, runRefresh } from "../version-check/index.js";
 import { join } from "node:path";
 
 const argv = mri(process.argv.slice(2), {
@@ -31,17 +32,34 @@ const argv = mri(process.argv.slice(2), {
     "purge",
     "preflight",
     "follow",
+    "check",
+    "dry-run",
   ],
-  string: ["env-group", "worktree", "tree", "sort"],
+  string: ["env-group", "worktree", "tree", "sort", "cache"],
   default: { last: undefined },
 });
+
+const [commandName, ...rest] = argv._;
+
+// Hidden subcommand: background cache refresh for the "update available" notice.
+// Spawned detached by runVersionCheck; must stay silent and exit quickly.
+if (commandName === "__update-check-refresh") {
+  const cacheArg = typeof argv.cache === "string" ? argv.cache : undefined;
+  if (cacheArg) await runRefresh({ cachePath: cacheArg });
+  process.exit(0);
+}
 
 if (argv.version) {
   console.log(`lich ${VERSION}`);
   process.exit(0);
 }
 
-const [commandName, ...rest] = argv._;
+runVersionCheck({
+  currentVersion: VERSION,
+  argv,
+  env: process.env,
+  commandName: typeof commandName === "string" ? commandName : undefined,
+});
 
 // Telemetry: opt-out via LICH_TELEMETRY=0, user config, or lich.yaml runtime.telemetry.
 // Show the one-time notice on the very first run when telemetry is enabled.

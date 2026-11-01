@@ -24,6 +24,7 @@ describe("smoke", () => {
         "stacks",
         "top",
         "up",
+        "update",
         "urls",
         "validate",
       ].sort()
