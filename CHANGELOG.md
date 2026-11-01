@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/RPate97/lich/compare/v0.6.2...v0.7.0) (2026-11-01)
+
+
+### Features
+
+* **cli:** add lich update + out-of-date notice ([b353cd6](https://github.com/RPate97/lich/commit/b353cd6bed3a94570e07f5e49771d3c4d9c2f3c0))
+* **cli:** out-of-date notice on every CLI run ([1af5347](https://github.com/RPate97/lich/commit/1af5347e2536c482b01caaa7cd798a0248b5a52b))
+* **update:** add `lich update` command ([6e844f1](https://github.com/RPate97/lich/commit/6e844f1521bf522665f93410135f2b369015259f))
+* **version-check:** pure helpers for latest-version check ([265c83f](https://github.com/RPate97/lich/commit/265c83f021006d0034150e239f098c678001a7b0))
+
 ## [0.6.2](https://github.com/RPate97/lich/compare/v0.6.1...v0.6.2) (2026-08-20)
 
 
