@@ -43,6 +43,7 @@ const BUILT_IN_NAMES = [
   "validate",
   "exec",
   "env",
+  "update",
 ] as const;
 
 const USER_COMMAND_NAMES = ["test:e2e", "db:psql", "tools:env-check"] as const;
